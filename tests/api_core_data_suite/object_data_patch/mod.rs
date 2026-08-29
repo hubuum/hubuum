@@ -5,14 +5,11 @@ use std::time::Duration;
 use actix_web::{http::StatusCode, test};
 use rstest::rstest;
 
-use crate::db::prelude::*;
-use crate::db::{with_connection, with_transaction};
-use crate::events::{Event, EventContext};
+use crate::events::{EntityType, EventContext};
 use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
 use crate::models::{
-    HubuumClassID, HubuumObject, HubuumObjectHistory, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
-    NewHubuumClass, NewHubuumObject, NewObjectComputedData, ObjectComputedData,
-    ObjectDataPatchDocument, ObjectSelector,
+    HubuumClassID, HubuumObject, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES, NewHubuumClass,
+    NewHubuumObject, ObjectDataPatchDocument, ObjectSelector,
 };
 use crate::tests::api_operations::{
     patch_request, patch_request_with_content_type, patch_request_with_raw_body, post_request,
@@ -20,6 +17,8 @@ use crate::tests::api_operations::{
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{TestContext, create_test_classes, test_context};
 use crate::traits::{CanSave, SelfAccessors};
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::{with_connection, with_transaction};
 
 const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
 
@@ -82,17 +81,9 @@ async fn object_history_count(context: &TestContext, object_id: i32) -> i64 {
 }
 
 async fn object_event_count(context: &TestContext, object_id: i32) -> i64 {
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::events::dsl::{entity_id, entity_type, events};
-        events
-            .filter(entity_type.eq("object"))
-            .filter(entity_id.eq(object_id))
-            .count()
-            .get_result(conn)
-            .await
-    })
-    .await
-    .unwrap()
+    crate::test_support::audit_event_total(&context.pool, EntityType::Object, object_id)
+        .await
+        .unwrap()
 }
 
 async fn current_object(context: &TestContext, object_id: i32) -> HubuumObject {

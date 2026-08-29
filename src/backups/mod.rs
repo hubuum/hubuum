@@ -4,17 +4,16 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
-use crate::db::DbPool;
-use crate::db::traits::backup::snapshot_backup_db;
-use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
-    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord,
-    TaskResultCounts, TaskStatus,
+    CURRENT_BACKUP_VERSION, NewTaskEventRecord, TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::services::backups::capture_backup_snapshot;
+use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
+use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionArtifact};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
@@ -70,11 +69,11 @@ impl BackupSettings {
 fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> BackupManifest {
     let mut item_counts = BTreeMap::new();
     for (name, rows) in &state.sections {
-        item_counts.insert(name.clone(), rows.len() as i64);
+        item_counts.insert(name.as_str().to_string(), rows.len() as i64);
     }
     if let Some(history) = history {
         for (name, rows) in &history.sections {
-            item_counts.insert(format!("history.{name}"), rows.len() as i64);
+            item_counts.insert(format!("history.{}", name.as_str()), rows.len() as i64);
         }
     }
     BackupManifest {
@@ -94,15 +93,15 @@ fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> Backu
 }
 
 pub async fn create_backup_document(
-    pool: &DbPool,
+    backend: &impl crate::storage::StorageContext,
     request: &BackupRequest,
 ) -> Result<BackupDocument, ApiError> {
     let include_history = request.include_history;
-    let (state, history) = snapshot_backup_db(pool, include_history).await?;
+    let (state, history) = capture_backup_snapshot(backend, include_history).await?;
     let manifest = build_manifest(&state, history.as_ref());
     Ok(BackupDocument {
         backup_version: CURRENT_BACKUP_VERSION,
-        created_at: Utc::now().naive_utc(),
+        created_at: Utc::now(),
         source_version: env!("CARGO_PKG_VERSION").to_string(),
         state,
         history,
@@ -110,9 +109,9 @@ pub async fn create_backup_document(
     })
 }
 
-pub async fn execute_backup_task(
+pub(crate) async fn execute_backup_task(
     context: &AppContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
     settings: &BackupSettings,
@@ -136,7 +135,6 @@ pub async fn execute_backup_task(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    let byte_size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
     let total_items = document.manifest.item_counts.values().copied().sum::<i64>();
     let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
@@ -145,14 +143,15 @@ pub async fn execute_backup_task(
         total_items,
         bytes.len()
     );
-    task.finalize_backup_with_output(
+    complete_task(
         context,
-        TaskStateUpdate::new(
+        task,
+        TaskStateChange::new(
             TaskStatus::Succeeded,
             TaskResultCounts::from_outcomes(total_items, 0)?,
         )
-        .with_summary(summary.clone())
-        .with_started_at(task.started_at),
+        .summary(summary.clone())
+        .started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
@@ -164,13 +163,10 @@ pub async fn execute_backup_task(
                 "include_history": request.include_history,
             })),
         },
-        NewBackupTaskOutputRecord {
-            task_id: task.id,
-            document: bytes,
-            byte_size,
-            sha256,
-            output_expires_at: expires_at,
-        },
+        StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::try_new(
+            bytes,
+            expires_at.and_utc(),
+        )?),
     )
     .await?;
     Ok(())
@@ -198,14 +194,13 @@ mod tests {
 
     use super::{BackupSettings, authorize_backup_request};
     use crate::errors::ApiError;
-    use crate::permissions::AppContext;
     use crate::permissions::test_support::MockTreetopBackend;
     use crate::tests::{TestContext, create_test_group};
 
     #[tokio::test]
     async fn configured_backend_can_deny_a_sql_administrator_backup() {
         let test = TestContext::new().await;
-        let context = AppContext::new(
+        let context = crate::tests::app_context_with_permission_backend(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -225,7 +220,10 @@ mod tests {
             .unwrap();
         let backend = MockTreetopBackend::new();
         backend.add_admin_rule(policy_group.id);
-        let context = AppContext::new(test.pool.get_ref().clone(), Arc::new(backend));
+        let context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            Arc::new(backend),
+        );
 
         authorize_backup_request(&context, &test.normal_user, None)
             .await

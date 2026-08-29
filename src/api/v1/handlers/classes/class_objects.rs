@@ -1,7 +1,5 @@
 use super::*;
-use crate::db::traits::user::search::{
-    ExternalRelatedFilterAuthorization, externally_authorized_related_object_ids,
-};
+use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
 
 //
 // Object API
@@ -30,12 +28,12 @@ use crate::db::traits::user::search::{
 )]
 #[get("/{class_id}/")]
 async fn get_objects_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    list_objects_in_class(pool, requestor, class_id.into_inner(), None, req).await
+    list_objects_in_class(context, requestor, class_id.into_inner(), None, req).await
 }
 
 #[utoipa::path(
@@ -62,32 +60,33 @@ async fn get_objects_in_class(
 )]
 #[get("/by-name/{class_name}/objects")]
 async fn get_objects_in_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let class_id = HubuumClassID::new(target.class().id)?;
     let class = target.class().clone();
-    list_objects_in_class(pool, requestor, class_id, Some(class), req).await
+    list_objects_in_class(context, requestor, class_id, Some(class), req).await
 }
 
 async fn class_for_object_list(
-    pool: &AppContext,
+    context: &AppContext,
     class_id: &HubuumClassID,
     resolved_class: Option<&HubuumClass>,
 ) -> Result<HubuumClass, ApiError> {
     match resolved_class {
         Some(class) => Ok(class.clone()),
-        None => class_id.instance(pool).await,
+        None => class_id.instance(context).await,
     }
 }
 
 async fn list_objects_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: HubuumClassID,
     resolved_class: Option<HubuumClass>,
@@ -98,39 +97,45 @@ async fn list_objects_in_class(
 
     // The path is authoritative even if the caller supplied a conflicting
     // class_id/classes filter.
-    scope_object_query_to_class(&mut params, &class_id);
+    scope_object_query_to_class(&mut params, &class_id)?;
 
     debug!(
         message = "Getting objects in class",
-        user_id = requestor.principal.id(),
+        user_id = requestor.principal.id().id(),
         class_id = class_id.id(),
         query = query_string
     );
 
     let computed_querying = params
-        .sort
+        .sort()
         .iter()
         .any(|sort| sort.field.computed_query().is_some())
         || params
-            .filters
+            .filters()
             .iter()
             .any(|filter| filter.field.computed_query().is_some());
 
     if computed_querying {
-        let class = class_for_object_list(&pool, &class_id, resolved_class.as_ref()).await?;
-        return computed_objects::list_objects(&pool, &requestor, &class, params, include_computed)
-            .await;
+        let class = class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
+        return computed_objects::list_objects(
+            &context,
+            &requestor,
+            &class,
+            params,
+            include_computed,
+        )
+        .await;
     }
 
-    let (page, total_count) = load_raw_object_page(&pool, &requestor, &params).await?;
+    let (page, total_count) = load_raw_object_page(&context, &requestor, &params).await?;
     if !include_computed {
         return object_read_page(page, total_count, effective_page_limit(&params)?, false);
     }
 
-    let class = class_for_object_list(&pool, &class_id, resolved_class.as_ref()).await?;
-    let personal_owner = computed_personal_owner(&pool, &requestor, &class).await?;
+    let class = class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
+    let personal_owner = computed_personal_owner(&context, &requestor, &class).await?;
     let next_cursor = page.next_cursor;
-    let enriched = enrich_objects_with_computed(&pool, page.items, personal_owner).await?;
+    let enriched = enrich_objects_with_computed(&context, page.items, personal_owner).await?;
     object_read_page(
         Page {
             items: enriched,
@@ -143,57 +148,57 @@ async fn list_objects_in_class(
 }
 
 async fn load_raw_object_page(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     params: &QueryOptions,
 ) -> Result<(Page<HubuumObject>, i64), ApiError> {
     let user = &requestor.principal;
-    let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
-        let total_count = if params.include_total {
-            user.count_objects(pool, count_query_options(params), requestor.scopes())
-                .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
-        };
-        let objects = user
-            .search_objects(
-                pool,
-                prepare_db_pagination::<HubuumObject>(params)?,
-                requestor.scopes(),
-            )
-            .await?;
+    let (objects, total_count) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
+        let is_admin = crate::traits::AuthzSubject::is_admin(user, context).await?;
+        let (objects, total_count) = catalog_service::list_objects(
+            context,
+            user.id().id(),
+            is_admin,
+            requestor.scopes(),
+            prepare_db_pagination::<HubuumObject>(params)?,
+        )
+        .await?;
+        let total_count = total_count.unwrap_or(SKIPPED_TOTAL_COUNT);
         (objects, total_count)
     } else if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
         (Vec::new(), 0)
     } else {
-        let principal = PrincipalRef::load(pool, user).await?;
+        let principal = PrincipalRef::load(&context, user).await?;
         let related_ids = externally_authorized_related_object_ids(
-            user,
-            &params.filters,
-            ExternalRelatedFilterAuthorization::new(
-                pool.db_pool(),
-                pool.permission_backend(),
-                &principal,
-                requestor.scopes(),
-            ),
+            context,
+            context.permission_backend(),
+            &principal,
+            requestor.scopes(),
+            params.filters(),
         )
         .await?;
         let mut candidate_options = count_query_options(params);
         candidate_options
-            .filters
-            .retain(|filter| filter.field.related_query().is_none());
+            .filters_mut()
+            .try_retain(|filter| filter.field.related_query().is_none())
+            .expect("removing every related filter preserves query invariants");
+        candidate_options.set_include_total(false);
         let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
             Vec::new()
         } else {
-            user.search_objects_from_backend_with_admin_status(pool, candidate_options, true, None)
+            catalog_service::list_objects(&context, user.id().id(), true, None, candidate_options)
                 .await?
+                .0
         };
         if let Some(related_ids) = &related_ids {
             candidates.retain(|object| related_ids.contains(object.id));
         }
         let search_params = prepare_db_pagination::<HubuumObject>(params)?;
         let page = authorize_cursor_page(
-            pool.permission_backend(),
+            context.permission_backend(),
             &principal,
             candidates,
             requestor.scopes(),
@@ -225,18 +230,24 @@ async fn load_raw_object_page(
 )]
 #[post("/{class_id}/")]
 async fn create_object_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     object_data: web::Json<NewHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    let object =
-        create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())
-            .await?;
+    let object = create_object_in_resolved_class(
+        &context,
+        &requestor,
+        &req,
+        target,
+        object_data.into_inner(),
+    )
+    .await?;
     let location = api_locations::class_object(object.hubuum_class_id, object.id())?;
     ApiResponse::created_revisioned(object, location)
 }
@@ -261,24 +272,30 @@ async fn create_object_in_class(
 )]
 #[post("/by-name/{class_name}/objects")]
 async fn create_object_in_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     object_data: web::Json<NewHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = context
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    let object =
-        create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())
-            .await?;
+    let object = create_object_in_resolved_class(
+        &context,
+        &requestor,
+        &req,
+        target,
+        object_data.into_inner(),
+    )
+    .await?;
     let location = api_locations::class_object(object.hubuum_class_id, object.id())?;
     ApiResponse::created_revisioned(object, location)
 }
 
 async fn create_object_in_resolved_class(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedClassTarget,
@@ -287,32 +304,33 @@ async fn create_object_in_resolved_class(
     let object = object.into_domain_for_class(target.class())?;
     debug!(
         message = "Creating object in class",
-        user_id = requestor.principal.id(),
+        user_id = requestor.principal.id().id(),
         class_id = target.class().id,
         object_name = object.name,
     );
 
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::CreateObject],
         target.class()
     );
     let event_context = requestor.event_context(req);
-    object
-        .create_object_in_resolved_class(pool, &target, &event_context)
+    context
+        .object_service()
+        .create(&target, object, &event_context)
         .await
 }
 
 async fn read_resolved_object(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedObjectTarget,
 ) -> Result<ApiResponse<HubuumObjectReadResponse>, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadObject],
@@ -321,9 +339,9 @@ async fn read_resolved_object(
 
     let (_, include_computed) = parse_computed_include(req.query_string())?;
     if include_computed {
-        let personal_owner = computed_personal_owner(pool, requestor, target.class()).await?;
+        let personal_owner = computed_personal_owner(context, requestor, target.class()).await?;
         let enriched =
-            enrich_objects_with_computed(pool, vec![target.object().clone()], personal_owner)
+            enrich_objects_with_computed(&context, vec![target.object().clone()], personal_owner)
                 .await?
                 .pop()
                 .ok_or_else(|| {
@@ -362,7 +380,7 @@ async fn read_resolved_object(
 )]
 #[get("/{class_id}/{object_id}")]
 async fn get_object_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
@@ -372,15 +390,16 @@ async fn get_object_in_class(
 
     debug!(
         message = "Getting object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
 
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
-    read_resolved_object(&pool, &requestor, &req, target).await
+    read_resolved_object(&context, &requestor, &req, target).await
 }
 
 #[utoipa::path(
@@ -404,27 +423,28 @@ async fn get_object_in_class(
 )]
 #[get("/by-name/{class_name}/objects/by-name/{object_name}")]
 async fn get_object_in_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(String, String)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
-    read_resolved_object(&pool, &requestor, &req, target).await
+    read_resolved_object(&context, &requestor, &req, target).await
 }
 
 async fn apply_resolved_object_update(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedObjectTarget,
     update: UpdateHubuumObject,
 ) -> Result<HubuumObject, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateObject],
@@ -434,9 +454,12 @@ async fn apply_resolved_object_update(
 
     let precondition = revision_precondition(req, target.object())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        update.update_resolved_object(pool, &target, &event_context),
+        context
+            .object_service()
+            .update(&target, update, &event_context),
     )
     .await
 }
@@ -460,7 +483,7 @@ async fn apply_resolved_object_update(
 )]
 #[patch("/{class_id}/{object_id}")]
 async fn patch_object_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     object_data: web::Json<UpdateHubuumObjectRequest>,
@@ -472,15 +495,17 @@ async fn patch_object_in_class(
 
     debug!(
         message = "Updating object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
 
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
-    let object = apply_resolved_object_update(&pool, &requestor, &req, target, object_data).await?;
+    let object =
+        apply_resolved_object_update(&context, &requestor, &req, target, object_data).await?;
     ApiResponse::ok_revisioned(object)
 }
 
@@ -506,18 +531,19 @@ async fn patch_object_in_class(
 )]
 #[patch("/by-name/{class_name}/objects/by-name/{object_name}")]
 async fn patch_object_in_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(String, String)>,
     object_data: web::Json<UpdateHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
     let object = apply_resolved_object_update(
-        &pool,
+        &context,
         &requestor,
         &req,
         target,
@@ -528,14 +554,14 @@ async fn patch_object_in_class_by_name(
 }
 
 async fn apply_object_data_patch(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedObjectTarget,
     patch: ObjectDataPatchDocument,
 ) -> Result<HubuumObject, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateObject],
@@ -547,9 +573,12 @@ async fn apply_object_data_patch(
     // otherwise fail with 409.
     let precondition = revision_precondition(req, target.object())?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        patch.patch_object_data(pool, &target, &event_context),
+        context
+            .object_service()
+            .patch_data(&target, patch, &event_context),
     )
     .await
 }
@@ -585,7 +614,7 @@ async fn apply_object_data_patch(
 )]
 #[patch("/{class_id}/{object_id}/data")]
 async fn patch_object_data_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     patch: ObjectDataPatchPayload,
@@ -596,16 +625,17 @@ async fn patch_object_data_in_class(
 
     debug!(
         message = "Applying JSON Patch to object data",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
 
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
     let object =
-        apply_object_data_patch(&pool, &requestor, &req, target, patch.into_inner()).await?;
+        apply_object_data_patch(&context, &requestor, &req, target, patch.into_inner()).await?;
     ApiResponse::ok_revisioned(object)
 }
 
@@ -640,7 +670,7 @@ async fn patch_object_data_in_class(
 )]
 #[patch("/by-name/{class_name}/objects/by-name/{object_name}/data")]
 async fn patch_object_data_by_name_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(String, String)>,
     patch: ObjectDataPatchPayload,
@@ -648,30 +678,31 @@ async fn patch_object_data_by_name_in_class(
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
 
     debug!(
         message = "Applying JSON Patch to object data by name",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = target.object().hubuum_class_id,
         object_id = target.object().id
     );
 
     let object =
-        apply_object_data_patch(&pool, &requestor, &req, target, patch.into_inner()).await?;
+        apply_object_data_patch(&context, &requestor, &req, target, patch.into_inner()).await?;
     ApiResponse::ok_revisioned(object)
 }
 
 async fn delete_resolved_object(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedObjectTarget,
 ) -> Result<crate::api::etag::EntityTag, ApiError> {
     can!(
-        pool,
+        context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DeleteObject],
@@ -681,9 +712,10 @@ async fn delete_resolved_object(
     let etag = target.object().entity_tag()?;
     let precondition = revision_precondition_for_tag(req, &etag)?;
     let event_context = requestor.event_context(req);
-    with_revision_precondition_scope(
+    with_revision_precondition(
+        &context,
         precondition,
-        target.delete_resolved_object(pool, &event_context),
+        context.object_service().delete(&target, &event_context),
     )
     .await?;
     Ok(etag)
@@ -706,7 +738,7 @@ async fn delete_resolved_object(
 )]
 #[delete("/{class_id}/{object_id}")]
 async fn delete_object_in_class(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
@@ -716,15 +748,16 @@ async fn delete_object_in_class(
 
     debug!(
         message = "Deleting object in class",
-        user_id = user.id(),
+        user_id = user.id().id(),
         class_id = class_id.id(),
         object_id = object_id.id()
     );
 
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
-    let etag = delete_resolved_object(&pool, &requestor, &req, target).await?;
+    let etag = delete_resolved_object(&context, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -748,15 +781,16 @@ async fn delete_object_in_class(
 )]
 #[delete("/by-name/{class_name}/objects/by-name/{object_name}")]
 async fn delete_object_in_class_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(String, String)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = context
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
-    let etag = delete_resolved_object(&pool, &requestor, &req, target).await?;
+    let etag = delete_resolved_object(&context, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }

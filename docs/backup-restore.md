@@ -38,14 +38,31 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `4` preserves authoritative resource revisions, collection
+Backup version `5` preserves authoritative resource revisions, collection
 authorization-set revisions, temporal-history revisions, and event before/after
-revisions. Restore rejects older backup versions and invalid, maximum, or
-inconsistent revisions, then restores exact values through transaction-local
-restore mode. Class computation state and object materializations remain
-excluded as rebuildable caches; restore validates definitions and queues class
-rebuild tasks. The manifest does not carry partial-selection counts,
-import-planning warnings, a collection scope, or an embedded import request.
+revisions. It identifies sections by Hubuum resources rather than database
+tables. State sections include identity scopes, groups, principals, users,
+service accounts, memberships, collections, authorization state, hierarchy,
+permission grants, classes, computed-field definitions, relations, objects,
+export templates, remote targets, event sinks, and event subscriptions. History
+sections describe resource history, terminal tasks and results, audit events,
+and terminal event deliveries.
+
+Rows use the versioned logical vocabulary: `class_id`, `from_class_id`,
+`from_object_id`, principal identifiers, permission-name arrays,
+`history_entry_id`, and the temporal operations `create`, `update`, and
+`delete`. Timestamp values are RFC 3339 UTC instants. The PostgreSQL adapter
+privately maps these sections and fields to its tables, columns, and trigger
+operation codes; another adapter must implement the same logical projection
+without reproducing PostgreSQL names.
+
+Restore rejects version 4 and older backups, unknown or incomplete sections,
+malformed logical rows, invalid timestamps, and invalid, maximum, or
+inconsistent revisions. Create a new backup after upgrading and before relying
+on restore. Class computation state and object materializations remain excluded
+as rebuildable caches; restore validates definitions and queues class rebuild
+tasks. The manifest does not carry partial-selection counts, import-planning
+warnings, a collection scope, or an embedded import request.
 
 Backups cannot be scoped and backup documents are not import requests. Use the
 export/import workflow (with an import-compatible export template or adapter)

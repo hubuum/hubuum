@@ -9,6 +9,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- `hubuum-domain`, `hubuum-events-core`, `hubuum-query`,
+  `hubuum-task-core`, and `hubuum-storage-core` now have explicit compatibility,
+  MSRV, error, runtime, cancellation, and security policies in preparation for
+  a possible later crate split. They remain workspace-internal and unpublished
+  in this release. An external-crate integration test exercises the future
+  adapter-facing surface without making a crates.io support promise.
+- The redacted administrator configuration now reports the selected complete
+  storage backend and effective non-secret pool settings. Startup logs and
+  Prometheus metrics expose the same backend identity, and storage calls have
+  uniform bounded tracing plus duration and failure metrics. The server and
+  administrator CLI accept the typed `HUBUUM_STORAGE_BACKEND` selector;
+  `postgresql` is the sole registered value, empty selects that default, and
+  other unknown values fail startup.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and
@@ -19,24 +32,271 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   internal crates from becoming publishable and automatically adds rustdoc,
   clean-package, and crates.io-backed semantic compatibility checks when a
   crate is deliberately promoted to a supported public status.
+- Storage compatibility now has a machine-checked trait-method and input-variant
+  evidence inventory, runs representative service and authenticated HTTP paths
+  for every registered backend, and uses adapter-private deterministic
+  failpoints to verify rollback of compound collection and task-finalization
+  writes.
+- Breaking storage-adapter API: event envelopes now expose typed, validated
+  accessors instead of public raw fields; event sink, subscription, and
+  inventory and delivery-work projections now require fallible construction;
+  subscription catalogs use `EntityType` and `Action`; event update requests
+  use terminal builders; and
+  `BackupSnapshotStorage::create_backup_snapshot` is renamed to
+  `capture_backup_snapshot`. External adapter authors must migrate field reads
+  to accessors, handle `try_build` or `try_new` failures as backend corruption
+  when decoding persisted state, use typed subscription catalog values, and
+  rename the backup snapshot method.
+- Storage query documentation now defines common visibility, counting,
+  snapshot, ordering, cursor, limit, and error semantics plus the exact
+  identity-membership and collection-authorization filter/sort matrix. The
+  remaining method-specific matrices are explicitly required before the
+  boundary is promoted to a supported external adapter SDK.
+- Storage backend certification now includes a reusable six-part audit
+  conformance harness. Every selectable backend must prove that committed
+  receipts match durable events, no-ops append nothing, failed mutations roll
+  back state and events, durable outbox work reaches a recording sink, and
+  logical, backend, and failure telemetry is reported, and stale writes return
+  the exact current revision. Reusable retention and deterministic-fault
+  runners additionally prove durable retry identity, idempotent completion,
+  delivery recovery, restore-coordination rollback, and lease-loss
+  finalization while adapters retain native fault injection.
+- Storage backends now provide a mandatory backend-neutral unit of work for
+  composing collection, class, object, and relation operations. Transactional
+  mutations inherit one audit context, and shared PostgreSQL and memory-model
+  tests verify whole-graph commit plus state-and-event rollback.
 
 ### Changed
 
+- Removed the legacy root PostgreSQL storage implementation tree and direct SQL
+  from the storage compatibility harness. PostgreSQL composition is now
+  confined to the storage factory, adapter-native fixtures are typed and
+  feature-gated in `hubuum-storage-postgres`, and reusable
+  application/service/HTTP expectations live in
+  `hubuum-storage-conformance`. Deterministic storage fault coverage now
+  includes delivery acknowledgement, restore coordination, lease loss, and
+  connection loss; high-availability failover remains out of scope.
 - Main-branch CI no longer updates a rolling GitHub Release. Native binaries
   remain available as per-run Actions artifacts, while multi-architecture GHCR
   images receive a commit-SHA tag before the movable `main` and `main-full`
   tags are advanced to the same manifest.
-- **Breaking (Rust API support policy):** the root `hubuum` library and every
-  current workspace crate are explicitly internal and non-publishable. Their
-  Rust `pub` items are workspace construction details rather than supported
-  third-party embedding or extension APIs. Rust application clients must use
-  `hubuum-client-rust` over the versioned HTTP/OpenAPI contract; known Git
-  consumers must pin and maintain internal interfaces themselves or migrate to
-  the client. The server, admin, and OpenAPI binaries now call narrow internal
-  library entrypoints, and the library owns API/worker/all runtime composition.
+- Storage backends now implement one complete compile-time contract for
+  catalog and lifecycle operations, authorization and identity, queries and
+  history, workflows, operational behavior, and durable-worker notifications.
+  Application code exchanges backend-neutral DTOs and errors through uniformly
+  observed traits; PostgreSQL owns Diesel rows, SQL construction, transactions,
+  native notifications, migrations, and adapter-specific failures. Opaque
+  storage contexts preserve the configured backend instance. Resource services
+  depend on their exact operation traits; focused adapters implement only the
+  traits they support and cannot be selected as complete backends.
+  PostgreSQL helpers accept concrete pools only inside the adapter tree.
+  Storage-only contexts no longer carry authorization-provider selection;
+  policy-aware workflows explicitly require the stronger application context,
+  whose `AuthorizationContext::authorization_mode` implementation must choose
+  `LocalStorage` or `Delegated` explicitly.
+  PostgreSQL is the only selectable production backend, and compatibility tests
+  exercise every semantic capability group for every selectable backend.
+  Validated domain identifiers now live in the backend-neutral domain crate, and their OpenAPI
+  schemas explicitly declare the existing positive-integer invariant. The
+  deprecated administrator configuration field
+  `exports.database_statement_timeout_ms` remains as an alias for
+  `exports.storage_query_budget_ms`.
+- **Breaking (workspace storage API):** complete storage adapters must now
+  implement `TransactionStorage` in addition to the existing capability
+  traits. Capability traits consistently use the `<Domain>Storage` suffix;
+  operations use `get_*`, `list_*`, `resolve_*`, and `search_*`; observer hooks
+  are `StorageObserver` and `PostgresObserver`; identity administration is
+  split into focused bootstrap, scope, membership, service-account, and
+  external-identity traits; `TransactionStorage::with_transaction` owns atomic
+  callbacks; archive destinations implement async `EventArchiveSink`; and
+  paginated operations use `StoragePage<T>` instead of domain-specific
+  wrappers. `WorkerNotificationProvider` is now an
+  optional application-composition provider rather than a required
+  `StorageBackend` supertrait. Long positional parts aliases are replaced by
+  named private-field types, token issuance policy construction validates its
+  invariants, and retention orchestration can no longer be overridden by
+  adapters. Adapter authors must update method names, await archive calls,
+  provide atomic transaction-scoped lifecycle accessors, attach notification
+  providers explicitly when supported, and use the named `StorageError`
+  constructors. Named parts structs replace the most error-prone positional
+  decompositions introduced or changed by this boundary work. Static
+  application selection remains unchanged; there is no dynamic plugin
+  interface.
+- **Breaking (workspace storage API):** task execution now uses separate
+  `StorageTaskActiveUpdate` and `StorageTaskTerminalUpdate` values. Both are
+  fallible, claims require an active task with a projected lease expiry, and
+  `StorageTaskCompletion::try_new` requires the task kind plus its matching
+  export, backup, remote-call, or absent artifact. Task progress and task
+  projections also use fallible construction. Adapter authors must replace
+  `StorageTaskStateUpdate::new`, `StorageTaskCompletion::new`,
+  `StorageTaskProgress::new`, and `StorageTaskBuilder::build`, map invalid
+  persisted projections to `StorageErrorKind::Backend`, and verify that a
+  completion's declared kind matches the claimed stored task. PostgreSQL now
+  rejects negative task progress counters with database constraints. Operators
+  upgrading a database containing negative values in `tasks.total_items`,
+  `processed_items`, `success_items`, or `failed_items` must repair those rows
+  before running migrations.
+- Persisted reversed history intervals and negative computed-field revisions
+  are now consistently reported as `StorageErrorKind::Backend` instead of
+  `Internal`.
+- **Breaking (workspace storage API):** ordinary storage mutations now require
+  `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
+  non-empty set of durable `AuditReceipt` values for commits and no receipt for
+  genuine no-ops. Import
+  and restore implement `ImportStorage` and `RestoreStorage` directly, and
+  logical/native observers are supplied explicitly by application composition.
+  External
+  adapter authors must remove optional audit contexts, return the new outcome
+  type from resource methods, provide telemetry observers, implement the
+  reusable audit fixture, and be added to the sealed certification registry.
+  No database or HTTP migration is required.
+- **Breaking (workspace storage API):** the backend-neutral domain, query, event,
+  and storage contracts now keep database and application implementation
+  details behind their crate boundaries. External adapter authors must replace
+  raw lifecycle, event, principal, metadata, and revision integers with the
+  matching `hubuum-domain` IDs and `ResourceRevision`; use
+  `StorageRevisionTarget` instead of formatted revision-owner keys; construct
+  and mutate `QueryOptions` through its bounded collection and cursor APIs;
+  handle the now-fallible `QueryOptions::set_limit` method, which rejects zero
+  and values outside the native signed limit range;
+  replace `SQLMappedType` and the JSONB-named inference helpers with
+  `QueryScalarType` and the `infer_*` helpers; use semantic event `parse`
+  methods instead of `from_db`; and update matches to the semantic
+  `StorageErrorKind` names. HTTP shapes, database schemas, and persisted event
+  documents are unchanged by this Rust boundary cleanup.
+- **Breaking (workspace storage API):** capability ownership and naming now
+  align across traits, discovery modules, family bounds, and observer labels.
+  Adapters must rename `AuthorizationStorage` to `AuthorizationDataStorage`,
+  `CollectionAuthorizationStorage` to
+  `CollectionAuthorizationQueryStorage`, `ComputedFieldLifecycleStorage` to
+  `ComputedFieldStorage`, `EventSubscriptionStorage` to
+  `EventConfigurationStorage`, `EventDeliveryStorage` to
+  `EventDeliveryWorkerStorage`, and `BootstrapStorage` to
+  `LocalIdentityCredentialStorage`. Group listing and lifecycle belong to
+  `GroupStorage`; `GroupMembershipStorage` owns membership reads and mutations;
+  and retained-token listing belongs to `TokenStorage`. Pageable operations use
+  `list_*`, while complete policy projections use `load_*`; page-returning
+  method names no longer carry a redundant `_page` suffix. Renamed operations
+  otherwise use consistent `resolve_*`, `update_*`, and
+  service-account-specific names. The coarse cross-cutting family is
+  `OperationalStorage`, matching the other singular family bounds. Observer
+  capabilities are typed `StorageCapability` values; storage metrics users
+  must update label selectors such as `authorization` to
+  `authorization_data`, `event_subscriptions` to `event_configuration`, and
+  `event_delivery` to either `event_delivery_administration` or
+  `event_delivery_worker`; the membership label is `group_membership`.
+  Capability labels now uniformly use the singular trait stem, for example
+  `collection`, `collection_authorization_query`, `computed_field`,
+  `task_queue`, and `transaction`. Complete
+  batch reads now use `load_token_metadata_by_ids` and
+  `load_export_template_health` rather than `get_*` names. Authorization
+  candidate enumeration is now named `load_authorization_*_candidates`, group
+  candidate queries accept filters only, and the duplicate collection-grant
+  methods on `CollectionAuthorizationQueryStorage` are removed in favor of
+  `AuthorizationDataStorage::{list_local_collection_grants,
+  get_local_collection_grant}`. Operational adapters must also rename
+  `list_export_templates_for_audit` to `load_export_templates_for_audit`.
+  `ExportTemplateStorage` no longer duplicates class ownership lookup; callers
+  must use `ClassStorage::resolve_class`.
+- **Breaking (workspace storage API):** object aggregation accepts one
+  `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
+  when required. The query no longer stores a separate authorization mode, so
+  callers cannot construct storage/delegated mode and callback mismatches.
+  Delegated target and object authorization, computed-definition resolution,
+  aggregation, and paging now share one repeatable-read snapshot. The native
+  read transaction remains open while the application-owned policy backend
+  evaluates bounded candidate batches.
+- **Breaking (workspace storage API):** storage pages now use one
+  `StoragePage<T>` with an optional non-negative exact total instead of a
+  negative sentinel or a second counted-page type. Persisted record metadata
+  uses explicit UTC timestamps and rejects reversed creation/update order.
+  Restore identities, artifact digests, lifecycle timestamps, remote-target
+  transports and policies, event-delivery and computed-rebuild states, retained
+  events, and backup rows validate their invariants at construction. History
+  metadata, import DTOs, group membership, user details, remote transports, and
+  remote-call artifact targets expose named parts where positional
+  decomposition would be especially error-prone. Contract DTO timestamps use
+  explicit UTC values; adapters must convert native timestamp representations
+  at their private boundary. Import execution policy, identity-key scopes,
+  class schema-validation state, and permission replacement behavior are now
+  concrete before crossing into an adapter; adapter authors must remove native
+  fallback defaults for those values.
+  `StorageErrorKind::ValidationFailed` distinguishes semantically invalid
+  content, and malformed persisted conflict metadata becomes an internal
+  storage error instead of panicking. The complete storage contract no longer
+  exposes a generic unsupported-operation result; all mandatory behavior must
+  be implemented. `StorageTaskCreateRequestBuilder::build` now returns a
+  result and rejects negative totals and zero active-task capacity; callers
+  must handle that validation error. Ordinary `StorageTask` projections expose
+  lease presence and expiry without exposing or prescribing a UUID claim-token
+  representation. `StorageTaskClaim::try_new` rejects mismatched task and lease
+  identifiers, and `StorageTaskResultCounts::try_new` centrally rejects negative
+  task progress counts. Group page/count queries and computed-object
+  requested/execution queries now use validating constructors that reject
+  predicate or count-intent divergence. Export task artifacts require exactly
+  one typed content variant and a non-negative warning count, backup task
+  artifacts derive their byte size and SHA-256 digest from their document, and
+  task-output durations reject negative phases; adapter authors must handle the
+  validating constructors.
+- **Breaking (backup/restore):** full backups are version 5 and restore rejects
+  version 4. Version 5 uses stable logical resource and history section names,
+  semantic class/object/principal fields, permission-name arrays,
+  `history_entry_id`, `create`/`update`/`delete` history operations, and
+  explicit RFC 3339 UTC timestamps. PostgreSQL tables, legacy columns, trigger
+  operation codes, credentials, and worker-claim fields are mapped or excluded
+  privately by its adapter. Operators must create new backups after upgrading;
+  adapters must project their persistence layout to the version 5 logical
+  schema.
+- Administrator configuration responses add `database.backend` and
+  `exports.storage_query_budget_ms`; the deprecated
+  `exports.database_statement_timeout_ms` alias remains with the same value.
+  Database diagnostics document the backend-unavailable `404` response. The
+  token-resource and remote-invocation `oneOf` variants remain JSON-compatible
+  with v0.0.9, and optional provenance task IDs still accept the same
+  integer-or-null values. No client migration is required because the
+  token-resource and remote-invocation `oneOf` variants are schema-identical to
+  v0.0.9 and optional provenance task IDs retain the same integer-or-null
+  representation.
+- **Breaking (storage operations):** event retention now uses durable
+  claim/archive/complete batches. `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` names a
+  directory, not an append-only JSONL file; operators using local archival must
+  create or point to a durable directory and must not reuse the old file path.
+  Each claim is atomically written as `<batch-uuid>.jsonl`. Failed archives
+  retain the same claim and source events for retry, and completion deletes
+  exactly the claimed IDs. The new retention-claim migration is applied
+  automatically before the worker runs.
+- Backend-neutral logical metrics traits and DTOs now live in
+  `hubuum-storage-core`. PostgreSQL pool statistics remain adapter-owned and
+  are projected by application composition into the root-owned compatibility
+  shape used by the legacy database endpoint and gauges.
+- Event worker and retention configuration validation now uses backend-neutral
+  policy terminology, matching the storage traits and DTOs used by application
+  workers instead of exposing database implementation language.
+- **Breaking (Rust API support policy):** the root `hubuum` library and crates
+  not explicitly classified as experimental public remain internal and
+  non-publishable. Their Rust `pub` items are workspace construction details
+  rather than supported third-party embedding APIs. Rust application clients
+  must use `hubuum-client-rust` over the versioned HTTP/OpenAPI contract. The
+  server, admin, and OpenAPI binaries call narrow internal library entrypoints,
+  and the library owns API/worker/all runtime composition.
+
+### Fixed
+
+- Single-host rolling updates now require Caddy to report the API standby
+  itself eligible before draining the primary for migrations. Unrelated web
+  failure marks no longer block frontend recovery, custom API ports are
+  respected, and expected replicas are checked after each rollout phase.
+- `hubuum-admin --migrate` once again exits with the documented database error
+  code `3` when it cannot connect or apply a migration.
 
 ### Security
 
+- Mitigated RUSTSEC-2026-0258 by disabling Actix's optional HTTP/2 feature, so
+  vulnerable `h2` 0.3 code is not compiled. HTTP/1.1, TLS, compression,
+  cookies, and WebSockets remain enabled. Deployments requiring HTTP/2 must
+  terminate it at a reverse proxy until Actix supports the fixed `h2` 0.4
+  series; the owned advisory exception exists only because Cargo records the
+  disabled optional package in `Cargo.lock`.
 - Treetop authorization failures now redact transport details, response bodies,
   URL credentials, and failed batch-item diagnostics from public errors. A
   pinned, hermetic real-service conformance gate now exercises these failure

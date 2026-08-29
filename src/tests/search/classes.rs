@@ -77,13 +77,8 @@ mod test {
 
     async fn check_test_cases(context: &TestContext, testcases: Vec<TestCase>) {
         for tc in testcases {
-            let query_options = QueryOptions {
-                filters: tc.query.clone(),
-                sort: vec![],
-                limit: None,
-                cursor: None,
-                include_total: true,
-            };
+            let query_options =
+                QueryOptions::new(tc.query.clone(), vec![], None, None, true).unwrap();
 
             let hits = context
                 .admin_user

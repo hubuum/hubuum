@@ -5,14 +5,17 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::backups::{BackupSettings, authorize_backup_request};
-use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
-    BackupDocument, BackupOutputLookup, BackupRequest, PrincipalID, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TokenID,
+    BackupDocument, BackupOutputLookup, BackupRequest, PrincipalID, TaskID, TaskKind, TaskResponse,
+    TokenID,
 };
-use crate::permissions::{AppContext, AuthzTarget, PermissionDecision, PrincipalRef};
+use crate::permissions::AppContext;
+use crate::services::tasks::{
+    TaskSubmission, backup_output, backup_output_summary, load_authorized_backup, submit_task,
+    task_scope_snapshot,
+};
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
 
 fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
@@ -22,7 +25,7 @@ fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
     }
 
     let mut decoded = [0_u8; 32];
-    for (byte, pair) in decoded.iter_mut().zip(encoded.chunks_exact(2)) {
+    for (byte, pair) in decoded.iter_mut().zip(encoded.as_chunks::<2>().0) {
         let high = decode_hex_nibble(pair[0]).ok_or_else(invalid_stored_sha256)?;
         let low = decode_hex_nibble(pair[1]).ok_or_else(invalid_stored_sha256)?;
         *byte = (high << 4) | low;
@@ -43,37 +46,6 @@ fn decode_hex_nibble(value: u8) -> Option<u8> {
 
 fn invalid_stored_sha256() -> ApiError {
     ApiError::InternalServerError("Stored backup SHA-256 is invalid".to_string())
-}
-
-async fn load_authorized_backup(
-    context: &AppContext,
-    requestor: &Authenticated,
-    task_id: TaskID,
-) -> Result<TaskRecord, ApiError> {
-    if context.permission_backend().uses_sql_permission_store() {
-        return task_id
-            .load_authorized_backup(context, &requestor.principal)
-            .await;
-    }
-
-    let task = task_id.find_record(context).await?;
-    if task.kind != TaskKind::Backup.as_str() {
-        return Err(ApiError::NotFound(format!(
-            "Backup task {} not found",
-            task_id.id()
-        )));
-    }
-    let principal = PrincipalRef::load(context, &requestor.principal).await?;
-    let resource = task.to_resource_ref(context).await?;
-    if context
-        .permission_backend()
-        .authorize_task(&principal, &resource)
-        .await?
-        != PermissionDecision::Allow
-    {
-        return Err(ApiError::NotFound("Backup task not found".to_string()));
-    }
-    Ok(task)
 }
 
 #[utoipa::path(
@@ -103,23 +75,24 @@ pub async fn create_backup(
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
-    let scope_snapshot = TaskScopeSnapshot::from_request(
-        Some(TokenID::new(requestor.token_meta.id)?),
+    let scope_snapshot = task_scope_snapshot(
+        Some(TokenID::new(requestor.token_meta.id().id())?),
         requestor.scopes(),
     );
-    let task_request = TaskCreateRequest::builder(
-        TaskKind::Backup,
-        PrincipalID::new(requestor.principal.id)?,
-        payload,
-        1,
+    let task = submit_task(
+        &context,
+        TaskSubmission::new(
+            TaskKind::Backup,
+            PrincipalID::new(requestor.principal.id().id())?,
+            payload,
+            1,
+            settings.max_active_tasks_per_user(),
+        )
+        .idempotency_key(idempotency_key_from_headers(req.headers())?)
+        .request_hash(Some(hash))
+        .scope_snapshot(scope_snapshot),
     )
-    .idempotency_key(idempotency_key_from_headers(req.headers())?)
-    .request_hash(Some(hash))
-    .scope_snapshot(scope_snapshot)
-    .build();
-    let task = task_request
-        .create_idempotently_with_active_limit(&context, settings.max_active_tasks_per_user())
-        .await?;
+    .await?;
     let response = task.to_response()?;
     kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(
@@ -148,8 +121,9 @@ pub async fn get_backup(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
-    let task = load_authorized_backup(&context, &requestor, task_id.into_inner()).await?;
-    let output = task.find_backup_output_summary(&context).await?;
+    let task_id = task_id.into_inner();
+    let task = load_authorized_backup(&context, &requestor.principal, task_id).await?;
+    let output = backup_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
         task.to_response_with_backup_output(output.as_ref())?,
         StatusCode::OK,
@@ -185,8 +159,8 @@ pub async fn get_backup_output(
 ) -> Result<HttpResponse, ApiError> {
     let task_id = task_id.into_inner();
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
-    load_authorized_backup(&context, &requestor, task_id).await?;
-    match task_id.find_backup_output(&context).await? {
+    load_authorized_backup(&context, &requestor.principal, task_id).await?;
+    match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
             let digest = digest_header_from_sha256(&output.sha256)?;
             Ok(HttpResponse::Ok()

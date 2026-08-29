@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::db::prelude::*;
 use async_trait::async_trait;
 use reqwest::Certificate;
 use treetop_client::{
@@ -10,19 +9,18 @@ use treetop_client::{
 };
 
 use crate::config::AppConfig;
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
+use crate::models::search::{QueryOptions, QueryParamsExt};
 use crate::models::{
-    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
-    PermissionsList,
+    Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
-use crate::schema::collections;
+use crate::storage::{AuthorizationDataStorage, AuthorizationGroupCandidateQuery, StorageHandle};
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
+use super::storage::{collection_from_storage, group_from_storage};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
 const BACKEND_KIND: &str = "treetop";
@@ -45,7 +43,7 @@ pub use mapping::{cedar_action, cedar_resource, cedar_user};
 ///   `ApiError::NotImplemented` — permissions are managed out-of-band.
 pub struct TreetopPermissionBackend {
     client: Client,
-    pool: DbPool,
+    storage: StorageHandle,
 }
 
 impl TreetopPermissionBackend {
@@ -53,7 +51,11 @@ impl TreetopPermissionBackend {
     ///
     /// Returns a fatal `ApiError` if the server is unreachable or unhealthy —
     /// per the spec, we fail-closed-fatal on startup health failures.
-    pub async fn connect(url: &str, cfg: &AppConfig, pool: DbPool) -> Result<Self, ApiError> {
+    pub(crate) async fn connect(
+        url: &str,
+        cfg: &AppConfig,
+        storage: StorageHandle,
+    ) -> Result<Self, ApiError> {
         let mut builder = Client::builder(url)
             .connect_timeout(Duration::from_millis(cfg.treetop_connect_timeout_ms))
             .request_timeout(Duration::from_millis(cfg.treetop_request_timeout_ms));
@@ -73,7 +75,7 @@ impl TreetopPermissionBackend {
         // Startup health check — fail-closed-fatal per Q9 of the spec.
         client.health().await.map_err(treetop_to_api_error)?;
 
-        Ok(Self { client, pool })
+        Ok(Self { client, storage })
     }
 
     async fn authorize_cedar_requests(
@@ -357,14 +359,17 @@ impl PermissionBackend for TreetopPermissionBackend {
         principal: &PrincipalRef,
         permissions: &[Permissions],
     ) -> Result<Vec<Collection>, ApiError> {
-        // Enumerate candidates from the local DB, filter via Treetop.
+        // Enumerate candidates from storage, then filter via Treetop.
         // We load all collections without any permission filtering, then
         // use paginate_authorized to filter via Treetop batch authorization.
         let start = Instant::now();
-        let all_collections = with_connection(&self.pool, async |conn| {
-            collections::table.load::<Collection>(conn).await
-        })
-        .await?;
+        let all_collections = self
+            .storage
+            .load_authorization_collection_candidates()
+            .await?
+            .into_iter()
+            .map(collection_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
         let candidate_count = all_collections.len();
         let tested_permissions = if permissions.is_empty() {
             Permissions::all()
@@ -419,41 +424,17 @@ impl PermissionBackend for TreetopPermissionBackend {
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-        use crate::schema::groups::dsl::{
-            created_at, groupname, groups as groups_dsl, id, updated_at,
-        };
-        use crate::{date_search, numeric_search, string_search};
-
         let start = Instant::now();
         let collection_id = collection_id.id();
-
-        let mut group_query = groups_dsl.into_boxed();
-        for param in &page.filters {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(group_query, param, operator, id),
-                FilterField::Name | FilterField::Groupname => {
-                    string_search!(group_query, param, operator, groupname)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(group_query, param, operator, created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(group_query, param, operator, updated_at)
-                }
-                FilterField::Permissions => {}
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for permissions",
-                        param.field
-                    )));
-                }
-            }
-        }
-        let all_groups: Vec<Group> = with_connection(&self.pool, async |conn| {
-            group_query.load::<Group>(conn).await
-        })
-        .await?;
+        let all_groups = self
+            .storage
+            .load_authorization_group_candidates(AuthorizationGroupCandidateQuery::new(
+                page.filters().clone(),
+            ))
+            .await?
+            .into_iter()
+            .map(group_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
         let candidate_count = all_groups.len();
 
         if all_groups.is_empty() {
@@ -464,7 +445,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         // collection. Treetop returns decisions in input order, so we know
         // which group/permission each maps to.
         let perms = Permissions::all();
-        let mut effective_filter = page.filters.permissions()?;
+        let mut effective_filter = page.filters().permissions()?;
         effective_filter.ensure_contains(permissions_filter);
         let check_count = all_groups.len().checked_mul(perms.len()).ok_or_else(|| {
             ApiError::InternalServerError("too many group permission checks".into())
@@ -606,11 +587,11 @@ impl PermissionBackend for TreetopPermissionBackend {
         false
     }
 
-    fn supports_sql_visibility_pushdown(&self) -> bool {
+    fn supports_storage_visibility_filtering(&self) -> bool {
         false
     }
 
-    fn uses_sql_permission_store(&self) -> bool {
+    fn uses_local_permission_store(&self) -> bool {
         false
     }
 

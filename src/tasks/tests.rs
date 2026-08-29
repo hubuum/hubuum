@@ -1,11 +1,10 @@
-use chrono::{NaiveDate, NaiveDateTime};
-use diesel::sql_types::Timestamp;
-use diesel::{ExpressionMethods, QueryDsl, QueryableByName};
+use chrono::NaiveDateTime;
+use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
 use rstest::rstest;
 use std::sync::Arc;
 
-use super::execution::{execute_import_best_effort, execute_import_strict, execute_planned_item};
+use super::execution::{execute_import_best_effort, execute_import_strict};
 use super::helpers::{
     class_to_resolution, planned_result, sanitize_error_for_storage,
     should_abort_best_effort_execution,
@@ -16,44 +15,93 @@ use super::planning::{
 use super::request_hash;
 use super::resolution::{
     remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
-    resolve_collection_planning, resolve_object_planning, resolve_object_runtime,
+    resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
     CollectionResolution, ExecutionAccumulator, FailureKind, PlannedExecution, PlannedItem,
-    PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
+    PlanningFailure, PlanningState, WorkerLoopAction,
 };
-use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
-use crate::db::traits::collection::DeleteCollectionRecord;
-use crate::db::traits::task::{TaskBackend, insert_import_results};
-use crate::db::traits::task_import::{
-    create_class_db, create_class_relation_db, create_collection_db, create_object_db,
-    create_object_relation_db, update_class_db, update_class_relation_timestamps_db,
-    update_collection_db, update_object_db, update_object_relation_timestamps_db,
-    upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
-    upsert_remote_target_db,
+use super::worker::{
+    background_worker_action, mark_claimed_task_failed, process_claimed_task_for_test,
 };
-use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
-    ExportScopeKind, ExportTemplateKind, GroupID, ImportAtomicity, ImportClassInput,
-    ImportClassRelationInput, ImportCollectionInput, ImportCollisionPolicy,
+    ExportScopeKind, ExportTemplateKind, GroupID, GroupKey, IdentityScopeKey, ImportAtomicity,
+    ImportClassInput, ImportClassRelationInput, ImportCollectionInput, ImportCollisionPolicy,
     ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput, ImportIdentityScopeInput,
     ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, ImportWriteCondition,
     NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, NewImportTaskResultRecord, NewTaskRecord, ObjectKey, Permissions,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision,
-    RestoreTimestamps, TaskKind, TaskStatus,
+    NewHubuumObjectRelation, ObjectKey, Permissions, PrincipalKey, RemoteAuthConfig,
+    RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision, RestoreTimestamps,
+    TaskResultCounts, TaskStatus,
 };
+use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{ResourceAttrs, ResourceKind};
-use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
-use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
+use crate::services::tasks::{ClaimedTask, TaskStateChange, find_task, update_task_state};
+use crate::storage::{
+    CollectionStorage, ImportStorage, StorageImportPlan, StorageImportPlanItem,
+    StorageImportResult, StorageTaskCreateRequest, StorageTaskKind, StorageTaskScopeSnapshot,
+    TaskQueueStorage,
+};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
+use hubuum_storage_postgres::PostgresStorage;
+use hubuum_storage_postgres::{capture_queries, with_connection};
+
+async fn create_worker_test_task(
+    context: &TestContext,
+    kind: StorageTaskKind,
+    payload: serde_json::Value,
+    total_items: i32,
+    label: &str,
+) -> crate::models::TaskRecord {
+    let backend = crate::storage::storage_handle(&context.pool);
+    let task = backend
+        .create_task(
+            StorageTaskCreateRequest::builder(
+                kind,
+                hubuum_domain::PrincipalId::new(context.admin_user.id)
+                    .expect("persisted test principal id must be positive"),
+                payload,
+                total_items,
+            )
+            .idempotency_key(Some(
+                hubuum_task_core::IdempotencyKey::new(context.scoped_name(label))
+                    .expect("test idempotency key must be valid"),
+            ))
+            .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .build(100)
+            .expect("worker test task request should be valid"),
+        )
+        .await
+        .expect("worker test task should be created");
+    hubuum_storage_postgres::test_support::prioritize_task(context.pool.get_ref(), task.id())
+        .await
+        .expect("worker test task should be prioritized");
+    find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id().id()).expect("persisted task id must be positive"),
+    )
+    .await
+    .expect("worker test task should be loadable")
+}
+
+async fn claim_worker_test_task(
+    context: &TestContext,
+    task_id: i32,
+) -> crate::services::tasks::ClaimedTask {
+    let task_id = hubuum_domain::TaskId::new(task_id).expect("persisted task id must be positive");
+    let claim =
+        hubuum_storage_postgres::test_support::claim_task_by_id(context.pool.get_ref(), task_id)
+            .await
+            .expect("the exact worker test task should be claimable");
+    ClaimedTask::from_storage(claim).expect("the claimed worker test task should be valid")
+}
 
 #[tokio::test]
 async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
@@ -196,7 +244,10 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
         .collection_fixture("external_task_authorization")
         .await;
     let permissions: Arc<dyn PermissionBackend> = Arc::new(MockTreetopBackend::new());
-    let backend = AppContext::new(context.pool.get_ref().clone(), permissions);
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        permissions,
+    );
     let request = ImportRequest {
         version: CURRENT_IMPORT_VERSION,
         dry_run: Some(true),
@@ -320,7 +371,10 @@ async fn relation_timestamp_overwrite_requires_update_permission(
             },
         });
     }
-    let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        Arc::new(permission_backend),
+    );
 
     let collection_key = |index: usize| CollectionKey {
         name: fixtures[index].collection.name.clone(),
@@ -448,12 +502,6 @@ enum TemplateDependency {
     Missing,
 }
 
-#[derive(QueryableByName)]
-struct DatabaseNaiveTimestamp {
-    #[diesel(sql_type = Timestamp)]
-    value: NaiveDateTime,
-}
-
 fn restore_timestamps(created_at_value: &str, updated_at_value: &str) -> RestoreTimestamps {
     RestoreTimestamps::new(
         created_at_value.parse().expect("created_at test timestamp"),
@@ -462,34 +510,62 @@ fn restore_timestamps(created_at_value: &str, updated_at_value: &str) -> Restore
     .expect("ordered restore timestamps")
 }
 
+async fn apply_import_operations(
+    context: &TestContext,
+    operations: impl IntoIterator<Item = PlannedExecution>,
+) -> Result<(), ApiError> {
+    let items = operations
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            crate::services::import_boundary::import_operation_to_storage(operation)
+                .map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let plan = StorageImportPlan::new(items).map_err(ApiError::from)?;
+    PostgresStorage::unobserved(context.pool.get_ref().clone())
+        .apply_import_strict(plan)
+        .await
+        .map_err(ApiError::from)
+}
+
 #[tokio::test]
 async fn imported_collection_timestamps_are_written_in_the_initial_history_entry() {
     let context = TestContext::new().await;
     let parent = context.collection_fixture("import_history_parent").await;
     let timestamps = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
-    let collection = with_connection(&context.pool, async |conn| {
-        create_collection_db(
-            conn,
-            &ImportCollectionInput {
-                ref_: None,
-                name: context.scoped_name("import_history_collection"),
-                description: "Imported collection history".to_string(),
-                parent_collection_ref: None,
-                parent_collection_key: None,
-                condition: None,
-                timestamps: Some(timestamps.clone()),
-            },
-            Some(parent.collection.id),
-        )
-        .await
-    })
+    let imported_name = context.scoped_name("import_history_collection");
+    apply_import_operations(
+        &context,
+        [PlannedExecution::CreateCollection(ImportCollectionInput {
+            ref_: None,
+            name: imported_name.clone(),
+            description: "Imported collection history".to_string(),
+            parent_collection_ref: None,
+            parent_collection_key: Some(CollectionKey {
+                name: parent.collection.name.clone(),
+                path: None,
+            }),
+            condition: None,
+            timestamps: Some(timestamps.clone()),
+        })],
+    )
     .await
     .unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let collection = backend
+        .get_import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &imported_name,
+        )
+        .await
+        .unwrap()
+        .expect("imported collection should exist");
 
     let history = with_connection(&context.pool, async |conn| {
         use crate::schema::collections_history::dsl as h;
         h::collections_history
-            .filter(h::id.eq(collection.id))
+            .filter(h::id.eq(collection.id().id()))
             .order(h::history_id.asc())
             .select((h::op, h::created_at, h::updated_at))
             .load::<(String, NaiveDateTime, NaiveDateTime)>(conn)
@@ -507,10 +583,11 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
         )]
     );
 
-    collection
-        .delete_collection_record_without_events(&context.pool)
+    backend
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
@@ -534,12 +611,16 @@ async fn unchanged_temporal_import_overwrite_does_not_append_history(
         TimestampOverwrite::Identical => Some(timestamps.clone()),
     };
 
-    let history_count = with_connection(&context.pool, async |conn| match kind {
+    let collection_key = Some(CollectionKey {
+        name: fixture.collection.name.clone(),
+        path: None,
+    });
+    let history_count = match kind {
         ClassBoundImport::ExportTemplate => {
             let input = ImportExportTemplateInput {
                 ref_: None,
                 collection_ref: None,
-                collection_key: None,
+                collection_key: collection_key.clone(),
                 class_ref: None,
                 class_key: None,
                 name: context.scoped_name("unchanged_export_template"),
@@ -556,27 +637,47 @@ async fn unchanged_temporal_import_overwrite_does_not_append_history(
                 condition: None,
                 timestamps: Some(timestamps.clone()),
             };
-            let id =
-                upsert_export_template_db(conn, &input, fixture.collection.id, None, false).await?;
-            let mut overwrite_input = input;
+            let mut overwrite_input = input.clone();
             overwrite_input.timestamps = overwrite_timestamps;
-            upsert_export_template_db(conn, &overwrite_input, fixture.collection.id, None, true)
-                .await?;
+            apply_import_operations(
+                &context,
+                [
+                    PlannedExecution::UpsertExportTemplate {
+                        input: input.clone(),
+                        overwrite: false,
+                    },
+                    PlannedExecution::UpsertExportTemplate {
+                        input: overwrite_input,
+                        overwrite: true,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
 
+            let name = input.name;
+            use crate::schema::export_templates::dsl as t;
             use crate::schema::export_templates_history::dsl as h;
-            Ok::<_, ApiError>(
+            with_connection(&context.pool, async |conn| {
+                let id = t::export_templates
+                    .filter(t::name.eq(name))
+                    .select(t::id)
+                    .first::<i32>(conn)
+                    .await?;
                 h::export_templates_history
                     .filter(h::id.eq(id))
                     .count()
                     .get_result::<i64>(conn)
-                    .await?,
-            )
+                    .await
+            })
+            .await
+            .unwrap()
         }
         ClassBoundImport::RemoteTarget => {
             let input = ImportRemoteTargetInput {
                 ref_: None,
                 collection_ref: None,
-                collection_key: None,
+                collection_key,
                 class_ref: None,
                 class_key: None,
                 name: context.scoped_name("unchanged_remote_target"),
@@ -592,25 +693,43 @@ async fn unchanged_temporal_import_overwrite_does_not_append_history(
                 condition: None,
                 timestamps: Some(timestamps.clone()),
             };
-            let id =
-                upsert_remote_target_db(conn, &input, fixture.collection.id, None, false).await?;
-            let mut overwrite_input = input;
+            let mut overwrite_input = input.clone();
             overwrite_input.timestamps = overwrite_timestamps;
-            upsert_remote_target_db(conn, &overwrite_input, fixture.collection.id, None, true)
-                .await?;
+            apply_import_operations(
+                &context,
+                [
+                    PlannedExecution::UpsertRemoteTarget {
+                        input: input.clone(),
+                        overwrite: false,
+                    },
+                    PlannedExecution::UpsertRemoteTarget {
+                        input: overwrite_input,
+                        overwrite: true,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
 
+            let name = input.name;
+            use crate::schema::remote_targets::dsl as t;
             use crate::schema::remote_targets_history::dsl as h;
-            Ok::<_, ApiError>(
+            with_connection(&context.pool, async |conn| {
+                let id = t::remote_targets
+                    .filter(t::name.eq(name))
+                    .select(t::id)
+                    .first::<i32>(conn)
+                    .await?;
                 h::remote_targets_history
                     .filter(h::id.eq(id))
                     .count()
                     .get_result::<i64>(conn)
-                    .await?,
-            )
+                    .await
+            })
+            .await
+            .unwrap()
         }
-    })
-    .await
-    .unwrap();
+    };
 
     assert_eq!(history_count, 1);
 
@@ -633,138 +752,233 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         .await;
     let timestamps = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
     let collection_input = ImportCollectionInput {
-        ref_: None,
+        ref_: Some("collection:current".to_string()),
         name: context.scoped_name("unchanged_core_import_collection"),
         description: "Unchanged core import collection".to_string(),
         parent_collection_ref: None,
-        parent_collection_key: None,
+        parent_collection_key: Some(CollectionKey {
+            name: parent.collection.name.clone(),
+            path: None,
+        }),
         condition: None,
         timestamps: Some(timestamps.clone()),
     };
     let class_inputs = [0, 1].map(|index| ImportClassInput {
-        ref_: None,
+        ref_: Some(format!("class:{index}")),
         name: context.scoped_name(&format!("unchanged_core_import_class_{index}")),
         description: format!("Unchanged core import class {index}"),
         json_schema: None,
         validate_schema: Some(false),
-        collection_ref: None,
+        collection_ref: Some("collection:current".to_string()),
         collection_key: None,
         condition: None,
         timestamps: Some(timestamps.clone()),
     });
     let object_inputs = [0, 1].map(|index| ImportObjectInput {
-        ref_: None,
+        ref_: Some(format!("object:{index}")),
         name: context.scoped_name(&format!("unchanged_core_import_object_{index}")),
         description: format!("Unchanged core import object {index}"),
         data: serde_json::json!({"index": index}),
-        class_ref: None,
+        class_ref: Some(format!("class:{index}")),
         class_key: None,
         condition: None,
         timestamps: Some(timestamps.clone()),
     });
+    let class_relation_input = ImportClassRelationInput {
+        ref_: Some("class-relation:current".to_string()),
+        from_class_ref: Some("class:0".to_string()),
+        from_class_key: None,
+        to_class_ref: Some("class:1".to_string()),
+        to_class_key: None,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
+        condition: None,
+        timestamps: Some(timestamps.clone()),
+    };
+    let object_relation_input = ImportObjectRelationInput {
+        ref_: Some("object-relation:current".to_string()),
+        from_object_ref: Some("object:0".to_string()),
+        from_object_key: None,
+        to_object_ref: Some("object:1".to_string()),
+        to_object_key: None,
+        condition: None,
+        timestamps: Some(timestamps.clone()),
+    };
+    apply_import_operations(
+        &context,
+        vec![
+            PlannedExecution::CreateCollection(collection_input.clone()),
+            PlannedExecution::CreateClass(class_inputs[0].clone()),
+            PlannedExecution::CreateClass(class_inputs[1].clone()),
+            PlannedExecution::CreateObject(object_inputs[0].clone()),
+            PlannedExecution::CreateObject(object_inputs[1].clone()),
+            PlannedExecution::CreateClassRelation(class_relation_input.clone()),
+            PlannedExecution::CreateObjectRelation(object_relation_input.clone()),
+        ],
+    )
+    .await
+    .unwrap();
 
-    let (collection, history_count) = with_transaction(&context.pool, async |conn| {
-        let collection =
-            create_collection_db(conn, &collection_input, Some(parent.collection.id)).await?;
-        let mut classes = Vec::new();
-        let mut objects = Vec::new();
-        for index in 0..2 {
-            let class = create_class_db(conn, &class_inputs[index], collection.id).await?;
-            let object = create_object_db(conn, &object_inputs[index], &class).await?;
-            classes.push(class);
-            objects.push(object);
-        }
-        let class_relation = create_class_relation_db(
-            conn,
-            NewHubuumClassRelation {
-                from_hubuum_class_id: classes[0].id,
-                to_hubuum_class_id: classes[1].id,
-                forward_template_alias: None,
-                reverse_template_alias: None,
-                from_max_relations: None,
-                to_max_relations: None,
-            },
-            Some(&timestamps),
-            None,
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let collection = backend
+        .get_import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &collection_input.name,
         )
-        .await?;
-        let object_relation =
-            create_object_relation_db(conn, &objects[0], &objects[1], Some(&timestamps), None)
-                .await?;
+        .await
+        .unwrap()
+        .expect("imported collection should exist");
+    let classes = [
+        backend
+            .get_import_class_by_name(collection.id(), &class_inputs[0].name)
+            .await
+            .unwrap()
+            .expect("first imported class should exist"),
+        backend
+            .get_import_class_by_name(collection.id(), &class_inputs[1].name)
+            .await
+            .unwrap()
+            .expect("second imported class should exist"),
+    ];
+    let objects = [
+        backend
+            .get_import_object_by_name(classes[0].id(), &object_inputs[0].name)
+            .await
+            .unwrap()
+            .expect("first imported object should exist"),
+        backend
+            .get_import_object_by_name(classes[1].id(), &object_inputs[1].name)
+            .await
+            .unwrap()
+            .expect("second imported object should exist"),
+    ];
+    let (class_relation_id, object_relation_id) = with_connection(&context.pool, async |conn| {
+        use crate::schema::hubuumclass_relation::dsl as cr;
+        use crate::schema::hubuumobject_relation::dsl as or;
+        let class_relation_id = cr::hubuumclass_relation
+            .filter(cr::from_hubuum_class_id.eq(classes[0].id().id()))
+            .filter(cr::to_hubuum_class_id.eq(classes[1].id().id()))
+            .select(cr::id)
+            .first::<i32>(conn)
+            .await?;
+        let object_relation_id = or::hubuumobject_relation
+            .filter(or::from_hubuum_object_id.eq(objects[0].id().id()))
+            .filter(or::to_hubuum_object_id.eq(objects[1].id().id()))
+            .select(or::id)
+            .first::<i32>(conn)
+            .await?;
+        Ok::<_, diesel::result::Error>((class_relation_id, object_relation_id))
+    })
+    .await
+    .unwrap();
 
-        let history_count = match entity {
-            CoreTemporalEntity::Collection => {
-                update_collection_db(conn, collection.id, &collection_input).await?;
-                use crate::schema::collections_history::dsl as h;
-                h::collections_history
-                    .filter(h::id.eq(collection.id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?
-            }
-            CoreTemporalEntity::Class => {
-                update_class_db(conn, classes[0].id, &class_inputs[0]).await?;
-                use crate::schema::hubuumclass_history::dsl as h;
-                h::hubuumclass_history
-                    .filter(h::id.eq(classes[0].id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?
-            }
-            CoreTemporalEntity::Object => {
-                update_object_db(conn, objects[0].id, &object_inputs[0]).await?;
-                use crate::schema::hubuumobject_history::dsl as h;
-                h::hubuumobject_history
-                    .filter(h::id.eq(objects[0].id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?
-            }
-            CoreTemporalEntity::ClassRelation => {
-                update_class_relation_timestamps_db(
-                    conn,
-                    classes[0].id,
-                    classes[1].id,
-                    &timestamps,
-                    None,
-                )
-                .await?;
-                use crate::schema::hubuumclass_relation_history::dsl as h;
-                h::hubuumclass_relation_history
-                    .filter(h::id.eq(class_relation.id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?
-            }
-            CoreTemporalEntity::ObjectRelation => {
-                update_object_relation_timestamps_db(
-                    conn,
-                    &objects[0],
-                    &objects[1],
-                    &timestamps,
-                    None,
-                )
-                .await?;
-                use crate::schema::hubuumobject_relation_history::dsl as h;
-                h::hubuumobject_relation_history
-                    .filter(h::id.eq(object_relation.id))
-                    .count()
-                    .get_result::<i64>(conn)
-                    .await?
-            }
-        };
+    // Import refs are local to one plan. This update runs in a second plan, so
+    // address the existing relation endpoints through their durable keys.
+    let collection_key = || CollectionKey {
+        name: collection.name().to_string(),
+        path: None,
+    };
+    let class_key = |index: usize| ClassKey {
+        name: classes[index].name().to_string(),
+        collection_ref: None,
+        collection_key: Some(collection_key()),
+    };
+    let object_key = |index: usize| ObjectKey {
+        name: objects[index].name().to_string(),
+        class_ref: None,
+        class_key: Some(class_key(index)),
+    };
 
-        Ok::<_, ApiError>((collection, history_count))
+    let update = match entity {
+        CoreTemporalEntity::Collection => PlannedExecution::UpdateCollection {
+            collection_id: collection.id().id(),
+            input: collection_input,
+        },
+        CoreTemporalEntity::Class => PlannedExecution::UpdateClass {
+            class_id: classes[0].id().id(),
+            input: class_inputs[0].clone(),
+        },
+        CoreTemporalEntity::Object => PlannedExecution::UpdateObject {
+            object_id: objects[0].id().id(),
+            input: object_inputs[0].clone(),
+        },
+        CoreTemporalEntity::ClassRelation => PlannedExecution::UpdateClassRelationTimestamps {
+            input: ImportClassRelationInput {
+                from_class_ref: None,
+                from_class_key: Some(class_key(0)),
+                to_class_ref: None,
+                to_class_key: Some(class_key(1)),
+                ..class_relation_input
+            },
+            timestamps: timestamps.clone(),
+        },
+        CoreTemporalEntity::ObjectRelation => PlannedExecution::UpdateObjectRelationTimestamps {
+            input: ImportObjectRelationInput {
+                from_object_ref: None,
+                from_object_key: Some(object_key(0)),
+                to_object_ref: None,
+                to_object_key: Some(object_key(1)),
+                ..object_relation_input
+            },
+            timestamps,
+        },
+    };
+    apply_import_operations(&context, [update]).await.unwrap();
+
+    let history_count = with_connection(&context.pool, async |conn| match entity {
+        CoreTemporalEntity::Collection => {
+            use crate::schema::collections_history::dsl as h;
+            h::collections_history
+                .filter(h::id.eq(collection.id().id()))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        }
+        CoreTemporalEntity::Class => {
+            use crate::schema::hubuumclass_history::dsl as h;
+            h::hubuumclass_history
+                .filter(h::id.eq(classes[0].id().id()))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        }
+        CoreTemporalEntity::Object => {
+            use crate::schema::hubuumobject_history::dsl as h;
+            h::hubuumobject_history
+                .filter(h::id.eq(objects[0].id().id()))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        }
+        CoreTemporalEntity::ClassRelation => {
+            use crate::schema::hubuumclass_relation_history::dsl as h;
+            h::hubuumclass_relation_history
+                .filter(h::id.eq(class_relation_id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        }
+        CoreTemporalEntity::ObjectRelation => {
+            use crate::schema::hubuumobject_relation_history::dsl as h;
+            h::hubuumobject_relation_history
+                .filter(h::id.eq(object_relation_id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        }
     })
     .await
     .unwrap();
 
     assert_eq!(history_count, 1);
 
-    collection
-        .delete_collection_record_without_events(&context.pool)
+    backend
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
@@ -775,7 +989,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         .collection_fixture("database_timestamp_parent")
         .await;
     let imported_collection_name = context.scoped_name("database_timestamp_collection");
-    let class_names = [
+    let resolve_class_names = [
         context.scoped_name("database_timestamp_class_one"),
         context.scoped_name("database_timestamp_class_two"),
     ];
@@ -784,106 +998,156 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         context.scoped_name("database_timestamp_object_two"),
     ];
 
-    let (collection, expected, actual) = with_transaction(&context.pool, async |conn| {
-        let expected = diesel::sql_query("SELECT transaction_timestamp()::timestamp AS value")
-            .get_result::<DatabaseNaiveTimestamp>(conn)
-            .await?
-            .value;
-        let collection = create_collection_db(
-            conn,
-            &ImportCollectionInput {
+    let collection_input = ImportCollectionInput {
+        ref_: Some("collection:current".to_string()),
+        name: imported_collection_name.clone(),
+        description: "Database timestamp collection".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: Some(CollectionKey {
+            name: parent.collection.name.clone(),
+            path: None,
+        }),
+        condition: None,
+        timestamps: None,
+    };
+    let class_inputs = [0, 1].map(|index| ImportClassInput {
+        ref_: Some(format!("class:{index}")),
+        name: resolve_class_names[index].clone(),
+        description: format!("Database timestamp class {index}"),
+        json_schema: None,
+        validate_schema: Some(false),
+        collection_ref: Some("collection:current".to_string()),
+        collection_key: None,
+        condition: None,
+        timestamps: None,
+    });
+    let object_inputs = [0, 1].map(|index| ImportObjectInput {
+        ref_: Some(format!("object:{index}")),
+        name: object_names[index].clone(),
+        description: format!("Database timestamp object {index}"),
+        data: serde_json::json!({"index": index}),
+        class_ref: Some(format!("class:{index}")),
+        class_key: None,
+        condition: None,
+        timestamps: None,
+    });
+    apply_import_operations(
+        &context,
+        vec![
+            PlannedExecution::CreateCollection(collection_input),
+            PlannedExecution::CreateClass(class_inputs[0].clone()),
+            PlannedExecution::CreateClass(class_inputs[1].clone()),
+            PlannedExecution::CreateObject(object_inputs[0].clone()),
+            PlannedExecution::CreateObject(object_inputs[1].clone()),
+            PlannedExecution::CreateClassRelation(ImportClassRelationInput {
                 ref_: None,
-                name: imported_collection_name,
-                description: "Database timestamp collection".to_string(),
-                parent_collection_ref: None,
-                parent_collection_key: None,
-                condition: None,
-                timestamps: None,
-            },
-            Some(parent.collection.id),
-        )
-        .await?;
-        let mut classes = Vec::new();
-        let mut objects = Vec::new();
-        for (index, imported_class_name) in class_names.into_iter().enumerate() {
-            let class = create_class_db(
-                conn,
-                &ImportClassInput {
-                    ref_: None,
-                    name: imported_class_name,
-                    description: format!("Database timestamp class {index}"),
-                    json_schema: None,
-                    validate_schema: Some(false),
-                    collection_ref: None,
-                    collection_key: None,
-                    condition: None,
-                    timestamps: None,
-                },
-                collection.id,
-            )
-            .await?;
-            let object = create_object_db(
-                conn,
-                &ImportObjectInput {
-                    ref_: None,
-                    name: object_names[index].clone(),
-                    description: format!("Database timestamp object {index}"),
-                    data: serde_json::json!({"index": index}),
-                    class_ref: None,
-                    class_key: None,
-                    condition: None,
-                    timestamps: None,
-                },
-                &class,
-            )
-            .await?;
-            classes.push(class);
-            objects.push(object);
-        }
-        let class_relation = create_class_relation_db(
-            conn,
-            NewHubuumClassRelation {
-                from_hubuum_class_id: classes[0].id,
-                to_hubuum_class_id: classes[1].id,
+                from_class_ref: Some("class:0".to_string()),
+                from_class_key: None,
+                to_class_ref: Some("class:1".to_string()),
+                to_class_key: None,
                 forward_template_alias: None,
                 reverse_template_alias: None,
                 from_max_relations: None,
                 to_max_relations: None,
-            },
-            None,
-            None,
+                condition: None,
+                timestamps: None,
+            }),
+            PlannedExecution::CreateObjectRelation(ImportObjectRelationInput {
+                ref_: None,
+                from_object_ref: Some("object:0".to_string()),
+                from_object_key: None,
+                to_object_ref: Some("object:1".to_string()),
+                to_object_key: None,
+                condition: None,
+                timestamps: None,
+            }),
+        ],
+    )
+    .await
+    .unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let collection = backend
+        .get_import_collection_child_by_name(
+            hubuum_domain::CollectionId::new(parent.collection.id).unwrap(),
+            &imported_collection_name,
         )
-        .await?;
-        let object_relation =
-            create_object_relation_db(conn, &objects[0], &objects[1], None, None).await?;
-        let actual = [
-            (collection.created_at, collection.updated_at),
-            (classes[0].created_at, classes[0].updated_at),
-            (classes[1].created_at, classes[1].updated_at),
-            (objects[0].created_at, objects[0].updated_at),
-            (objects[1].created_at, objects[1].updated_at),
-            (class_relation.created_at, class_relation.updated_at),
-            (object_relation.created_at, object_relation.updated_at),
-        ];
-
-        Ok::<_, ApiError>((collection, expected, actual))
+        .await
+        .unwrap()
+        .expect("imported collection should exist");
+    let classes = [
+        backend
+            .get_import_class_by_name(collection.id(), &resolve_class_names[0])
+            .await
+            .unwrap()
+            .expect("first imported class should exist"),
+        backend
+            .get_import_class_by_name(collection.id(), &resolve_class_names[1])
+            .await
+            .unwrap()
+            .expect("second imported class should exist"),
+    ];
+    let objects = [
+        backend
+            .get_import_object_by_name(classes[0].id(), &object_names[0])
+            .await
+            .unwrap()
+            .expect("first imported object should exist"),
+        backend
+            .get_import_object_by_name(classes[1].id(), &object_names[1])
+            .await
+            .unwrap()
+            .expect("second imported object should exist"),
+    ];
+    let relation_timestamps = with_connection(&context.pool, async |conn| {
+        use crate::schema::hubuumclass_relation::dsl as cr;
+        use crate::schema::hubuumobject_relation::dsl as or;
+        let class_relation = cr::hubuumclass_relation
+            .filter(cr::from_hubuum_class_id.eq(classes[0].id().id()))
+            .filter(cr::to_hubuum_class_id.eq(classes[1].id().id()))
+            .select((cr::created_at, cr::updated_at))
+            .first::<(NaiveDateTime, NaiveDateTime)>(conn)
+            .await?;
+        let object_relation = or::hubuumobject_relation
+            .filter(or::from_hubuum_object_id.eq(objects[0].id().id()))
+            .filter(or::to_hubuum_object_id.eq(objects[1].id().id()))
+            .select((or::created_at, or::updated_at))
+            .first::<(NaiveDateTime, NaiveDateTime)>(conn)
+            .await?;
+        Ok::<_, diesel::result::Error>((class_relation, object_relation))
     })
     .await
     .unwrap();
+    let actual = [
+        (collection.created_at(), collection.updated_at()),
+        (classes[0].created_at(), classes[0].updated_at()),
+        (classes[1].created_at(), classes[1].updated_at()),
+        (objects[0].created_at(), objects[0].updated_at()),
+        (objects[1].created_at(), objects[1].updated_at()),
+        (
+            relation_timestamps.0.0.and_utc(),
+            relation_timestamps.0.1.and_utc(),
+        ),
+        (
+            relation_timestamps.1.0.and_utc(),
+            relation_timestamps.1.1.and_utc(),
+        ),
+    ];
+    let expected = actual[0].0;
 
     assert_eq!(actual, [(expected, expected); 7]);
 
-    collection
-        .delete_collection_record_without_events(&context.pool)
+    backend
+        .delete_collection(collection.id(), &crate::events::EventContext::system())
         .await
-        .unwrap();
+        .unwrap()
+        .into_value();
     parent.cleanup().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_extended_import_uses_backend_denial_for_sql_administrator() {
     let test = TestContext::new().await;
-    let context = AppContext::new(
+    let context = crate::tests::app_context_with_permission_backend(
         test.pool.get_ref().clone(),
         Arc::new(MockTreetopBackend::new()),
     );
@@ -908,7 +1172,10 @@ async fn test_extended_import_uses_backend_grant_for_non_sql_administrator() {
         .unwrap();
     let backend = MockTreetopBackend::new();
     backend.add_admin_rule(policy_group.id);
-    let context = AppContext::new(test.pool.get_ref().clone(), Arc::new(backend));
+    let context = crate::tests::app_context_with_permission_backend(
+        test.pool.get_ref().clone(),
+        Arc::new(backend),
+    );
     let request = extended_import_request(test.scoped_name("backend_allowed_import"));
 
     let planning = plan_import(&context, &test.normal_user, None, &request).await;
@@ -925,50 +1192,52 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
     let initial = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
     let restored = restore_timestamps("2019-04-05T06:07:08", "2021-06-07T08:09:10");
 
-    let id = with_connection(&context.pool, async |conn| {
-        upsert_identity_scope_db(
-            conn,
-            &ImportIdentityScopeInput {
-                ref_: None,
-                name: name.clone(),
-                provider_kind: "local".to_string(),
-                condition: None,
-                timestamps: Some(initial),
+    apply_import_operations(
+        &context,
+        [
+            PlannedExecution::UpsertIdentityScope {
+                input: ImportIdentityScopeInput {
+                    ref_: None,
+                    name: name.clone(),
+                    provider_kind: "local".to_string(),
+                    condition: None,
+                    timestamps: Some(initial),
+                },
+                overwrite: false,
             },
-            false,
-        )
-        .await?;
-        upsert_identity_scope_db(
-            conn,
-            &ImportIdentityScopeInput {
-                ref_: None,
-                name: name.clone(),
-                provider_kind: "oidc".to_string(),
-                condition: None,
-                timestamps: Some(restored.clone()),
+            PlannedExecution::UpsertIdentityScope {
+                input: ImportIdentityScopeInput {
+                    ref_: None,
+                    name: name.clone(),
+                    provider_kind: "oidc".to_string(),
+                    condition: None,
+                    timestamps: Some(restored.clone()),
+                },
+                overwrite: true,
             },
-            true,
-        )
-        .await
-    })
+        ],
+    )
     .await
     .unwrap();
 
     let row = with_connection(&context.pool, async |conn| {
-        use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
+        use crate::schema::identity_scopes::dsl::{
+            created_at, id as scope_id, identity_scopes, name as scope_name, updated_at,
+        };
         identity_scopes
-            .filter(scope_id.eq(id))
-            .first::<crate::models::IdentityScope>(conn)
+            .filter(scope_name.eq(name))
+            .select((scope_id, created_at, updated_at))
+            .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
             .await
     })
     .await
     .unwrap();
-    assert_eq!(row.created_at, restored.created_at());
-    assert_eq!(row.updated_at, restored.updated_at());
+    assert_eq!(row.1, restored.created_at());
+    assert_eq!(row.2, restored.updated_at());
 
     with_connection(&context.pool, async |conn| {
         use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
-        diesel::delete(identity_scopes.filter(scope_id.eq(id)))
+        diesel::delete(identity_scopes.filter(scope_id.eq(row.0)))
             .execute(conn)
             .await
     })
@@ -981,22 +1250,25 @@ async fn identity_scope_import_rejects_a_stale_expected_revision() {
     let context = TestContext::new().await;
     let name = context.scoped_name("identity_scope_stale_revision");
 
-    let error = with_connection(&context.pool, async |conn| {
-        upsert_identity_scope_db(
-            conn,
-            &ImportIdentityScopeInput {
+    apply_import_operations(
+        &context,
+        [PlannedExecution::UpsertIdentityScope {
+            input: ImportIdentityScopeInput {
                 ref_: None,
                 name: name.clone(),
                 provider_kind: "local".to_string(),
                 condition: None,
                 timestamps: None,
             },
-            false,
-        )
-        .await?;
-        upsert_identity_scope_db(
-            conn,
-            &ImportIdentityScopeInput {
+            overwrite: false,
+        }],
+    )
+    .await
+    .unwrap();
+    let error = apply_import_operations(
+        &context,
+        [PlannedExecution::UpsertIdentityScope {
+            input: ImportIdentityScopeInput {
                 ref_: None,
                 name,
                 provider_kind: "oidc".to_string(),
@@ -1005,16 +1277,16 @@ async fn identity_scope_import_rejects_a_stale_expected_revision() {
                 }),
                 timestamps: None,
             },
-            true,
-        )
-        .await
-    })
+            overwrite: true,
+        }],
+    )
     .await
     .unwrap_err();
 
     assert!(matches!(
         error,
-        ApiError::PreconditionFailed(message, _) if message.contains("stale_revision")
+        ApiError::RevisionConflict(message, revision)
+            if message.contains("stale_revision") && revision.get() == 1
     ));
 }
 
@@ -1028,27 +1300,14 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
         .collection_fixture("import_class_scope_target")
         .await;
     let class_owner = context.collection_fixture("import_class_scope_owner").await;
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: context.scoped_name("import_class_scope_class"),
-                description: "Class in another collection".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: class_owner.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            class_owner.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: class_owner.collection.id,
+        name: context.scoped_name("import_class_scope_class"),
+        description: "Class in another collection".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let collection_key = Some(CollectionKey {
@@ -1110,16 +1369,14 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
             overwrite: false,
         },
     };
+    let execution =
+        crate::services::import_boundary::import_operation_to_storage(execution).unwrap();
 
-    let result = with_connection(&context.pool, async |conn| {
-        execute_planned_item(conn, &mut RuntimeState::default(), &execution).await
-    })
-    .await;
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let plan = StorageImportPlan::new(vec![StorageImportPlanItem::new(0, execution)]).unwrap();
+    let result = backend.apply_import_strict(plan).await;
 
-    assert!(matches!(
-        result,
-        Err(ApiError::BadRequest(message)) if message.contains("not target collection")
-    ));
+    assert!(result.is_err_and(|error| error.to_string().contains("not target collection")));
 }
 
 #[rstest]
@@ -1169,29 +1426,37 @@ async fn imported_templates_use_effective_collection_loader(
         ..fragment.clone()
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        if matches!(dependency, TemplateDependency::Existing) {
-            upsert_export_template_db(conn, &fragment, fixture.collection.id, None, false).await?;
-        }
-        let import_export_templates = match dependency {
-            TemplateDependency::SameImport => vec![export.clone(), fragment],
-            TemplateDependency::Existing | TemplateDependency::Missing => vec![export.clone()],
-        };
-        let mut runtime = RuntimeState {
-            import_export_templates,
-            ..RuntimeState::default()
-        };
-        execute_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::UpsertExportTemplate {
-                input: export,
+    if matches!(dependency, TemplateDependency::Existing) {
+        apply_import_operations(
+            &context,
+            [PlannedExecution::UpsertExportTemplate {
+                input: fragment.clone(),
+                overwrite: false,
+            }],
+        )
+        .await
+        .unwrap();
+    }
+    let executions = match dependency {
+        TemplateDependency::SameImport => vec![export.clone(), fragment],
+        TemplateDependency::Existing | TemplateDependency::Missing => vec![export.clone()],
+    }
+    .into_iter()
+    .enumerate()
+    .map(|(index, input)| {
+        crate::services::import_boundary::import_operation_to_storage(
+            PlannedExecution::UpsertExportTemplate {
+                input,
                 overwrite: false,
             },
         )
-        .await
+        .map(|operation| StorageImportPlanItem::new(index, operation))
     })
-    .await;
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+    let executions = StorageImportPlan::new(executions).unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let result = backend.apply_import_strict(executions).await;
 
     assert_eq!(result.is_ok(), expected_valid);
 }
@@ -1206,18 +1471,27 @@ async fn membership_import_honors_collision_policy(
 ) {
     let context = TestContext::new().await;
     let group = create_test_group(&context.pool).await;
+    let principal_name = context.admin_user.name(&context.pool).await.unwrap();
     let initial = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
     let restored = restore_timestamps("2019-04-05T06:07:08", "2021-06-07T08:09:10");
     let membership = |timestamps: RestoreTimestamps| ImportGroupMembershipInput {
         ref_: None,
         principal_ref: None,
-        principal_key: None,
+        principal_key: Some(PrincipalKey {
+            identity_scope: None,
+            name: principal_name.clone(),
+        }),
         group_ref: None,
-        group_key: None,
+        group_key: Some(GroupKey {
+            identity_scope: None,
+            groupname: group.groupname.clone(),
+        }),
         sources: vec![ImportMembershipSourceInput {
             source: "oidc".to_string(),
             source_scope_ref: None,
-            source_scope_key: None,
+            source_scope_key: Some(IdentityScopeKey {
+                name: crate::models::identity::LOCAL_IDENTITY_SCOPE.to_string(),
+            }),
             source_key: "operators".to_string(),
             timestamps: Some(timestamps.clone()),
         }],
@@ -1225,25 +1499,24 @@ async fn membership_import_honors_collision_policy(
         timestamps: Some(timestamps),
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        upsert_group_membership_db(
-            conn,
-            &membership(initial.clone()),
-            context.admin_user.id,
-            group.id,
-            &[group.identity_scope_id],
-            false,
-        )
-        .await?;
-        let collision = upsert_group_membership_db(
-            conn,
-            &membership(restored.clone()),
-            context.admin_user.id,
-            group.id,
-            &[group.identity_scope_id],
+    apply_import_operations(
+        &context,
+        [PlannedExecution::UpsertGroupMembership {
+            input: membership(initial.clone()),
+            overwrite: false,
+        }],
+    )
+    .await
+    .unwrap();
+    let collision = apply_import_operations(
+        &context,
+        [PlannedExecution::UpsertGroupMembership {
+            input: membership(restored.clone()),
             overwrite,
-        )
-        .await;
+        }],
+    )
+    .await;
+    let (stored_membership, stored_source) = with_connection(&context.pool, async |conn| {
         use crate::schema::group_membership_sources::dsl as s;
         use crate::schema::group_memberships::dsl as m;
         let stored_membership = m::group_memberships
@@ -1261,11 +1534,11 @@ async fn membership_import_honors_collision_policy(
             .select((s::created_at, s::updated_at))
             .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
-        Ok::<_, ApiError>((collision, stored_membership, stored_source))
+        Ok::<_, diesel::result::Error>((stored_membership, stored_source))
     })
     .await
     .unwrap();
-    let actual_outcome = match result.0 {
+    let actual_outcome = match collision {
         Ok(()) => "updated",
         Err(ApiError::Conflict(_)) => "conflict",
         Err(error) => panic!("unexpected membership collision result: {error}"),
@@ -1275,7 +1548,7 @@ async fn membership_import_honors_collision_policy(
     let expected_timestamps = initial;
 
     assert_eq!(
-        (actual_outcome, result.1, result.2),
+        (actual_outcome, stored_membership, stored_source),
         (
             expected_outcome,
             (
@@ -1558,7 +1831,7 @@ async fn test_execute_import_strict_preserves_underlying_error_variant() {
             Some("missing".to_string()),
         ),
         execution: Some(PlannedExecution::UpdateCollection {
-            collection_id: -999,
+            collection_id: i32::MAX,
             input: ImportCollectionInput {
                 ref_: Some("collection:missing".to_string()),
                 name: "missing".to_string(),
@@ -1575,82 +1848,6 @@ async fn test_execute_import_strict_preserves_underlying_error_variant() {
     let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
 
     assert!(matches!(result, Err(ApiError::NotFound(_))));
-}
-
-#[tokio::test]
-async fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
-    let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("missing-payload-task")),
-        request_hash: None,
-        request_payload: None,
-        summary: None,
-        total_items: 1,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
-
-    let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
-        .expect("valid date")
-        .and_hms_opt(0, 0, 0)
-        .expect("valid timestamp");
-    with_connection(&context.pool, async |conn| {
-        diesel::update(tasks.filter(task_id.eq(task.id)))
-            .set(created_at.eq(earliest))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    for _ in 0..20 {
-        let _ = (process_one_task(&context.pool, None)).await.unwrap();
-
-        let stored = (task.find_record(&context.pool)).await.unwrap();
-        if stored.status == TaskStatus::Failed.as_str() {
-            assert!(stored.finished_at.is_some());
-            assert!(stored.request_redacted_at.is_some());
-
-            let (events, _) = (task.list_events_with_total_count(
-                &context.pool,
-                &crate::models::search::QueryOptions {
-                    filters: Vec::new(),
-                    sort: Vec::new(),
-                    limit: None,
-                    cursor: None,
-                    include_total: true,
-                },
-            ))
-            .await
-            .unwrap();
-            let event_types = events
-                .iter()
-                .map(|event| event.event_type.as_str())
-                .collect::<Vec<_>>();
-            assert!(event_types.contains(&"validating"));
-            assert!(event_types.contains(&"failed"));
-            return;
-        }
-    }
-
-    let stored = (task.find_record(&context.pool)).await.unwrap();
-    panic!(
-        "Task {} did not reach failed state after repeated processing attempts; current status: {}",
-        task.id, stored.status
-    );
 }
 
 #[test]
@@ -1855,27 +2052,14 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
 async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("duplicate_virtual_object")).await;
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: context.scoped_name("duplicate_virtual_object_class"),
-                description: "existing class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("duplicate_virtual_object_class"),
+        description: "existing class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let mut state = PlanningState::new();
@@ -2008,50 +2192,24 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
 async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("duplicate_object_ref")).await;
-    let class_one = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: context.scoped_name("duplicate_object_ref_class_one"),
-                description: "first class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class_one = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("duplicate_object_ref_class_one"),
+        description: "first class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
-    let class_two = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: context.scoped_name("duplicate_object_ref_class_two"),
-                description: "second class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class_two = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("duplicate_object_ref_class_two"),
+        description: "second class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let mut state = PlanningState::new();
@@ -2272,27 +2430,14 @@ async fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("planning_class_cache")).await;
     let class_name_value = context.scoped_name("planning_class_cache_value");
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: class_name_value.clone(),
-                description: "cached class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: class_name_value.clone(),
+        description: "cached class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let mut state = PlanningState::new();
@@ -2329,54 +2474,25 @@ async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("planning_object_cache")).await;
     let class_name_value = context.scoped_name("planning_object_cache_class");
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: class_name_value.clone(),
-                description: "cached class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: class_name_value.clone(),
+        description: "cached class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let object_name_value = context.scoped_name("planning_object_cache_value");
-    let object = with_connection(&context.pool, async |conn| {
-        create_object_db(
-            conn,
-            &ImportObjectInput {
-                ref_: None,
-                name: object_name_value.clone(),
-                description: "cached object".to_string(),
-                condition: None,
-                timestamps: None,
-                data: serde_json::json!({"hostname":"cached"}),
-                class_ref: None,
-                class_key: Some(ClassKey {
-                    name: class.name.clone(),
-                    collection_ref: None,
-                    collection_key: Some(CollectionKey {
-                        name: fixture.collection.name.clone(),
-                        path: None,
-                    }),
-                }),
-            },
-            &class,
-        )
-        .await
-    })
+    let object = NewHubuumObject {
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        name: object_name_value.clone(),
+        description: "cached object".to_string(),
+        data: serde_json::json!({"hostname":"cached"}),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
     let mut state = PlanningState::new();
@@ -2442,28 +2558,28 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         collection_key: None,
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
-        execute_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::CreateClass(class_input.clone()),
+    let operations = [execution, PlannedExecution::CreateClass(class_input)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            crate::services::import_boundary::import_operation_to_storage(operation)
+                .map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let operations = StorageImportPlan::new(operations).unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    backend.apply_import_strict(operations).await.unwrap();
+    let collection = backend
+        .get_import_collection_by_id(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
         )
-        .await?;
-        Ok::<_, ApiError>(
-            runtime
-                .collections_by_ref
-                .get("collection:existing")
-                .cloned(),
-        )
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
-    let collection = result.expect("collection ref should be available after update");
-    assert_eq!(collection.id, fixture.collection.id);
-    assert_eq!(collection.description, updated_description);
+    let collection = collection.expect("collection should remain available after update");
+    assert_eq!(collection.id().id(), fixture.collection.id);
+    assert_eq!(collection.description(), updated_description);
 }
 
 #[tokio::test]
@@ -2471,27 +2587,14 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("update_class_ref")).await;
     let class_name_value = context.scoped_name("existing_class_for_update");
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: class_name_value.clone(),
-                description: "existing class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: class_name_value.clone(),
+        description: "existing class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
 
@@ -2524,23 +2627,29 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         class_key: None,
     };
 
-    let result = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
-        execute_planned_item(
-            conn,
-            &mut runtime,
-            &PlannedExecution::CreateObject(object_input.clone()),
+    let operations = [execution, PlannedExecution::CreateObject(object_input)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            crate::services::import_boundary::import_operation_to_storage(operation)
+                .map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let operations = StorageImportPlan::new(operations).unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    backend.apply_import_strict(operations).await.unwrap();
+    let updated = backend
+        .get_import_class_by_name(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            &class.name,
         )
-        .await?;
-        Ok::<_, ApiError>(runtime.classes_by_ref.get("class:existing").cloned())
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
-    let updated = result.expect("class ref should be available after update");
-    assert_eq!(updated.id, class.id);
-    assert_eq!(updated.name, class.name);
+    let updated = updated.expect("class should remain available after update");
+    assert_eq!(updated.id().id(), class.id);
+    assert_eq!(updated.name(), class.name);
 }
 
 #[tokio::test]
@@ -2555,27 +2664,14 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
         }
     });
     let class_name_value = context.scoped_name("existing_class_with_schema");
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: class_name_value.clone(),
-                description: "existing class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: Some(schema.clone()),
-                validate_schema: Some(true),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: class_name_value.clone(),
+        description: "existing class".to_string(),
+        json_schema: Some(schema.clone()),
+        validate_schema: Some(true),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
 
@@ -2641,59 +2737,113 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
 }
 
 #[tokio::test]
+async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_settings() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("persist_class_schema_on_overwrite")).await;
+    let schema = serde_json::json!({
+        "type": "object",
+        "required": ["hostname"],
+        "properties": {
+            "hostname": {"type": "string"}
+        }
+    });
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("persisted_class_schema"),
+        description: "existing class".to_string(),
+        json_schema: Some(schema.clone()),
+        validate_schema: Some(true),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let mut state = PlanningState::new();
+    remember_collection(
+        &mut state,
+        Some("collection:existing".to_string()),
+        CollectionResolution {
+            id: fixture.collection.id,
+            name: fixture.collection.name.clone(),
+            description: fixture.collection.description.clone(),
+            parent_collection_id: fixture.collection.parent_collection_id,
+            exists_in_db: true,
+        },
+    );
+    let mode = ImportMode {
+        atomicity: Some(ImportAtomicity::Strict),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Abort),
+    };
+    let planned = plan_class(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &ImportClassInput {
+            ref_: Some("class:existing".to_string()),
+            name: class.name.clone(),
+            description: "updated class".to_string(),
+            json_schema: None,
+            validate_schema: None,
+            collection_ref: Some("collection:existing".to_string()),
+            collection_key: None,
+            condition: None,
+            timestamps: None,
+        },
+    )
+    .await
+    .unwrap();
+    let operation = crate::services::import_boundary::import_operation_to_storage(
+        planned
+            .execution
+            .expect("class overwrite must be executable"),
+    )
+    .map(|operation| StorageImportPlanItem::new(0, operation))
+    .unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+
+    backend
+        .apply_import_strict(StorageImportPlan::new(vec![operation]).unwrap())
+        .await
+        .unwrap();
+
+    let updated = backend
+        .get_import_class_by_name(
+            hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            &class.name,
+        )
+        .await
+        .unwrap()
+        .expect("updated class must remain available");
+    assert_eq!(updated.json_schema(), Some(&schema));
+    assert!(updated.validates_schema());
+}
+
+#[tokio::test]
 async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("update_object_ref")).await;
     let class_name_value = context.scoped_name("existing_class_for_object_update");
-    let class = with_connection(&context.pool, async |conn| {
-        create_class_db(
-            conn,
-            &ImportClassInput {
-                ref_: None,
-                name: class_name_value.clone(),
-                description: "existing class".to_string(),
-                condition: None,
-                timestamps: None,
-                json_schema: None,
-                validate_schema: Some(false),
-                collection_ref: None,
-                collection_key: Some(CollectionKey {
-                    name: fixture.collection.name.clone(),
-                    path: None,
-                }),
-            },
-            fixture.collection.id,
-        )
-        .await
-    })
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: class_name_value.clone(),
+        description: "existing class".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
 
     let object_name_value = context.scoped_name("existing_object_for_update");
-    let object = with_connection(&context.pool, async |conn| {
-        create_object_db(
-            conn,
-            &ImportObjectInput {
-                ref_: None,
-                name: object_name_value.clone(),
-                description: "existing object".to_string(),
-                condition: None,
-                timestamps: None,
-                data: serde_json::json!({"hostname":"existing"}),
-                class_ref: None,
-                class_key: Some(ClassKey {
-                    name: class.name.clone(),
-                    collection_ref: None,
-                    collection_key: Some(CollectionKey {
-                        name: fixture.collection.name.clone(),
-                        path: None,
-                    }),
-                }),
-            },
-            &class,
-        )
-        .await
-    })
+    let object = NewHubuumObject {
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        name: object_name_value.clone(),
+        description: "existing object".to_string(),
+        data: serde_json::json!({"hostname":"existing"}),
+    }
+    .save_without_events(&context.pool)
     .await
     .unwrap();
 
@@ -2718,16 +2868,20 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
         },
     };
 
-    let resolved = with_connection(&context.pool, async |conn| {
-        let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution).await?;
-        resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>).await
-    })
-    .await
-    .unwrap();
+    let operation = crate::services::import_boundary::import_operation_to_storage(execution)
+        .map(|operation| StorageImportPlanItem::new(0, operation))
+        .unwrap();
+    let plan = StorageImportPlan::new(vec![operation]).unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    backend.apply_import_strict(plan).await.unwrap();
+    let resolved = backend
+        .get_import_object_by_name(hubuum_domain::ClassId::new(class.id).unwrap(), &object.name)
+        .await
+        .unwrap()
+        .expect("updated object should remain addressable by name");
 
-    assert_eq!(resolved.id, object.id);
-    assert_eq!(resolved.description, "updated object");
+    assert_eq!(resolved.id().id(), object.id);
+    assert_eq!(resolved.description(), "updated object");
 }
 
 #[test]
@@ -2789,7 +2943,7 @@ fn test_runtime_planning_failures_are_sanitized_for_storage() {
     assert_eq!(failure.message_for_storage(), "An internal error occurred");
 
     let stored = failure.into_result(1);
-    assert_eq!(stored.error.as_deref(), Some("An internal error occurred"));
+    assert_eq!(stored.error(), Some("An internal error occurred"));
 }
 
 #[test]
@@ -2821,123 +2975,72 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
 #[tokio::test]
 async fn test_process_one_task_export_failure_marks_single_failed_item() {
     let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Export.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("unimplemented-export-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"export": "demo"})),
-        summary: None,
-        total_items: 0,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Export,
+        serde_json::json!({"export": "demo"}),
+        0,
+        "unimplemented-export-task",
+    )
+    .await;
+    let task_id = crate::models::TaskID::new(task.id).expect("persisted task id must be positive");
 
-    let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
-        .expect("valid date")
-        .and_hms_opt(0, 0, 0)
-        .expect("valid timestamp");
-    with_connection(&context.pool, async |conn| {
-        diesel::update(tasks.filter(task_id.eq(task.id)))
-            .set(created_at.eq(earliest))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
-
-    for _ in 0..20 {
-        let _ = (process_one_task(&context.pool, None)).await.unwrap();
-        let stored = (task.find_record(&context.pool)).await.unwrap();
-        if stored.status == TaskStatus::Failed.as_str() {
-            assert_eq!(stored.total_items, 0);
-            assert_eq!(stored.processed_items, 1);
-            assert_eq!(stored.failed_items, 1);
-            return;
-        }
-    }
-
-    let stored = (task.find_record(&context.pool)).await.unwrap();
-    panic!(
-        "Task {} did not reach failed state after repeated processing attempts; current status: {}",
-        task.id, stored.status
-    );
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    process_claimed_task_for_test(&context.pool, &claimed)
+        .await
+        .unwrap();
+    let stored = find_task(&context.pool, task_id).await.unwrap();
+    assert_eq!(stored.status, TaskStatus::Failed.as_str());
+    assert_eq!(stored.total_items, 0);
+    assert_eq!(stored.processed_items, 1);
+    assert_eq!(stored.failed_items, 1);
 }
 
 #[tokio::test]
 async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("fallback-count-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"version": 1})),
-        summary: None,
-        total_items: 3,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({"version": 1}),
+        3,
+        "fallback-count-task",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    assert_eq!(claimed.id, task.id);
 
-    (insert_import_results(
-        &context.pool,
-        &[
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("a".to_string()),
-                entity_kind: "collection".to_string(),
-                action: "create".to_string(),
-                identifier: Some("a".to_string()),
-                outcome: "succeeded".to_string(),
-                error: None,
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("b".to_string()),
-                entity_kind: "class".to_string(),
-                action: "create".to_string(),
-                identifier: Some("b".to_string()),
-                outcome: "failed".to_string(),
-                error: Some("failed".to_string()),
-                details: None,
-            },
-        ],
-    ))
-    .await
-    .unwrap();
+    let storage_task_id =
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive");
+    crate::storage::storage_handle(&context.pool)
+        .record_import_results(vec![
+            StorageImportResult::builder(storage_task_id, "collection", "create", "succeeded")
+                .item_ref(Some("a".to_string()))
+                .identifier(Some("a".to_string()))
+                .build(),
+            StorageImportResult::builder(storage_task_id, "class", "create", "failed")
+                .item_ref(Some("b".to_string()))
+                .identifier(Some("b".to_string()))
+                .error(Some("failed".to_string()))
+                .build(),
+        ])
+        .await
+        .expect("import results should be recorded");
 
     (mark_claimed_task_failed(
         &context.pool,
-        &task,
+        &claimed,
         &ApiError::InternalServerError("boom".to_string()),
     ))
     .await
     .unwrap();
 
-    let stored = (task.find_record(&context.pool)).await.unwrap();
+    let stored = find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .unwrap();
     assert_eq!(stored.processed_items, 2);
     assert_eq!(stored.success_items, 1);
     assert_eq!(stored.failed_items, 1);
@@ -2946,120 +3049,42 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
 #[tokio::test]
 async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     let context = TestContext::new().await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Reindex.as_str().to_string(),
-        status: TaskStatus::Running.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("reindex-progress-task")),
-        request_hash: None,
-        request_payload: None,
-        summary: None,
-        total_items: 5,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Reindex,
+        serde_json::json!({"class_id": 1}),
+        5,
+        "reindex-progress-task",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    assert_eq!(claimed.id, task.id);
+    update_task_state(
+        &context.pool,
+        &claimed,
+        TaskStateChange::new(
+            TaskStatus::Running,
+            TaskResultCounts::from_stored(3, 3, 0).expect("test progress must be valid"),
+        ),
+    )
     .await
-    .unwrap();
-
-    with_connection(&context.pool, async |conn| {
-        use crate::schema::tasks::dsl::{id, processed_items, success_items, tasks};
-        diesel::update(tasks.filter(id.eq(task.id)))
-            .set((processed_items.eq(3), success_items.eq(3)))
-            .execute(conn)
-            .await
-    })
-    .await
-    .unwrap();
+    .expect("reindex progress should be persisted");
 
     mark_claimed_task_failed(
         &context.pool,
-        &task,
+        &claimed,
         &ApiError::InternalServerError("batch failed".to_string()),
     )
     .await
     .unwrap();
 
-    let stored = task.find_record(&context.pool).await.unwrap();
+    let stored = find_task(
+        &context.pool,
+        crate::models::TaskID::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .unwrap();
     assert_eq!(stored.processed_items, 3);
     assert_eq!(stored.success_items, 3);
     assert_eq!(stored.failed_items, 1);
-}
-
-#[tokio::test]
-async fn test_count_import_results_summary_counts_success_and_failure_rows() {
-    let context = (TestContext::new()).await;
-    let task = (NewTaskRecord {
-        kind: TaskKind::Import.as_str().to_string(),
-        status: TaskStatus::Queued.as_str().to_string(),
-        submitted_by: Some(context.admin_user.id),
-        submitted_token_id: None,
-        submitted_token_scoped: false,
-        submitted_token_scopes: serde_json::json!([]),
-        idempotency_key: Some(context.scoped_name("aggregate-count-task")),
-        request_hash: None,
-        request_payload: Some(serde_json::json!({"version": 1})),
-        summary: None,
-        total_items: 4,
-        processed_items: 0,
-        success_items: 0,
-        failed_items: 0,
-        request_redacted_at: None,
-        started_at: None,
-        finished_at: None,
-    }
-    .create(&context.pool))
-    .await
-    .unwrap();
-
-    (insert_import_results(
-        &context.pool,
-        &[
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("one".to_string()),
-                entity_kind: "collection".to_string(),
-                action: "create".to_string(),
-                identifier: Some("one".to_string()),
-                outcome: "succeeded".to_string(),
-                error: None,
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("two".to_string()),
-                entity_kind: "class".to_string(),
-                action: "create".to_string(),
-                identifier: Some("two".to_string()),
-                outcome: "failed".to_string(),
-                error: Some("failed".to_string()),
-                details: None,
-            },
-            NewImportTaskResultRecord {
-                task_id: task.id,
-                item_ref: Some("three".to_string()),
-                entity_kind: "object".to_string(),
-                action: "update".to_string(),
-                identifier: Some("three".to_string()),
-                outcome: "planned".to_string(),
-                error: None,
-                details: None,
-            },
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let counts = (task.count_import_results(&context.pool)).await.unwrap();
-
-    assert_eq!(counts.processed(), 3);
-    assert_eq!(counts.success(), 2);
-    assert_eq!(counts.failed(), 1);
 }

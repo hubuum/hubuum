@@ -1,13 +1,15 @@
-//! Validation invariants shared by every `int_id_newtype!`-generated id newtype.
+//! Validation invariants shared by every backend-neutral domain id newtype.
 //!
-//! All id newtypes are produced by the same macro, so one test over the full set guards the
-//! contract: positive ids round-trip, non-positive ids are rejected, and `Deserialize` routes
-//! through the validating constructor so `web::Path<XID>` rejects invalid ids at the API edge.
+//! Tests over both supported integer widths guard the shared contract: positive ids round-trip,
+//! non-positive ids are rejected, and `Deserialize` routes through the validating constructor so
+//! `web::Path<XID>` rejects invalid ids at the API edge.
 
 use crate::errors::ApiError;
 use crate::models::{
-    CollectionID, ExportTemplateID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, NewCollectionWithAssignee, NewServiceAccount, TaskID, TokenID, UserID,
+    CollectionID, ComputedFieldDefinitionID, EventDeliveryID, EventSinkID, EventSubscriptionID,
+    ExportTemplateID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
+    HubuumObjectRelationID, NewCollectionWithAssignee, NewServiceAccount, RemoteTargetID,
+    RestoreJobID, ServiceAccountID, TaskID, TokenID, UserID,
 };
 
 macro_rules! assert_id_newtype_validates {
@@ -19,7 +21,7 @@ macro_rules! assert_id_newtype_validates {
 
             // Non-positive ids are rejected with a 400-class error.
             for invalid in [0, -1, i32::MIN] {
-                let err = <$t>::new(invalid).unwrap_err();
+                let err: ApiError = <$t>::new(invalid).unwrap_err().into();
                 assert!(
                     matches!(err, ApiError::BadRequest(_)),
                     "{}::new({invalid}) should be BadRequest, got {err:?}",
@@ -28,6 +30,26 @@ macro_rules! assert_id_newtype_validates {
             }
 
             // `Deserialize` routes through `new`, so an invalid path/body id never produces a value.
+            assert_eq!(serde_json::from_str::<$t>("7").unwrap().id(), 7);
+            assert!(serde_json::from_str::<$t>("0").is_err());
+            assert!(serde_json::from_str::<$t>("-3").is_err());
+        )+
+    }};
+}
+
+macro_rules! assert_i64_id_newtype_validates {
+    ($($t:ty),+ $(,)?) => {{
+        $(
+            assert_eq!(<$t>::new(1).unwrap().id(), 1);
+            assert_eq!(<$t>::new(i64::MAX).unwrap().id(), i64::MAX);
+            for invalid in [0_i64, -1, i64::MIN] {
+                let err: ApiError = <$t>::new(invalid).unwrap_err().into();
+                assert!(
+                    matches!(err, ApiError::BadRequest(_)),
+                    "{}::new({invalid}) should be BadRequest, got {err:?}",
+                    stringify!($t)
+                );
+            }
             assert_eq!(serde_json::from_str::<$t>("7").unwrap().id(), 7);
             assert!(serde_json::from_str::<$t>("0").is_err());
             assert!(serde_json::from_str::<$t>("-3").is_err());
@@ -46,9 +68,19 @@ fn all_id_newtypes_reject_invalid_ids() {
         CollectionID,
         GroupID,
         ExportTemplateID,
+        RemoteTargetID,
+        ServiceAccountID,
+        ComputedFieldDefinitionID,
         TaskID,
+        EventSinkID,
+        EventSubscriptionID,
         TokenID,
     );
+}
+
+#[test]
+fn all_i64_id_newtypes_reject_invalid_ids() {
+    assert_i64_id_newtype_validates!(EventDeliveryID, RestoreJobID);
 }
 
 #[test]

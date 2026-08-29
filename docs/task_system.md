@@ -38,8 +38,9 @@ The result/output tables are typed per task kind.
 Relevant code:
 
 - [src/models/task.rs](../src/models/task.rs)
-- [src/db/traits/task.rs](../src/db/traits/task.rs)
-- [migrations/2023-12-27-011440_initial/up.sql](../migrations/2023-12-27-011440_initial/up.sql)
+- [PostgreSQL task queue operations](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
+- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
+- [PostgreSQL initial migration](../crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql)
 
 ### `tasks`
 
@@ -158,7 +159,7 @@ Submission flow:
 
 Task creation itself is generic and implemented in:
 
-- [create_generic_task](../src/db/traits/task.rs)
+- [`create_task`](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
 
 When a task is created:
 
@@ -229,7 +230,7 @@ The HTTP worker count and background task worker count are intentionally separat
 
 Task claiming is DB-backed and implemented in:
 
-- [claim_next_queued_task](../src/db/traits/task.rs)
+- [`claim_next_task`](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
 
 Claiming uses:
 
@@ -380,9 +381,10 @@ After execution:
 - terminal event is appended
 - the original request payload is redacted
 
-Redaction is implemented in:
+Terminal completion, failure, event append, result persistence, and redaction
+are implemented together in:
 
-- [finalize_task_terminal_state](../src/db/traits/task.rs)
+- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
 
 Redaction means:
 
@@ -552,7 +554,8 @@ The task system now has coverage in three areas:
 
 See:
 
-- [src/db/traits/task.rs](../src/db/traits/task.rs)
+- [PostgreSQL task queue operations](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
+- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
 - [src/tasks/tests.rs](../src/tasks/tests.rs)
 - [src/tests/api/v1/imports.rs](../src/tests/api/v1/imports.rs)
 - [src/tests/api/meta.rs](../src/tests/api/meta.rs)

@@ -7,10 +7,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::event_subscription::{validate_sink_parts, validate_subscription_parts};
-use crate::models::export_template::{
-    ExportTemplateImportRef, validate_import_export_template,
-    validate_import_export_template_composition,
-};
+use crate::models::export_template::{ExportTemplateImportRef, validate_import_export_template};
 use crate::models::remote_target::validate_target_parts;
 use crate::models::{
     ComputedResultType, EventSinkKind, ExportContentType, ExportInclude, ExportLimits,
@@ -113,7 +110,7 @@ pub struct PrincipalKey {
 }
 
 impl PrincipalKey {
-    pub fn identity_scope_name(&self) -> &str {
+    pub fn resolve_identity_scope_name(&self) -> &str {
         self.identity_scope
             .as_deref()
             .unwrap_or(crate::models::identity::LOCAL_IDENTITY_SCOPE)
@@ -174,7 +171,7 @@ impl<'de> Deserialize<'de> for RestoreTimestamps {
 }
 
 impl GroupKey {
-    pub fn identity_scope_name(&self) -> &str {
+    pub fn resolve_identity_scope_name(&self) -> &str {
         self.identity_scope
             .as_deref()
             .unwrap_or(crate::models::identity::LOCAL_IDENTITY_SCOPE)
@@ -503,13 +500,6 @@ impl ImportExportTemplateInput {
 
     fn validate(&self) -> Result<(), ApiError> {
         validate_import_export_template(self.template_ref())
-    }
-
-    pub(crate) fn validate_composition(
-        &self,
-        collection_templates: &[(String, String)],
-    ) -> Result<(), ApiError> {
-        validate_import_export_template_composition(self.template_ref(), collection_templates)
     }
 }
 

@@ -1,12 +1,11 @@
 #![allow(async_fn_in_trait)]
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
     Collection, CollectionID, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID,
 };
 
-use super::context::BackendContext;
+use crate::storage::StorageContext;
 
 /// Provide a uniform way to work with both an entity and its identifier wrapper.
 ///
@@ -26,7 +25,7 @@ pub trait SelfAccessors<T> {
     /// usually loads the instance from the backend.
     async fn instance<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 #[doc(hidden)]
@@ -36,7 +35,10 @@ pub(crate) trait IdAccessor {
 
 #[doc(hidden)]
 pub(crate) trait InstanceAdapter<T> {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<T, ApiError>;
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<T, ApiError>;
 }
 
 impl<T, U> SelfAccessors<T> for U
@@ -49,9 +51,9 @@ where
 
     async fn instance<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.instance_adapter(backend.db_pool()).await
+        self.instance_adapter(backend).await
     }
 }
 
@@ -68,7 +70,10 @@ impl<T, U> InstanceAdapter<U> for &T
 where
     T: InstanceAdapter<U> + ?Sized,
 {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<U, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<U, ApiError> {
         (*self).instance_adapter(pool).await
     }
 }
@@ -82,18 +87,24 @@ pub trait CollectionAccessors<N = Collection, I = CollectionID> {
     /// Return the collection instance for this value.
     async fn collection<C>(&self, backend: &C) -> Result<N, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 
     /// Return the collection identifier for this value.
     async fn collection_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 #[doc(hidden)]
 pub(crate) trait CollectionAdapter<N = Collection, I = CollectionID> {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<N, ApiError>;
-    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<N, ApiError>;
+    async fn collection_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError>;
 }
 
 impl<T, N, I> CollectionAccessors<N, I> for T
@@ -102,16 +113,16 @@ where
 {
     async fn collection<C>(&self, backend: &C) -> Result<N, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.collection_adapter(backend.db_pool()).await
+        self.collection_adapter(backend).await
     }
 
     async fn collection_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.collection_id_adapter(backend.db_pool()).await
+        self.collection_id_adapter(backend).await
     }
 }
 
@@ -119,11 +130,17 @@ impl<T, N, I> CollectionAdapter<N, I> for &T
 where
     T: CollectionAdapter<N, I> + ?Sized,
 {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<N, ApiError> {
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<N, ApiError> {
         (*self).collection_adapter(pool).await
     }
 
-    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError> {
+    async fn collection_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError> {
         (*self).collection_id_adapter(pool).await
     }
 }
@@ -136,18 +153,24 @@ pub trait ClassAccessors<C = HubuumClass, I = HubuumClassID> {
     /// Return the class instance for this value.
     async fn class<B>(&self, backend: &B) -> Result<C, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: StorageContext;
 
     /// Return the class identifier for this value.
     async fn class_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: StorageContext;
 }
 
 #[doc(hidden)]
 pub(crate) trait ClassAdapter<C = HubuumClass, I = HubuumClassID> {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<C, ApiError>;
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<C, ApiError>;
+    async fn class_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError>;
 }
 
 impl<T, C, I> ClassAccessors<C, I> for T
@@ -156,16 +179,16 @@ where
 {
     async fn class<B>(&self, backend: &B) -> Result<C, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: StorageContext,
     {
-        self.class_adapter(backend.db_pool()).await
+        self.class_adapter(backend).await
     }
 
     async fn class_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: StorageContext,
     {
-        self.class_id_adapter(backend.db_pool()).await
+        self.class_id_adapter(backend).await
     }
 }
 
@@ -173,11 +196,17 @@ impl<T, C, I> ClassAdapter<C, I> for &T
 where
     T: ClassAdapter<C, I> + ?Sized,
 {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<C, ApiError> {
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<C, ApiError> {
         (*self).class_adapter(pool).await
     }
 
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError> {
+    async fn class_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError> {
         (*self).class_id_adapter(pool).await
     }
 }
@@ -190,18 +219,24 @@ pub trait ObjectAccessors<O = HubuumObject, I = HubuumObjectID> {
     /// Return the object instance for this value.
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: StorageContext;
 
     /// Return the object identifier for this value.
     async fn object_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: StorageContext;
 }
 
 #[doc(hidden)]
 pub(crate) trait ObjectAdapter<O = HubuumObject, I = HubuumObjectID> {
-    async fn object_adapter(&self, pool: &DbPool) -> Result<O, ApiError>;
-    async fn object_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
+    async fn object_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<O, ApiError>;
+    async fn object_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError>;
 }
 
 impl<T, O, I> ObjectAccessors<O, I> for T
@@ -210,16 +245,16 @@ where
 {
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: StorageContext,
     {
-        self.object_adapter(backend.db_pool()).await
+        self.object_adapter(backend).await
     }
 
     async fn object_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: StorageContext,
     {
-        self.object_id_adapter(backend.db_pool()).await
+        self.object_id_adapter(backend).await
     }
 }
 
@@ -227,11 +262,17 @@ impl<T, O, I> ObjectAdapter<O, I> for &T
 where
     T: ObjectAdapter<O, I> + ?Sized,
 {
-    async fn object_adapter(&self, pool: &DbPool) -> Result<O, ApiError> {
+    async fn object_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<O, ApiError> {
         (*self).object_adapter(pool).await
     }
 
-    async fn object_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError> {
+    async fn object_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<I, ApiError> {
         (*self).object_id_adapter(pool).await
     }
 }

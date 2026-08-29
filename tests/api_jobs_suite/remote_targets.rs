@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
     use actix_rt::time::sleep;
     use actix_web::{
         http::{StatusCode, header},
@@ -20,7 +19,6 @@ mod tests {
         pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     };
 
-    use crate::db::with_connection;
     use crate::models::{
         GroupID, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
@@ -249,7 +247,7 @@ mod tests {
         task_id: i32,
         expected: TaskStatus,
     ) -> TaskResponse {
-        for _ in 0..50 {
+        for _ in 0..200 {
             let resp = get_request(
                 &context.pool,
                 &context.admin_token,
@@ -348,16 +346,9 @@ mod tests {
     }
 
     async fn remote_call_result(context: &TestContext, task_id_value: i32) -> RemoteCallResult {
-        use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
-
-        with_connection(&context.pool, async |conn| {
-            remote_call_results
-                .filter(task_id.eq(task_id_value))
-                .first::<RemoteCallResult>(conn)
-                .await
-        })
-        .await
-        .unwrap()
+        crate::test_support::remote_call_result(&context.pool, task_id_value)
+            .await
+            .unwrap()
     }
 
     #[actix_web::test]

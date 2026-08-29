@@ -116,12 +116,12 @@ transaction as the collection row. Move operations update `parent_collection_id`
 and rebuild only the closure rows that connect the moved subtree to ancestors
 outside that subtree.
 
-The hierarchy logic intentionally remains in the application database layer
-instead of a workspace crate. It depends on Diesel table definitions,
-PostgreSQL-specific closure-table SQL, application errors, temporal history,
-and permission semantics. A workspace crate would be useful only if another
-binary or service needed the same hierarchy algorithm without depending on
-Hubuum's schema and authorization model.
+The hierarchy implementation intentionally remains inside the PostgreSQL
+storage adapter rather than the root application or backend-neutral contract.
+It depends on Diesel table definitions, PostgreSQL-specific closure-table SQL,
+temporal history, and permission semantics. Other storage adapters must preserve
+the same observable hierarchy contract but may use a different persistence
+representation.
 
 Performance-sensitive queries rely on these indexes:
 

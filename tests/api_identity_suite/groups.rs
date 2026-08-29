@@ -1,25 +1,27 @@
 #[cfg(test)]
 mod tests {
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::SubsecRound;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::db::traits::identity::ensure_identity_scope;
-    use crate::db::{with_connection, with_revision_precondition_scope};
-    use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
+    use crate::models::group::{Group, GroupID, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
     use crate::models::{
-        IdentityScope, LDAP_PROVIDER_KIND, MembershipPrincipalResponse, NewIdentityScope,
-        Principal, PrincipalGroup, PrincipalID, PrincipalKind, PrincipalMemberResponse,
+        LDAP_PROVIDER_KIND, MembershipPrincipalResponse, PrincipalID, PrincipalKind,
+        PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::services::identity::ensure_identity_scope;
+    use crate::storage::with_revision_precondition;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, create_test_admin, create_test_group, create_test_user, test_context,
     };
+    use crate::traits::{GroupIdApplicationExt, PrincipalIdApplicationExt};
+    use hubuum_storage_postgres::with_connection;
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
@@ -39,22 +41,27 @@ mod tests {
 
         let returned = with_connection(&context.pool, async |conn| {
             diesel::insert_into(identity_scopes::table)
-                .values(NewIdentityScope {
-                    name: &scope_name,
-                    provider_kind: LDAP_PROVIDER_KIND,
-                })
+                .values((
+                    identity_scopes::name.eq(&scope_name),
+                    identity_scopes::provider_kind.eq(LDAP_PROVIDER_KIND),
+                ))
                 .on_conflict(identity_scopes::name)
                 .do_update()
                 .set(identity_scopes::provider_kind.eq(crate::models::LDAP_PROVIDER_KIND))
-                .get_result::<IdentityScope>(conn)
+                .returning((
+                    identity_scopes::id,
+                    identity_scopes::revision,
+                    identity_scopes::updated_at,
+                ))
+                .get_result::<(i32, PostgresRevision, chrono::NaiveDateTime)>(conn)
                 .await
         })
         .await
         .unwrap();
 
-        assert_eq!(returned.id, created.id);
-        assert_eq!(returned.revision, created.revision);
-        assert_eq!(returned.updated_at, created.updated_at);
+        assert_eq!(returned.0, created.id);
+        assert_eq!(returned.1.into_domain(), created.revision);
+        assert_eq!(returned.2, created.updated_at);
     }
 
     async fn check_show_group(
@@ -178,7 +185,7 @@ mod tests {
         .await
         .unwrap();
         let groupname = context.scoped_name("external_group");
-        let group = with_connection(&context.pool, async |conn| {
+        let group_id = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -189,11 +196,17 @@ mod tests {
                     groups::managed_by.eq(crate::models::LDAP_PROVIDER_KIND),
                     groups::external_key.eq(context.scoped_name("external_group_key")),
                 ))
-                .get_result::<Group>(conn)
+                .returning(groups::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let group = GroupID::new(group_id)
+            .unwrap()
+            .group(&context.pool)
+            .await
+            .unwrap();
         let group_url = format!("{GROUPS_ENDPOINT}/{}", group.id);
 
         let resp = get_request(&context.pool, &context.normal_token, &group_url).await;
@@ -236,7 +249,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external_group = with_connection(&context.pool, async |conn| {
+        let external_group_id = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -247,11 +260,17 @@ mod tests {
                     groups::managed_by.eq(crate::models::LDAP_PROVIDER_KIND),
                     groups::external_key.eq(context.scoped_name("batch_external_group_key")),
                 ))
-                .get_result::<Group>(conn)
+                .returning(groups::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let external_group = GroupID::new(external_group_id)
+            .unwrap()
+            .group(&context.pool)
+            .await
+            .unwrap();
 
         let responses =
             GroupResponse::from_groups(&context.pool, vec![local_group, external_group])
@@ -283,7 +302,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external = with_connection(&context.pool, async |conn| {
+        let external_id = with_connection(&context.pool, async |conn| {
             use crate::schema::principals;
 
             diesel::insert_into(principals::table)
@@ -294,11 +313,17 @@ mod tests {
                     principals::provider_managed.eq(true),
                     principals::external_subject.eq(context.scoped_name("batch_subject")),
                 ))
-                .get_result::<Principal>(conn)
+                .returning(principals::id)
+                .get_result::<i32>(conn)
                 .await
         })
         .await
         .unwrap();
+        let external = PrincipalID::new(external_id)
+            .unwrap()
+            .principal(&context.pool)
+            .await
+            .unwrap();
 
         let responses =
             futures::future::try_join_all(vec![local, external].into_iter().map(|principal| {
@@ -544,7 +569,7 @@ mod tests {
             .await
             .unwrap();
         let membership =
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
         let tag = membership.entity_tag().unwrap();
@@ -556,7 +581,8 @@ mod tests {
             .remove_member_without_events(&user, &context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             group.add_member_without_events(&context.pool, &user),
         )
@@ -568,8 +594,7 @@ mod tests {
             crate::errors::ApiError::PreconditionFailed(_, _)
         ));
         assert!(matches!(
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
-                .await,
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id).await,
             Err(crate::errors::ApiError::NotFound(_))
         ));
     }
@@ -582,18 +607,22 @@ mod tests {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
         let user = create_test_user(&context.pool).await;
-        let initial = with_connection(&context.pool, async |conn| {
+        with_connection(&context.pool, async |conn| {
             use crate::schema::group_memberships;
             diesel::insert_into(group_memberships::table)
                 .values((
                     group_memberships::principal_id.eq(user.id),
                     group_memberships::group_id.eq(group.id),
                 ))
-                .get_result::<PrincipalGroup>(conn)
+                .execute(conn)
                 .await
         })
         .await
         .unwrap();
+        let initial =
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
 
         let response = post_request(
             &context.pool,
@@ -612,7 +641,7 @@ mod tests {
             .to_string();
         let returned: PrincipalMemberResponse = test::read_body_json(response).await;
         let persisted =
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -641,9 +670,10 @@ mod tests {
         .await;
         assert_response_status(response, StatusCode::CREATED).await;
 
-        let scope = crate::db::traits::identity::identity_scope_by_name(
+        let scope = ensure_identity_scope(
             &context.pool,
             crate::models::LOCAL_IDENTITY_SCOPE,
+            crate::models::LOCAL_PROVIDER_KIND,
         )
         .await
         .unwrap();
@@ -663,7 +693,7 @@ mod tests {
         .await
         .unwrap();
         let before =
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -672,7 +702,7 @@ mod tests {
         let response_etag = header_value(&response, actix_web::http::header::ETAG.as_str())
             .expect("surviving membership ETag");
         let surviving =
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
 
@@ -693,9 +723,10 @@ mod tests {
             .add_member_without_events(&context.pool, &user)
             .await
             .unwrap();
-        let scope = crate::db::traits::identity::identity_scope_by_name(
+        let scope = ensure_identity_scope(
             &context.pool,
             crate::models::LOCAL_IDENTITY_SCOPE,
+            crate::models::LOCAL_PROVIDER_KIND,
         )
         .await
         .unwrap();
@@ -715,7 +746,7 @@ mod tests {
         .await
         .unwrap();
         let before =
-            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+            crate::services::identity::get_principal_group(&context.pool, user.id, group.id)
                 .await
                 .unwrap();
         let stale_tag = before.entity_tag().unwrap();
@@ -727,7 +758,8 @@ mod tests {
             .remove_member_without_events(&user, &context.pool)
             .await
             .unwrap();
-        let error = with_revision_precondition_scope(
+        let error = with_revision_precondition(
+            &context.pool,
             precondition,
             group.remove_member_without_events(&user, &context.pool),
         )
@@ -736,7 +768,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            crate::errors::ApiError::PreconditionFailed(_, _)
+            crate::errors::ApiError::RevisionConflict(_, revision) if revision.get() == 3
         ));
     }
 

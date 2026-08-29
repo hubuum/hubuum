@@ -1,12 +1,13 @@
-use actix_web::{Responder, get, http::StatusCode, web};
+use actix_web::{Responder, get, http::StatusCode};
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::traits::probe::ProbeBackend;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
+use crate::permissions::AppContext;
+use crate::storage::OperationalStateStorage;
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -44,11 +45,15 @@ pub async fn healthz() -> impl Responder {
     )
 )]
 #[get("/readyz")]
-pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
-    let snapshot = with_db_call_site(DbCallSite::Readiness, pool.readiness_snapshot())
-        .await
-        .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
-    if !snapshot.schema_is_ready() {
+pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
+    let snapshot = with_storage_call_site(
+        &context,
+        StorageCallSite::Readiness,
+        context.backend().get_readiness_snapshot(),
+    )
+    .await
+    .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
+    if !snapshot.storage_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Database schema is not ready".to_string(),
         ));

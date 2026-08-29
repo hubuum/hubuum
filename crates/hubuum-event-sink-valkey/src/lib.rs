@@ -168,14 +168,14 @@ fn stream_entry(
         approximate_trim: config.approximate_trim,
         io_timeout: valkey_io_timeout(&config)?,
         fields: vec![
-            ("event_id", envelope.event_id.to_string()),
-            ("entity_type", envelope.entity_type.clone()),
+            ("event_id", envelope.event_id().to_string()),
+            ("entity_type", envelope.entity_type().as_str().to_string()),
             (
                 "entity_name",
-                envelope.entity_name.clone().unwrap_or_default(),
+                envelope.entity_name().unwrap_or_default().to_string(),
             ),
-            ("action", envelope.action.clone()),
-            ("actor_kind", envelope.actor_kind.clone()),
+            ("action", envelope.action().as_str().to_string()),
+            ("actor_kind", envelope.actor_kind().as_str().to_string()),
             ("payload", payload),
         ],
     })
@@ -253,39 +253,38 @@ mod tests {
         assert!(!entry_debug.contains("payload-secret"));
     }
     fn envelope() -> EventEnvelope {
-        EventEnvelope {
-            id: 42,
-            event_id: Uuid::new_v4(),
-            occurred_at: Utc::now().naive_utc(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(7),
-            entity_name: Some("example".to_string()),
-            collection_id: Some(7),
-            action: "created".to_string(),
-            actor_user_id: Some(1),
-            actor_kind: "user".to_string(),
-            provenance: hubuum_events_core::Provenance {
+        EventEnvelope::builder()
+            .id(hubuum_events_core::EventSequence::new(42).unwrap())
+            .event_id(Uuid::new_v4())
+            .occurred_at(Utc::now())
+            .entity_type(hubuum_events_core::EntityType::Collection)
+            .entity_id(Some(hubuum_events_core::EventEntityId::new(7).unwrap()))
+            .entity_name(Some("example".to_string()))
+            .collection_id(Some(hubuum_events_core::CollectionId::new(7).unwrap()))
+            .action(hubuum_events_core::Action::Created)
+            .actor_user_id(Some(hubuum_events_core::PrincipalId::new(1).unwrap()))
+            .actor_kind(hubuum_events_core::ActorKind::User)
+            .provenance(hubuum_events_core::Provenance {
                 actor: hubuum_events_core::ProvenanceActor {
                     kind: Some("user".to_string()),
                     principal: Some(hubuum_events_core::ProvenancePrincipal {
-                        principal_id: 1,
+                        principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                         name: Some("admin".to_string()),
                     }),
                 },
                 initiator: Some(hubuum_events_core::ProvenancePrincipal {
-                    principal_id: 1,
+                    principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                     name: Some("admin".to_string()),
                 }),
-                task_id: Some(99),
-            },
-            request_id: None,
-            correlation_id: Some("corr-1".to_string()),
-            summary: "collection created".to_string(),
-            before: None,
-            after: Some(serde_json::json!({"name": "example"})),
-            metadata: serde_json::json!({"source": "test"}),
-            schema_version: 1,
-        }
+                task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
+            })
+            .correlation_id(Some("corr-1".to_string()))
+            .summary("collection created".to_string())
+            .after(Some(serde_json::json!({"name": "example"})))
+            .metadata(serde_json::json!({"source": "test"}))
+            .schema_version(1)
+            .try_build()
+            .unwrap()
     }
 
     fn delivery<'a>(
@@ -371,7 +370,7 @@ mod tests {
         assert_eq!(
             entry.fields,
             vec![
-                ("event_id", envelope.event_id.to_string()),
+                ("event_id", envelope.event_id().to_string()),
                 ("entity_type", "collection".to_string()),
                 ("entity_name", "example".to_string()),
                 ("action", "created".to_string()),

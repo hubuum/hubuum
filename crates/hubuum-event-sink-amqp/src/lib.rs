@@ -153,13 +153,17 @@ fn parse_config(delivery: &SinkDelivery<'_>) -> Result<AmqpConfig, SinkError> {
 }
 
 fn routing_key(envelope: &EventEnvelope) -> String {
-    format!("{}.{}", envelope.entity_type, envelope.action)
+    format!(
+        "{}.{}",
+        envelope.entity_type().as_str(),
+        envelope.action().as_str()
+    )
 }
 
 fn message_properties(envelope: &EventEnvelope) -> BasicProperties {
     BasicProperties::default()
         .with_content_type("application/json".into())
-        .with_message_id(envelope.event_id.to_string().into())
+        .with_message_id(envelope.event_id().to_string().into())
         .with_delivery_mode(2)
 }
 
@@ -210,39 +214,38 @@ mod tests {
         assert!(!debug.contains("private-exchange"));
     }
     fn envelope() -> EventEnvelope {
-        EventEnvelope {
-            id: 42,
-            event_id: Uuid::new_v4(),
-            occurred_at: Utc::now().naive_utc(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(7),
-            entity_name: Some("example".to_string()),
-            collection_id: Some(7),
-            action: "created".to_string(),
-            actor_user_id: Some(1),
-            actor_kind: "user".to_string(),
-            provenance: hubuum_events_core::Provenance {
+        EventEnvelope::builder()
+            .id(hubuum_events_core::EventSequence::new(42).unwrap())
+            .event_id(Uuid::new_v4())
+            .occurred_at(Utc::now())
+            .entity_type(hubuum_events_core::EntityType::Collection)
+            .entity_id(Some(hubuum_events_core::EventEntityId::new(7).unwrap()))
+            .entity_name(Some("example".to_string()))
+            .collection_id(Some(hubuum_events_core::CollectionId::new(7).unwrap()))
+            .action(hubuum_events_core::Action::Created)
+            .actor_user_id(Some(hubuum_events_core::PrincipalId::new(1).unwrap()))
+            .actor_kind(hubuum_events_core::ActorKind::User)
+            .provenance(hubuum_events_core::Provenance {
                 actor: hubuum_events_core::ProvenanceActor {
                     kind: Some("user".to_string()),
                     principal: Some(hubuum_events_core::ProvenancePrincipal {
-                        principal_id: 1,
+                        principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                         name: Some("admin".to_string()),
                     }),
                 },
                 initiator: Some(hubuum_events_core::ProvenancePrincipal {
-                    principal_id: 1,
+                    principal_id: hubuum_events_core::PrincipalId::new(1).unwrap(),
                     name: Some("admin".to_string()),
                 }),
-                task_id: Some(99),
-            },
-            request_id: None,
-            correlation_id: Some("corr-1".to_string()),
-            summary: "collection created".to_string(),
-            before: None,
-            after: Some(serde_json::json!({"name": "example"})),
-            metadata: serde_json::json!({"source": "test"}),
-            schema_version: 1,
-        }
+                task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
+            })
+            .correlation_id(Some("corr-1".to_string()))
+            .summary("collection created".to_string())
+            .after(Some(serde_json::json!({"name": "example"})))
+            .metadata(serde_json::json!({"source": "test"}))
+            .schema_version(1)
+            .try_build()
+            .unwrap()
     }
 
     fn delivery<'a>(

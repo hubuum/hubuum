@@ -443,6 +443,16 @@
               }
             }
           },
+          "404": {
+            "description": "Database diagnostics are not available for the configured storage backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -19344,7 +19354,8 @@
           },
           "created_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "RFC 3339 creation instant in UTC."
           },
           "history": {
             "oneOf": [
@@ -19370,7 +19381,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only table snapshots. In backup version 4, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only logical snapshots. Backup version 5 identifies\nsections by stable Hubuum resources rather than PostgreSQL tables. Each\nstorage adapter explicitly maps its persistence layout to these versioned\nsections. These are disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -19378,7 +19389,8 @@
           "sections": {
             "type": "object"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "BackupManifest": {
         "type": "object",
@@ -19410,7 +19422,7 @@
       },
       "BackupState": {
         "type": "object",
-        "description": "Exact logical rows used by the destructive full-system restore path.",
+        "description": "Canonical logical rows used by the destructive full-system restore path.",
         "required": [
           "sections"
         ],
@@ -19418,7 +19430,8 @@
           "sections": {
             "type": "object"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "BackupTaskDetails": {
         "type": "object",
@@ -19747,7 +19760,8 @@
       "CollectionID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`Collection`]."
+        "description": "Validated positive collection id.",
+        "minimum": 1
       },
       "CollectionKey": {
         "type": "object",
@@ -19771,7 +19785,7 @@
       },
       "CollectionPermissionSet": {
         "type": "object",
-        "description": "The revisioned, SQL-owned authorization state for a collection.\n\nIndividual permission rows are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
+        "description": "The revisioned authorization grant set for a collection.\n\nIndividual grants are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
         "required": [
           "collection_id",
           "revision",
@@ -19787,7 +19801,7 @@
             "items": {
               "$ref": "#/components/schemas/Permission"
             },
-            "description": "ACL rows contain stable group identifiers without embedding mutable\ngroup representations that are outside this aggregate's revision."
+            "description": "ACL entries contain stable group identifiers without embedding mutable\ngroup representations that are outside this aggregate's revision."
           },
           "revision": {
             "$ref": "#/components/schemas/ResourceRevision"
@@ -20253,12 +20267,17 @@
       "DatabaseConfig": {
         "type": "object",
         "required": [
+          "backend",
           "url",
           "pool_size",
           "pool_acquire_timeout_ms",
           "statement_timeout_ms"
         ],
         "properties": {
+          "backend": {
+            "type": "string",
+            "description": "Complete storage backend selected by the application composition root."
+          },
           "pool_acquire_timeout_ms": {
             "type": "integer",
             "format": "int64",
@@ -20370,7 +20389,7 @@
           "connections_created": {
             "type": "integer",
             "format": "int64",
-            "description": "Cumulative connections established by the pool.",
+            "description": "Cumulative connections established by the context.",
             "minimum": 0
           },
           "db_size": {
@@ -20381,13 +20400,13 @@
           "idle_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Established connections currently waiting in the pool.",
+            "description": "Established connections currently waiting in the context.",
             "minimum": 0
           },
           "in_use_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Established connections currently checked out of the pool.",
+            "description": "Established connections currently checked out of the context.",
             "minimum": 0
           },
           "last_vacuum_time": {
@@ -20400,7 +20419,7 @@
           "max_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Configured maximum number of connections in this process-local pool.",
+            "description": "Configured maximum number of connections in this process-local context.",
             "minimum": 0
           },
           "pending_acquisitions": {
@@ -20412,7 +20431,7 @@
           "total_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Connections currently managed by this process-local pool.",
+            "description": "Connections currently managed by this process-local context.",
             "minimum": 0
           }
         }
@@ -20673,6 +20692,7 @@
       },
       "EventDeliveryStatus": {
         "type": "string",
+        "description": "Durable lifecycle state for one event delivery.\n\nThe textual representation is shared by storage adapters, API models, and\noperational reporting so each layer cannot silently invent different\npersisted status values.",
         "enum": [
           "pending",
           "in_flight",
@@ -20733,6 +20753,12 @@
             "$ref": "#/components/schemas/EventDeliveryResponse"
           }
         }
+      },
+      "EventEntityId": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive event entity id.",
+        "minimum": 1
       },
       "EventFanoutHealth": {
         "type": "object",
@@ -20972,7 +20998,8 @@
       "EventSinkID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for an event sink."
+        "description": "Validated positive event sink id.",
+        "minimum": 1
       },
       "EventSinkKey": {
         "type": "object",
@@ -21132,15 +21159,13 @@
           "actor_user_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/PrincipalID"
             }
           },
           "collection_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/CollectionID"
             }
           },
           "correlation_ids": {
@@ -21152,8 +21177,7 @@
           "entity_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/EventEntityId"
             }
           },
           "entity_names": {
@@ -21165,15 +21189,13 @@
           "initiator_user_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/PrincipalID"
             }
           },
           "related_collection_ids": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "$ref": "#/components/schemas/CollectionID"
             }
           },
           "request_ids": {
@@ -21253,12 +21275,14 @@
           "template_max_objects",
           "max_output_bytes",
           "stage_timeout_ms",
+          "storage_query_budget_ms",
           "database_statement_timeout_ms"
         ],
         "properties": {
           "database_statement_timeout_ms": {
             "type": "integer",
             "format": "int64",
+            "description": "Deprecated compatibility alias for `storage_query_budget_ms`.\n\nThe value is identical and remains present so administrator clients do\nnot break while migrating away from the PostgreSQL-shaped field name.",
             "minimum": 0
           },
           "max_output_bytes": {
@@ -21277,6 +21301,12 @@
           "stage_timeout_ms": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "storage_query_budget_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Backend-neutral budget applied to each export storage read stage.",
             "minimum": 0
           },
           "template_fuel": {
@@ -21977,7 +22007,8 @@
       "ExportTemplateID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`ExportTemplate`]."
+        "description": "Validated positive export template id.",
+        "minimum": 1
       },
       "ExportTemplateKind": {
         "type": "string",
@@ -23107,7 +23138,8 @@
       "HubuumClassID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumClass`]."
+        "description": "Validated positive class id.",
+        "minimum": 1
       },
       "HubuumClassRelation": {
         "type": "object",
@@ -23182,7 +23214,8 @@
       "HubuumClassRelationID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumClassRelation`]."
+        "description": "Validated positive class relation id.",
+        "minimum": 1
       },
       "HubuumClassWithPath": {
         "type": "object",
@@ -23397,7 +23430,8 @@
       "HubuumObjectID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumObject`]."
+        "description": "Validated positive object id.",
+        "minimum": 1
       },
       "HubuumObjectReadResponse": {
         "oneOf": [
@@ -23454,7 +23488,8 @@
       "HubuumObjectRelationID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`HubuumObjectRelation`]."
+        "description": "Validated positive object relation id.",
+        "minimum": 1
       },
       "HubuumObjectWithPath": {
         "type": "object",
@@ -25459,7 +25494,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/PrincipalKind"
           },
           "name": {
             "type": "string"
@@ -26937,7 +26972,8 @@
       "PrincipalID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`Principal`]."
+        "description": "Validated positive principal id.",
+        "minimum": 1
       },
       "PrincipalKey": {
         "type": "object",
@@ -26955,6 +26991,14 @@
             "type": "string"
           }
         }
+      },
+      "PrincipalKind": {
+        "type": "string",
+        "description": "Closed set of principal kinds understood by every Hubuum layer.\n\nAdapters must parse persisted values into this type before returning a\nprincipal so database corruption cannot cross the storage boundary as an\narbitrary string.",
+        "enum": [
+          "human",
+          "service_account"
+        ]
       },
       "PrincipalMemberResponse": {
         "type": "object",
@@ -27351,11 +27395,14 @@
             ]
           },
           "task_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
           }
         }
       },
@@ -27395,8 +27442,7 @@
             ]
           },
           "principal_id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/PrincipalID"
           }
         }
       },
@@ -27947,7 +27993,8 @@
       "RemoteTargetID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a remote target."
+        "description": "Validated positive remote target id.",
+        "minimum": 1
       },
       "RemoteTargetInvokeRequest": {
         "type": "object",
@@ -28594,6 +28641,12 @@
           }
         }
       },
+      "TaskID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive task id.",
+        "minimum": 1
+      },
       "TaskKind": {
         "type": "string",
         "enum": [
@@ -28925,7 +28978,8 @@
       "TokenID": {
         "type": "integer",
         "format": "int32",
-        "description": "Identifier wrapper for a [`PrincipalToken`]."
+        "description": "Validated positive token id.",
+        "minimum": 1
       },
       "TokenListState": {
         "type": "string",

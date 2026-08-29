@@ -102,6 +102,16 @@ assert_flag "$querying_docs_output" markdown true
 assert_flag "$querying_docs_output" code true
 assert_flag "$querying_docs_output" artifacts false
 
+storage_contract_docs_output="$(bash "$classifier" \
+  docs/storage_boundary.md \
+  docs/storage_boundary/contract.md \
+  docs/storage_boundary/semantic-coverage.toml)"
+assert_flag "$storage_contract_docs_output" markdown true
+assert_flag "$storage_contract_docs_output" code true
+assert_flag "$storage_contract_docs_output" container false
+assert_flag "$storage_contract_docs_output" artifacts false
+assert_flag "$storage_contract_docs_output" benchmarks false
+
 markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false
@@ -168,7 +178,6 @@ assert_flag "$source_output" code true
 assert_flag "$source_output" container true
 assert_flag "$source_output" artifacts true
 assert_flag "$source_output" benchmarks true
-assert_flag "$source_output" postgres_benchmark true
 assert_flag "$source_output" runtime_benchmark true
 assert_flag "$source_output" treetop_conformance false
 
@@ -197,16 +206,38 @@ assert_flag "$treetop_docs_output" code false
 assert_flag "$treetop_docs_output" markdown true
 assert_flag "$treetop_docs_output" treetop_conformance true
 
+migration_output="$(bash "$classifier" \
+  crates/hubuum-storage-postgres/migrations/2026-08-03-000001_resource_revisions/up.sql)"
+assert_flag "$migration_output" code true
+assert_flag "$migration_output" container true
+assert_flag "$migration_output" artifacts true
+assert_flag "$migration_output" benchmarks true
+assert_flag "$migration_output" runtime_benchmark true
+
 benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
 assert_flag "$benchmark_output" benchmarks true
-assert_flag "$benchmark_output" postgres_benchmark true
 assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
+
+storage_benchmark_output="$(
+  bash "$classifier" benches/storage_postgres_criterion.rs
+)"
+assert_flag "$storage_benchmark_output" code true
+assert_flag "$storage_benchmark_output" benchmarks true
+assert_flag "$storage_benchmark_output" runtime_benchmark false
+assert_flag "$storage_benchmark_output" artifacts false
+
+runtime_check_output="$(
+  bash "$classifier" src/bin/runtime_behavior_check.rs
+)"
+assert_flag "$runtime_check_output" code true
+assert_flag "$runtime_check_output" benchmarks true
+assert_flag "$runtime_check_output" runtime_benchmark true
+assert_flag "$runtime_check_output" artifacts true
 
 classifier_output="$(bash "$classifier" scripts/classify-ci-changes.sh)"
 assert_flag "$classifier_output" code true
 assert_flag "$classifier_output" benchmarks true
-assert_flag "$classifier_output" postgres_benchmark true
 assert_flag "$classifier_output" runtime_benchmark true
 assert_flag "$classifier_output" artifacts false
 

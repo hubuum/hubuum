@@ -5,11 +5,6 @@ use crate::api::etag::{RevisionedResource, revision_precondition, revision_preco
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::traits::service_account::{
-    DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
-    is_human_owner_group_member, search_manageable_service_accounts,
-};
-use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::search::parse_query_parameter;
@@ -17,8 +12,18 @@ use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountPointResponse,
     ServiceAccountResponse, ServiceAccountWithName, UpdateServiceAccount,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
+use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
+use crate::services::identity::{
+    create_service_account as create_service_account_record,
+    delete_service_account as delete_service_account_record,
+    disable_service_account as disable_service_account_record,
+    get_service_account as get_service_account_record, is_human_owner_group_member,
+    list_manageable_service_accounts, update_service_account as update_service_account_record,
+};
+use crate::storage::StorageContext;
+use crate::storage::with_revision_precondition;
+use crate::traits::AuthzSubject;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -32,12 +37,12 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 /// A caller may manage an SA iff they are an admin or a **human** member of the
 /// SA's owner group (a service account never manages itself; see token routes).
 async fn ensure_can_manage(
-    pool: &DbPool,
+    context: &impl StorageContext,
     requestor: &ManagementAccess,
     sa: &ServiceAccount,
 ) -> Result<(), ApiError> {
-    if requestor.user.is_admin(pool).await?
-        || is_human_owner_group_member(pool, requestor.user.id, sa.owner_group_id).await?
+    if requestor.user.is_admin(context).await?
+        || is_human_owner_group_member(context, requestor.user.id, sa.owner_group_id).await?
     {
         Ok(())
     } else {
@@ -64,7 +69,7 @@ async fn ensure_can_manage(
 #[post("")]
 #[post("/")]
 pub async fn create_service_account(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
     new_sa: web::Json<NewServiceAccount>,
@@ -73,8 +78,8 @@ pub async fn create_service_account(
 
     // Create authz: admin may create for any group; a non-admin human may create
     // only for a group they already belong to.
-    if !requestor.user.is_admin(&pool).await?
-        && !is_human_owner_group_member(&pool, requestor.user.id, new_sa.owner_group_id.id())
+    if !requestor.user.is_admin(&context).await?
+        && !is_human_owner_group_member(&context, requestor.user.id, new_sa.owner_group_id.id())
             .await?
     {
         return Err(ApiError::Forbidden(
@@ -90,10 +95,10 @@ pub async fn create_service_account(
     );
 
     let event_context = requestor.event_context(&req);
-    let sa = new_sa
-        .save(&pool, Some(requestor.user.id), &event_context)
-        .await?;
-    let response = sa.to_point_response(&pool).await?;
+    let sa =
+        create_service_account_record(&context, &new_sa, Some(requestor.user.id), &event_context)
+            .await?;
+    let response = sa.to_point_response(&context).await?;
 
     let location = api_locations::service_account(sa.id)?;
     ApiResponse::created_revisioned(response, location)
@@ -113,29 +118,19 @@ pub async fn create_service_account(
 #[get("")]
 #[get("/")]
 pub async fn list_service_accounts(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let is_admin = requestor.user.is_admin(&pool).await?;
+    let is_admin = requestor.user.is_admin(&context).await?;
     let params = parse_query_parameter(req.query_string())?;
 
-    // Authorization is applied in SQL (admin sees all; otherwise owner-group
-    // membership), so this is a single paginated query, not a per-row scan.
-    let total_count = if params.include_total {
-        count_manageable_service_accounts(
-            &pool,
-            &requestor.user,
-            is_admin,
-            count_query_options(&params),
-        )
-        .await?
-    } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
+    // Authorization and the optional exact count are applied by the selected
+    // backend, not reconstructed as a per-row application scan.
     let search_params = prepare_db_pagination::<ServiceAccountWithName>(&params)?;
-    let accounts =
-        search_manageable_service_accounts(&pool, &requestor.user, is_admin, search_params).await?;
+    let (accounts, total_count) =
+        list_manageable_service_accounts(&context, requestor.user.id, is_admin, search_params)
+            .await?;
 
     ApiResponse::mapped_paginated(accounts, total_count, &params, |accounts| {
         accounts
@@ -160,13 +155,13 @@ pub async fn list_service_accounts(
 )]
 #[get("/{service_account_id}")]
 pub async fn get_service_account(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
-    let sa = service_account_id.into_inner().instance(&pool).await?;
-    ensure_can_manage(&pool, &requestor, &sa).await?;
-    ApiResponse::ok_revisioned(sa.to_point_response(&pool).await?)
+    let sa = get_service_account_record(&context, service_account_id.into_inner().id()).await?;
+    ensure_can_manage(&context, &requestor, &sa).await?;
+    ApiResponse::ok_revisioned(sa.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -185,15 +180,15 @@ pub async fn get_service_account(
 )]
 #[patch("/{service_account_id}")]
 pub async fn update_service_account(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
     update: web::Json<UpdateServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&pool).await?;
-    ensure_can_manage(&pool, &requestor, &sa).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
+    ensure_can_manage(&context, &requestor, &sa).await?;
 
     let update = update.into_inner();
 
@@ -203,21 +198,24 @@ pub async fn update_service_account(
     // rights to.
     if let Some(new_group) = update.owner_group_id
         && new_group != sa.owner_group_id
-        && !requestor.user.is_admin(&pool).await?
-        && !is_human_owner_group_member(&pool, requestor.user.id, new_group).await?
+        && !requestor.user.is_admin(&context).await?
+        && !is_human_owner_group_member(&context, requestor.user.id, new_group).await?
     {
         return Err(ApiError::Forbidden(
             "May only reassign a service account to a group you belong to".to_string(),
         ));
     }
 
-    let current = sa.to_point_response(&pool).await?;
+    let current = sa.to_point_response(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let updated =
-        with_revision_precondition_scope(precondition, update.update(&pool, id, &event_context))
-            .await?;
-    ApiResponse::ok_revisioned(updated.to_point_response(&pool).await?)
+    let updated = with_revision_precondition(
+        &context,
+        precondition,
+        update_service_account_record(&context, id.id(), &update, &event_context),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(updated.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -235,20 +233,24 @@ pub async fn update_service_account(
 )]
 #[post("/{service_account_id}/disable")]
 pub async fn disable_service_account(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&pool).await?;
-    ensure_can_manage(&pool, &requestor, &sa).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
+    ensure_can_manage(&context, &requestor, &sa).await?;
 
-    let current = sa.to_point_response(&pool).await?;
+    let current = sa.to_point_response(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let disabled =
-        with_revision_precondition_scope(precondition, id.disable(&pool, &event_context)).await?;
+    let disabled = with_revision_precondition(
+        &context,
+        precondition,
+        disable_service_account_record(&context, id.id(), &event_context),
+    )
+    .await?;
 
     debug!(
         message = "Service account disabled",
@@ -256,7 +258,7 @@ pub async fn disable_service_account(
         requestor = requestor.user.id
     );
 
-    ApiResponse::ok_revisioned(disabled.to_point_response(&pool).await?)
+    ApiResponse::ok_revisioned(disabled.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -274,18 +276,23 @@ pub async fn disable_service_account(
 )]
 #[delete("/{service_account_id}")]
 pub async fn delete_service_account(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.instance(&pool).await?;
-    ensure_can_manage(&pool, &requestor, &sa).await?;
-    let current = sa.to_point_response(&pool).await?;
+    let sa = get_service_account_record(&context, id.id()).await?;
+    ensure_can_manage(&context, &requestor, &sa).await?;
+    let current = sa.to_point_response(&context).await?;
     let etag = current.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, id.delete(&pool, &event_context)).await?;
+    with_revision_precondition(
+        &context,
+        precondition,
+        delete_service_account_record(&context, id.id(), &event_context),
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }

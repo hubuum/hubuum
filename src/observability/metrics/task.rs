@@ -3,9 +3,7 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
-use crate::db::traits::metrics::{MetricsRefreshBackend, TaskGaugeSnapshot};
-use crate::models::{TaskKind, TaskStatus};
+use crate::storage::{MetricsStorage, StorageTaskKind, StorageTaskStatus, TaskGaugeSnapshot};
 
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
@@ -119,14 +117,17 @@ pub fn task_output_cleanup_deleted(kind: TaskOutputKind, count: usize) {
     }
 }
 
-pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
+pub(super) async fn refresh_task_gauges(
+    metrics: &Metrics,
+    backend: &(impl MetricsStorage + ?Sized),
+) {
     if let Some(snapshot) = cached_task_snapshot(metrics) {
         record_task_snapshot(metrics, &snapshot);
         return;
     }
 
     let refresh_started_at = Instant::now();
-    match pool.metrics_task_gauge_snapshot().await {
+    match backend.get_task_metrics_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,
@@ -181,50 +182,72 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
     let mut counts = HashMap::new();
     let mut last_terminal = HashMap::new();
 
-    for row in &snapshot.counts {
-        counts.insert((row.kind, row.status), row.count);
+    for row in snapshot.counts() {
+        counts.insert((row.kind(), row.status()), row.count());
     }
-    for row in &snapshot.last_terminal {
-        last_terminal.insert((row.kind, row.status), row.finished_at);
+    for row in snapshot.last_terminal() {
+        last_terminal.insert((row.kind(), row.status()), row.finished_at());
     }
 
-    for kind in TaskKind::ALL {
-        for status in TaskStatus::ALL {
+    for kind in StorageTaskKind::ALL {
+        for status in StorageTaskStatus::ALL {
             let count = counts.get(&(kind, status)).copied().unwrap_or(0);
             record_task_count(metrics, kind, status, count);
         }
-        for status in TaskStatus::TERMINAL {
+        for status in StorageTaskStatus::ALL
+            .into_iter()
+            .filter(|status| status.is_terminal())
+        {
             record_last_terminal_timestamp(
                 metrics,
                 kind,
                 status,
-                terminal_timestamp_seconds(last_terminal.get(&(kind, status)).copied().flatten()),
+                terminal_timestamp_seconds(
+                    last_terminal
+                        .get(&(kind, status))
+                        .copied()
+                        .flatten()
+                        .map(|timestamp| timestamp.naive_utc()),
+                ),
             );
         }
     }
 
-    for age in &snapshot.ages {
+    for age in snapshot.ages() {
         record_task_age(
             metrics,
-            age.kind,
+            age.kind(),
             TaskAgeState::Queued,
-            age_seconds(age.oldest_queued_at, now).unwrap_or(0.0),
+            age_seconds(
+                age.oldest_queued_at()
+                    .map(|timestamp| timestamp.naive_utc()),
+                now,
+            )
+            .unwrap_or(0.0),
         );
         record_task_age(
             metrics,
-            age.kind,
+            age.kind(),
             TaskAgeState::Active,
-            age_seconds(age.oldest_active_at, now).unwrap_or(0.0),
+            age_seconds(
+                age.oldest_active_at()
+                    .map(|timestamp| timestamp.naive_utc()),
+                now,
+            )
+            .unwrap_or(0.0),
         );
     }
 }
 
 fn record_empty_task_snapshot(metrics: &Metrics) {
-    for kind in TaskKind::ALL {
-        for status in TaskStatus::ALL {
+    for kind in StorageTaskKind::ALL {
+        for status in StorageTaskStatus::ALL {
             record_task_count(metrics, kind, status, 0);
         }
-        for status in TaskStatus::TERMINAL {
+        for status in StorageTaskStatus::ALL
+            .into_iter()
+            .filter(|status| status.is_terminal())
+        {
             record_last_terminal_timestamp(metrics, kind, status, 0.0);
         }
         record_task_age(metrics, kind, TaskAgeState::Queued, 0.0);
@@ -232,7 +255,12 @@ fn record_empty_task_snapshot(metrics: &Metrics) {
     }
 }
 
-fn record_task_count(metrics: &Metrics, kind: TaskKind, status: TaskStatus, count: i64) {
+fn record_task_count(
+    metrics: &Metrics,
+    kind: StorageTaskKind,
+    status: StorageTaskStatus,
+    count: i64,
+) {
     metrics.task_counts.record(
         count,
         &[
@@ -242,7 +270,7 @@ fn record_task_count(metrics: &Metrics, kind: TaskKind, status: TaskStatus, coun
     );
 }
 
-fn record_task_age(metrics: &Metrics, kind: TaskKind, state: TaskAgeState, age: f64) {
+fn record_task_age(metrics: &Metrics, kind: StorageTaskKind, state: TaskAgeState, age: f64) {
     metrics.task_oldest_age.record(
         age,
         &[
@@ -254,8 +282,8 @@ fn record_task_age(metrics: &Metrics, kind: TaskKind, state: TaskAgeState, age: 
 
 fn record_last_terminal_timestamp(
     metrics: &Metrics,
-    kind: TaskKind,
-    status: TaskStatus,
+    kind: StorageTaskKind,
+    status: StorageTaskStatus,
     timestamp: f64,
 ) {
     metrics.task_last_terminal_timestamp.record(

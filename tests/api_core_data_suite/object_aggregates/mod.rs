@@ -4,26 +4,27 @@ use std::time::Duration;
 use actix_web::{App, http::StatusCode, test, web::Data};
 use base64::Engine;
 
-use crate::db::traits::computed_field::{
-    class_computation_state_for, create_personal_definition, create_shared_definition,
-    execute_computed_reindex_task, update_shared_definition,
-};
 use crate::events::EventContext;
 use crate::models::{
     ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, GroupID, HubuumObject,
     HubuumObjectID, MAX_OBJECT_AGGREGATE_CURSOR_LENGTH, NewHubuumClass, NewHubuumObject,
-    Permissions, ServiceAccountID, TaskID, TokenResourceScope, UpdateHubuumObject,
+    Permissions, TokenResourceScope, UpdateHubuumObject,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::{AppContext, PermissionBackend, ResourceAttrs, ResourceKind};
+use crate::permissions::{PermissionBackend, ResourceAttrs, ResourceKind};
+use crate::services::computed_fields::{
+    class_computation_state_for, create_personal_definition, create_shared_definition,
+    update_shared_definition,
+};
+use crate::services::tasks::execute_computed_field_rebuild;
 use crate::tests::api_operations::get_request;
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{
     ObjectFixture, TestContext, create_test_group, create_test_service_account,
     resource_scoped_token, scoped_token, service_account_token, test_context,
 };
-use crate::traits::{CanDelete, CanUpdate, PermissionController, SelfAccessors};
+use crate::traits::{CanUpdate, PermissionController};
 
 async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
     let object = |name: &str, description: &str, data: serde_json::Value| NewHubuumObject {
@@ -197,12 +198,13 @@ async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
         if state.active_task_id.is_none() {
             return;
         }
-        let task = TaskID::new(state.active_task_id.unwrap())
-            .unwrap()
-            .instance(&context.pool)
-            .await
-            .unwrap();
-        let _ = execute_computed_reindex_task(&context.pool, &task).await;
+        let task = crate::test_support::claim_persisted_test_task(
+            context.pool.get_ref(),
+            state.active_task_id.unwrap(),
+        )
+        .await
+        .unwrap();
+        let _ = execute_computed_field_rebuild(&context.pool, &task).await;
         tokio::task::yield_now().await;
     }
     panic!("computed-field rebuild did not finish");

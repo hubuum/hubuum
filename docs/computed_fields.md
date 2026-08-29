@@ -313,7 +313,7 @@ deliberately refreshed classes.
 
 ## Backup, events, and metrics
 
-Backup version 4 includes computed-field definitions and their resource
+Backup version 5 includes computed-field definitions and their resource
 revisions as authoritative state.
 Class rebuild state and object materializations are excluded as rebuildable
 caches. Restore validates all definitions, increments each affected class

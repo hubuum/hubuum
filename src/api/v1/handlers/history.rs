@@ -5,9 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::history::resolve_principal_names;
 use crate::errors::ApiError;
 use crate::events::{PrincipalNames, Provenance, StoredProvenance};
 use crate::models::collection::user_can_on_any;
@@ -18,6 +15,8 @@ use crate::models::{
 use crate::pagination::count_query_options;
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::services::history::resolve_principal_names;
+use crate::traits::scope_allows;
 use crate::traits::{AuthzSubject, CursorPaginated};
 
 /// A serialized history row plus the resolved username of its actor (if any).
@@ -52,7 +51,7 @@ where
 
 /// Resolve the union of actor and initiator ids with one principal query.
 pub(crate) async fn resolve_history_principal_names<T>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     rows: &[T],
 ) -> Result<PrincipalNames, ApiError>
 where
@@ -128,7 +127,7 @@ where
 /// Load every non-permission-filtered candidate before external authorization.
 pub fn history_candidate_query_options(query_options: &QueryOptions) -> QueryOptions {
     let mut candidates = count_query_options(query_options);
-    candidates.include_total = false;
+    candidates.set_include_total(false);
     candidates
 }
 
@@ -185,87 +184,6 @@ pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
     DateTime::parse_from_rfc3339(at)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|_| ApiError::BadRequest(format!("invalid rfc3339 timestamp: {at}")))
-}
-
-/// Implement `CursorPaginated` + `CursorSqlMapping` for a history Queryable
-/// type. `$table` is the history table name as it appears in SQL (used to
-/// build fully-qualified column references for the keyset/ORDER BY clauses).
-#[macro_export]
-macro_rules! impl_history_pagination {
-    ($ty:ty, $table:literal) => {
-        impl $crate::traits::CursorPaginated for $ty {
-            fn supports_sort(field: &$crate::models::search::FilterField) -> bool {
-                matches!(
-                    field,
-                    $crate::models::search::FilterField::HistoryId
-                        | $crate::models::search::FilterField::Revision
-                )
-            }
-
-            fn cursor_value(
-                &self,
-                field: &$crate::models::search::FilterField,
-            ) -> Result<$crate::traits::CursorValue, $crate::errors::ApiError> {
-                Ok(match field {
-                    $crate::models::search::FilterField::HistoryId => {
-                        $crate::traits::CursorValue::Integer(self.history_id)
-                    }
-                    $crate::models::search::FilterField::Revision => {
-                        $crate::traits::CursorValue::Integer(self.revision.get())
-                    }
-                    other => {
-                        return Err($crate::errors::ApiError::BadRequest(format!(
-                            "Field '{}' is not orderable for history",
-                            other
-                        )));
-                    }
-                })
-            }
-
-            fn default_sort() -> Vec<$crate::models::search::SortParam> {
-                vec![$crate::models::search::SortParam {
-                    field: $crate::models::search::FilterField::HistoryId,
-                    descending: true,
-                }]
-            }
-
-            fn tie_breaker_sort() -> Vec<$crate::models::search::SortParam> {
-                vec![$crate::models::search::SortParam {
-                    field: $crate::models::search::FilterField::HistoryId,
-                    descending: true,
-                }]
-            }
-        }
-
-        impl $crate::traits::CursorSqlMapping for $ty {
-            fn sql_field(
-                field: &$crate::models::search::FilterField,
-            ) -> Result<$crate::traits::CursorSqlField, $crate::errors::ApiError> {
-                Ok(match field {
-                    $crate::models::search::FilterField::HistoryId => {
-                        $crate::traits::CursorSqlField {
-                            column: concat!($table, ".history_id"),
-                            sql_type: $crate::traits::CursorSqlType::BigInt,
-                            nullable: false,
-                        }
-                    }
-                    $crate::models::search::FilterField::Revision => {
-                        $crate::traits::CursorSqlField {
-                            column: concat!($table, ".revision"),
-                            sql_type: $crate::traits::CursorSqlType::BigInt,
-                            nullable: false,
-                        }
-                    }
-                    other => {
-                        return Err($crate::errors::ApiError::BadRequest(format!(
-                            "Field '{}' is not orderable for history",
-                            other
-                        )));
-                    }
-                })
-            }
-        }
-    };
 }
 
 #[cfg(test)]
@@ -326,14 +244,17 @@ mod tests {
 
         let allow_backend = MockTreetopBackend::new();
         allow_backend.add_admin_rule(policy_group.id);
-        let allow_context = AppContext::new(test.pool.get_ref().clone(), Arc::new(allow_backend));
+        let allow_context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            Arc::new(allow_backend),
+        );
         assert!(
             can_read_deleted_history(&allow_context, &test.normal_user, false)
                 .await
                 .unwrap()
         );
 
-        let deny_context = AppContext::new(
+        let deny_context = crate::tests::app_context_with_permission_backend(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -370,7 +291,10 @@ mod tests {
                 ..Default::default()
             },
         });
-        let context = AppContext::new(test.pool.get_ref().clone(), backend.clone());
+        let context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            backend.clone(),
+        );
         let timestamp = Utc::now();
         let visible = HubuumClassHistory {
             id: 41,

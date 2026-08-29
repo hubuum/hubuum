@@ -1,36 +1,23 @@
-use crate::db::prelude::*;
 use async_trait::async_trait;
-use diesel::deserialize::{self, FromSql, FromSqlRow};
-use diesel::expression::AsExpression;
-use diesel::pg::{Pg, PgValue};
-use diesel::serialize::{self, Output, ToSql};
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Schema, Type};
 use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath, ResourceRevision,
+    HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
+    HubuumObjectWithPath, ResourceRevision,
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::utilities::aliases::normalize_template_alias;
-use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumClassRelation`].
-    pub struct HubuumClassRelationID;
-    noun = "class relation id";
-}
+pub use hubuum_domain::ClassRelationId as HubuumClassRelationID;
 
 /// Maximum number of object relations allowed for one object on one side of a
 /// class relation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, AsExpression, FromSqlRow)]
-#[diesel(sql_type = Integer)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct ObjectRelationLimit(i32);
 
 impl ObjectRelationLimit {
@@ -60,19 +47,6 @@ impl<'de> Deserialize<'de> for ObjectRelationLimit {
     }
 }
 
-impl FromSql<Integer, Pg> for ObjectRelationLimit {
-    fn from_sql(value: PgValue<'_>) -> deserialize::Result<Self> {
-        let value = i32::from_sql(value)?;
-        Self::new(value).map_err(|error| error.to_string().into())
-    }
-}
-
-impl ToSql<Integer, Pg> for ObjectRelationLimit {
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
-        <i32 as ToSql<Integer, Pg>>::to_sql(&self.0, out)
-    }
-}
-
 impl utoipa::PartialSchema for ObjectRelationLimit {
     fn schema() -> RefOr<Schema> {
         ObjectBuilder::new()
@@ -88,8 +62,7 @@ impl utoipa::PartialSchema for ObjectRelationLimit {
 
 impl ToSchema for ObjectRelationLimit {}
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, PartialEq, Eq, ToSchema)]
-#[diesel(table_name = hubuumclass_relation)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelation {
     pub id: i32,
     pub from_hubuum_class_id: i32,
@@ -107,9 +80,8 @@ pub struct HubuumClassRelation {
     pub revision: ResourceRevision,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_example)]
-#[diesel(table_name = hubuumclass_relation)]
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
@@ -192,14 +164,128 @@ impl NewHubuumClassRelationFromClass {
     }
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumObjectRelation`].
-    pub struct HubuumObjectRelationID;
-    noun = "object relation id";
+fn class_relation_authorization_resource(
+    relation_id: i32,
+    from_class: &HubuumClass,
+    to_class: &HubuumClass,
+) -> ResourceRef {
+    ResourceRef {
+        kind: ResourceKind::ClassRelation,
+        id: relation_id,
+        attrs: ResourceAttrs {
+            collection_id: (from_class.collection_id == to_class.collection_id)
+                .then_some(from_class.collection_id),
+            from_collection_id: Some(from_class.collection_id),
+            to_collection_id: Some(to_class.collection_id),
+            from_class_id: Some(from_class.id),
+            to_class_id: Some(to_class.id),
+            ..Default::default()
+        },
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
-#[diesel(table_name = hubuumobject_relation)]
+/// A normalized prospective class relation together with both endpoint classes.
+///
+/// Carrying the endpoints keeps authorization independent of the persistence
+/// adapter and lets creation recheck the exact aggregate that was authorized.
+#[derive(Clone, Debug)]
+pub struct PreparedClassRelation {
+    command: NewHubuumClassRelation,
+    from_class: HubuumClass,
+    to_class: HubuumClass,
+}
+
+impl PreparedClassRelation {
+    pub(crate) fn new(
+        command: NewHubuumClassRelation,
+        from_class: HubuumClass,
+        to_class: HubuumClass,
+    ) -> Result<Self, ApiError> {
+        let command = command.normalized()?;
+        if command.from_hubuum_class_id != from_class.id
+            || command.to_hubuum_class_id != to_class.id
+        {
+            return Err(ApiError::InternalServerError(
+                "prepared class relation endpoints do not match its normalized command".to_string(),
+            ));
+        }
+        Ok(Self {
+            command,
+            from_class,
+            to_class,
+        })
+    }
+
+    pub(crate) fn command(&self) -> &NewHubuumClassRelation {
+        &self.command
+    }
+
+    pub fn from_class(&self) -> &HubuumClass {
+        &self.from_class
+    }
+
+    pub fn to_class(&self) -> &HubuumClass {
+        &self.to_class
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        class_relation_authorization_resource(0, &self.from_class, &self.to_class)
+    }
+}
+
+/// A persisted class relation resolved with both endpoint classes.
+#[derive(Clone, Debug)]
+pub struct ResolvedClassRelationTarget {
+    relation: HubuumClassRelation,
+    from_class: HubuumClass,
+    to_class: HubuumClass,
+}
+
+impl ResolvedClassRelationTarget {
+    pub(crate) fn new(
+        relation: HubuumClassRelation,
+        from_class: HubuumClass,
+        to_class: HubuumClass,
+    ) -> Result<Self, ApiError> {
+        if relation.from_hubuum_class_id != from_class.id
+            || relation.to_hubuum_class_id != to_class.id
+        {
+            return Err(ApiError::InternalServerError(format!(
+                "class relation {} endpoints do not match the resolved classes",
+                relation.id
+            )));
+        }
+        Ok(Self {
+            relation,
+            from_class,
+            to_class,
+        })
+    }
+
+    pub fn relation(&self) -> &HubuumClassRelation {
+        &self.relation
+    }
+
+    pub fn from_class(&self) -> &HubuumClass {
+        &self.from_class
+    }
+
+    pub fn to_class(&self) -> &HubuumClass {
+        &self.to_class
+    }
+
+    pub fn contains_class(&self, class_id: HubuumClassID) -> bool {
+        self.from_class.id == class_id.id() || self.to_class.id == class_id.id()
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        class_relation_authorization_resource(self.relation.id, &self.from_class, &self.to_class)
+    }
+}
+
+pub use hubuum_domain::ObjectRelationId as HubuumObjectRelationID;
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, ToSchema)]
 pub struct HubuumObjectRelation {
     pub id: i32,
     pub from_hubuum_object_id: i32,
@@ -210,89 +296,319 @@ pub struct HubuumObjectRelation {
     pub revision: ResourceRevision,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_object_relation_example)]
-#[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
     pub class_relation_id: i32,
 }
 
+impl NewHubuumObjectRelation {
+    /// Validate and normalize an object relation before persistence.
+    pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
+        if self.from_hubuum_object_id == self.to_hubuum_object_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_object_id and to_hubuum_object_id cannot be the same".to_string(),
+            ));
+        }
+        if self.from_hubuum_object_id > self.to_hubuum_object_id {
+            std::mem::swap(
+                &mut self.from_hubuum_object_id,
+                &mut self.to_hubuum_object_id,
+            );
+        }
+        Ok(self)
+    }
+}
+
+/// One typed endpoint of an object relation route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectRelationEndpoint {
+    class_id: HubuumClassID,
+    object_id: HubuumObjectID,
+}
+
+impl ObjectRelationEndpoint {
+    pub fn new(class_id: HubuumClassID, object_id: HubuumObjectID) -> Self {
+        Self {
+            class_id,
+            object_id,
+        }
+    }
+
+    pub fn class_id(self) -> HubuumClassID {
+        self.class_id
+    }
+
+    pub fn object_id(self) -> HubuumObjectID {
+        self.object_id
+    }
+}
+
+/// Explicit address for a persisted object relation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectRelationSelector(ObjectRelationSelectorKind);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ObjectRelationSelectorKind {
+    ById(HubuumObjectRelationID),
+    Between {
+        from: ObjectRelationEndpoint,
+        to: ObjectRelationEndpoint,
+    },
+}
+
+impl ObjectRelationSelector {
+    pub fn by_id(id: HubuumObjectRelationID) -> Self {
+        Self(ObjectRelationSelectorKind::ById(id))
+    }
+
+    pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
+        Self(ObjectRelationSelectorKind::Between { from, to })
+    }
+
+    pub(crate) fn kind(&self) -> &ObjectRelationSelectorKind {
+        &self.0
+    }
+}
+
+/// Explicit source for preparing a prospective object relation.
+#[derive(Clone, Debug)]
+pub struct ObjectRelationCreateSelector(ObjectRelationCreateSelectorKind);
+
+#[derive(Clone, Debug)]
+pub(crate) enum ObjectRelationCreateSelectorKind {
+    Explicit(NewHubuumObjectRelation),
+    Between {
+        from: ObjectRelationEndpoint,
+        to: ObjectRelationEndpoint,
+    },
+}
+
+impl ObjectRelationCreateSelector {
+    pub fn explicit(command: NewHubuumObjectRelation) -> Self {
+        Self(ObjectRelationCreateSelectorKind::Explicit(command))
+    }
+
+    pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
+        Self(ObjectRelationCreateSelectorKind::Between { from, to })
+    }
+
+    pub(crate) fn kind(&self) -> &ObjectRelationCreateSelectorKind {
+        &self.0
+    }
+}
+
+fn object_relation_authorization_resource(
+    relation_id: i32,
+    class_relation_id: i32,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+) -> ResourceRef {
+    ResourceRef {
+        kind: ResourceKind::ObjectRelation,
+        id: relation_id,
+        attrs: ResourceAttrs {
+            collection_id: (from_object.collection_id == to_object.collection_id)
+                .then_some(from_object.collection_id),
+            from_collection_id: Some(from_object.collection_id),
+            to_collection_id: Some(to_object.collection_id),
+            from_class_id: Some(from_object.hubuum_class_id),
+            to_class_id: Some(to_object.hubuum_class_id),
+            from_object_id: Some(from_object.id),
+            to_object_id: Some(to_object.id),
+            class_relation_id: Some(class_relation_id),
+            ..Default::default()
+        },
+    }
+}
+
+fn validate_object_relation_membership(
+    command: &NewHubuumObjectRelation,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+    class_relation: &ResolvedClassRelationTarget,
+) -> Result<(), ApiError> {
+    if command.from_hubuum_object_id != from_object.id
+        || command.to_hubuum_object_id != to_object.id
+        || command.class_relation_id != class_relation.relation().id
+    {
+        return Err(ApiError::InternalServerError(
+            "object relation aggregate does not match its command".to_string(),
+        ));
+    }
+    if from_object.hubuum_class_id == to_object.hubuum_class_id {
+        return Err(ApiError::BadRequest(
+            "from_hubuum_object_id and to_hubuum_object_id must not have the same class"
+                .to_string(),
+        ));
+    }
+    let matches_class_relation = (from_object.hubuum_class_id == class_relation.from_class().id
+        && to_object.hubuum_class_id == class_relation.to_class().id)
+        || (from_object.hubuum_class_id == class_relation.to_class().id
+            && to_object.hubuum_class_id == class_relation.from_class().id);
+    if !matches_class_relation {
+        return Err(ApiError::BadRequest(
+            "objects do not match the specified class relation".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A prospective object relation with both objects and its class relation.
+#[derive(Clone, Debug)]
+pub struct PreparedObjectRelation {
+    command: NewHubuumObjectRelation,
+    from_object: HubuumObject,
+    to_object: HubuumObject,
+    class_relation: ResolvedClassRelationTarget,
+}
+
+impl PreparedObjectRelation {
+    pub(crate) fn new(
+        command: NewHubuumObjectRelation,
+        from_object: HubuumObject,
+        to_object: HubuumObject,
+        class_relation: ResolvedClassRelationTarget,
+    ) -> Result<Self, ApiError> {
+        let command = command.normalized()?;
+        validate_object_relation_membership(&command, &from_object, &to_object, &class_relation)?;
+        Ok(Self {
+            command,
+            from_object,
+            to_object,
+            class_relation,
+        })
+    }
+
+    pub(crate) fn command(&self) -> &NewHubuumObjectRelation {
+        &self.command
+    }
+
+    pub fn from_object(&self) -> &HubuumObject {
+        &self.from_object
+    }
+
+    pub fn to_object(&self) -> &HubuumObject {
+        &self.to_object
+    }
+
+    pub fn class_relation(&self) -> &ResolvedClassRelationTarget {
+        &self.class_relation
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        object_relation_authorization_resource(
+            0,
+            self.class_relation.relation().id,
+            &self.from_object,
+            &self.to_object,
+        )
+    }
+}
+
+/// A persisted object relation resolved with both objects and its class relation.
+#[derive(Clone, Debug)]
+pub struct ResolvedObjectRelationTarget {
+    relation: HubuumObjectRelation,
+    from_object: HubuumObject,
+    to_object: HubuumObject,
+    class_relation: ResolvedClassRelationTarget,
+}
+
+impl ResolvedObjectRelationTarget {
+    pub(crate) fn new(
+        relation: HubuumObjectRelation,
+        from_object: HubuumObject,
+        to_object: HubuumObject,
+        class_relation: ResolvedClassRelationTarget,
+    ) -> Result<Self, ApiError> {
+        validate_object_relation_membership(
+            &NewHubuumObjectRelation {
+                from_hubuum_object_id: relation.from_hubuum_object_id,
+                to_hubuum_object_id: relation.to_hubuum_object_id,
+                class_relation_id: relation.class_relation_id,
+            },
+            &from_object,
+            &to_object,
+            &class_relation,
+        )?;
+        Ok(Self {
+            relation,
+            from_object,
+            to_object,
+            class_relation,
+        })
+    }
+
+    pub fn relation(&self) -> &HubuumObjectRelation {
+        &self.relation
+    }
+
+    pub fn from_object(&self) -> &HubuumObject {
+        &self.from_object
+    }
+
+    pub fn to_object(&self) -> &HubuumObject {
+        &self.to_object
+    }
+
+    pub fn class_relation(&self) -> &ResolvedClassRelationTarget {
+        &self.class_relation
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        object_relation_authorization_resource(
+            self.relation.id,
+            self.relation.class_relation_id,
+            &self.from_object,
+            &self.to_object,
+        )
+    }
+}
+
 /// To create new relations between objects from within a
 /// path where we already provide the class and object IDs
 /// we only need the destination object ID.
-#[derive(Debug, Serialize, Deserialize, Insertable, Clone, ToSchema)]
-#[diesel(table_name = hubuumobject_relation)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct NewHubuumObjectRelationFromClassAndObject {
     pub to_hubuum_object_id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, QueryableByName, Clone, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelationTransitive {
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Nullable<Integer>>)]
     pub path: Vec<Option<i32>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, QueryableByName, Clone)]
-pub struct HubuumObjectTransitiveLink {
-    #[diesel(sql_type = Integer)]
-    target_object_id: i32,
-    #[diesel(sql_type = Array<Integer>)]
-    path: Vec<i32>,
-}
-
-#[derive(Debug, Queryable, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClassGraphRow {
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Nullable<Jsonb>)]
     pub ancestor_json_schema: Option<serde_json::Value>,
-    #[diesel(sql_type = Nullable<Jsonb>)]
     pub descendant_json_schema: Option<serde_json::Value>,
-    #[diesel(sql_type = Bool)]
     pub ancestor_validate_schema: bool,
-    #[diesel(sql_type = Bool)]
     pub descendant_validate_schema: bool,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ObjectGraphRow {
     pub ancestor_object_id: i32,
     pub descendant_object_id: i32,
@@ -316,121 +632,68 @@ pub struct ObjectGraphRow {
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectGraphRow {
-    #[diesel(sql_type = Integer)]
     pub ancestor_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub ancestor_data: serde_json::Value,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectIncludeRow {
-    #[diesel(sql_type = Integer)]
     pub root_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub ancestor_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub ancestor_data: serde_json::Value,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub ancestor_revision: ResourceRevision,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
-#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelatedObjectForRootRow {
-    #[diesel(sql_type = Integer)]
     pub root_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_object_id: i32,
-    #[diesel(sql_type = Integer)]
     pub depth: i32,
-    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
-    #[diesel(sql_type = Text)]
     pub descendant_name: String,
-    #[diesel(sql_type = Integer)]
     pub descendant_collection_id: i32,
-    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
-    #[diesel(sql_type = Text)]
     pub descendant_description: String,
-    #[diesel(sql_type = Jsonb)]
     pub descendant_data: serde_json::Value,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
     pub descendant_revision: ResourceRevision,
 }
 
@@ -477,7 +740,10 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumClassRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
             .await?;
@@ -503,7 +769,10 @@ impl AuthzTarget for HubuumClassRelation {
 
 #[async_trait]
 impl AuthzTarget for NewHubuumClassRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
             .await?;
@@ -528,14 +797,20 @@ impl AuthzTarget for NewHubuumClassRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumClassRelationID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
             .await?;
@@ -564,7 +839,10 @@ impl AuthzTarget for HubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for NewHubuumObjectRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
             .await?;
@@ -592,24 +870,17 @@ impl AuthzTarget for NewHubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectRelationID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
 
 #[cfg(test)]
-pub mod tests {
-    use rstest::rstest;
-
+mod tests {
     use super::*;
-    use crate::db::DbPool;
-    use crate::db::traits::ClassRelation;
-    use crate::errors::ApiError;
-    use crate::models::class::tests::create_class;
-    use crate::models::object::tests::create_object;
-    use crate::models::{HubuumClass, HubuumObject};
-    use crate::tests::{TestContext, TestScope, test_context};
-    use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
     #[test]
     fn class_relation_normalization_keeps_directional_settings_with_their_classes() {
@@ -642,879 +913,5 @@ pub mod tests {
             normalized.to_max_relations,
             Some(ObjectRelationLimit::new(1).unwrap())
         );
-    }
-
-    pub async fn create_collection_and_classes(
-        suffix: &str,
-    ) -> (crate::tests::CollectionFixture, HubuumClass, HubuumClass) {
-        let scope = TestScope::new();
-        let pool = scope.pool.clone();
-
-        let collection = scope
-            .collection_fixture(&format!("rel_test_{suffix}"))
-            .await;
-
-        let class1 = create_class(
-            &pool,
-            &collection.collection,
-            &format!("rel_class1_{suffix}"),
-        )
-        .await;
-        let class2 = create_class(
-            &pool,
-            &collection.collection,
-            &format!("rel_class2_{suffix}"),
-        )
-        .await;
-
-        (collection, class1, class2)
-    }
-
-    pub async fn verify_no_such_class_relation(pool: &DbPool, id: i32) {
-        match HubuumClassRelationID(id).instance(pool).await {
-            Ok(_) => panic!("Found a class relation that should not exist"),
-            Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
-    }
-
-    pub async fn verify_no_such_object_relation(pool: &DbPool, id: i32) {
-        match HubuumObjectRelationID(id).instance(pool).await {
-            Ok(_) => panic!("Found an object relation that should not exist"),
-            Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
-    }
-
-    pub async fn create_class_relation(
-        pool: &DbPool,
-        class1: &HubuumClass,
-        class2: &HubuumClass,
-    ) -> HubuumClassRelation {
-        let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: class1.id,
-            to_hubuum_class_id: class2.id,
-            forward_template_alias: None,
-            reverse_template_alias: None,
-            from_max_relations: None,
-            to_max_relations: None,
-        };
-
-        let relation = relation.save_without_events(pool).await.unwrap();
-
-        assert!(relation.from_hubuum_class_id < relation.to_hubuum_class_id);
-
-        let correct_relation = if class1.id > class2.id {
-            NewHubuumClassRelation {
-                from_hubuum_class_id: class2.id,
-                to_hubuum_class_id: class1.id,
-                forward_template_alias: None,
-                reverse_template_alias: None,
-                from_max_relations: None,
-                to_max_relations: None,
-            }
-        } else {
-            NewHubuumClassRelation {
-                from_hubuum_class_id: class1.id,
-                to_hubuum_class_id: class2.id,
-                forward_template_alias: None,
-                reverse_template_alias: None,
-                from_max_relations: None,
-                to_max_relations: None,
-            }
-        };
-
-        let fetched_relation = HubuumClassRelationID(relation.id)
-            .instance(pool)
-            .await
-            .unwrap();
-
-        assert_eq!(fetched_relation.id, relation.id);
-        assert_eq!(
-            fetched_relation.from_hubuum_class_id,
-            correct_relation.from_hubuum_class_id
-        );
-        assert_eq!(
-            fetched_relation.to_hubuum_class_id,
-            correct_relation.to_hubuum_class_id
-        );
-        relation
-    }
-
-    pub async fn create_object_relation(
-        pool: &DbPool,
-        class1: &HubuumClassRelation,
-        object1: &HubuumObject,
-        object2: &HubuumObject,
-    ) -> HubuumObjectRelation {
-        let object_rel = NewHubuumObjectRelation {
-            from_hubuum_object_id: object1.id,
-            to_hubuum_object_id: object2.id,
-            class_relation_id: class1.id,
-        };
-
-        object_rel.save_without_events(pool).await.unwrap()
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_class_relation() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) = create_collection_and_classes("create_class").await;
-        let relation = create_class_relation(&pool, &class1, &class2).await;
-        collection.cleanup().await.unwrap();
-        verify_no_such_class_relation(&pool, relation.id).await;
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_class_relation_with_same_classes() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, _) = create_collection_and_classes("same_classes").await;
-        let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: class1.id,
-            to_hubuum_class_id: class1.id,
-            forward_template_alias: None,
-            reverse_template_alias: None,
-            from_max_relations: None,
-            to_max_relations: None,
-        };
-
-        match relation.save_without_events(&pool).await {
-            Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!("Should not be able to create a relation with the same classes"),
-        }
-
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_class_relation_lowest_id_becomes_from() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) = create_collection_and_classes("lowest_id").await;
-        let relation = create_class_relation(&pool, &class2, &class1).await;
-
-        // Check that the database actually swapped the order of the identifiers
-        assert_eq!(relation.from_hubuum_class_id, class1.id);
-        assert_eq!(relation.to_hubuum_class_id, class2.id);
-
-        // Check that the original relation will give a conflict
-        let old_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: class2.id,
-            to_hubuum_class_id: class1.id,
-            forward_template_alias: None,
-            reverse_template_alias: None,
-            from_max_relations: None,
-            to_max_relations: None,
-        };
-        match old_relation.save_without_events(&pool).await {
-            Err(ApiError::Conflict(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!("Should not be able to create a relation with the same classes"),
-        }
-
-        collection.cleanup().await.unwrap();
-
-        verify_no_such_class_relation(&pool, relation.id).await;
-    }
-
-    #[actix_rt::test]
-    async fn test_deleting_class_relation() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) = create_collection_and_classes("delete_class").await;
-        let relation = create_class_relation(&pool, &class1, &class2).await;
-
-        relation.delete_without_events(&pool).await.unwrap();
-        verify_no_such_class_relation(&pool, relation.id).await;
-
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_object_relation() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) = create_collection_and_classes("create_object").await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            &pool,
-            class1.id,
-            collection_id,
-            "o1_create relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            &pool,
-            class2.id,
-            collection_id,
-            "o2_create relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-
-        let class_relations: Vec<HubuumClassRelationTransitive> =
-            class1.relations_to(&pool, &class2).await.unwrap();
-
-        assert_eq!(class_relations.len(), 1);
-
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
-
-        assert_eq!(object_rel.from_hubuum_object_id, object1.id);
-        assert_eq!(object_rel.to_hubuum_object_id, object2.id);
-
-        let fetched_relation = HubuumObjectRelationID(object_rel.id)
-            .instance(&pool)
-            .await
-            .unwrap();
-
-        assert_eq!(fetched_relation, object_rel);
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_object_relation_reverse_duplicate_conflicts() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) =
-            create_collection_and_classes("create_object_reverse").await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            &pool,
-            class1.id,
-            collection_id,
-            "o1_create reverse relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            &pool,
-            class2.id,
-            collection_id,
-            "o2_create reverse relation",
-            json,
-        )
-        .await
-        .unwrap();
-
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
-
-        let reverse_relation = NewHubuumObjectRelation {
-            from_hubuum_object_id: object2.id,
-            to_hubuum_object_id: object1.id,
-            class_relation_id: class_rel.id,
-        };
-
-        match reverse_relation.save_without_events(&pool).await {
-            Err(ApiError::Conflict(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!("Should not be able to create an inverse duplicate object relation"),
-        }
-
-        let fetched_relation = HubuumObjectRelationID(object_rel.id)
-            .instance(&pool)
-            .await
-            .unwrap();
-
-        assert_eq!(fetched_relation, object_rel);
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_creating_object_relation_failure_class_mismatch() {
-        use crate::db::traits::ClassRelation;
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) =
-            create_collection_and_classes("create_object_class_mismatch").await;
-
-        let class3 = create_class(
-            &pool,
-            &collection.collection,
-            "class3_create_object_class_mismatch",
-        )
-        .await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            &pool,
-            class1.id,
-            collection_id,
-            "o1_fail relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            &pool,
-            class2.id,
-            collection_id,
-            "o2_fail relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        let class_relation_13 = create_class_relation(&pool, &class1, &class3).await;
-
-        let class1_to_class2_relations = class1.relations_to(&pool, &class2).await.unwrap();
-        let class2_to_class1_relations = class2.relations_to(&pool, &class1).await.unwrap();
-
-        assert_eq!(class1_to_class2_relations.len(), 0);
-        assert_eq!(class2_to_class1_relations.len(), 0);
-
-        let object_rel = NewHubuumObjectRelation {
-            from_hubuum_object_id: object1.id,
-            to_hubuum_object_id: object2.id,
-            class_relation_id: class_relation_13.id,
-        };
-
-        match object_rel.save_without_events(&pool).await {
-            Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!(
-                "Creating a relation should fail when the classes of objects do not match the relation classes"
-            ),
-        }
-
-        let object_rel = NewHubuumObjectRelation {
-            from_hubuum_object_id: object2.id,
-            to_hubuum_object_id: object1.id,
-            class_relation_id: class_relation_13.id,
-        };
-
-        match object_rel.save_without_events(&pool).await {
-            Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!("Creating a relation should fail also when the order is flipped"),
-        }
-
-        let object_rel = NewHubuumObjectRelation {
-            from_hubuum_object_id: object1.id,
-            to_hubuum_object_id: object2.id,
-            class_relation_id: 999999999,
-        };
-
-        match object_rel.save_without_events(&pool).await {
-            Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!(
-                "Should not be able to create object relations when class relation does not exist"
-            ),
-        }
-
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_deleting_object_relation() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) = create_collection_and_classes("delete_object").await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            &pool,
-            class1.id,
-            collection_id,
-            "o1_delete relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            &pool,
-            class2.id,
-            collection_id,
-            "o2_delete relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        // Create a class relation so that we can create an object relation
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
-
-        object_rel.delete_without_events(&pool).await.unwrap();
-        verify_no_such_object_relation(&pool, object_rel.id).await;
-
-        collection.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_deleting_class_relation_cascade() {
-        let pool = TestScope::new().pool;
-
-        let (collection, class1, class2) =
-            create_collection_and_classes("delete_object_cascade").await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            &pool,
-            class1.id,
-            collection_id,
-            "o1_delete relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            &pool,
-            class2.id,
-            collection_id,
-            "o2_delete relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        // Create a class relation so that we can create an object relation
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
-
-        class_rel.delete_without_events(&pool).await.unwrap();
-        verify_no_such_object_relation(&pool, object_rel.id).await;
-
-        collection.cleanup().await.unwrap();
-    }
-
-    #[rstest]
-    #[actix_rt::test]
-    async fn test_finding_object_relations(#[future(awt)] test_context: TestContext) {
-        use crate::db::traits::ObjectRelationsFromUser;
-        let context = test_context;
-        let pool = &context.pool;
-
-        let (collection, class1, class2) =
-            create_collection_and_classes("find_object_relations").await;
-
-        let collection_id = collection.collection.id;
-        let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(
-            pool,
-            class1.id,
-            collection_id,
-            "o1_find_object relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let object2 = create_object(
-            pool,
-            class2.id,
-            collection_id,
-            "o2_find_object relation",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        let class_rel = create_class_relation(pool, &class1, &class2).await;
-        let object_rel = create_object_relation(pool, &class_rel, &object1, &object2).await;
-
-        let rels = context
-            .admin_user
-            .get_related_objects(pool, &object1, &class2)
-            .await
-            .unwrap();
-
-        assert_eq!(rels.len(), 1);
-        assert_eq!(rels[0].target_object_id, object2.id);
-        assert_eq!(rels[0].path, vec![object1.id, object2.id]);
-
-        class_rel.delete_without_events(pool).await.unwrap();
-        verify_no_such_object_relation(pool, object_rel.id).await;
-
-        collection.cleanup().await.unwrap();
-    }
-
-    /// Test that transitive object traversal works bidirectionally.
-    /// Creates a chain: classA ↔ classB ↔ classC with objects oA, oB, oC
-    /// linked oA-oB and oB-oC. Verifies that traversal from oC finds oA
-    /// (i.e. walks "backwards" through the normalized from < to relations).
-    #[rstest]
-    #[actix_rt::test]
-    async fn test_bidirectional_transitive_object_traversal(
-        #[future(awt)] test_context: TestContext,
-    ) {
-        use crate::db::traits::ObjectRelationsFromUser;
-        let context = test_context;
-        let pool = &context.pool;
-
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("bidir_obj_traversal").await;
-        let collection_id = collection_fixture.collection.id;
-
-        let class_a = create_class(pool, &collection_fixture.collection, "bidir_class_a").await;
-        let class_b = create_class(pool, &collection_fixture.collection, "bidir_class_b").await;
-        let class_c = create_class(pool, &collection_fixture.collection, "bidir_class_c").await;
-
-        let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
-        let rel_bc = create_class_relation(pool, &class_b, &class_c).await;
-
-        let json = serde_json::json!({});
-        let obj_a = create_object(pool, class_a.id, collection_id, "bidir_oA", json.clone())
-            .await
-            .unwrap();
-        let obj_b = create_object(pool, class_b.id, collection_id, "bidir_oB", json.clone())
-            .await
-            .unwrap();
-        let obj_c = create_object(pool, class_c.id, collection_id, "bidir_oC", json.clone())
-            .await
-            .unwrap();
-
-        create_object_relation(pool, &rel_ab, &obj_a, &obj_b).await;
-        create_object_relation(pool, &rel_bc, &obj_b, &obj_c).await;
-
-        // Forward: from oA, find objects of classC
-        let forward = context
-            .admin_user
-            .get_related_objects(pool, &obj_a, &class_c)
-            .await
-            .unwrap();
-        assert_eq!(
-            forward.len(),
-            1,
-            "Forward traversal A→C should find 1 object"
-        );
-        assert_eq!(forward[0].target_object_id, obj_c.id);
-
-        // Backward: from oC, find objects of classA — this is the key bidirectional test
-        let backward = context
-            .admin_user
-            .get_related_objects(pool, &obj_c, &class_a)
-            .await
-            .unwrap();
-        assert_eq!(
-            backward.len(),
-            1,
-            "Backward traversal C→A should find 1 object"
-        );
-        assert_eq!(backward[0].target_object_id, obj_a.id);
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    /// Test that transitive class relations are found bidirectionally.
-    /// A ↔ B ↔ C: verify C sees a transitive relation to A.
-    #[actix_rt::test]
-    async fn test_bidirectional_transitive_class_relations() {
-        use crate::db::traits::SelfRelations;
-        let pool = TestScope::new().pool;
-
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("bidir_class_trans").await;
-
-        let class_a = create_class(&pool, &collection_fixture.collection, "bidir_trans_a").await;
-        let class_b = create_class(&pool, &collection_fixture.collection, "bidir_trans_b").await;
-        let class_c = create_class(&pool, &collection_fixture.collection, "bidir_trans_c").await;
-
-        create_class_relation(&pool, &class_a, &class_b).await;
-        create_class_relation(&pool, &class_b, &class_c).await;
-
-        // From A, should see transitive relations to B (depth 1) and C (depth 2)
-        let from_a = class_a.transitive_relations(&pool).await.unwrap();
-        let from_a_ids: Vec<i32> = from_a.iter().map(|r| r.descendant_class_id).collect();
-        assert!(
-            from_a_ids.contains(&class_b.id),
-            "A should see B transitively"
-        );
-        assert!(
-            from_a_ids.contains(&class_c.id),
-            "A should see C transitively"
-        );
-
-        // From C, should see transitive relations to B (depth 1) and A (depth 2)
-        let from_c = class_c.transitive_relations(&pool).await.unwrap();
-        let from_c_ids: Vec<i32> = from_c.iter().map(|r| r.descendant_class_id).collect();
-        assert!(
-            from_c_ids.contains(&class_b.id),
-            "C should see B transitively"
-        );
-        assert!(
-            from_c_ids.contains(&class_a.id),
-            "C should see A transitively"
-        );
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_class_reachability_rebuild_switches_to_remaining_shortest_path() {
-        use crate::db::traits::ClassRelation;
-
-        let pool = TestScope::new().pool;
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("reachability_rebuild").await;
-
-        let class_a = create_class(&pool, &collection_fixture.collection, "reachability_a").await;
-        let class_b = create_class(&pool, &collection_fixture.collection, "reachability_b").await;
-        let class_c = create_class(&pool, &collection_fixture.collection, "reachability_c").await;
-        let class_d = create_class(&pool, &collection_fixture.collection, "reachability_d").await;
-
-        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
-        create_class_relation(&pool, &class_b, &class_c).await;
-        create_class_relation(&pool, &class_a, &class_d).await;
-        create_class_relation(&pool, &class_c, &class_d).await;
-
-        let before_delete = class_a.relations_to(&pool, &class_c).await.unwrap();
-        assert_eq!(before_delete.len(), 1);
-        assert_eq!(
-            before_delete[0].path,
-            vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
-        );
-
-        rel_ab.delete_without_events(&pool).await.unwrap();
-
-        let after_delete = class_a.relations_to(&pool, &class_c).await.unwrap();
-        assert_eq!(after_delete.len(), 1);
-        assert_eq!(
-            after_delete[0].path,
-            vec![Some(class_a.id), Some(class_d.id), Some(class_c.id)]
-        );
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_transitive_class_relations_paginated_cursor_path_sort() {
-        use crate::db::traits::SelfRelations;
-        use crate::models::search::parse_query_parameter;
-        use crate::pagination::{finalize_page, prepare_db_pagination};
-
-        let pool = TestScope::new().pool;
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("transitive_cursor_path").await;
-
-        let class_a =
-            create_class(&pool, &collection_fixture.collection, "transitive_cursor_a").await;
-        let class_b =
-            create_class(&pool, &collection_fixture.collection, "transitive_cursor_b").await;
-        let class_c =
-            create_class(&pool, &collection_fixture.collection, "transitive_cursor_c").await;
-        let class_d =
-            create_class(&pool, &collection_fixture.collection, "transitive_cursor_d").await;
-
-        create_class_relation(&pool, &class_a, &class_b).await;
-        create_class_relation(&pool, &class_b, &class_c).await;
-        create_class_relation(&pool, &class_c, &class_d).await;
-
-        let first_request = parse_query_parameter("limit=1&sort=path").unwrap();
-        let first_query =
-            prepare_db_pagination::<HubuumClassRelationTransitive>(&first_request).unwrap();
-        let first_hits = class_a
-            .transitive_relations_paginated(&pool, &first_query)
-            .await
-            .unwrap();
-        let first_page = finalize_page(first_hits, &first_request).unwrap();
-
-        assert_eq!(first_page.items.len(), 1);
-        assert_eq!(
-            first_page.items[0].path,
-            vec![Some(class_a.id), Some(class_b.id)]
-        );
-        assert!(first_page.next_cursor.is_some());
-
-        let next_cursor = first_page.next_cursor.clone().unwrap();
-        let second_request =
-            parse_query_parameter(&format!("limit=1&sort=path&cursor={next_cursor}")).unwrap();
-        let second_query =
-            prepare_db_pagination::<HubuumClassRelationTransitive>(&second_request).unwrap();
-        let second_hits = class_a
-            .transitive_relations_paginated(&pool, &second_query)
-            .await
-            .unwrap();
-        let second_page = finalize_page(second_hits, &second_request).unwrap();
-
-        assert_eq!(second_page.items.len(), 1);
-        assert_eq!(
-            second_page.items[0].path,
-            vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
-        );
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    #[rstest]
-    #[actix_rt::test]
-    async fn test_transitive_object_traversal_supports_same_class_target(
-        #[future(awt)] test_context: TestContext,
-    ) {
-        use crate::db::traits::ObjectRelationsFromUser;
-
-        let context = test_context;
-        let pool = &context.pool;
-
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("same_class_target").await;
-        let collection_id = collection_fixture.collection.id;
-
-        let class_a =
-            create_class(pool, &collection_fixture.collection, "same_target_class_a").await;
-        let class_b =
-            create_class(pool, &collection_fixture.collection, "same_target_class_b").await;
-
-        let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
-
-        let json = serde_json::json!({});
-        let obj_a1 = create_object(
-            pool,
-            class_a.id,
-            collection_id,
-            "same_target_a1",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let obj_b1 = create_object(
-            pool,
-            class_b.id,
-            collection_id,
-            "same_target_b1",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-        let obj_a2 = create_object(
-            pool,
-            class_a.id,
-            collection_id,
-            "same_target_a2",
-            json.clone(),
-        )
-        .await
-        .unwrap();
-
-        create_object_relation(pool, &rel_ab, &obj_a1, &obj_b1).await;
-        create_object_relation(pool, &rel_ab, &obj_a2, &obj_b1).await;
-
-        let related = context
-            .admin_user
-            .get_related_objects(pool, &obj_a1, &class_a)
-            .await
-            .unwrap();
-
-        assert_eq!(related.len(), 1);
-        assert_eq!(related[0].target_object_id, obj_a2.id);
-        assert_eq!(related[0].path, vec![obj_a1.id, obj_b1.id, obj_a2.id]);
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    /// Deleting one class relation in a chain should only clean up object relations
-    /// that depended on it, leaving other object relations intact.
-    /// Chain: A ↔ B ↔ C, with oA-oB and oB-oC.
-    /// Delete B↔C → oB-oC should be removed, oA-oB should survive.
-    #[actix_rt::test]
-    async fn test_cleanup_scoped_to_deleted_class_relation() {
-        let pool = TestScope::new().pool;
-
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("cleanup_scoped").await;
-        let collection_id = collection_fixture.collection.id;
-
-        let class_a = create_class(&pool, &collection_fixture.collection, "cleanup_a").await;
-        let class_b = create_class(&pool, &collection_fixture.collection, "cleanup_b").await;
-        let class_c = create_class(&pool, &collection_fixture.collection, "cleanup_c").await;
-
-        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
-        let rel_bc = create_class_relation(&pool, &class_b, &class_c).await;
-
-        let json = serde_json::json!({});
-        let obj_a = create_object(&pool, class_a.id, collection_id, "cleanup_oA", json.clone())
-            .await
-            .unwrap();
-        let obj_b = create_object(&pool, class_b.id, collection_id, "cleanup_oB", json.clone())
-            .await
-            .unwrap();
-        let obj_c = create_object(&pool, class_c.id, collection_id, "cleanup_oC", json.clone())
-            .await
-            .unwrap();
-
-        let obj_rel_ab = create_object_relation(&pool, &rel_ab, &obj_a, &obj_b).await;
-        let obj_rel_bc = create_object_relation(&pool, &rel_bc, &obj_b, &obj_c).await;
-
-        // Delete class relation B↔C
-        rel_bc.delete_without_events(&pool).await.unwrap();
-
-        // oB-oC should be cleaned up
-        verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
-
-        // oA-oB should survive — its class relation (A↔B) still exists
-        let surviving = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
-        assert!(
-            surviving.is_ok(),
-            "Object relation A-B should survive when only B-C class relation is deleted"
-        );
-
-        collection_fixture.cleanup().await.unwrap();
-    }
-
-    /// When there's an alternative path (triangle: A↔B, A↔C, B↔C),
-    /// deleting one class relation edge should NOT clean up object relations
-    /// if the classes remain reachable via the other path.
-    #[actix_rt::test]
-    async fn test_cleanup_preserves_object_relations_with_alternative_path() {
-        let pool = TestScope::new().pool;
-
-        let scope = TestScope::new();
-        let collection_fixture = scope.collection_fixture("cleanup_alt_path").await;
-        let collection_id = collection_fixture.collection.id;
-
-        let class_a = create_class(&pool, &collection_fixture.collection, "altpath_a").await;
-        let class_b = create_class(&pool, &collection_fixture.collection, "altpath_b").await;
-        let class_c = create_class(&pool, &collection_fixture.collection, "altpath_c").await;
-
-        // Triangle: A↔B, B↔C, A↔C
-        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
-        let rel_bc = create_class_relation(&pool, &class_b, &class_c).await;
-        let _rel_ac = create_class_relation(&pool, &class_a, &class_c).await;
-
-        let json = serde_json::json!({});
-        let obj_a = create_object(&pool, class_a.id, collection_id, "altpath_oA", json.clone())
-            .await
-            .unwrap();
-        let obj_b = create_object(&pool, class_b.id, collection_id, "altpath_oB", json.clone())
-            .await
-            .unwrap();
-        let obj_c = create_object(&pool, class_c.id, collection_id, "altpath_oC", json.clone())
-            .await
-            .unwrap();
-
-        let obj_rel_ab = create_object_relation(&pool, &rel_ab, &obj_a, &obj_b).await;
-        let obj_rel_bc = create_object_relation(&pool, &rel_bc, &obj_b, &obj_c).await;
-
-        // Delete B↔C class relation. But A↔C still exists, so classes B and C
-        // are still transitively reachable (B→A→C). However, the object relation
-        // oB-oC was created under rel_bc which is now deleted — so it should be
-        // cleaned up via CASCADE (class_relation_id FK), regardless of transitive
-        // reachability.
-        rel_bc.delete_without_events(&pool).await.unwrap();
-
-        // oA-oB should survive — its class relation A↔B still exists
-        let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
-        assert!(surviving_ab.is_ok(), "Object relation A-B should survive");
-
-        // oB-oC was created under rel_bc which is now deleted — FK CASCADE removes it
-        verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
-
-        collection_fixture.cleanup().await.unwrap();
     }
 }

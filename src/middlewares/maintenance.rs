@@ -6,9 +6,10 @@ use actix_web::{Error, ResponseError};
 
 use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
+use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
+use crate::storage::{StorageCallSite, with_storage_call_site};
 
 fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
     matches!(path, "/healthz" | "/readyz")
@@ -25,7 +26,10 @@ pub async fn reject_during_maintenance(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    with_db_call_site(DbCallSite::HttpRequest, async move {
+    let storage = AppContext::from_http_request(req.request())?
+        .backend()
+        .clone();
+    with_storage_call_site(&storage, StorageCallSite::HttpRequest, async move {
         let metrics_path = req
             .app_data::<Data<RunningConfig>>()
             .map(|config| config.server.metrics_path.as_str());
@@ -37,12 +41,11 @@ pub async fn reject_during_maintenance(
             // cannot wait on itself. Its transactional state transition and
             // advisory lock serialize concurrent confirmations.
             let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
-            let pool = req.app_data::<Data<DbPool>>().cloned().ok_or_else(|| {
-                ApiError::InternalServerError("Database pool is unavailable".to_string())
-            })?;
-            let state = with_db_call_site(
-                DbCallSite::RequestMaintenance,
-                current_maintenance_state(&pool),
+            let backend = AppContext::from_http_request(req.request())?;
+            let state = with_storage_call_site(
+                backend.backend(),
+                StorageCallSite::RequestMaintenance,
+                current_maintenance_state(backend.backend()),
             )
             .await?;
             if !state.is_normal() {

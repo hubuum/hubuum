@@ -1,84 +1,94 @@
 // src/models/group.rs
 
-use crate::db::traits::group::{
-    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
-    SavePrincipalGroupRecord, UpdateGroupRecord, group_identity_scope_name,
-};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::principal::Principal;
-use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
-use crate::schema::groups;
-
-use crate::db::prelude::*;
+use crate::services::storage_boundary::{
+    group_create_to_storage, group_from_storage, group_id_to_storage, group_update_to_storage,
+    principal_from_storage, principal_group_from_storage, principal_id_to_storage,
+};
+use crate::storage::{GroupMembershipStorage, GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
+use crate::traits::{CursorPaginated, CursorValue};
 
-use crate::db::DbPool;
-
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Group`].
-    pub struct GroupID;
-    noun = "group id";
-}
+pub use hubuum_domain::GroupId as GroupID;
 
 impl IdAccessor for GroupID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
 impl InstanceAdapter<Group> for GroupID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Group, ApiError> {
         self.group(pool).await
     }
 }
 
-impl GroupID {
-    pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+/// Application behavior for a backend-neutral group identifier.
+pub trait GroupIdApplicationExt {
+    async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        self.load_group_record(backend.db_pool()).await
-    }
+        C: StorageContext;
 
-    /// Delete this group without emitting domain events.
-    ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`GroupID::delete`] so event subscribers observe the change.
-    pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
+    async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext;
+
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
+    where
+        C: StorageContext;
+}
+
+impl GroupIdApplicationExt for GroupID {
+    async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: StorageContext,
     {
-        self.delete_group_record_without_events(backend.db_pool())
+        storage_handle(backend)
+            .get_group(*self)
             .await
+            .map_err(ApiError::from)
+            .and_then(group_from_storage)
     }
 
-    pub async fn delete<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<usize, ApiError>
+    /// Delete this group with system audit attribution.
+    ///
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
+    async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_group_record(backend.db_pool(), context).await
+        storage_handle(backend)
+            .delete_group(*self, &EventContext::system())
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+    }
+
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<usize, ApiError>
+    where
+        C: StorageContext,
+    {
+        storage_handle(backend)
+            .delete_group(*self, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
-#[diesel(table_name = groups)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Group {
     pub id: i32,
     pub groupname: String,
@@ -171,15 +181,14 @@ impl GroupResponse {
 
     pub async fn from_groups<C>(backend: &C, groups: Vec<Group>) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let scope_ids = groups
             .iter()
             .map(|group| group.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
-                .await?;
+            crate::services::identity::resolve_identity_scope_names(backend, &scope_ids).await?;
 
         groups
             .into_iter()
@@ -239,7 +248,10 @@ impl IdAccessor for Group {
 }
 
 impl InstanceAdapter<Group> for Group {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Group, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<Group, ApiError> {
         Ok(self.clone())
     }
 }
@@ -247,48 +259,59 @@ impl InstanceAdapter<Group> for Group {
 impl Group {
     pub async fn to_response<C>(&self, backend: &C) -> Result<GroupResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let identity_scope = group_identity_scope_name(backend.db_pool(), self.id).await?;
+        let identity_scope = storage_handle(backend)
+            .resolve_group_identity_scope_name(group_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)?;
         Ok(GroupResponse::from_parts(self, identity_scope))
     }
 
     pub async fn to_point_response<C>(&self, backend: &C) -> Result<GroupPointResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         Ok(self.to_response(backend).await?.into())
     }
 
     pub async fn members<C>(&self, backend: &C) -> Result<Vec<Principal>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_group_members(backend.db_pool()).await
+        storage_handle(backend)
+            .load_group_member_principals(group_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)
+            .and_then(|members| members.into_iter().map(principal_from_storage).collect())
     }
 
     pub async fn members_paginated<C>(
         &self,
         backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<(crate::models::PrincipalGroup, Principal)>, ApiError>
+    ) -> Result<(Vec<(crate::models::PrincipalGroup, Principal)>, Option<i64>), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_group_members_paginated(backend.db_pool(), query_options)
+        storage_handle(backend)
+            .list_group_members(group_id_to_storage(self.id), query_options.clone())
             .await
-    }
-
-    pub async fn count_members_paginated<C>(
-        &self,
-        backend: &C,
-        query_options: &QueryOptions,
-    ) -> Result<i64, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.count_group_members_paginated(backend.db_pool(), query_options)
-            .await
+            .map_err(ApiError::from)
+            .and_then(|page| {
+                let (members, total) = page.into_parts();
+                let members = members
+                    .into_iter()
+                    .map(|member| {
+                        let (membership, principal) = member.into_parts();
+                        Ok((
+                            principal_group_from_storage(membership)?,
+                            principal_from_storage(principal)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
+                Ok((members, total))
+            })
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -301,10 +324,7 @@ impl Group {
     /// * `Ok(())` if the user was added to the group
     /// * `Err(ApiError)` if the user was not added to the group
     ///
-    /// This bypasses event emission and is intended only for internal
-    /// infrastructure paths such as bootstrap/setup, fixture construction,
-    /// cleanup, and event-system tests. Normal application code should use
-    /// [`Group::add_member`] so event subscribers observe the change.
+    /// This compatibility path emits an event attributed to the system actor.
     ///
     /// If the user is already a member of the group, this function is a safe noop.
     pub async fn add_member_without_events<C, P>(
@@ -313,15 +333,18 @@ impl Group {
         member: &P,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        NewPrincipalGroup {
-            principal_id: member.principal_id(),
-            group_id: self.id,
-        }
-        .save_principal_group_record_without_events(backend.db_pool())
-        .await?;
+        let _membership = storage_handle(backend)
+            .add_group_member(
+                principal_id_to_storage(member.principal_id()),
+                group_id_to_storage(self.id),
+                &EventContext::system(),
+            )
+            .await
+            .map_err(ApiError::from)?
+            .into_value();
 
         Ok(())
     }
@@ -330,66 +353,82 @@ impl Group {
         &self,
         backend: &C,
         member: &P,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<crate::models::PrincipalGroup, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        NewPrincipalGroup {
-            principal_id: member.principal_id(),
-            group_id: self.id,
-        }
-        .save_principal_group_record(backend.db_pool(), context)
-        .await
+        storage_handle(backend)
+            .add_group_member(
+                principal_id_to_storage(member.principal_id()),
+                group_id_to_storage(self.id),
+                context,
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(principal_group_from_storage)
     }
 
-    /// Remove a member from this group without emitting domain events.
+    /// Remove a member with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use [`Group::remove_member`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn remove_member_without_events<C, P>(
         &self,
         member: &P,
         backend: &C,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend_without_events(
-            member.principal_id(),
-            backend.db_pool(),
-        )
-        .await
+        storage_handle(backend)
+            .remove_group_member(
+                principal_id_to_storage(member.principal_id()),
+                group_id_to_storage(self.id),
+                &EventContext::system(),
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     pub async fn remove_member<C, P>(
         &self,
         member: &P,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(member.principal_id(), backend.db_pool(), context)
+        storage_handle(backend)
+            .remove_group_member(
+                principal_id_to_storage(member.principal_id()),
+                group_id_to_storage(self.id),
+                context,
+            )
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
-    /// Delete this group without emitting domain events.
+    /// Delete this group with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture cleanup, and event-system tests. Normal application code should
-    /// use the event-aware delete path so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_group_record_without_events(backend.db_pool())
+        storage_handle(backend)
+            .delete_group(group_id_to_storage(self.id), &EventContext::system())
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -402,76 +441,81 @@ pub struct NewGroup {
 }
 
 impl NewGroup {
-    /// Persist without emitting domain events.
+    /// Persist with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`NewGroup::save`] so event subscribers observe the change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn save_without_events<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_group_record_without_events(backend.db_pool())
+        storage_handle(backend)
+            .create_group(group_create_to_storage(self), &EventContext::system())
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(group_from_storage)
     }
 
-    pub async fn save<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Group, ApiError>
+    pub async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_group_record(backend.db_pool(), context).await
+        storage_handle(backend)
+            .create_group(group_create_to_storage(self), context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(group_from_storage)
     }
 }
 
-#[derive(Deserialize, Serialize, AsChangeset, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 #[schema(example = update_group_example)]
-#[diesel(table_name = groups)]
 pub struct UpdateGroup {
     pub groupname: Option<String>,
 }
 
 impl UpdateGroup {
-    pub(crate) fn has_changes(&self, current: &Group) -> bool {
-        self.groupname
-            .as_ref()
-            .is_some_and(|value| value != &current.groupname)
-    }
-}
-
-impl UpdateGroup {
-    /// Persist changes without emitting domain events.
+    /// Persist changes with system audit attribution.
     ///
-    /// Intended only for internal infrastructure paths such as bootstrap/setup,
-    /// fixture construction, cleanup, and event-system tests. Normal application
-    /// code should use [`UpdateGroup::save`] so event subscribers observe the
-    /// change.
+    /// The compatibility name is retained for internal callers; the mutation
+    /// still emits its audit event.
     pub async fn save_without_events<C>(
         &self,
         group_id: GroupID,
         backend: &C,
     ) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_group_record_without_events(group_id.id(), backend.db_pool())
+        storage_handle(backend)
+            .update_group(
+                group_id,
+                group_update_to_storage(self),
+                &EventContext::system(),
+            )
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(group_from_storage)
     }
 
     pub async fn save<C>(
         &self,
         group_id: GroupID,
         backend: &C,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_group_record(group_id.id(), backend.db_pool(), context)
+        storage_handle(backend)
+            .update_group(group_id, group_update_to_storage(self), context)
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(group_from_storage)
     }
 }
 
@@ -531,48 +575,5 @@ impl CursorPaginated for Group {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for Group {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "groups.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Groupname => CursorSqlField {
-                column: "groups.groupname",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "groups.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "groups.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "groups.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "groups.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for groups",
-                    field
-                )));
-            }
-        })
     }
 }

@@ -1,121 +1,12 @@
-use std::{fmt, str::FromStr};
-
-use crate::db::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
-use crate::models::redacted_debug_option;
 use crate::models::search::{FilterField, SortParam};
-use crate::pagination::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-};
-use crate::schema::event_deliveries;
+use crate::pagination::{CursorPaginated, CursorValue};
 
-/// Identifier wrapper for an event delivery.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-pub struct EventDeliveryID(i64);
-
-impl EventDeliveryID {
-    pub fn new(id: i64) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid event delivery id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    pub fn id(self) -> i64 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for EventDeliveryID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = <i64 as Deserialize>::deserialize(deserializer)?;
-        Self::new(id).map_err(serde::de::Error::custom)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EventDeliveryStatus {
-    Pending,
-    InFlight,
-    Succeeded,
-    Failed,
-    Dead,
-}
-
-impl EventDeliveryStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::InFlight => "in_flight",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Dead => "dead",
-        }
-    }
-}
-
-impl FromStr for EventDeliveryStatus {
-    type Err = ApiError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "in_flight" => Ok(Self::InFlight),
-            "succeeded" => Ok(Self::Succeeded),
-            "failed" => Ok(Self::Failed),
-            "dead" => Ok(Self::Dead),
-            _ => Err(ApiError::BadRequest(format!(
-                "Unsupported event delivery status: '{value}'"
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Queryable, Selectable, PartialEq, Eq)]
-#[diesel(table_name = event_deliveries)]
-pub struct EventDelivery {
-    pub id: i64,
-    pub event_id: i64,
-    pub subscription_id: i32,
-    pub status: String,
-    pub attempts: i32,
-    pub next_attempt_at: NaiveDateTime,
-    pub last_error: Option<String>,
-    pub locked_until: Option<NaiveDateTime>,
-    pub(crate) claim_token: Option<Uuid>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-impl fmt::Debug for EventDelivery {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EventDelivery")
-            .field("id", &self.id)
-            .field("event_id", &self.event_id)
-            .field("subscription_id", &self.subscription_id)
-            .field("status", &self.status)
-            .field("attempts", &self.attempts)
-            .field("next_attempt_at", &self.next_attempt_at)
-            .field("last_error", &redacted_debug_option(&self.last_error))
-            .field("locked_until", &self.locked_until)
-            .field("claim_token", &redacted_debug_option(&self.claim_token))
-            .field("created_at", &self.created_at)
-            .field("updated_at", &self.updated_at)
-            .finish()
-    }
-}
+pub use hubuum_domain::{EventDeliveryId as EventDeliveryID, EventDeliveryStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryResponse {
@@ -131,34 +22,50 @@ pub struct EventDeliveryResponse {
     pub updated_at: NaiveDateTime,
 }
 
-impl From<EventDelivery> for EventDeliveryResponse {
-    fn from(delivery: EventDelivery) -> Self {
-        Self {
-            id: delivery.id,
-            event_id: delivery.event_id,
-            subscription_id: delivery.subscription_id,
-            status: delivery.status,
-            attempts: delivery.attempts,
-            next_attempt_at: delivery.next_attempt_at,
-            last_error: delivery.last_error,
-            locked_until: delivery.locked_until,
-            created_at: delivery.created_at,
-            updated_at: delivery.updated_at,
+impl CursorPaginated for EventDeliveryResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Status
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::NextAttemptAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id)),
+            FilterField::Status => Ok(CursorValue::String(self.status.clone())),
+            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
+            FilterField::NextAttemptAt => Ok(CursorValue::DateTime(self.next_attempt_at)),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for event deliveries",
+                field
+            ))),
         }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryUpdateResponse {
     pub delivery: EventDeliveryResponse,
-}
-
-impl From<EventDelivery> for EventDeliveryUpdateResponse {
-    fn from(delivery: EventDelivery) -> Self {
-        Self {
-            delivery: delivery.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
@@ -240,140 +147,199 @@ pub struct EventDeliveryHealthResponse {
     pub subscriptions: Vec<EventSubscriptionDeliveryHealth>,
 }
 
-impl CursorPaginated for EventDelivery {
-    fn supports_sort(field: &FilterField) -> bool {
-        matches!(
-            field,
-            FilterField::Id
-                | FilterField::Status
-                | FilterField::CreatedAt
-                | FilterField::UpdatedAt
-                | FilterField::NextAttemptAt
-        )
-    }
-
-    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
-        match field {
-            FilterField::Id => Ok(CursorValue::Integer(self.id)),
-            FilterField::Status => Ok(CursorValue::String(self.status.clone())),
-            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
-            FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
-            FilterField::NextAttemptAt => Ok(CursorValue::DateTime(self.next_attempt_at)),
-            _ => Err(ApiError::BadRequest(format!(
-                "Unsupported sort field '{}' for event deliveries",
-                field
-            ))),
+impl EventDeliveryStatusCounts {
+    pub(crate) fn from_storage(snapshot: crate::storage::EventDeliveryStatusSnapshot) -> Self {
+        Self {
+            total: snapshot.total(),
+            pending: snapshot.pending(),
+            in_flight: snapshot.in_flight(),
+            succeeded: snapshot.succeeded(),
+            failed: snapshot.failed(),
+            dead: snapshot.dead(),
+            retryable: snapshot.retryable(),
         }
-    }
-
-    fn default_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    }
-
-    fn tie_breaker_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
     }
 }
 
-impl CursorSqlMapping for EventDelivery {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "event_deliveries.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
+impl EventDeliveryHealthResponse {
+    pub(crate) fn from_storage(
+        snapshot: crate::storage::EventDeliveryHealthSnapshot,
+        fanout_worker: EventWorkerHealth,
+        delivery_worker: EventWorkerHealth,
+    ) -> Self {
+        let fanout = snapshot.fanout();
+        let delivery = snapshot.delivery();
+        Self {
+            fanout: EventFanoutHealth {
+                pending_events: fanout.pending_events(),
+                in_flight_events: fanout.in_flight_events(),
+                stale_claims: fanout.stale_claims(),
+                oldest_pending_age_seconds: fanout.oldest_pending_age_seconds(),
+                worker: fanout_worker,
             },
-            FilterField::Status => CursorSqlField {
-                column: "event_deliveries.status",
-                sql_type: CursorSqlType::String,
-                nullable: false,
+            delivery: EventDeliveryQueueHealth {
+                counts: EventDeliveryStatusCounts::from_storage(delivery.counts()),
+                stale_claims: delivery.stale_claims(),
+                oldest_due_age_seconds: delivery.oldest_due_age_seconds(),
+                worker: delivery_worker,
             },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "event_deliveries.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "event_deliveries.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::NextAttemptAt => CursorSqlField {
-                column: "event_deliveries.next_attempt_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for event deliveries",
-                    field
-                )));
-            }
-        })
+            sinks: snapshot
+                .sinks()
+                .iter()
+                .map(|snapshot| {
+                    let sink = snapshot.sink();
+                    let queue = snapshot.queue();
+                    EventSinkDeliveryHealth {
+                        sink_id: sink.id().id(),
+                        sink_name: sink.name().to_string(),
+                        sink_kind: sink.kind().to_string(),
+                        sink_enabled: sink.enabled(),
+                        subscription_count: snapshot.subscription_count(),
+                        counts: EventDeliveryStatusCounts::from_storage(queue.counts()),
+                        stale_claims: queue.stale_claims(),
+                        oldest_due_age_seconds: queue.oldest_due_age_seconds(),
+                    }
+                })
+                .collect(),
+            subscriptions: snapshot
+                .subscriptions()
+                .iter()
+                .map(|snapshot| {
+                    let sink = snapshot.sink();
+                    let queue = snapshot.queue();
+                    EventSubscriptionDeliveryHealth {
+                        subscription_id: snapshot.id().id(),
+                        subscription_name: snapshot.name().to_string(),
+                        collection_id: snapshot.collection_id().id(),
+                        sink_id: sink.id().id(),
+                        sink_name: sink.name().to_string(),
+                        sink_kind: sink.kind().to_string(),
+                        subscription_enabled: snapshot.enabled(),
+                        sink_enabled: sink.enabled(),
+                        counts: EventDeliveryStatusCounts::from_storage(queue.counts()),
+                        stale_claims: queue.stale_claims(),
+                        oldest_due_age_seconds: queue.oldest_due_age_seconds(),
+                    }
+                })
+                .collect(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::REDACTED_DEBUG_VALUE;
+    use hubuum_storage_core::{
+        EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
+        EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
+        EventSubscriptionHealthSnapshot,
+    };
 
-    #[test]
-    fn event_delivery_response_omits_internal_claim_token() {
-        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc();
-        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-        let delivery = EventDelivery {
-            id: 1,
-            event_id: 2,
-            subscription_id: 3,
-            status: EventDeliveryStatus::InFlight.as_str().to_string(),
-            attempts: 1,
-            next_attempt_at: timestamp,
-            last_error: None,
-            locked_until: Some(timestamp),
-            claim_token: Some(claim_token),
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-
-        let serialized = serde_json::to_value(EventDeliveryResponse::from(delivery)).unwrap();
-
-        assert!(serialized.get("claim_token").is_none());
-        assert!(!serialized.to_string().contains(&claim_token.to_string()));
+    fn worker_health(workers_configured: usize) -> EventWorkerHealth {
+        EventWorkerHealth {
+            workers_configured,
+            batch_size: 25,
+            poll_interval_ms: 500,
+            lock_timeout_ms: 5_000,
+            wakeups: EventWorkerWakeupStats {
+                notifications_sent: 2,
+                notification_wakeups: 3,
+                poll_wakeups: 5,
+            },
+        }
     }
 
     #[test]
-    fn event_delivery_debug_redacts_claim_token_and_error() {
-        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc();
-        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-        let delivery = EventDelivery {
-            id: 1,
-            event_id: 2,
-            subscription_id: 3,
-            status: EventDeliveryStatus::InFlight.as_str().to_string(),
-            attempts: 1,
-            next_attempt_at: timestamp,
-            last_error: Some("delivery-error-secret".to_string()),
-            locked_until: Some(timestamp),
-            claim_token: Some(claim_token),
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
+    fn storage_health_snapshot_projects_into_the_existing_api_shape() {
+        let counts = EventDeliveryStatusSnapshot::new(28, 2, 3, 5, 7, 11, 13);
+        let queue = EventQueueSnapshot::new(counts, 17, Some(19));
+        let sink = EventSinkSnapshot::new(
+            hubuum_domain::EventSinkId::new(23).unwrap(),
+            "primary".to_string(),
+            "webhook".to_string(),
+            true,
+        );
+        let snapshot = EventDeliveryHealthSnapshot::new(
+            EventFanoutSnapshot::new(29, 31, 37, Some(41)),
+            queue,
+            vec![EventSinkHealthSnapshot::new(sink.clone(), 43, queue)],
+            vec![EventSubscriptionHealthSnapshot::new(
+                hubuum_domain::EventSubscriptionId::new(47).unwrap(),
+                "changes".to_string(),
+                hubuum_domain::CollectionId::new(53).unwrap(),
+                false,
+                sink,
+                queue,
+            )],
+        );
 
-        let debug = format!("{delivery:?}");
+        let response =
+            EventDeliveryHealthResponse::from_storage(snapshot, worker_health(2), worker_health(3));
 
-        assert!(debug.contains(REDACTED_DEBUG_VALUE));
-        assert!(!debug.contains("delivery-error-secret"));
-        assert!(!debug.contains(&claim_token.to_string()));
+        assert_eq!(
+            response,
+            EventDeliveryHealthResponse {
+                fanout: EventFanoutHealth {
+                    pending_events: 29,
+                    in_flight_events: 31,
+                    stale_claims: 37,
+                    oldest_pending_age_seconds: Some(41),
+                    worker: worker_health(2),
+                },
+                delivery: EventDeliveryQueueHealth {
+                    counts: EventDeliveryStatusCounts {
+                        total: 28,
+                        pending: 2,
+                        in_flight: 3,
+                        succeeded: 5,
+                        failed: 7,
+                        dead: 11,
+                        retryable: 13,
+                    },
+                    stale_claims: 17,
+                    oldest_due_age_seconds: Some(19),
+                    worker: worker_health(3),
+                },
+                sinks: vec![EventSinkDeliveryHealth {
+                    sink_id: 23,
+                    sink_name: "primary".to_string(),
+                    sink_kind: "webhook".to_string(),
+                    sink_enabled: true,
+                    subscription_count: 43,
+                    counts: EventDeliveryStatusCounts {
+                        total: 28,
+                        pending: 2,
+                        in_flight: 3,
+                        succeeded: 5,
+                        failed: 7,
+                        dead: 11,
+                        retryable: 13,
+                    },
+                    stale_claims: 17,
+                    oldest_due_age_seconds: Some(19),
+                }],
+                subscriptions: vec![EventSubscriptionDeliveryHealth {
+                    subscription_id: 47,
+                    subscription_name: "changes".to_string(),
+                    collection_id: 53,
+                    sink_id: 23,
+                    sink_name: "primary".to_string(),
+                    sink_kind: "webhook".to_string(),
+                    subscription_enabled: false,
+                    sink_enabled: true,
+                    counts: EventDeliveryStatusCounts {
+                        total: 28,
+                        pending: 2,
+                        in_flight: 3,
+                        succeeded: 5,
+                        failed: 7,
+                        dead: 11,
+                        retryable: 13,
+                    },
+                    stale_claims: 17,
+                    oldest_due_age_seconds: Some(19),
+                }],
+            }
+        );
     }
 }

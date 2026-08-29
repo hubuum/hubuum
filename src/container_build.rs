@@ -8,9 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rstest::rstest;
 
-#[cfg(unix)]
-static TEST_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 fn read_repository_text(relative_path: &str) -> String {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fs::read_to_string(repository.join(relative_path))
@@ -41,62 +38,14 @@ fn lines_between_handles_platform_line_endings(#[case] line_ending: &str) {
         "  benchmarks:",
         "    with:",
         "      auto_discover: true",
-        "  postgres-storage:",
+        "  runtime-behavior:",
     ]
     .join(line_ending);
 
     assert_eq!(
-        lines_between(&workflow, "  benchmarks:", "  postgres-storage:"),
+        lines_between(&workflow, "  benchmarks:", "  runtime-behavior:"),
         Some(vec!["    with:", "      auto_discover: true"])
     );
-}
-
-#[cfg(unix)]
-fn test_directory(prefix: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!(
-        "hubuum-{prefix}-{}-{}",
-        std::process::id(),
-        TEST_DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir(&directory).expect("test directory should be created");
-    directory
-}
-
-#[cfg(unix)]
-fn write_criterion_estimates(
-    criterion_directory: &std::path::Path,
-    benchmark: &str,
-    baseline_name: &str,
-    change: (f64, f64, f64),
-    base_median_ns: f64,
-    new_median_ns: f64,
-) {
-    let benchmark_directory = criterion_directory.join(benchmark);
-    for estimate_kind in ["change", baseline_name, "new"] {
-        fs::create_dir_all(benchmark_directory.join(estimate_kind))
-            .expect("Criterion estimate directory should be created");
-    }
-    fs::write(
-        benchmark_directory.join("change/estimates.json"),
-        serde_json::json!({
-            "median": {
-                "point_estimate": change.0,
-                "confidence_interval": {
-                    "lower_bound": change.1,
-                    "upper_bound": change.2
-                }
-            }
-        })
-        .to_string(),
-    )
-    .expect("Criterion change estimate should be written");
-    for (estimate_kind, median_ns) in [(baseline_name, base_median_ns), ("new", new_median_ns)] {
-        fs::write(
-            benchmark_directory.join(format!("{estimate_kind}/estimates.json")),
-            serde_json::json!({"median": {"point_estimate": median_ns}}).to_string(),
-        )
-        .expect("Criterion median estimate should be written");
-    }
 }
 
 #[cfg(unix)]
@@ -313,216 +262,59 @@ fn container_dependency_images_are_pinned() {
 }
 
 #[test]
-fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
+fn benchmark_action_autodiscovers_every_cargo_benchmark() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
         .expect("benchmark workflow should be readable");
-    let self_contained_job = lines_between(&workflow, "  benchmarks:", "  postgres-storage:")
-        .expect("benchmark workflow should contain a bounded self-contained job");
+    let benchmark_job = lines_between(&workflow, "  benchmarks:", "  runtime-behavior:")
+        .expect("benchmark workflow should contain a bounded benchmark job");
     assert!(
-        self_contained_job
+        benchmark_job
             .iter()
             .any(|line| line.contains("auto_discover: true"))
     );
     assert!(
-        !self_contained_job
+        !benchmark_job
             .iter()
             .any(|line| line.contains("benchmarks_json:"))
+    );
+    assert!(
+        benchmark_job
+            .iter()
+            .any(|line| line.contains("\"features\":\"postgres-bench\"")),
+        "benchmark action should enable the feature-gated PostgreSQL benchmark"
     );
 
     let manifest = read_repository_text("Cargo.toml");
     let manifest: toml::Value =
         toml::from_str(&manifest).expect("root Cargo manifest should be valid TOML");
-    let feature_gated_benchmarks = manifest
+    let benchmarks = manifest
         .get("bench")
         .and_then(toml::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|benchmark| benchmark.get("required-features").is_some())
-        .collect::<Vec<_>>();
-    assert!(!feature_gated_benchmarks.is_empty());
+        .expect("root Cargo manifest should declare benchmarks");
+    assert!(!benchmarks.is_empty());
 
-    for benchmark in feature_gated_benchmarks {
+    for benchmark in benchmarks {
         let name = benchmark
             .get("name")
             .and_then(toml::Value::as_str)
-            .expect("feature-gated benchmark should have a name");
+            .expect("benchmark should have a name");
         let path = benchmark
             .get("path")
             .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| {
-                panic!(
-                    "feature-gated benchmark '{name}' needs an explicit path outside benches/*.rs"
-                )
-            });
-        let path = Path::new(path);
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(format!("benches/{name}.rs")));
+        let path = Path::new(&path);
         assert!(
-            path.starts_with("benches") && path.parent() != Some(Path::new("benches")),
-            "feature-gated benchmark '{name}' must stay below a nested benches directory"
+            path.parent() == Some(Path::new("benches")),
+            "benchmark '{name}' must be a direct child of benches/ for action auto-discovery"
         );
         assert!(
             repository.join(path).is_file(),
-            "feature-gated benchmark '{name}' path '{}' should exist",
+            "benchmark '{name}' path '{}' should exist",
             path.display()
         );
     }
-}
-
-#[test]
-fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
-        .expect("benchmark workflow should be readable");
-
-    assert!(workflow.contains("Confirm PostgreSQL regressions in reverse order"));
-    assert!(workflow.contains("check-criterion-stability.sh"));
-    assert!(workflow.contains("ALTER SYSTEM SET autovacuum = 'off'"));
-    assert!(workflow.contains("POSTGRES_BENCH_FAILURE_ABSOLUTE_NS"));
-    let stability_invocation = workflow
-        .rsplit_once("scripts/check-criterion-stability.sh")
-        .expect("workflow should invoke the stability checker")
-        .1
-        .lines()
-        .take(6)
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(stability_invocation.contains("$CONFIRMED_FAILURES"));
-    assert!(!stability_invocation.contains("$POSTGRES_BENCH_INITIAL_FAILURES"));
-    assert!(stability_invocation.contains("pr-base"));
-}
-
-#[cfg(unix)]
-#[rstest]
-#[case(0.05, 50_000.0, true)]
-#[case(0.25, 10_000.0, true)]
-#[case(0.25, 50_000.0, false)]
-fn criterion_regression_requires_confident_relative_and_absolute_changes(
-    #[case] relative_lower_bound: f64,
-    #[case] absolute_change_ns: f64,
-    #[case] expected_success: bool,
-) {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let test_directory = test_directory("criterion-regression");
-    let criterion_directory = test_directory.join("criterion");
-    let failures = test_directory.join("failures.txt");
-    write_criterion_estimates(
-        &criterion_directory,
-        "point_read",
-        "pr-base",
-        (0.40, relative_lower_bound, 0.50),
-        100_000.0,
-        100_000.0 + absolute_change_ns,
-    );
-
-    let output = Command::new(repository.join("scripts/check-criterion-regressions.sh"))
-        .arg(&criterion_directory)
-        .args(["10", "20", "25000", "forward", "none"])
-        .arg(&failures)
-        .arg("")
-        .arg("pr-base")
-        .output()
-        .expect("Criterion regression checker should run");
-    let diagnostics = format!(
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert_eq!(output.status.success(), expected_success, "{diagnostics}");
-    if expected_success {
-        assert_eq!(fs::read_to_string(&failures).unwrap(), "");
-    } else {
-        assert_eq!(fs::read_to_string(&failures).unwrap(), "point_read\n");
-    }
-    fs::remove_dir_all(test_directory).expect("test directory should be removed");
-}
-
-#[cfg(unix)]
-#[test]
-fn criterion_reverse_comparison_reports_the_same_head_regression() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let test_directory = test_directory("criterion-reverse");
-    let criterion_directory = test_directory.join("criterion");
-    let failures = test_directory.join("failures.txt");
-    let filter = test_directory.join("filter.txt");
-    fs::write(&filter, "point_read\n").expect("benchmark filter should be written");
-    write_criterion_estimates(
-        &criterion_directory,
-        "point_read",
-        "pr-head-confirmation",
-        (-0.285_714, -0.35, -0.25),
-        140_000.0,
-        100_000.0,
-    );
-
-    let output = Command::new(repository.join("scripts/check-criterion-regressions.sh"))
-        .arg(&criterion_directory)
-        .args(["10", "20", "25000", "reverse", "none"])
-        .arg(&failures)
-        .arg(&filter)
-        .arg("pr-head-confirmation")
-        .output()
-        .expect("Criterion reverse regression checker should run");
-    let diagnostics = format!(
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert_eq!(output.status.code(), Some(1), "{diagnostics}");
-    assert_eq!(fs::read_to_string(&failures).unwrap(), "point_read\n");
-    fs::remove_dir_all(test_directory).expect("test directory should be removed");
-}
-
-#[cfg(unix)]
-#[rstest]
-#[case(109_000.0, true)]
-#[case(111_000.0, false)]
-fn criterion_stability_rejects_excessive_base_to_base_drift(
-    #[case] confirmation_base_median_ns: f64,
-    #[case] expected_success: bool,
-) {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let test_directory = test_directory("criterion-stability");
-    let initial_directory = test_directory.join("initial");
-    let confirmation_directory = test_directory.join("confirmation");
-    let filter = test_directory.join("filter.txt");
-    fs::write(&filter, "point_read\n").expect("benchmark filter should be written");
-    write_criterion_estimates(
-        &initial_directory,
-        "point_read",
-        "pr-base",
-        (0.0, 0.0, 0.0),
-        100_000.0,
-        100_000.0,
-    );
-    write_criterion_estimates(
-        &confirmation_directory,
-        "point_read",
-        "pr-head-confirmation",
-        (0.0, 0.0, 0.0),
-        140_000.0,
-        confirmation_base_median_ns,
-    );
-
-    let output = Command::new(repository.join("scripts/check-criterion-stability.sh"))
-        .args([
-            &initial_directory,
-            &confirmation_directory,
-            std::path::Path::new("10"),
-            &filter,
-            std::path::Path::new("pr-base"),
-        ])
-        .output()
-        .expect("Criterion stability checker should run");
-    let diagnostics = format!(
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert_eq!(output.status.success(), expected_success, "{diagnostics}");
-    fs::remove_dir_all(test_directory).expect("test directory should be removed");
 }
 
 #[test]

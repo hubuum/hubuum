@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::Permissions;
+use crate::services::storage_boundary::principal_id_to_storage;
+use crate::storage::{AuthorizationDataStorage, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,23 +24,21 @@ impl PrincipalRef {
         Self { user_id, group_ids }
     }
 
-    pub async fn load<S>(pool: &DbPool, subject: &S) -> Result<Self, ApiError>
+    pub async fn load<S>(
+        pool: &impl crate::storage::StorageContext,
+        subject: &S,
+    ) -> Result<Self, ApiError>
     where
         S: PrincipalIdAccessor + ?Sized,
     {
-        use crate::db::prelude::*;
-        use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
-
         let user_id = subject.principal_id();
-        let group_ids = with_connection(pool, async |conn| {
-            group_memberships
-                .filter(principal_id.eq(user_id))
-                .select(group_id)
-                .load::<i32>(conn)
-                .await
-        })
-        .await?;
-        Ok(Self::new(user_id, group_ids))
+        let principal = storage_handle(pool)
+            .get_authorization_principal(principal_id_to_storage(user_id))
+            .await?;
+        Ok(Self::new(
+            user_id,
+            principal.into_group_ids().into_iter().map(|id| id.id()),
+        ))
     }
 }
 
@@ -211,8 +210,8 @@ impl ResourceRef {
     }
 
     /// Construct the global System resource. Currently only Treetop's
-    /// `is_admin` dispatches against it; the SQL backend reads the admin
-    /// group directly. Marked `dead_code`-allow so a build without the
+    /// `is_admin` dispatches against it; the local backend checks membership in
+    /// the configured admin group. Marked `dead_code`-allow so a build without the
     /// optional Treetop backend doesn't lint the helper away.
     pub fn system() -> Self {
         Self {
@@ -258,7 +257,10 @@ pub struct AuthorizationResult {
 /// HubuumObject, …).
 #[async_trait]
 pub trait AuthzTarget: Send + Sync {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError>;
+    async fn to_resource_ref(
+        &self,
+        backend: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError>;
 }
 
 #[async_trait]
@@ -266,7 +268,10 @@ impl<T> AuthzTarget for &T
 where
     T: AuthzTarget + ?Sized + Sync,
 {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         (*self).to_resource_ref(pool).await
     }
 }

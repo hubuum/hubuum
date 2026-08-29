@@ -13,15 +13,14 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, OnceLock, Weak};
 use tokio::sync::Mutex;
 
-use crate::db::DbPool;
-use crate::db::traits::external_identity::{
-    ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
-    sync_external_user as sync_external_user_from_backend,
-};
-use crate::db::traits::identity::ensure_identity_scope;
 use crate::errors::ApiError;
 use crate::models::user::{LoginUser, User, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
+use crate::services::identity::ensure_identity_scope;
+use crate::services::identity::{
+    ExternalPrincipalState, get_external_principal_state, mark_external_sync_attempted,
+    sync_external_user as sync_external_user_from_backend,
+};
 
 const DEFAULT_REFRESH_TTL_SECONDS: i64 = 300;
 const DEFAULT_MAX_STALE_SECONDS: i64 = 3600;
@@ -131,13 +130,13 @@ enum AuthProviderRefreshError {
 trait AuthProviderBackend: Send + Sync {
     fn authenticate<'a>(
         &'a self,
-        pool: &'a DbPool,
+        storage: &'a crate::storage::StorageHandle,
         login: LoginUser,
     ) -> AuthProviderFuture<'a, User>;
 
     fn refresh<'a>(
         &'a self,
-        pool: &'a DbPool,
+        storage: &'a crate::storage::StorageHandle,
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a>;
 }
@@ -299,15 +298,15 @@ impl LocalAuthProvider {
 impl AuthProviderBackend for LocalAuthProvider {
     fn authenticate<'a>(
         &'a self,
-        pool: &'a DbPool,
+        storage: &'a crate::storage::StorageHandle,
         login: LoginUser,
     ) -> AuthProviderFuture<'a, User> {
-        Box::pin(async move { login.login(pool).await })
+        Box::pin(async move { login.login(storage).await })
     }
 
     fn refresh<'a>(
         &'a self,
-        _pool: &'a DbPool,
+        _storage: &'a crate::storage::StorageHandle,
         _state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async {
@@ -341,7 +340,7 @@ impl LdapAuthProvider {
 impl AuthProviderBackend for LdapAuthProvider {
     fn authenticate<'a>(
         &'a self,
-        pool: &'a DbPool,
+        storage: &'a crate::storage::StorageHandle,
         login: LoginUser,
     ) -> AuthProviderFuture<'a, User> {
         Box::pin(async move {
@@ -350,14 +349,14 @@ impl AuthProviderBackend for LdapAuthProvider {
                 .authenticate(&login.name, &login.password)
                 .await
                 .map_err(login_provider_error)?;
-            sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, authenticated)
+            sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, authenticated)
                 .await
         })
     }
 
     fn refresh<'a>(
         &'a self,
-        pool: &'a DbPool,
+        storage: &'a crate::storage::StorageHandle,
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
@@ -366,7 +365,7 @@ impl AuthProviderBackend for LdapAuthProvider {
                 .refresh_user(&state.refresh_request)
                 .await
                 .map_err(|error| AuthProviderRefreshError::Provider(provider_error(error)))?;
-            sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, refreshed)
+            sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, refreshed)
                 .await
                 .map(|_| ())
                 .map_err(AuthProviderRefreshError::Internal)
@@ -374,8 +373,12 @@ impl AuthProviderBackend for LdapAuthProvider {
     }
 }
 
-pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
+pub async fn login(
+    storage: &impl crate::storage::StorageContext,
+    login: LoginUser,
+) -> Result<User, ApiError> {
     login.validate()?;
+    let storage = crate::storage::storage_handle(storage);
     let scope = login
         .identity_scope
         .as_deref()
@@ -384,12 +387,16 @@ pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
     auth_provider_registry()?
         .provider(&scope)?
         .backend
-        .authenticate(pool, login)
+        .authenticate(&storage, login)
         .await
 }
 
-pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Result<(), ApiError> {
-    let Some(state) = external_user_state(pool, principal_id).await? else {
+pub async fn refresh_principal_if_needed(
+    storage: &impl crate::storage::StorageContext,
+    principal_id: i32,
+) -> Result<(), ApiError> {
+    let storage = crate::storage::storage_handle(storage);
+    let Some(state) = external_user_state(&storage, principal_id).await? else {
         return Ok(());
     };
 
@@ -403,7 +410,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
     {
         let _guard = lock.lock().await;
 
-        match external_user_state(pool, principal_id).await {
+        match external_user_state(&storage, principal_id).await {
             Err(err) => Err(err),
             Ok(None) => Ok(()),
             Ok(Some(state)) => match refresh_status(&state) {
@@ -413,11 +420,11 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                     .and_then(|registry| registry.provider(&state.identity_scope))
                 {
                     Err(err) => Err(err),
-                    Ok(configured) => match configured.backend.refresh(pool, &state).await {
+                    Ok(configured) => match configured.backend.refresh(&storage, &state).await {
                         Ok(()) => Ok(()),
                         Err(AuthProviderRefreshError::Internal(err)) => Err(err),
                         Err(AuthProviderRefreshError::Provider(err)) => {
-                            match mark_external_sync_attempted(pool, principal_id).await {
+                            match mark_external_sync_attempted(&storage, principal_id).await {
                                 Err(mark_err) => Err(mark_err),
                                 Ok(()) => {
                                     if within_max_stale(
@@ -450,7 +457,9 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
     }
 }
 
-pub async fn ensure_configured_identity_scopes(pool: &DbPool) -> Result<(), ApiError> {
+pub async fn ensure_configured_identity_scopes(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
     for provider in auth_provider_registry()?.providers() {
         ensure_identity_scope(pool, &provider.name, &provider.kind).await?;
     }
@@ -693,10 +702,10 @@ impl ExternalUserState {
 }
 
 async fn external_user_state(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     principal_id_value: i32,
 ) -> Result<Option<ExternalUserState>, ApiError> {
-    let Some(state) = external_principal_state(pool, principal_id_value).await? else {
+    let Some(state) = get_external_principal_state(pool, principal_id_value).await? else {
         return Ok(None);
     };
     let configured = auth_provider_registry()?.provider(&state.identity_scope)?;
@@ -711,7 +720,7 @@ async fn external_user_state(
 
 #[cfg(feature = "integration-test-support")]
 pub(crate) async fn sync_external_user(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     configured: &ConfiguredLdapScope,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<User, ApiError> {

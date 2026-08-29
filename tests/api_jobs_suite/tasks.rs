@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
-    use chrono::Utc;
     use rstest::rstest;
 
-    use crate::models::{NewTaskRecord, TaskKind, TaskResponse, TaskStatus};
+    use crate::models::{TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{
@@ -21,28 +20,14 @@ mod tests {
         status: TaskStatus,
         label: &str,
     ) -> i32 {
-        let task = NewTaskRecord {
-            kind: kind.as_str().to_string(),
-            status: status.as_str().to_string(),
-            submitted_by: Some(submitted_by),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: None,
-            request_hash: None,
-            request_payload: None,
-            summary: Some(context.scoped_name(label)),
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: Some(Utc::now().naive_utc()),
-            started_at: Some(Utc::now().naive_utc()),
-            finished_at: Some(Utc::now().naive_utc()),
-        }
-        .create(&context.pool)
+        let task = crate::test_support::create_persisted_test_task(
+            context.pool.get_ref(),
+            crate::test_support::persisted_test_task_request(kind, status, submitted_by)
+                .expect("test task request must be valid")
+                .summary(Some(context.scoped_name(label))),
+        )
         .await
-        .unwrap();
+        .expect("synthetic task should be persisted");
 
         task.id
     }

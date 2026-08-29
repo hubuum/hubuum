@@ -1,18 +1,13 @@
-use crate::db::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::hubuumclass;
-use crate::traits::{BackendContext, SelfAccessors};
+use crate::traits::SelfAccessors;
 
-#[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
-#[diesel(table_name = hubuumclass )]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, ToSchema)]
 pub struct HubuumClass {
     pub id: i32,
     pub name: String,
@@ -25,9 +20,8 @@ pub struct HubuumClass {
     pub revision: ResourceRevision,
 }
 
-#[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = new_hubuum_class_example)]
-#[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
     pub collection_id: i32,
@@ -36,9 +30,8 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, AsChangeset, Clone, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = update_hubuum_class_example)]
-#[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
     pub collection_id: Option<i32>,
@@ -49,6 +42,7 @@ pub struct UpdateHubuumClass {
 
 impl UpdateHubuumClass {
     /// Validate the schema state that would result from applying this update to `current`.
+    #[cfg(test)]
     pub(crate) fn validate_schema_update(&self, current: &HubuumClass) -> Result<(), ApiError> {
         if self.json_schema.is_none() && self.validate_schema.is_none() {
             return Ok(());
@@ -64,6 +58,7 @@ impl UpdateHubuumClass {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn has_changes(&self, current: &HubuumClass) -> bool {
         self.name
             .as_ref()
@@ -128,11 +123,7 @@ pub struct HubuumClassWithPath {
     pub path: Vec<i32>,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`HubuumClass`].
-    pub struct HubuumClassID;
-    noun = "class id";
-}
+pub use hubuum_domain::ClassId as HubuumClassID;
 
 /// Explicit route-selected address for a class.
 ///
@@ -187,8 +178,8 @@ impl ResolvedClassTarget {
 ///
 /// Construct via [`ClassIdSet::new`]; the inner vec stays private so the "sorted, deduped,
 /// positive" invariant holds for every consumer — including callers that `binary_search` the
-/// set and rely on the ordering. Bulk class-keyed backend lookups hang off this type (see
-/// `crate::db::traits::class`).
+/// set and rely on the ordering. Storage contracts can accept this type without trusting callers
+/// to normalize class identifiers themselves.
 #[derive(Debug, Clone)]
 pub(crate) struct ClassIdSet(Vec<i32>);
 
@@ -216,13 +207,6 @@ impl ClassIdSet {
     }
 }
 
-pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    total_class_count_from_backend(backend.db_pool()).await
-}
-
 fn new_hubuum_class_example() -> NewHubuumClass {
     NewHubuumClass {
         name: "server".to_string(),
@@ -243,8 +227,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::hubuumclass_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassHistory {
     pub id: i32,
     pub name: String,
@@ -265,18 +248,62 @@ pub struct HubuumClassHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
+impl crate::traits::CursorPaginated for HubuumClassHistory {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        matches!(
+            field,
+            crate::models::search::FilterField::HistoryId
+                | crate::models::search::FilterField::Revision
+        )
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::HistoryId => {
+                crate::traits::CursorValue::Integer(self.history_id)
+            }
+            crate::models::search::FilterField::Revision => {
+                crate::traits::CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: crate::models::search::FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for HubuumClass {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(self.authorization_resource())
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumClassID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
@@ -284,14 +311,14 @@ impl AuthzTarget for HubuumClassID {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::db::DbPool;
+
     use crate::models::class::HubuumClass;
     use crate::models::collection::Collection;
     use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, CollectionAccessors};
 
-    pub async fn verify_no_such_class(pool: &DbPool, id: i32) {
-        match HubuumClassID(id).class(pool).await {
+    pub async fn verify_no_such_class(pool: &impl crate::storage::StorageContext, id: i32) {
+        match HubuumClassID::new(id).unwrap().class(pool).await {
             Ok(_) => panic!("Class should not exist"),
             Err(e) => match e {
                 ApiError::NotFound(_) => {}
@@ -300,12 +327,12 @@ pub mod tests {
         }
     }
 
-    pub async fn get_class(id: i32, pool: &DbPool) -> HubuumClass {
-        HubuumClassID(id).class(pool).await.unwrap()
+    pub async fn get_class(id: i32, pool: &impl crate::storage::StorageContext) -> HubuumClass {
+        HubuumClassID::new(id).unwrap().class(pool).await.unwrap()
     }
 
     pub async fn create_class(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         collection: &Collection,
         class_name: &str,
     ) -> HubuumClass {

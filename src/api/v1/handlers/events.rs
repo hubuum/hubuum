@@ -2,8 +2,6 @@ use actix_web::{HttpRequest, Responder, get, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::events::{list_events_with_total_count, parse_event_filters};
 use crate::errors::ApiError;
 use crate::events::{EntityType, EventResponse};
 use crate::extractors::Authenticated;
@@ -16,7 +14,9 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::services::event_administration::{list_audit_events, parse_audit_event_filters};
 use crate::traits::AuthzSubject;
+use crate::traits::scope_allows;
 
 #[utoipa::path(
     get,
@@ -45,15 +45,15 @@ use crate::traits::AuthzSubject;
 )]
 #[get("")]
 pub async fn get_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    list_visible_events(pool, requestor, req, None).await
+    list_visible_events(context, requestor, req, None).await
 }
 
 async fn list_visible_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     entity_filter: Option<(EntityType, i32)>,
@@ -72,46 +72,34 @@ async fn list_visible_events(
 
     let (params, mut passthrough) =
         parse_query_parameter_with_passthrough(req.query_string(), &filter_keys)?;
-    let mut filters = parse_event_filters(&mut passthrough)?;
-    if let Some((entity_type, entity_id)) = entity_filter {
-        if filters.entity_type.is_some() {
-            return Err(ApiError::BadRequest(
-                "entity_type is fixed by this route".to_string(),
-            ));
-        }
-        if filters.entity_id.is_some() {
-            return Err(ApiError::BadRequest(
-                "entity_id is fixed by this route".to_string(),
-            ));
-        }
-        filters.entity_type = Some(entity_type);
-        filters.entity_id = Some(entity_id);
-    }
+    let filters = parse_audit_event_filters(&mut passthrough, entity_filter)?;
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
-    let (visible_collections, include_collection_less) =
-        if pool.permission_backend().supports_sql_visibility_pushdown() {
-            let collections = user_can_on_any(
-                &pool,
-                &requestor.principal,
-                Permissions::ReadAudit,
-                requestor.scopes(),
-            )
+    let (visible_collections, include_collection_less) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
+        let collections = user_can_on_any(
+            &context,
+            &requestor.principal,
+            Permissions::ReadAudit,
+            requestor.scopes(),
+        )
+        .await?;
+        let include_collection_less =
+            requestor.scopes().is_none() && requestor.principal.is_admin(&context).await?;
+        (collections, include_collection_less)
+    } else if scope_allows(requestor.scopes(), &[Permissions::ReadAudit]) {
+        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
+        let collections = context
+            .permission_backend()
+            .collections_user_can(&principal, &[Permissions::ReadAudit])
             .await?;
-            let include_collection_less =
-                requestor.scopes().is_none() && requestor.principal.is_admin(&pool).await?;
-            (collections, include_collection_less)
-        } else if scope_allows(requestor.scopes(), &[Permissions::ReadAudit]) {
-            let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
-            let collections = pool
-                .permission_backend()
-                .collections_user_can(&principal, &[Permissions::ReadAudit])
-                .await?;
-            let include_collection_less = requestor.scopes().is_none()
-                && pool.permission_backend().is_admin(&principal).await?;
-            (collections, include_collection_less)
-        } else {
-            (Vec::new(), false)
-        };
+        let include_collection_less = requestor.scopes().is_none()
+            && context.permission_backend().is_admin(&principal).await?;
+        (collections, include_collection_less)
+    } else {
+        (Vec::new(), false)
+    };
     let mut accessible_collection_ids = visible_collections
         .iter()
         .map(|collection| collection.id)
@@ -119,12 +107,12 @@ async fn list_visible_events(
     if let Some(scope) = requestor.scopes() {
         scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
     }
-    let (events, total_count) = list_events_with_total_count(
-        &pool,
-        &accessible_collection_ids,
+    let (events, total_count) = list_audit_events(
+        &context,
+        accessible_collection_ids,
         include_collection_less,
-        &filters,
-        &search_params,
+        filters,
+        search_params,
     )
     .await?;
     ApiResponse::paginated(events, total_count, &params)
@@ -155,13 +143,13 @@ async fn list_visible_events(
 )]
 #[get("/{collection_id}/events")]
 pub async fn get_collection_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::Collection, collection_id.into_inner().id())),
@@ -195,13 +183,13 @@ pub async fn get_collection_events(
 )]
 #[get("/{class_id}/events")]
 pub async fn get_class_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     class_id: web::Path<HubuumClassID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::Class, class_id.into_inner().id())),
@@ -237,15 +225,15 @@ pub async fn get_class_events(
 )]
 #[get("/{class_id}/{object_id}/events")]
 pub async fn get_object_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, object_id) = path.into_inner();
-    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    check_if_object_in_class(&context, &class_id, &object_id).await?;
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::Object, object_id.id())),
@@ -279,13 +267,13 @@ pub async fn get_object_events(
 )]
 #[get("/{user_id}/events")]
 pub async fn get_user_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     user_id: web::Path<UserID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::User, user_id.into_inner().id())),
@@ -319,13 +307,13 @@ pub async fn get_user_events(
 )]
 #[get("/{group_id}/events")]
 pub async fn get_group_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     group_id: web::Path<GroupID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::Group, group_id.into_inner().id())),
@@ -359,13 +347,13 @@ pub async fn get_group_events(
 )]
 #[get("/{template_id}/events")]
 pub async fn get_export_template_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     template_id: web::Path<ExportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::ExportTemplate, template_id.into_inner().id())),
@@ -399,13 +387,13 @@ pub async fn get_export_template_events(
 )]
 #[get("/{target_id}/events")]
 pub async fn get_remote_target_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
-        pool,
+        context,
         requestor,
         req,
         Some((EntityType::RemoteTarget, target_id.into_inner().id())),

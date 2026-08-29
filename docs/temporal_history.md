@@ -135,8 +135,8 @@ in an audit/event stream rather than in the row's temporal state.
 
 ### Ambient Mutation-Provenance Task-Local
 
-In `src/db/mod.rs`, an async task-local (`tokio::task_local!`) variable stores
-typed mutation provenance:
+In `crates/hubuum-storage-postgres/src/runtime.rs`, an async task-local
+(`tokio::task_local!`) variable stores typed mutation provenance:
 
 ```rust
 tokio::task_local! {
@@ -153,16 +153,16 @@ tokio::task_local! {
 
 ### Setting the Provenance Scope
 
-The `with_mutation_provenance_scope()` helper establishes provenance for the
+The `with_mutation_provenance()` helper establishes provenance for the
 duration of a future:
 
 ```rust
-pub async fn with_mutation_provenance_scope<F, R>(
+pub async fn with_mutation_provenance<F>(
     provenance: Option<MutationProvenance>,
     future: F,
-) -> R
+) -> F::Output
 where
-    F: std::future::Future<Output = R>,
+    F: Future,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
 }
@@ -170,9 +170,10 @@ where
 
 ### Applying to Database Connections
 
-Both `with_connection_timeout()` and `with_transaction()` apply all four
-values as transaction-local settings with bound parameters. The equivalent
-database operation is:
+Both `PostgresRuntime::with_connection()` and
+`PostgresRuntime::with_transaction()` apply all four values as
+transaction-local settings with bound parameters. The equivalent database
+operation is:
 
 ```sql
 SELECT
@@ -268,7 +269,7 @@ This achieves **pseudonymization** under GDPR Article 4(5): once a user is anony
 Located in `src/utilities/iam.rs`:
 
 ```rust
-pub async fn anonymize_user(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
+pub async fn anonymize_user(pool: &PostgresPool, target_id: i32) -> Result<(), ApiError> {
     use crate::schema::principals::dsl as p;
     use crate::schema::tokens::dsl as t;
     use crate::schema::users::dsl as u;
@@ -310,7 +311,7 @@ Exposed as `POST /api/v1/iam/users/{user_id}/anonymize` (admin-only):
 ```rust
 #[post("/{user_id}/anonymize")]
 pub async fn anonymize_user(
-    pool: web::Data<DbPool>,
+    pool: web::Data<PostgresPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -519,8 +520,8 @@ Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) 
 
 ## References
 
-- **Schema**: `migrations/2023-12-27-011440_initial/up.sql`
-- **Database actor plumbing**: `src/db/mod.rs`
+- **Schema**: `crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql`
+- **Database actor plumbing**: `crates/hubuum-storage-postgres/src/runtime.rs`
 - **Request-scoped actor context**: `src/middlewares/actor_context.rs`
 - **Anonymization logic**: `src/utilities/iam.rs`
 - **Anonymization endpoint**: `src/api/v1/handlers/users.rs`

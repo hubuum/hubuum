@@ -1,18 +1,25 @@
 use std::time::Instant;
 
-use crate::db::prelude::*;
 use async_trait::async_trait;
-use tokio::sync::OnceCell;
 
-use crate::db::traits::collection as collection_backend;
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::events::EventContext;
+use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
-    PrincipalID,
 };
-use crate::traits::{AuthzSubject, PermissionController};
+use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::permissions::storage::{
+    collection_from_storage, grant_from_storage, group_grant_from_storage, permission_to_storage,
+};
+use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
+use crate::storage::{
+    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
+    AuthorizationCollectionsQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupMembershipQuery,
+    StorageHandle,
+};
 
 use super::backend::PermissionBackend;
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
@@ -20,43 +27,22 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
 
 const BACKEND_KIND: &str = "local";
 
-/// PostgreSQL-backed permission backend.
+/// Built-in permission backend backed by the mandatory authorization storage
+/// contract.
 ///
-/// This adapter deliberately delegates SQL behavior to the existing current-main
-/// permission traits and query helpers. That keeps local semantics aligned with
-/// the canonical API surface instead of carrying a forked copy of the SQL code.
+/// Policy decisions and grant management use backend-neutral requests and
+/// DTOs. The selected storage adapter owns its persistence and query details.
 pub struct LocalPermissionBackend {
-    pool: DbPool,
+    storage: StorageHandle,
     admin_groupname: String,
-    admin_group_id: OnceCell<Option<i32>>,
 }
 
 impl LocalPermissionBackend {
-    pub fn new(pool: DbPool, admin_groupname: String) -> Self {
+    pub(crate) fn new(storage: StorageHandle, admin_groupname: String) -> Self {
         Self {
-            pool,
+            storage,
             admin_groupname,
-            admin_group_id: OnceCell::new(),
         }
-    }
-
-    async fn admin_group_id(&self) -> Result<Option<i32>, ApiError> {
-        self.admin_group_id
-            .get_or_try_init(|| async {
-                use crate::schema::groups::dsl::{groupname, groups, id};
-
-                with_connection(&self.pool, async |conn| {
-                    groups
-                        .filter(groupname.eq(&self.admin_groupname))
-                        .select(id)
-                        .first::<i32>(conn)
-                        .await
-                        .optional()
-                })
-                .await
-            })
-            .await
-            .copied()
     }
 
     async fn collection_allows(
@@ -65,11 +51,12 @@ impl LocalPermissionBackend {
         collection_id: i32,
         permissions: Vec<Permissions>,
     ) -> Result<bool, ApiError> {
-        let collection = CollectionID::new(collection_id)?;
-        let principal_id = PrincipalID::new(principal.user_id)?;
-        collection
-            .user_can_all(&self.pool, principal_id, permissions, None)
-            .await
+        let query = AuthorizationCollectionAccessQuery::new(
+            principal_id_to_storage(principal.user_id),
+            collection_id_to_storage(collection_id),
+            permissions.into_iter().map(permission_to_storage),
+        );
+        Ok(self.storage.authorize_local_collection(query).await?)
     }
 }
 
@@ -155,78 +142,18 @@ impl PermissionBackend for LocalPermissionBackend {
         principal: &PrincipalRef,
         permissions: &[Permissions],
     ) -> Result<Vec<Collection>, ApiError> {
-        use crate::schema::collections;
-        use crate::schema::permissions::dsl::{
-            collection_id, group_id, permissions as permissions_table,
-        };
-
         let start = Instant::now();
-        let principal_id = PrincipalID::new(principal.user_id)?;
-
-        if permissions.is_empty() {
-            let group_ids_subquery = AuthzSubject::group_ids_subquery(&principal_id);
-            let collection_ids = with_connection(&self.pool, async |conn| {
-                permissions_table
-                    .filter(group_id.eq_any(group_ids_subquery))
-                    .select(collection_id)
-                    .distinct()
-                    .load::<i32>(conn)
-                    .await
-            })
-            .await?;
-            let rows = with_connection(&self.pool, async |conn| {
-                collections::table
-                    .filter(collections::id.eq_any(collection_ids))
-                    .load::<Collection>(conn)
-                    .await
-            })
-            .await?;
-            record_reverse_query(
-                BACKEND_KIND,
-                "collections_user_can",
-                rows.len(),
-                rows.len(),
-                start.elapsed(),
-            );
-            return Ok(rows);
-        }
-
-        let mut collection_ids: Option<Vec<i32>> = None;
-        for permission in permissions {
-            let rows = collection_backend::user_can_on_any_from_backend(
-                &self.pool,
-                principal_id,
-                *permission,
-                None,
-            )
-            .await?;
-            let mut ids = rows
-                .into_iter()
-                .map(|collection| collection.id)
-                .collect::<Vec<_>>();
-            ids.sort_unstable();
-            ids.dedup();
-            collection_ids = Some(match collection_ids {
-                Some(existing) => existing
-                    .into_iter()
-                    .filter(|id| ids.binary_search(id).is_ok())
-                    .collect(),
-                None => ids,
-            });
-        }
-
-        let collection_ids = collection_ids.unwrap_or_default();
-        let rows = if collection_ids.is_empty() {
-            Vec::new()
-        } else {
-            with_connection(&self.pool, async |conn| {
-                collections::table
-                    .filter(collections::id.eq_any(collection_ids))
-                    .load::<Collection>(conn)
-                    .await
-            })
+        let query = AuthorizationCollectionsQuery::new(
+            principal_id_to_storage(principal.user_id),
+            permissions.iter().copied().map(permission_to_storage),
+        );
+        let rows = self
+            .storage
+            .list_local_authorized_collections(query)
             .await?
-        };
+            .into_iter()
+            .map(collection_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
         record_reverse_query(
             BACKEND_KIND,
             "collections_user_can",
@@ -244,21 +171,34 @@ impl PermissionBackend for LocalPermissionBackend {
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
-        let (rows, total) = collection_backend::groups_on_paginated_with_total_count_from_backend(
-            &self.pool,
+        let query = AuthorizationCollectionGrantListQuery::new(
             collection_id,
-            permissions_filter.to_vec(),
-            page,
-        )
-        .await?;
+            permissions_filter
+                .iter()
+                .copied()
+                .map(permission_to_storage),
+            page.clone(),
+        );
+        let (rows, total) = self
+            .storage
+            .list_local_collection_grants(query)
+            .await?
+            .into_parts();
+        let rows = rows
+            .into_iter()
+            .map(group_grant_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
+        let observed_total = total
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(rows.len());
         record_reverse_query(
             BACKEND_KIND,
             "groups_with_permissions_on",
-            total as usize,
+            observed_total,
             rows.len(),
             start.elapsed(),
         );
-        Ok((rows, total))
+        Ok((rows, total.unwrap_or(SKIPPED_TOTAL_COUNT)))
     }
 
     async fn group_permission_on(
@@ -267,17 +207,13 @@ impl PermissionBackend for LocalPermissionBackend {
         group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
         let start = Instant::now();
-        let result = match collection_backend::group_on_from_backend(
-            &self.pool,
-            collection_id.id(),
-            group_id.id(),
-        )
-        .await
-        {
-            Ok(permission) => Ok(Some(permission)),
-            Err(ApiError::NotFound(_)) => Ok(None),
-            Err(error) => Err(error),
-        };
+        let key = AuthorizationGrantKey::new(collection_id, group_id);
+        let result = self
+            .storage
+            .get_local_collection_grant(key)
+            .await
+            .map(|grant| grant.map(grant_from_storage))
+            .map_err(ApiError::from);
         let result_count = result
             .as_ref()
             .map(|row| row.is_some() as usize)
@@ -299,9 +235,18 @@ impl PermissionBackend for LocalPermissionBackend {
         list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
-        collection_id
-            .apply_permissions(&self.pool, group_id, list, replace_existing, None)
-            .await
+        let mutation = AuthorizationGrantMutation::new(
+            AuthorizationGrantKey::new(collection_id, group_id),
+            list.iter().copied().map(permission_to_storage),
+            replace_existing,
+            EventContext::system(),
+        );
+        Ok(grant_from_storage(
+            self.storage
+                .apply_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     async fn revoke_permissions(
@@ -310,7 +255,18 @@ impl PermissionBackend for LocalPermissionBackend {
         group_id: GroupID,
         list: PermissionsList,
     ) -> Result<Permission, ApiError> {
-        collection_id.revoke(&self.pool, group_id, list, None).await
+        let mutation = AuthorizationGrantMutation::new(
+            AuthorizationGrantKey::new(collection_id, group_id),
+            list.iter().copied().map(permission_to_storage),
+            false,
+            EventContext::system(),
+        );
+        Ok(grant_from_storage(
+            self.storage
+                .revoke_local_collection_grant(mutation)
+                .await?
+                .into_value(),
+        ))
     }
 
     async fn revoke_all(
@@ -318,7 +274,15 @@ impl PermissionBackend for LocalPermissionBackend {
         collection_id: CollectionID,
         group_id: GroupID,
     ) -> Result<(), ApiError> {
-        collection_id.revoke_all(&self.pool, group_id, None).await
+        let request = AuthorizationGrantDelete::new(
+            AuthorizationGrantKey::new(collection_id, group_id),
+            EventContext::system(),
+        );
+        self.storage
+            .revoke_all_local_collection_grants(request)
+            .await?
+            .into_value();
+        Ok(())
     }
 
     fn supports_mutation(&self) -> bool {
@@ -331,19 +295,28 @@ impl PermissionBackend for LocalPermissionBackend {
 
     async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError> {
         let start = Instant::now();
-        let allowed = match self.admin_group_id().await? {
-            Some(admin_gid) => principal.group_ids.contains(&admin_gid),
-            None => false,
-        };
+        let identity_scope = crate::config::get_config()?
+            .admin_identity_scope
+            .clone()
+            .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
+        let query = AuthorizationGroupMembershipQuery::new(
+            principal_id_to_storage(principal.user_id),
+            &self.admin_groupname,
+            identity_scope,
+        );
+        let allowed = self
+            .storage
+            .is_authorization_principal_group_member(query)
+            .await?;
         record_is_admin(BACKEND_KIND, allowed, start.elapsed());
         Ok(allowed)
     }
 
-    fn supports_sql_visibility_pushdown(&self) -> bool {
+    fn supports_storage_visibility_filtering(&self) -> bool {
         true
     }
 
-    fn uses_sql_permission_store(&self) -> bool {
+    fn uses_local_permission_store(&self) -> bool {
         true
     }
 

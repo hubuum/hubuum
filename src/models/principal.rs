@@ -1,70 +1,34 @@
-use crate::db::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
-use crate::db::DbPool;
-use crate::db::traits::principal::PrincipalSettingsMutation;
+pub use hubuum_domain::PrincipalKind;
+
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::ResourceRevision;
 use crate::models::json_patch::{
     BoundedJsonPatch, MAX_JSON_PATCH_BYTES, MAX_JSON_PATCH_OPERATIONS,
     MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
+    bounded_json_patch_openapi_schema, register_bounded_json_patch_openapi_schemas,
 };
 use crate::models::search::{FilterField, SortParam};
-use crate::schema::principals;
-use crate::traits::BackendContext;
-use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+use crate::services::storage_boundary::{
+    principal_from_storage, principal_settings_from_storage, principal_settings_mutation_to_storage,
 };
-
-/// The kind of a principal: a human user or a non-human service account.
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PrincipalKind {
-    Human,
-    ServiceAccount,
-}
-
-impl PrincipalKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PrincipalKind::Human => "human",
-            PrincipalKind::ServiceAccount => "service_account",
-        }
-    }
-
-    pub fn from_db(value: &str) -> Result<Self, ApiError> {
-        match value {
-            "human" => Ok(PrincipalKind::Human),
-            "service_account" => Ok(PrincipalKind::ServiceAccount),
-            other => Err(ApiError::InternalServerError(format!(
-                "Unknown principal kind '{other}'"
-            ))),
-        }
-    }
-
-    pub fn is_human(self) -> bool {
-        matches!(self, PrincipalKind::Human)
-    }
-
-    pub fn is_service_account(self) -> bool {
-        matches!(self, PrincipalKind::ServiceAccount)
-    }
-}
+use crate::storage::{
+    PrincipalStorage, StorageContext, StoragePrincipalSettingsMutation, storage_handle,
+};
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
+use crate::traits::{CursorPaginated, CursorValue};
 
 /// The identity parent shared by both users and service accounts. A principal id
 /// IS the user/service-account id (class-table inheritance), and `(identity_scope_id,
 /// name)` is the race-safe authority for cross-kind identity-name uniqueness.
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
-#[diesel(table_name = principals)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Principal {
     pub id: i32,
-    pub kind: String,
+    pub kind: PrincipalKind,
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -72,7 +36,7 @@ pub struct Principal {
     pub provider_managed: bool,
     #[serde(skip, default = "empty_principal_settings_value")]
     #[schema(ignore)]
-    settings: serde_json::Value,
+    pub(crate) settings: serde_json::Value,
     pub external_subject: Option<String>,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
@@ -111,7 +75,7 @@ pub struct PrincipalSettingsPatchDocument(BoundedJsonPatch);
 
 impl PartialSchema for PrincipalSettingsPatchDocument {
     fn schema() -> RefOr<Schema> {
-        BoundedJsonPatch::openapi_schema(
+        bounded_json_patch_openapi_schema(
             "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             serde_json::json!([
                 {"op": "test", "path": "/theme", "value": "light"},
@@ -123,7 +87,7 @@ impl PartialSchema for PrincipalSettingsPatchDocument {
 
 impl ToSchema for PrincipalSettingsPatchDocument {
     fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
-        BoundedJsonPatch::register_openapi_schemas(schemas);
+        register_bounded_json_patch_openapi_schemas(schemas);
     }
 }
 
@@ -179,38 +143,6 @@ impl PrincipalSettings {
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
     }
-
-    /// Apply JSON Merge Patch object semantics to this document.
-    ///
-    /// Object values merge recursively, `null` removes a key, and every other
-    /// value replaces the value currently stored at that key.
-    pub fn merge_patch(mut self, patch: &Self) -> Self {
-        let target = self
-            .0
-            .as_object_mut()
-            .expect("PrincipalSettings always contains an object");
-        let patch = patch
-            .0
-            .as_object()
-            .expect("PrincipalSettings always contains an object");
-        merge_settings_objects(target, patch);
-        self
-    }
-}
-
-impl PrincipalSettingsPatchDocument {
-    fn apply(&self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        PrincipalSettings::new(self.0.apply(settings.as_value())?)
-    }
-}
-
-impl PrincipalSettingsPatch {
-    pub(crate) fn apply(self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
-        match self {
-            Self::MergePatch(patch) => Ok(settings.clone().merge_patch(&patch)),
-            Self::JsonPatch(patch) => patch.apply(settings),
-        }
-    }
 }
 
 impl Default for PrincipalSettings {
@@ -229,52 +161,22 @@ impl<'de> Deserialize<'de> for PrincipalSettings {
     }
 }
 
-fn merge_settings_objects(
-    target: &mut serde_json::Map<String, serde_json::Value>,
-    patch: &serde_json::Map<String, serde_json::Value>,
-) {
-    for (key, patch_value) in patch {
-        match patch_value {
-            serde_json::Value::Null => {
-                target.remove(key);
-            }
-            serde_json::Value::Object(patch_object) => {
-                let target_value = target
-                    .entry(key.clone())
-                    .or_insert_with(|| serde_json::json!({}));
-                if !target_value.is_object() {
-                    *target_value = serde_json::json!({});
-                }
-                merge_settings_objects(
-                    target_value
-                        .as_object_mut()
-                        .expect("replacement settings value is an object"),
-                    patch_object,
-                );
-            }
-            _ => {
-                target.insert(key.clone(), patch_value.clone());
-            }
-        }
-    }
-}
-
 fn empty_principal_settings_value() -> serde_json::Value {
     serde_json::json!({})
 }
 
 impl Principal {
     /// The typed kind of this principal.
-    pub fn principal_kind(&self) -> Result<PrincipalKind, ApiError> {
-        PrincipalKind::from_db(&self.kind)
+    pub const fn principal_kind(&self) -> PrincipalKind {
+        self.kind
     }
 
     pub fn is_human(&self) -> bool {
-        matches!(self.principal_kind(), Ok(kind) if kind.is_human())
+        self.kind.is_human()
     }
 
     pub fn is_service_account(&self) -> bool {
-        matches!(self.principal_kind(), Ok(kind) if kind.is_service_account())
+        self.kind.is_service_account()
     }
 
     pub fn is_provider_managed(&self) -> bool {
@@ -297,7 +199,7 @@ impl Principal {
 pub struct MembershipPrincipalResponse {
     pub principal_id: i32,
     pub identity_scope: String,
-    pub kind: String,
+    pub kind: PrincipalKind,
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -307,10 +209,10 @@ pub struct MembershipPrincipalResponse {
 impl MembershipPrincipalResponse {
     pub async fn from_principal<C>(backend: &C, principal: Principal) -> Result<Self, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let identity_scope = crate::db::traits::identity::identity_scope_name_by_id(
-            backend.db_pool(),
+        let identity_scope = crate::services::identity::resolve_identity_scope_name(
+            backend,
             principal.identity_scope_id,
         )
         .await?;
@@ -358,15 +260,14 @@ impl PrincipalMemberResponse {
         memberships: Vec<(crate::models::PrincipalGroup, Principal)>,
     ) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let scope_ids = memberships
             .iter()
             .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
-            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
-                .await?;
+            crate::services::identity::resolve_identity_scope_names(backend, &scope_ids).await?;
 
         memberships
             .into_iter()
@@ -447,44 +348,6 @@ impl CursorPaginated for PrincipalMemberResponse {
     }
 }
 
-impl CursorSqlMapping for PrincipalMemberResponse {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "principals.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "group_memberships.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "group_memberships.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "group_memberships.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for memberships",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl IdAccessor for Principal {
     fn accessor_id(&self) -> i32 {
         self.id
@@ -492,132 +355,193 @@ impl IdAccessor for Principal {
 }
 
 impl InstanceAdapter<Principal> for Principal {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Principal, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<Principal, ApiError> {
         Ok(self.clone())
     }
 }
 
 /// Insertable row for creating the parent principal. The id is assigned by the
 /// serial sequence; subtype tables (users/service_accounts) reference it.
-#[derive(Insertable)]
-#[diesel(table_name = principals)]
 pub struct NewPrincipal<'a> {
     pub identity_scope_id: i32,
-    pub kind: &'a str,
+    pub kind: PrincipalKind,
     pub name: &'a str,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Principal`].
-    pub struct PrincipalID;
-    noun = "principal id";
-}
+pub use hubuum_domain::PrincipalId as PrincipalID;
 
 impl IdAccessor for PrincipalID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
 impl InstanceAdapter<Principal> for PrincipalID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<Principal, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Principal, ApiError> {
         load_principal_by_id(pool, self.id()).await
     }
 }
 
-impl PrincipalID {
-    pub async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
+/// Application behavior for a backend-neutral principal identifier.
+pub trait PrincipalIdApplicationExt {
+    async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        load_principal_by_id(backend.db_pool(), self.id()).await
-    }
+        C: StorageContext;
 
-    pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
+    async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        crate::db::traits::principal::load_principal_settings(backend.db_pool(), self.id()).await
-    }
+        C: StorageContext;
 
-    pub async fn replace_settings<C>(
+    async fn replace_settings<C>(
         &self,
         backend: &C,
         settings: PrincipalSettings,
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
-            self.id(),
-            PrincipalSettingsMutation::Replace,
-            settings,
-            event_context,
-        )
-        .await
-    }
+        C: StorageContext;
 
-    pub async fn patch_settings<C>(
+    async fn patch_settings<C>(
         &self,
         backend: &C,
         patch: PrincipalSettings,
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
-            self.id(),
-            PrincipalSettingsMutation::Patch,
-            patch,
-            event_context,
-        )
-        .await
-    }
+        C: StorageContext;
 
-    pub(crate) async fn apply_settings_patch<C>(
-        &self,
-        backend: &C,
-        patch: PrincipalSettingsPatch,
-        event_context: &EventContext,
-    ) -> Result<PrincipalSettingsResponse, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        crate::db::traits::principal::apply_principal_settings_patch(
-            backend.db_pool(),
-            self.id(),
-            patch,
-            event_context,
-        )
-        .await
-    }
-
-    pub async fn reset_settings<C>(
+    async fn reset_settings<C>(
         &self,
         backend: &C,
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext;
+}
+
+impl PrincipalIdApplicationExt for PrincipalID {
+    async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
+    where
+        C: StorageContext,
     {
-        crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
-            self.id(),
-            PrincipalSettingsMutation::Reset,
-            PrincipalSettings::default(),
-            event_context,
-        )
-        .await
+        load_principal_by_id(backend, self.id()).await
+    }
+
+    async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext,
+    {
+        storage_handle(backend)
+            .get_principal_settings(crate::services::storage_boundary::principal_id_to_storage(
+                self.id(),
+            ))
+            .await
+            .map_err(ApiError::from)
+            .and_then(principal_settings_from_storage)
+    }
+
+    async fn replace_settings<C>(
+        &self,
+        backend: &C,
+        settings: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext,
+    {
+        storage_handle(backend)
+            .update_principal_settings(
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                StoragePrincipalSettingsMutation::Replace(settings.as_value().clone()),
+                event_context,
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(principal_settings_from_storage)
+    }
+
+    async fn patch_settings<C>(
+        &self,
+        backend: &C,
+        patch: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext,
+    {
+        storage_handle(backend)
+            .update_principal_settings(
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                StoragePrincipalSettingsMutation::MergePatch(patch.as_value().clone()),
+                event_context,
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(principal_settings_from_storage)
+    }
+
+    async fn reset_settings<C>(
+        &self,
+        backend: &C,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: StorageContext,
+    {
+        storage_handle(backend)
+            .update_principal_settings(
+                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                StoragePrincipalSettingsMutation::Reset,
+                event_context,
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(principal_settings_from_storage)
     }
 }
 
+pub(crate) async fn apply_principal_settings_patch<C>(
+    principal_id: PrincipalID,
+    backend: &C,
+    patch: PrincipalSettingsPatch,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError>
+where
+    C: StorageContext,
+{
+    storage_handle(backend)
+        .update_principal_settings(
+            crate::services::storage_boundary::principal_id_to_storage(principal_id.id()),
+            principal_settings_mutation_to_storage(patch)?,
+            event_context,
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
+        .and_then(principal_settings_from_storage)
+}
+
 /// Load a principal by id.
-pub async fn load_principal_by_id(pool: &DbPool, principal_id: i32) -> Result<Principal, ApiError> {
-    crate::db::traits::principal::load_principal_by_id(pool, principal_id).await
+pub async fn load_principal_by_id(
+    pool: &impl crate::storage::StorageContext,
+    principal_id: i32,
+) -> Result<Principal, ApiError> {
+    storage_handle(pool)
+        .get_principal(crate::services::storage_boundary::principal_id_to_storage(
+            principal_id,
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(principal_from_storage)
 }
 
 impl CursorPaginated for Principal {
@@ -658,43 +582,5 @@ impl CursorPaginated for Principal {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for Principal {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "principals.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "principals.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "principals.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "principals.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "principals.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for principals",
-                    field
-                )));
-            }
-        })
     }
 }

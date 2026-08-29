@@ -1,19 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::NaiveDateTime;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_connection};
-    use crate::errors::ApiError;
-    use crate::events::{Action, EntityType, Event};
+    use crate::events::{Action, EntityType};
     use crate::models::{Permissions, PrincipalID, PrincipalSettingsResponse};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, put_request};
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
         scoped_token, service_account_token,
     };
+    use crate::traits::PrincipalIdApplicationExt;
+    use hubuum_storage_postgres::{PostgresPool, with_connection};
 
     const ME_SETTINGS: &str = "/api/v1/iam/me/settings";
     const PRINCIPALS: &str = "/api/v1/iam/principals";
@@ -31,26 +31,31 @@ mod tests {
         }
     }
 
-    async fn principal_mutation_state(pool: &DbPool, principal_id: i32) -> (NaiveDateTime, i64) {
-        use crate::schema::{events, principals};
+    async fn principal_mutation_state(
+        pool: &PostgresPool,
+        principal_id: i32,
+    ) -> (NaiveDateTime, i64) {
+        use crate::schema::principals;
 
-        with_connection(pool, async |conn| -> Result<_, ApiError> {
+        let updated_at = with_connection(pool, async |conn| -> Result<_, diesel::result::Error> {
             let updated_at = principals::table
                 .filter(principals::id.eq(principal_id))
                 .select(principals::updated_at)
                 .first::<NaiveDateTime>(conn)
                 .await?;
-            let event_count = events::table
-                .filter(events::entity_type.eq(EntityType::User.as_str()))
-                .filter(events::entity_id.eq(principal_id))
-                .filter(events::action.eq(Action::Updated.as_str()))
-                .count()
-                .get_result::<i64>(conn)
-                .await?;
-            Ok((updated_at, event_count))
+            Ok(updated_at)
         })
         .await
-        .unwrap()
+        .unwrap();
+        let event_count = crate::test_support::audit_event_count(
+            pool,
+            EntityType::User,
+            Action::Updated,
+            principal_id,
+        )
+        .await
+        .unwrap();
+        (updated_at, event_count)
     }
 
     #[rstest]
@@ -98,10 +103,12 @@ mod tests {
         })
         .await;
 
-        assert!(matches!(
-            result,
-            Err(crate::errors::ApiError::BadRequest(_))
-        ));
+        assert_eq!(
+            result
+                .expect_err("non-object settings must be rejected")
+                .kind(),
+            hubuum_storage_core::StorageErrorKind::InvalidInput,
+        );
     }
 
     #[rstest]
@@ -462,17 +469,16 @@ mod tests {
         };
         assert_eq!(response.status(), expected_status);
 
-        let event = with_connection(&context.pool, async |conn| {
-            crate::schema::events::table
-                .filter(crate::schema::events::entity_type.eq(entity_type.as_str()))
-                .filter(crate::schema::events::entity_id.eq(target_id))
-                .filter(crate::schema::events::action.eq(Action::Updated.as_str()))
-                .order(crate::schema::events::id.desc())
-                .first::<Event>(conn)
-                .await
-        })
+        let event = crate::test_support::audit_events(
+            &context.pool,
+            entity_type,
+            target_id,
+            Some(Action::Updated),
+        )
         .await
-        .unwrap();
+        .unwrap()
+        .pop()
+        .expect("settings mutation should emit an audit event");
 
         assert_eq!(
             event.before,

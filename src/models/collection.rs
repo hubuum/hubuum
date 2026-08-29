@@ -1,35 +1,36 @@
-use crate::db::prelude::*;
 use crate::models::token_scope::TokenScope;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::authz::AuthzSubject;
-use crate::db::traits::collection as collection_backend;
 use crate::errors::ApiError;
 use crate::models::group::{Group, GroupID};
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::collections;
-use crate::traits::{BackendContext, CollectionAccessors, SelfAccessors};
+use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::permissions::{
+    AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef, authorization_collection_from_storage,
+    authorization_effective_group_grant_from_storage, authorization_group_from_storage,
+    authorization_group_grant_from_storage, grant_from_storage, permission_to_storage,
+};
+use crate::services::identity::token_scope_to_storage;
+use crate::services::storage_boundary::{
+    collection_from_storage, collection_id_to_storage, group_id_to_storage, principal_id_to_storage,
+};
+use crate::storage::{
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
+    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
+    AuthorizationDataStorage, AuthorizationGrantKey, AuthorizationGroupCollectionQuery,
+    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
+    CollectionAuthorizationQueryStorage, StorageContext, storage_handle,
+};
+use crate::traits::AuthzSubject;
+use crate::traits::{CollectionAccessors, SelfAccessors};
 
-#[derive(
-    Serialize,
-    Deserialize,
-    Queryable,
-    QueryableByName,
-    PartialEq,
-    Debug,
-    Clone,
-    Selectable,
-    ToSchema,
-)]
-#[diesel(table_name = collections)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct Collection {
     pub id: i32,
     pub name: String,
@@ -40,20 +41,16 @@ pub struct Collection {
     pub revision: ResourceRevision,
 }
 
-crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Collection`].
-    pub struct CollectionID;
-    noun = "collection id";
-}
+pub use hubuum_domain::CollectionId as CollectionID;
 
-#[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 #[schema(example = update_collection_example)]
-#[diesel(table_name = collections)]
 pub struct UpdateCollection {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
+#[cfg(test)]
 impl UpdateCollection {
     pub(crate) fn has_changes(&self, current: &Collection) -> bool {
         self.name
@@ -85,8 +82,7 @@ pub struct NewCollectionWithAssignee {
 /// into the database.
 ///
 /// Odds are pretty good that you want to use NewCollectionWithAssignee instead.
-#[derive(Serialize, Deserialize, Insertable, ToSchema)]
-#[diesel(table_name = collections)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct NewCollection {
     pub name: String,
     pub description: String,
@@ -114,13 +110,6 @@ fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
     }
 }
 
-pub async fn total_collection_count<C>(backend: &C) -> Result<i64, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    collection_backend::total_collection_count_from_backend(backend.db_pool()).await
-}
-
 /// Check what permissions a user has to a given collection
 ///
 /// ## Arguments
@@ -137,12 +126,23 @@ pub async fn principal_on<C, S, T>(
     collection_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_from_backend(backend.db_pool(), principal, collection_ref)
+    let query = AuthorizationPrincipalCollectionQuery::new(
+        principal_id_to_storage(principal.principal_id()),
+        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+    );
+    storage_handle(backend)
+        .load_principal_collection_permissions(query)
         .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -152,10 +152,27 @@ pub async fn principal_all_permissions<C, S>(
     principal: S,
 ) -> Result<Vec<(Collection, Group, Permission)>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: AuthzSubject,
 {
-    collection_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
+    storage_handle(backend)
+        .list_all_principal_collection_permissions(principal_id_to_storage(
+            principal.principal_id(),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let (grant, group, collection) = row.into_parts();
+                    Ok((
+                        authorization_collection_from_storage(collection)?,
+                        authorization_group_from_storage(group)?,
+                        grant_from_storage(grant),
+                    ))
+                })
+                .collect()
+        })
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
@@ -165,17 +182,30 @@ pub async fn principal_on_paginated_with_total_count<C, S, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    C: StorageContext,
+    S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
-        principal,
-        collection_ref,
-        query_options,
-    )
-    .await
+    let principal = AuthorizationPrincipalCollectionQuery::new(
+        principal_id_to_storage(principal.principal_id()),
+        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+    );
+    storage_handle(backend)
+        .list_principal_collection_permissions(AuthorizationPrincipalCollectionPageQuery::new(
+            principal,
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_grant_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
+            ))
+        })
 }
 
 pub async fn effective_principal_on<C, S, T>(
@@ -184,16 +214,23 @@ pub async fn effective_principal_on<C, S, T>(
     collection_ref: T,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    C: StorageContext,
+    S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::effective_principal_on_from_backend(
-        backend.db_pool(),
-        principal,
-        collection_ref,
-    )
-    .await
+    let query = AuthorizationPrincipalCollectionQuery::new(
+        principal_id_to_storage(principal.principal_id()),
+        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+    );
+    storage_handle(backend)
+        .list_effective_principal_collection_permissions(query)
+        .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_effective_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// Check if a user has a specific permission to any collection
@@ -214,16 +251,24 @@ pub async fn user_can_on_any<C, U>(
     scopes: Option<&TokenScope>,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     U: GroupAccessors + AuthzSubject,
 {
-    collection_backend::user_can_on_any_from_backend(
-        backend.db_pool(),
-        user_id,
-        permission_type,
-        scopes,
-    )
-    .await
+    let is_admin = user_id.is_admin(backend).await?;
+    storage_handle(backend)
+        .list_visible_collections(AuthorizationCollectionVisibilityQuery::new(
+            principal_id_to_storage(user_id.principal_id()),
+            is_admin,
+            permission_to_storage(permission_type),
+            scopes.map(token_scope_to_storage),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_collection_from_storage)
+                .collect()
+        })
 }
 
 /// Check if a group has a specific permission to a given collection ID
@@ -244,16 +289,17 @@ pub async fn group_can_on<C, T>(
     permission_type: Permissions,
 ) -> Result<bool, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::group_can_on_from_backend(
-        backend.db_pool(),
-        gid,
-        collection_ref,
-        permission_type,
-    )
-    .await
+    storage_handle(backend)
+        .has_group_collection_permission(AuthorizationGroupCollectionQuery::new(
+            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            group_id_to_storage(gid),
+            permission_to_storage(permission_type),
+        ))
+        .await
+        .map_err(ApiError::from)
 }
 
 pub async fn effective_group_on<C>(
@@ -262,14 +308,20 @@ pub async fn effective_group_on<C>(
     gid: i32,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::effective_group_on_from_backend(
-        backend.db_pool(),
-        target_collection_id,
-        gid,
-    )
-    .await
+    storage_handle(backend)
+        .list_effective_group_collection_permissions(
+            collection_id_to_storage(target_collection_id),
+            group_id_to_storage(gid),
+        )
+        .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_effective_group_grant_from_storage)
+                .collect()
+        })
 }
 
 /// Check what groups have a specific permission to a given collection ID
@@ -288,14 +340,20 @@ pub async fn groups_can_on<C>(
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::groups_can_on_from_backend(
-        backend.db_pool(),
-        target_collection_id,
-        permission_type,
-    )
-    .await
+    storage_handle(backend)
+        .load_groups_with_collection_permission(AuthorizationCollectionGroupsQuery::new(
+            collection_id_to_storage(target_collection_id),
+            permission_to_storage(permission_type),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(authorization_group_from_storage)
+                .collect()
+        })
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
@@ -305,15 +363,27 @@ pub async fn groups_can_on_paginated_with_total_count<C>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::groups_can_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
-        target_collection_id,
-        permission_type,
-        query_options,
-    )
-    .await
+    storage_handle(backend)
+        .list_groups_with_collection_permission(AuthorizationCollectionGroupsPageQuery::new(
+            AuthorizationCollectionGroupsQuery::new(
+                collection_id_to_storage(target_collection_id),
+                permission_to_storage(permission_type),
+            ),
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
+            ))
+        })
 }
 
 /// List all groups and their permissions for a collection
@@ -332,16 +402,25 @@ pub async fn groups_on<C, T>(
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_from_backend(
-        backend.db_pool(),
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    let mut query_options = query_options;
+    query_options.set_limit(None)?;
+    query_options.clear_cursor();
+    query_options.set_include_total(false);
+    let (rows, _) = storage_handle(backend)
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            permissions_filter.into_iter().map(permission_to_storage),
+            query_options,
+        ))
+        .await
+        .map_err(ApiError::from)?
+        .into_parts();
+    rows.into_iter()
+        .map(authorization_group_grant_from_storage)
+        .collect()
 }
 
 pub async fn groups_on_paginated<C, T>(
@@ -351,16 +430,22 @@ pub async fn groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_paginated_from_backend(
-        backend.db_pool(),
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    let page = storage_handle(backend)
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            permissions_filter.into_iter().map(permission_to_storage),
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)?;
+    let (items, _) = page.into_parts();
+    items
+        .into_iter()
+        .map(authorization_group_grant_from_storage)
+        .collect()
 }
 
 pub async fn groups_on_paginated_with_total_count<C, T>(
@@ -370,16 +455,26 @@ pub async fn groups_on_paginated_with_total_count<C, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::groups_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    storage_handle(backend)
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            permissions_filter.into_iter().map(permission_to_storage),
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|page| {
+            let (rows, total) = page.into_parts();
+            Ok((
+                rows.into_iter()
+                    .map(authorization_group_grant_from_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                total.unwrap_or(SKIPPED_TOTAL_COUNT),
+            ))
+        })
 }
 
 pub async fn count_groups_on_paginated<C, T>(
@@ -389,16 +484,19 @@ pub async fn count_groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::count_groups_on_paginated_from_backend(
-        backend.db_pool(),
-        collection_ref,
-        permissions_filter,
-        query_options,
-    )
-    .await
+    let (_, total) = storage_handle(backend)
+        .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            permissions_filter.into_iter().map(permission_to_storage),
+            query_options.clone(),
+        ))
+        .await
+        .map_err(ApiError::from)?
+        .into_parts();
+    Ok(total.unwrap_or(SKIPPED_TOTAL_COUNT))
 }
 
 /// List all permissions for a given group on a collection
@@ -408,53 +506,88 @@ pub async fn group_on<C>(
     gid: i32,
 ) -> Result<Permission, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::group_on_from_backend(backend.db_pool(), target_collection_id, gid).await
+    let grant = storage_handle(backend)
+        .get_local_collection_grant(AuthorizationGrantKey::new(
+            collection_id_to_storage(target_collection_id),
+            group_id_to_storage(gid),
+        ))
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "No grant exists for group {gid} on collection {target_collection_id}"
+            ))
+        })?;
+    Ok(grant_from_storage(grant))
 }
 
-pub async fn collection_children<C, T>(
+pub async fn list_collection_children<C, T>(
     backend: &C,
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_children_from_backend(backend.db_pool(), collection_ref).await
+    let collection_id = collection_ref.collection_id(backend).await?;
+    storage_handle(backend)
+        .collection_store()
+        .list_collection_children(crate::services::storage_boundary::collection_id_to_storage(
+            collection_id.id(),
+        ))
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(collection_from_storage)
+        .collect()
 }
 
-pub async fn collection_ancestors<C, T>(
+pub async fn list_collection_ancestors<C, T>(
     backend: &C,
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_ancestors_from_backend(backend.db_pool(), collection_ref).await
+    let collection_id = collection_ref.collection_id(backend).await?;
+    storage_handle(backend)
+        .collection_store()
+        .list_collection_ancestors(crate::services::storage_boundary::collection_id_to_storage(
+            collection_id.id(),
+        ))
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(collection_from_storage)
+        .collect()
 }
 
 pub async fn move_collection<C>(
     backend: &C,
     collection_id: i32,
     new_parent_collection_id: i32,
-    context: Option<&crate::events::EventContext>,
+    context: &crate::events::EventContext,
 ) -> Result<Collection, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::move_collection_record_from_backend(
-        backend.db_pool(),
-        collection_id,
-        new_parent_collection_id,
-        context,
-    )
-    .await
+    storage_handle(backend)
+        .collection_store()
+        .move_collection(
+            crate::services::storage_boundary::collection_id_to_storage(collection_id),
+            crate::services::storage_boundary::collection_id_to_storage(new_parent_collection_id),
+            context,
+        )
+        .await
+        .map_err(ApiError::from)
+        .map(|outcome| outcome.into_value())
+        .and_then(collection_from_storage)
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::collections_history)]
+#[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct CollectionHistory {
     pub id: i32,
     pub name: String,
@@ -473,11 +606,52 @@ pub struct CollectionHistory {
     pub revision: ResourceRevision,
 }
 
-crate::impl_history_pagination!(CollectionHistory, "collections_history");
+impl crate::traits::CursorPaginated for CollectionHistory {
+    fn supports_sort(field: &crate::models::search::FilterField) -> bool {
+        matches!(
+            field,
+            crate::models::search::FilterField::HistoryId
+                | crate::models::search::FilterField::Revision
+        )
+    }
+
+    fn cursor_value(
+        &self,
+        field: &crate::models::search::FilterField,
+    ) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            crate::models::search::FilterField::HistoryId => {
+                crate::traits::CursorValue::Integer(self.history_id)
+            }
+            crate::models::search::FilterField::Revision => {
+                crate::traits::CursorValue::Integer(self.revision.get())
+            }
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{other}' is not orderable for history"
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<crate::models::search::SortParam> {
+        vec![crate::models::search::SortParam {
+            field: crate::models::search::FilterField::HistoryId,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<crate::models::search::SortParam> {
+        Self::default_sort()
+    }
+}
 
 #[async_trait]
 impl AuthzTarget for Collection {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Collection,
             id: self.id,
@@ -492,7 +666,10 @@ impl AuthzTarget for Collection {
 
 #[async_trait]
 impl AuthzTarget for CollectionID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
@@ -502,17 +679,18 @@ mod tests {
     use std::vec;
 
     use diesel::sql_query;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
 
     use super::*;
-    use crate::db::DbPool;
-    use crate::db::traits::UserPermissions;
+
     use crate::models::group::{GroupID, NewGroup};
     use crate::models::permissions::PermissionsList;
     use crate::tests::{TestScope, create_test_user, generate_all_subsets};
+    use crate::traits::UserPermissions;
     use crate::traits::{CanDelete, CanSave, PermissionController};
 
     async fn assign_to_groups(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         collection: &Collection,
         groups: &[Group],
         permissions: PermissionsList,
@@ -542,7 +720,7 @@ mod tests {
     }
 
     async fn groups_can_on_count(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         target_collection_id: i32,
         permission_type: Permissions,
         expected_count: i32,
@@ -702,7 +880,7 @@ mod tests {
         .await
         .unwrap();
 
-        let initial_ancestors = collection_ancestors(&pool, grandchild.clone())
+        let initial_ancestors = list_collection_ancestors(&pool, grandchild.clone())
             .await
             .unwrap()
             .into_iter()
@@ -713,15 +891,26 @@ mod tests {
             &[child.id, parent.collection.id, root_id]
         );
 
-        let cycle_result = move_collection(&pool, parent.collection.id, grandchild.id, None).await;
+        let cycle_result = move_collection(
+            &pool,
+            parent.collection.id,
+            grandchild.id,
+            &crate::events::EventContext::system(),
+        )
+        .await;
         assert!(matches!(cycle_result, Err(ApiError::BadRequest(_))));
 
-        let moved = move_collection(&pool, child.id, root_id, None)
-            .await
-            .unwrap();
+        let moved = move_collection(
+            &pool,
+            child.id,
+            root_id,
+            &crate::events::EventContext::system(),
+        )
+        .await
+        .unwrap();
         assert_eq!(moved.parent_collection_id, Some(root_id));
 
-        let moved_ancestors = collection_ancestors(&pool, grandchild.clone())
+        let moved_ancestors = list_collection_ancestors(&pool, grandchild.clone())
             .await
             .unwrap()
             .into_iter()
@@ -743,7 +932,7 @@ mod tests {
         let parent = scope.collection_fixture("protect_root").await;
         let root_id = parent.collection.parent_collection_id.unwrap();
 
-        let delete_result = crate::db::with_connection(&pool, async |conn| {
+        let delete_result = hubuum_storage_postgres::with_connection(&pool, async |conn| {
             sql_query("DELETE FROM collections WHERE id = $1")
                 .bind::<diesel::sql_types::Integer, _>(root_id)
                 .execute(conn)
@@ -752,7 +941,7 @@ mod tests {
         .await;
         assert!(delete_result.is_err());
 
-        let reparent_result = crate::db::with_connection(&pool, async |conn| {
+        let reparent_result = hubuum_storage_postgres::with_connection(&pool, async |conn| {
             sql_query("UPDATE collections SET parent_collection_id = $1 WHERE id = $2")
                 .bind::<diesel::sql_types::Integer, _>(parent.collection.id)
                 .bind::<diesel::sql_types::Integer, _>(root_id)
@@ -853,13 +1042,7 @@ mod tests {
             &pool,
             collection.collection.clone(),
             vec![],
-            QueryOptions {
-                filters: vec![],
-                sort: vec![],
-                limit: None,
-                cursor: None,
-                include_total: true,
-            },
+            QueryOptions::new(vec![], vec![], None, None, true).expect("test query must be valid"),
         )
         .await
         .unwrap();
@@ -1342,8 +1525,10 @@ mod tests {
                  has_create_template = TRUE,
                  has_update_template = TRUE,
                  has_delete_template = TRUE
-             WHERE has_delegate_collection = TRUE",
+             WHERE has_delegate_collection = TRUE
+               AND collection_id = $1",
         )
+        .bind::<diesel::sql_types::Integer, _>(collection.collection.id)
         .execute(&mut conn)
         .await
         .unwrap();

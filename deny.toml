@@ -12,7 +12,13 @@ version = 2
 yanked = "deny"
 unmaintained = "workspace"
 unused-ignored-advisory = "deny"
-ignore = []
+ignore = [
+  # RUSTSEC-2026-0258 affects Actix's optional h2 0.3 dependency. Hubuum
+  # disables the Actix HTTP/2 feature, so the vulnerable code is not compiled.
+  # The package remains in Cargo.lock because Cargo records optional
+  # dependencies. Remove this exception when Actix supports fixed h2 0.4.
+  "RUSTSEC-2026-0258",
+]
 
 [licenses]
 confidence-threshold = 0.93

@@ -32,11 +32,15 @@ if [[ "$*" == *" exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/ups
     read -r failure_polls < "$failure_polls_file"
   fi
   if (( failure_polls > 0 )); then
-    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":1}]\n'
+    standby_fails=1
     printf '%s\n' "$((failure_polls - 1))" > "$failure_polls_file"
   else
-    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":0}]\n'
+    standby_fails=0
   fi
+  printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":0},'
+  printf '{"address":"hubuum-api-standby:8080","num_requests":0,"fails":%s},' "$standby_fails"
+  printf '{"address":"hubuum-web:3000","num_requests":0,"fails":0},'
+  printf '{"address":"hubuum-web-standby:3000","num_requests":0,"fails":0}]\n'
   exit 0
 fi
 
@@ -110,6 +114,7 @@ export FAKE_MISSING_SERVICES=""
 export FAKE_UNHEALTHY_SERVICES=""
 ENGINE_PATH="$FAKE_ENGINE"
 COMPOSE_CMD=("$FAKE_ENGINE" compose --env-file .env -f compose.yml)
+API_PORT=8080
 
 # shellcheck source=scripts/single-host-rollout.sh
 source "$REPOSITORY_ROOT/scripts/single-host-rollout.sh"
@@ -126,12 +131,14 @@ assert_caddy_upstream_status_eligibility() {
   local expected="$1"
   local upstreams="$2"
   local actual="false"
+  shift 2
 
-  if hubuum_caddy_upstream_status_is_eligible "$upstreams"; then
+  if hubuum_caddy_upstream_status_is_eligible "$upstreams" "$@"; then
     actual="true"
   fi
   [[ "$actual" == "$expected" ]] || {
-    printf 'unexpected Caddy upstream eligibility for %s\n' "$upstreams" >&2
+    printf 'unexpected Caddy upstream eligibility for %s (required: %s)\n' \
+      "$upstreams" "$*" >&2
     exit 1
   }
 }
@@ -155,18 +162,42 @@ assert_rollout_rejects_timeout_setting() {
   unset "$setting_name"
 }
 
-assert_caddy_upstream_status_eligibility "false" '[]'
-assert_caddy_upstream_status_eligibility "false" '[{"address":"hubuum-api:8080"}]'
-assert_caddy_upstream_status_eligibility "true" '[{"fails": 0}, {"fails":0}]'
-assert_caddy_upstream_status_eligibility "false" '[{"fails":0}, {"fails":2}]'
+assert_caddy_upstream_status_eligibility \
+  "false" '[]' "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "false" '[{"address":"hubuum-api:8080","fails":0}]' \
+  "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "false" '[{"address":"hubuum-api-standby:8080"}]' \
+  "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "true" \
+  '[{"address":"hubuum-api-standby:8080","fails":0},{"address":"hubuum-web:3000","fails":2}]' \
+  "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "false" \
+  '[{"address":"hubuum-api:8080","fails":0},{"address":"hubuum-api-standby:8080","fails":2}]' \
+  "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "false" \
+  '[{"address":"hubuum-api-standby:8080","fails":0},{"address":"hubuum-api-standby:8080","fails":1}]' \
+  "hubuum-api-standby:8080"
+assert_caddy_upstream_status_eligibility \
+  "true" \
+  '[{"address":"hubuum-api-standby:8080","fails":0},{"address":"hubuum-web-standby:3000","fails":0},{"address":"hubuum-web:3000","fails":4}]' \
+  "hubuum-api-standby:8080" "hubuum-web-standby:3000"
 
 FAKE_CADDY_RUNNING="true"
 FAKE_CADDY_DEPENDENCIES="true"
 INSTALL_MODE="all"
 : > "$COMMAND_LOG"
+printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-rolling.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate caddy
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
@@ -187,6 +218,7 @@ INSTALL_MODE="backend"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
@@ -205,6 +237,7 @@ if hubuum_rollout; then
   exit 1
 fi
 cat > "$TEST_ROOT/expected-migration-failure.log" <<EOF
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml start hubuum-api
@@ -253,6 +286,7 @@ rm -f "$TEST_ROOT/started-valkey"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-missing-infrastructure.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
@@ -286,7 +320,9 @@ printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
 sleep() { :; }
 # Bash's integer SECONDS clock can cross a boundary immediately after the
 # deadline is calculated. Keep enough synthetic time for all no-sleep polls.
-hubuum_wait_for_caddy_upstreams 5
+HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS=5
+hubuum_wait_for_caddy_upstreams "hubuum-api-standby:8080"
+unset HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS
 unset -f sleep
 [[ "$(grep -c 'reverse_proxy/upstreams' "$COMMAND_LOG")" -eq 3 ]] || {
   echo "Caddy upstream wait did not poll until passive failures cleared" >&2
@@ -294,11 +330,13 @@ unset -f sleep
 }
 rm -f "$TEST_ROOT/caddy-failure-polls"
 
-if timeout_output="$(hubuum_wait_for_caddy_upstreams invalid 2>&1)"; then
+HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS=invalid
+if timeout_output="$(hubuum_wait_for_caddy_upstreams "hubuum-api-standby:8080" 2>&1)"; then
   echo "invalid Caddy upstream timeout unexpectedly succeeded" >&2
   exit 1
 fi
 [[ "$timeout_output" == "ERROR: Caddy upstream timeout must be a positive integer; got 'invalid'" ]]
+unset HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS
 
 if timeout_output="$(hubuum_wait_for_healthy hubuum-api 0 2>&1)"; then
   echo "zero health timeout unexpectedly succeeded" >&2

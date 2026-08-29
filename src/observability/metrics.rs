@@ -12,6 +12,7 @@ mod registry;
 mod remote_call;
 mod scrape;
 mod security;
+mod storage;
 mod task;
 mod timer;
 
@@ -26,6 +27,7 @@ use crate::errors::ApiError;
 use self::cache::ScrapeCache;
 use self::process::ProcessMetrics;
 
+pub(crate) use self::computed_field::computed_evaluation_summary;
 pub use self::computed_field::{
     computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
     computed_rebuild_finished,
@@ -53,6 +55,7 @@ pub use self::registry::{init, runtime_identity};
 pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
 pub use self::security::{client_allowlist_rejected, revision_condition};
+pub use self::storage::{storage_backend_identity, storage_operation_finished};
 pub use self::task::{
     TaskOutputKind, task_claimed, task_completed, task_lease_recovered,
     task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
@@ -98,6 +101,9 @@ struct Metrics {
     db_connection_acquire_failures: Counter<u64>,
     db_operation_duration: Histogram<f64>,
     db_operation_errors: Counter<u64>,
+    storage_backend_info: Gauge<u64>,
+    storage_operation_duration: Histogram<f64>,
+    storage_operation_errors: Counter<u64>,
     task_worker_iterations: Counter<u64>,
     task_claims: Counter<u64>,
     task_lease_recoveries: Counter<u64>,

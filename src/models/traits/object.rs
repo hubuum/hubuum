@@ -1,10 +1,3 @@
-use crate::db::DbPool;
-use crate::db::traits::object::{
-    CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
-    LoadObjectRecord, ObjectClassLookup, ObjectCollectionLookup, PatchObjectDataRecord,
-    ResolveObjectSelectorRecord, SaveObjectRecord, UpdateObjectRecord, UpdateResolvedObjectRecord,
-    ValidateObjectRecord, ValidateObjectSchema,
-};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 
@@ -16,17 +9,24 @@ use crate::models::object::{
 };
 use crate::models::object_data_patch::ObjectDataPatchDocument;
 use crate::models::search::{FilterField, SortParam};
+use crate::services::storage_boundary::{
+    class_id_to_storage, collection_from_storage, collection_id_to_storage,
+    object_create_to_storage, object_from_storage, object_id_to_storage, object_patch_to_storage,
+    object_selector_to_storage, object_to_storage, object_update_to_storage,
+    resolved_class_from_storage, resolved_class_to_storage, resolved_object_from_storage,
+    resolved_object_to_storage,
+};
+use crate::storage::{StorageClassSelector, StorageContext, storage_handle};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    BackendContext, ClassAccessors, CollectionAccessors, CursorPaginated, CursorSqlField,
-    CursorSqlMapping, CursorSqlType, CursorValue, PermissionController, Validate,
-    ValidateAgainstSchema,
+    ClassAccessors, CollectionAccessors, CursorPaginated, CursorValue, PermissionController,
+    Validate, ValidateAgainstSchema,
 };
 use tracing::debug;
 
 pub async fn check_if_object_in_class<C, O>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     class: &C,
     object: &O,
 ) -> Result<(), ApiError>
@@ -88,39 +88,54 @@ impl HubuumObject {
 impl Validate for HubuumObject {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.validate_object_record(backend.db_pool()).await
+        storage_handle(backend)
+            .object_store()
+            .validate_object(object_to_storage(self.clone()))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
 impl ValidateAgainstSchema for HubuumObject {
     async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        self.validate_object_schema(schema)
+        crate::utilities::json_schema::validate_json_value(schema, &self.data)
     }
 }
 
 impl Validate for NewHubuumObject {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.validate_object_record(backend.db_pool()).await
+        storage_handle(backend)
+            .object_store()
+            .validate_object_create(object_create_to_storage(self.clone()))
+            .await
+            .map_err(ApiError::from)
     }
 }
 
 impl ValidateAgainstSchema for NewHubuumObject {
     async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        self.validate_object_schema(schema)
+        crate::utilities::json_schema::validate_json_value(schema, &self.data)
     }
 }
 
 impl Validate for (&UpdateHubuumObject, i32) {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.validate_object_record(backend.db_pool()).await
+        storage_handle(backend)
+            .object_store()
+            .validate_object_update(
+                object_id_to_storage(self.1),
+                object_update_to_storage(self.0.clone()),
+            )
+            .await
+            .map_err(ApiError::from)
     }
 }
 
@@ -130,32 +145,108 @@ impl Validate for (&UpdateHubuumObject, i32) {
 impl SaveAdapter for HubuumObject {
     type Output = HubuumObject;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_object_record_without_events(pool).await
+    async fn save_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Self::Output, ApiError> {
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)?;
+        let update = UpdateHubuumObject {
+            name: Some(self.name.clone()),
+            collection_id: Some(self.collection_id),
+            hubuum_class_id: Some(self.hubuum_class_id),
+            data: Some(self.data.clone()),
+            description: Some(self.description.clone()),
+        };
+        storage_handle(pool)
+            .object_store()
+            .update_object(
+                &target,
+                object_update_to_storage(update),
+                &EventContext::system(),
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool, Some(context)).await
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)?;
+        let update = UpdateHubuumObject {
+            name: Some(self.name.clone()),
+            collection_id: Some(self.collection_id),
+            hubuum_class_id: Some(self.hubuum_class_id),
+            data: Some(self.data.clone()),
+            description: Some(self.description.clone()),
+        };
+        storage_handle(pool)
+            .object_store()
+            .update_object(&target, object_update_to_storage(update), context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
 impl SaveAdapter for NewHubuumObject {
     type Output = HubuumObject;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_object_record_without_events(pool).await
+    async fn save_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Self::Output, ApiError> {
+        let class = storage_handle(pool)
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class_id_to_storage(
+                self.hubuum_class_id,
+            )))
+            .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .create_object(
+                &class,
+                object_create_to_storage(self.clone()),
+                &EventContext::system(),
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool, Some(context)).await
+        let class = storage_handle(pool)
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class_id_to_storage(
+                self.hubuum_class_id,
+            )))
+            .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .create_object(&class, object_create_to_storage(self.clone()), context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
@@ -165,21 +256,45 @@ impl UpdateAdapter for UpdateHubuumObject {
 
     async fn update_adapter_without_events(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         object_id: HubuumObjectID,
     ) -> Result<Self::Output, ApiError> {
-        self.update_object_record_without_events(pool, object_id.id())
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(object_id.id()))
             .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .update_object(
+                &target,
+                object_update_to_storage(self.clone()),
+                &EventContext::system(),
+            )
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 
     async fn update_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         object_id: HubuumObjectID,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_object_record(pool, object_id.id(), Some(context))
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(object_id.id()))
             .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .update_object(&target, object_update_to_storage(self.clone()), context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
@@ -191,7 +306,7 @@ pub trait PatchObjectData {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl PatchObjectData for ObjectDataPatchDocument {
@@ -202,17 +317,23 @@ impl PatchObjectData for ObjectDataPatchDocument {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.patch_object_data_record(backend.db_pool(), target, context)
+        let target = resolved_object_to_storage(target);
+        storage_handle(backend)
+            .object_store()
+            .patch_object_data(&target, object_patch_to_storage(self.clone())?, context)
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
 pub trait ResolveObjectTarget {
     async fn resolve_object_target<C>(&self, backend: &C) -> Result<ResolvedObjectTarget, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 pub trait CreateObjectInResolvedClass {
@@ -223,7 +344,7 @@ pub trait CreateObjectInResolvedClass {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl CreateObjectInResolvedClass for NewHubuumObject {
@@ -234,22 +355,30 @@ impl CreateObjectInResolvedClass for NewHubuumObject {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.create_object_in_resolved_class_record(backend.db_pool(), target, context)
+        let target = resolved_class_to_storage(target);
+        storage_handle(backend)
+            .object_store()
+            .create_object(&target, object_create_to_storage(self.clone()), context)
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
 impl ResolveObjectTarget for ObjectSelector {
     async fn resolve_object_target<C>(&self, backend: &C) -> Result<ResolvedObjectTarget, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let (class, object) = self
-            .resolve_object_selector_record(backend.db_pool())
-            .await?;
-        Ok(ResolvedObjectTarget::new(self.clone(), class, object))
+        storage_handle(backend)
+            .object_store()
+            .resolve_object(object_selector_to_storage(self.clone()))
+            .await
+            .map_err(ApiError::from)
+            .and_then(resolved_object_from_storage)
     }
 }
 
@@ -261,7 +390,7 @@ pub trait UpdateResolvedObject {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl UpdateResolvedObject for UpdateHubuumObject {
@@ -272,10 +401,16 @@ impl UpdateResolvedObject for UpdateHubuumObject {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_resolved_object_record(backend.db_pool(), target, context)
+        let target = resolved_object_to_storage(target);
+        storage_handle(backend)
+            .object_store()
+            .update_object(&target, object_update_to_storage(self.clone()), context)
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(object_from_storage)
     }
 }
 
@@ -286,7 +421,7 @@ pub trait DeleteResolvedObject {
         context: &EventContext,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl DeleteResolvedObject for ResolvedObjectTarget {
@@ -296,20 +431,52 @@ impl DeleteResolvedObject for ResolvedObjectTarget {
         context: &EventContext,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_resolved_object_record(backend.db_pool(), context)
+        let target = resolved_object_to_storage(self);
+        storage_handle(backend)
+            .object_store()
+            .delete_object(&target, context)
             .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
 impl DeleteAdapter for HubuumObject {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_object_record_without_events(pool).await
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .delete_object(&target, &EventContext::system())
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
-        self.delete_object_record(pool, Some(context)).await
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id))
+            .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .object_store()
+            .delete_object(&target, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -323,28 +490,56 @@ impl IdAccessor for HubuumObject {
 }
 
 impl InstanceAdapter<HubuumObject> for HubuumObject {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumObject, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumObject, ApiError> {
         Ok(self.clone())
     }
 }
 
 impl CollectionAdapter for HubuumObject {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
-        self.lookup_object_collection(pool).await
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Collection, ApiError> {
+        storage_handle(pool)
+            .collection_store()
+            .get_collection(collection_id_to_storage(self.collection_id))
+            .await
+            .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
-    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.collection_id)
+    async fn collection_id_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<CollectionID, ApiError> {
+        Ok(CollectionID::new(self.collection_id)?)
     }
 }
 
 impl ClassAdapter for HubuumObject {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        self.lookup_object_class(pool).await
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClass, ApiError> {
+        storage_handle(pool)
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class_id_to_storage(
+                self.hubuum_class_id,
+            )))
+            .await
+            .map_err(ApiError::from)
+            .and_then(resolved_class_from_storage)
+            .map(|target| target.class().clone())
     }
 
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
-        HubuumClassID::new(self.hubuum_class_id)
+    async fn class_id_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClassID, ApiError> {
+        Ok(HubuumClassID::new(self.hubuum_class_id)?)
     }
 }
 
@@ -358,28 +553,67 @@ impl IdAccessor for HubuumObjectID {
 }
 
 impl InstanceAdapter<HubuumObject> for HubuumObjectID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
-        self.load_object_record(pool).await
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumObject, ApiError> {
+        storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id()))
+            .await
+            .map_err(ApiError::from)
+            .and_then(resolved_object_from_storage)
+            .map(|target| target.object().clone())
     }
 }
 
 impl CollectionAdapter for HubuumObjectID {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
-        self.lookup_object_collection(pool).await
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Collection, ApiError> {
+        let target = storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id()))
+            .await
+            .map_err(ApiError::from)?;
+        storage_handle(pool)
+            .collection_store()
+            .get_collection(collection_id_to_storage(
+                target.object().collection_id().id(),
+            ))
+            .await
+            .map_err(ApiError::from)
+            .and_then(collection_from_storage)
     }
 
-    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
-        CollectionID::new(self.collection(pool).await?.id)
+    async fn collection_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<CollectionID, ApiError> {
+        Ok(CollectionID::new(self.collection(pool).await?.id)?)
     }
 }
 
 impl ClassAdapter for HubuumObjectID {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        self.lookup_object_class(pool).await
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClass, ApiError> {
+        storage_handle(pool)
+            .object_store()
+            .get_object(object_id_to_storage(self.id()))
+            .await
+            .map_err(ApiError::from)
+            .and_then(resolved_object_from_storage)
+            .map(|target| target.class().clone())
     }
 
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<HubuumClassID, ApiError> {
-        HubuumClassID::new(self.class(pool).await?.id)
+    async fn class_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClassID, ApiError> {
+        Ok(HubuumClassID::new(self.class(pool).await?.id)?)
     }
 }
 
@@ -438,59 +672,6 @@ impl CursorPaginated for HubuumObject {
     }
 }
 
-impl CursorSqlMapping for HubuumObject {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "hubuumobject.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "hubuumobject.name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Description => CursorSqlField {
-                column: "hubuumobject.description",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                column: "hubuumobject.collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassId | FilterField::Classes => CursorSqlField {
-                column: "hubuumobject.hubuum_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "hubuumobject.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "hubuumobject.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Revision => CursorSqlField {
-                column: "hubuumobject.revision",
-                sql_type: CursorSqlType::BigInt,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for objects",
-                    field
-                )));
-            }
-        })
-    }
-}
-
 impl CursorPaginated for HubuumObjectWithPath {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
@@ -544,53 +725,5 @@ impl CursorPaginated for HubuumObjectWithPath {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for HubuumObjectWithPath {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "descendant_object_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name => CursorSqlField {
-                column: "descendant_name",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                column: "descendant_collection_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::ClassId | FilterField::Classes => CursorSqlField {
-                column: "descendant_class_id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "descendant_created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "descendant_updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::Path => CursorSqlField {
-                column: "path",
-                sql_type: CursorSqlType::IntegerArray,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for related objects",
-                    field
-                )));
-            }
-        })
     }
 }

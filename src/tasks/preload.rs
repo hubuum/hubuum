@@ -1,17 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use super::helpers::{class_to_resolution, collection_to_resolution, object_to_resolution};
+use super::helpers::{
+    storage_class_to_resolution, storage_collection_to_resolution, storage_object_to_resolution,
+};
 use super::resolution::{
     remember_class, remember_collection, remember_object, resolve_class_planning,
     resolve_collection_planning,
 };
 use super::types::{CollectionResolution, PlanningState};
-use crate::db::DbPool;
-use crate::db::traits::task_import::{
-    lookup_classes_by_collection_and_names, lookup_collections_by_name,
-    lookup_objects_by_class_and_names,
-};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
+use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
+use crate::storage::{ImportStorage, storage_handle};
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
     let mut keys = Vec::new();
@@ -73,7 +72,7 @@ fn collect_request_object_keys(request: &ImportRequest) -> Vec<ObjectKey> {
 }
 
 async fn preload_collections_for_class_keys(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     class_keys: &[ClassKey],
 ) -> Result<(), String> {
@@ -93,7 +92,8 @@ async fn preload_collections_for_class_keys(
         .collect::<Vec<_>>();
 
     for name in names {
-        let collections = lookup_collections_by_name(pool, &name)
+        let collections = storage_handle(pool)
+            .list_import_collections_by_name(&name)
             .await
             .map_err(|err| err.to_string())?;
         if collections.is_empty() {
@@ -101,7 +101,7 @@ async fn preload_collections_for_class_keys(
             continue;
         }
         for collection in collections {
-            remember_collection(state, None, collection_to_resolution(collection));
+            remember_collection(state, None, storage_collection_to_resolution(collection));
         }
     }
 
@@ -120,7 +120,7 @@ async fn preload_collections_for_class_keys(
 }
 
 pub(super) async fn preload_existing_classes(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
@@ -156,15 +156,16 @@ pub(super) async fn preload_existing_classes(
 
     for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let classes = lookup_classes_by_collection_and_names(pool, collection_id, &names)
+        let classes = storage_handle(pool)
+            .list_import_classes_by_names(collection_id_to_storage(collection_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
             .iter()
-            .map(|class| class.name.clone())
+            .map(|class| class.name().to_string())
             .collect::<HashSet<_>>();
         for class in classes {
-            remember_class(state, None, class_to_resolution(class));
+            remember_class(state, None, storage_class_to_resolution(class));
         }
         for name in names {
             if !found_names.contains(&name) {
@@ -177,7 +178,7 @@ pub(super) async fn preload_existing_classes(
 }
 
 async fn resolve_class_collection_for_preload(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     key: &ClassKey,
 ) -> Result<Option<CollectionResolution>, String> {
@@ -195,7 +196,7 @@ async fn resolve_class_collection_for_preload(
 }
 
 pub(super) async fn preload_existing_objects(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
@@ -238,15 +239,16 @@ pub(super) async fn preload_existing_objects(
 
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let objects = lookup_objects_by_class_and_names(pool, class_id, &names)
+        let objects = storage_handle(pool)
+            .list_import_objects_by_names(class_id_to_storage(class_id), &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects
             .iter()
-            .map(|object| object.name.clone())
+            .map(|object| object.name().to_string())
             .collect::<HashSet<_>>();
         for object in objects {
-            remember_object(state, None, object_to_resolution(object));
+            remember_object(state, None, storage_object_to_resolution(object));
         }
         for name in names {
             if !found_names.contains(&name) {

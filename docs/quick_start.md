@@ -70,6 +70,7 @@ examples.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
@@ -79,21 +80,28 @@ examples.
 See [Database Pool Tuning and Load Testing](performance.md) for connection
 budgeting, pool observability, and a repeatable k6 scenario.
 
+Administrators can inspect the selected storage backend and these effective
+pool settings at `GET /api/v1/admin/config`. The endpoint reports only whether
+the database URL is configured; it never returns the URL or credentials. See
+[Application and Storage Boundary](storage_boundary.md) for the all-or-nothing
+backend contract.
+
 ### Task System Configuration
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
-| `HUBUUM_TASK_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for background task workers; committed task inserts normally wake workers through PostgreSQL notifications |
+| `HUBUUM_TASK_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for background task workers; committed task inserts normally wake workers through the selected storage backend |
 | `HUBUUM_TASK_LEASE_SECONDS` | `60` | Durable task lease duration |
 | `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Lease renewal interval; must be shorter than the lease |
 | `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between abandoned-task recovery scans |
 | `HUBUUM_COMPUTED_REINDEX_BATCH_SIZE` | `100` | Objects processed per computed-field rebuild transaction; valid range is 1 through 1000 |
 | `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |
 
-Background workers and PostgreSQL notification listeners participate in
-bounded graceful shutdown. See [Background Worker Lifecycle](background_workers.md)
-for startup ownership, cancellation, task interruption, and pool-drop ordering.
+Background workers and storage notification listeners participate in bounded
+graceful shutdown. See
+[Background Worker Lifecycle](background_workers.md) for startup ownership,
+cancellation, task interruption, and pool-drop ordering.
 
 ### Event And Audit Configuration
 
@@ -117,7 +125,7 @@ for startup ownership, cancellation, task interruption, and pool-drop ordering.
 | `HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Retention worker interval |
 | `HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum event rows selected per purge batch |
 | `HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED` | `false` | Enables local JSON Lines archive writes before deleting eligible events |
-| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Local JSON Lines archive path; required when file archive writes are enabled |
+| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Durable directory for atomic per-claim JSON Lines files; required when file archive writes are enabled |
 
 **Event note**: The canonical audit stream is always stored in the `events`
 table. External delivery workers default to disabled, and retention purge

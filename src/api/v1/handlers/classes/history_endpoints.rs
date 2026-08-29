@@ -15,7 +15,7 @@ use super::*;
 )]
 #[get("/{class_id}/history")]
 async fn get_class_history(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
@@ -28,10 +28,10 @@ async fn get_class_history(
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
-    let (entity_id, require_history) = match class_id.instance(&pool).await {
+    let (entity_id, require_history) = match class_id.instance(&context).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadClass],
@@ -41,7 +41,7 @@ async fn get_class_history(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -57,14 +57,17 @@ async fn get_class_history(
     let (rows, total_count) = if require_history {
         class_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::All,
         )
         .await?
-    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+    } else if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
         let collection_ids = readable_history_collection_ids(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
@@ -72,7 +75,7 @@ async fn get_class_history(
         .await?;
         class_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::Visible(&collection_ids),
         )
@@ -81,13 +84,13 @@ async fn get_class_history(
         let candidate_params = history_candidate_query_options(&params);
         let (candidates, _) = class_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &candidate_params,
             HistoryCollectionFilter::All,
         )
         .await?;
         authorize_history_page(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
@@ -97,11 +100,11 @@ async fn get_class_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!("class {entity_id} not found")));
     }
 
-    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
+    let principal_names = resolve_history_principal_names(&context, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
@@ -129,7 +132,7 @@ async fn get_class_history(
 )]
 #[get("/{class_id}/history/as-of")]
 async fn get_class_as_of(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
@@ -141,10 +144,10 @@ async fn get_class_as_of(
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
-    let (entity_id, deleted) = match class_id.instance(&pool).await {
+    let (entity_id, deleted) = match class_id.instance(&context).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadClass],
@@ -154,7 +157,7 @@ async fn get_class_as_of(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -166,13 +169,13 @@ async fn get_class_as_of(
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = class_as_of(entity_id, at, &pool)
+    let row = class_as_of(entity_id, at, &context)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of class {entity_id} at {at}")))?;
 
     if !deleted {
         authorize_history_snapshot(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
@@ -182,7 +185,7 @@ async fn get_class_as_of(
     }
 
     let principal_names =
-        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+        resolve_history_principal_names(&context, std::slice::from_ref(&row)).await?;
     Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,
@@ -207,7 +210,7 @@ async fn get_class_as_of(
 )]
 #[get("/{class_id}/{object_id}/history")]
 async fn get_object_history(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
@@ -222,11 +225,11 @@ async fn get_object_history(
     let (class_id, object_id) = paths.into_inner();
 
     let (entity_id, require_history) =
-        match check_if_object_in_class(&pool, &class_id, &object_id).await {
+        match check_if_object_in_class(&context, &class_id, &object_id).await {
             Ok(()) => {
-                let object = object_id.instance(&pool).await?;
+                let object = object_id.instance(&context).await?;
                 can!(
-                    &pool,
+                    &context,
                     user,
                     requestor.scopes(),
                     [Permissions::ReadObject],
@@ -236,7 +239,7 @@ async fn get_object_history(
             }
             Err(ApiError::NotFound(_))
                 if can_read_deleted_history(
-                    &pool,
+                    &context,
                     &requestor.principal,
                     requestor.scopes().is_some(),
                 )
@@ -253,14 +256,17 @@ async fn get_object_history(
         object_history_paginated_with_total_count(
             entity_id,
             class_id.id(),
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::All,
         )
         .await?
-    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+    } else if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
         let collection_ids = readable_history_collection_ids(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
@@ -269,7 +275,7 @@ async fn get_object_history(
         object_history_paginated_with_total_count(
             entity_id,
             class_id.id(),
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::Visible(&collection_ids),
         )
@@ -279,13 +285,13 @@ async fn get_object_history(
         let (candidates, _) = object_history_paginated_with_total_count(
             entity_id,
             class_id.id(),
-            &pool,
+            &context,
             &candidate_params,
             HistoryCollectionFilter::All,
         )
         .await?;
         authorize_history_page(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
@@ -295,11 +301,11 @@ async fn get_object_history(
         )
         .await?
     };
-    if require_history && rows.is_empty() && params.cursor.is_none() {
+    if require_history && rows.is_empty() && params.cursor().is_none() {
         return Err(ApiError::NotFound(format!("object {entity_id} not found")));
     }
 
-    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
+    let principal_names = resolve_history_principal_names(&context, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
@@ -328,7 +334,7 @@ async fn get_object_history(
 )]
 #[get("/{class_id}/{object_id}/history/as-of")]
 async fn get_object_as_of(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
@@ -341,11 +347,12 @@ async fn get_object_as_of(
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
 
-    let (entity_id, deleted) = match check_if_object_in_class(&pool, &class_id, &object_id).await {
+    let (entity_id, deleted) = match check_if_object_in_class(&context, &class_id, &object_id).await
+    {
         Ok(()) => {
-            let object = object_id.instance(&pool).await?;
+            let object = object_id.instance(&context).await?;
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadObject],
@@ -355,7 +362,7 @@ async fn get_object_as_of(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -367,13 +374,13 @@ async fn get_object_as_of(
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = object_as_of(entity_id, class_id.id(), at, &pool)
+    let row = object_as_of(entity_id, class_id.id(), at, &context)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of object {entity_id} at {at}")))?;
 
     if !deleted {
         authorize_history_snapshot(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
@@ -383,7 +390,7 @@ async fn get_object_as_of(
     }
 
     let principal_names =
-        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+        resolve_history_principal_names(&context, std::slice::from_ref(&row)).await?;
     Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,

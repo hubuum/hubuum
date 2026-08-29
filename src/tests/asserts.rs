@@ -1,9 +1,9 @@
 use actix_web::{http, test};
 use serde::de::DeserializeOwned;
 
-use crate::db::DbPool;
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::tests::api_operations::get_request;
+use hubuum_storage_postgres::PostgresPool;
 
 /// ## Asserts that a given item is found within the specified vector.
 ///
@@ -295,7 +295,7 @@ pub fn header_value(resp: &actix_web::dev::ServiceResponse, name: &str) -> Optio
 }
 
 pub async fn assert_paginated_collection_total_count<T, F>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     max_pages: usize,
     mut endpoint_for_cursor: F,

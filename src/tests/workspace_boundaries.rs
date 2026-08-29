@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 const FORBIDDEN_DEPENDENCY_PATTERNS: &[&str] = &["hubuum", "actix*", "diesel*"];
@@ -72,6 +73,28 @@ fn forbidden_dependencies(
         .collect()
 }
 
+fn rust_sources(directory: &Path) -> Vec<(PathBuf, String)> {
+    let mut sources = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", directory.display()))
+        {
+            let path = entry.expect("directory entry should be readable").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let source = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+                sources.push((path, source));
+            }
+        }
+    }
+
+    sources
+}
+
 #[test]
 fn workspace_crate_manifests_stay_app_neutral() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -100,15 +123,66 @@ fn workspace_crate_manifests_stay_app_neutral() {
         let manifest = toml::from_str::<toml::Value>(&manifest)
             .unwrap_or_else(|error| panic!("{} should be valid: {error}", manifest_path.display()));
 
-        if let Some((alias, package)) = forbidden_dependencies(&manifest, workspace_dependencies)
-            .into_iter()
-            .next()
-        {
+        let mut forbidden = forbidden_dependencies(&manifest, workspace_dependencies);
+        if member == "crates/hubuum-storage-postgres" {
+            forbidden.retain(|(_, package)| !package.starts_with("diesel"));
+        }
+
+        if let Some((alias, package)) = forbidden.into_iter().next() {
             panic!(
                 "workspace crate {member} must remain app-neutral and cannot depend on {package} (declared as {alias})"
             );
         }
     }
+}
+
+#[test]
+fn domain_and_storage_contract_sources_stay_backend_and_transport_neutral() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+
+    for member in ["hubuum-domain", "hubuum-storage-core"] {
+        for (path, source) in rust_sources(&repository.join("crates").join(member).join("src")) {
+            for forbidden in [
+                "use actix",
+                "actix_web::",
+                "diesel::",
+                "diesel_async::",
+                "crate::config",
+                "crate::errors::ApiError",
+                "PostgresPool",
+            ] {
+                if source.contains(forbidden) {
+                    violations.push(format!("{} contains {forbidden}", path.display()));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "workspace boundary source leaked backend or transport details:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn only_the_postgres_adapter_may_depend_on_diesel() {
+    let postgres_manifest = toml::from_str::<toml::Value>(
+        r#"
+        [dependencies]
+        diesel = "2"
+        diesel-async = "0.9"
+        "#,
+    )
+    .unwrap();
+    let unrelated_manifest = postgres_manifest.clone();
+
+    let mut postgres_forbidden = forbidden_dependencies(&postgres_manifest, None);
+    postgres_forbidden.retain(|(_, package)| !package.starts_with("diesel"));
+
+    assert!(postgres_forbidden.is_empty());
+    assert_eq!(forbidden_dependencies(&unrelated_manifest, None).len(), 2);
 }
 
 #[test]

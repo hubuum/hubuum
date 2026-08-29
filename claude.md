@@ -36,7 +36,8 @@ These conventions are present in the codebase and docs and should be followed al
    Use `callgrind` or `criterion` naming patterns consistently so CI discovers the correct targets.
 
 6. Generated artifacts should remain generated.
-   Do not hand-edit `src/schema.rs`; use Diesel migrations and regeneration flow.
+   Do not hand-edit `crates/hubuum-storage-postgres/src/schema.rs`; use Diesel
+   migrations and the regeneration flow.
    Keep `docs/openapi.json` synchronized with code changes.
 
 7. Markdown must pass markdownlint.

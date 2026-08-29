@@ -1,7 +1,8 @@
 #[cfg(test)]
 pub mod acl;
 pub mod api_operations;
-pub use api_operations::app_context;
+pub use api_operations::{app_context, app_context_with_permission_backend};
+pub mod application_boundary;
 pub mod asserts;
 #[cfg(test)]
 pub mod client_allowlist;
@@ -15,7 +16,11 @@ pub mod permissions;
 #[cfg(test)]
 pub mod search;
 #[cfg(test)]
+pub(crate) mod storage_contract;
+#[cfg(test)]
 pub mod storage_performance;
+#[cfg(test)]
+mod storage_transactions;
 #[cfg(test)]
 pub mod temporal;
 #[cfg(test)]
@@ -28,32 +33,71 @@ pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::erro
     crate::config::get_config()
 }
 
+#[cfg(test)]
+pub(crate) fn services_for_postgres(
+    pool: hubuum_storage_postgres::PostgresPool,
+) -> crate::services::Services {
+    crate::services::Services::from_storage(crate::storage::StorageHandle::postgres(pool))
+}
+
+pub(crate) fn postgres_test_pool(
+    database_url: &str,
+    max_connections: u32,
+) -> hubuum_storage_postgres::PostgresPool {
+    let config = integration_test_config().expect("test database configuration must be valid");
+    let settings = hubuum_storage_postgres::PostgresPoolSettings::builder(database_url)
+        .max_size(max_connections)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("PostgreSQL test pool settings must be valid");
+    hubuum_storage_postgres::build_postgres_pool(&settings)
+        .expect("PostgreSQL test pool must be constructible")
+}
+
+#[cfg(any(test, feature = "integration-test-support"))]
+pub(crate) fn background_worker_app_context() -> crate::permissions::AppContext {
+    let config = integration_test_config().expect("test worker requires database configuration");
+    let pool = postgres_test_pool(&config.database_url, config.db_pool_size);
+    let permissions = std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+        crate::storage::StorageHandle::postgres(pool.clone()),
+        config.admin_groupname,
+    ));
+    app_context_with_permission_backend(pool, permissions)
+}
+
 #[cfg(all(not(test), feature = "integration-test-support"))]
 pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::errors::ApiError> {
     crate::test_support::integration_test_config().cloned()
 }
 
-use crate::db::prelude::*;
+#[cfg(any(test, feature = "integration-test-support"))]
+use crate::events::EventContext;
 use actix_web::web;
 #[cfg(test)]
 use rstest::fixture;
 
 use crate::config::AppConfig;
-use crate::db::DbPool;
-use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
 use crate::models::user::{NewUser, User};
 use crate::models::{
-    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
-    PrincipalTokenCreateRequest, TokenResourceScope, TokenScope,
+    HubuumClass, HubuumObject, LOCAL_IDENTITY_SCOPE, NewHubuumClass, NewHubuumObject, Permissions,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, Token, TokenResourceScope,
+    TokenScope,
 };
+use crate::storage::ServiceAccountStorage;
+use hubuum_storage_postgres::PostgresPool;
+
+impl crate::permissions::AuthorizationContext for PostgresPool {
+    fn authorization_mode(&self) -> crate::permissions::AuthorizationMode<'_> {
+        crate::permissions::AuthorizationMode::LocalStorage
+    }
+}
 
 use crate::utilities::auth::{generate_random_password, hash_password};
 
-use crate::db::traits::service_account::SaveServiceAccount;
-use crate::db::traits::user::CreateUserRecord;
 use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
 use tokio::sync::{Mutex, MutexGuard};
@@ -64,9 +108,9 @@ static TEST_ADMIN_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
     hash_password("testadminpassword").expect("test admin password must be hashable")
 });
 
-fn new_test_pool() -> DbPool {
+fn new_test_pool() -> PostgresPool {
     let config = integration_test_config().unwrap();
-    init_pool(&config.database_url, 20)
+    postgres_test_pool(&config.database_url, 20)
 }
 
 pub type TestMutex = LazyLock<Mutex<()>>;
@@ -82,7 +126,7 @@ pub async fn lock_test_mutex(mutex: &'static TestMutex) -> TestMutexGuard {
 
 #[derive(Clone)]
 pub struct CollectionFixture {
-    pub pool: web::Data<DbPool>,
+    pub pool: web::Data<PostgresPool>,
     pub collection: Collection,
     pub owner_group: Group,
     pub prefix: String,
@@ -180,7 +224,7 @@ impl ObjectFixture {
 
 #[derive(Clone)]
 pub struct TestScope {
-    pub pool: web::Data<DbPool>,
+    pub pool: web::Data<PostgresPool>,
     scope_id: String,
 }
 
@@ -252,7 +296,7 @@ impl Default for TestScope {
 
 #[derive(Clone)]
 pub struct TestContext {
-    pub pool: web::Data<DbPool>,
+    pub pool: web::Data<PostgresPool>,
     pub admin_user: User,
     pub admin_token: String,
     pub normal_user: User,
@@ -372,7 +416,7 @@ fn sanitize_fixture_label(label: &str) -> String {
     }
 }
 
-async fn create_collection_fixture(pool: &DbPool, label: &str) -> CollectionFixture {
+async fn create_collection_fixture(pool: &PostgresPool, label: &str) -> CollectionFixture {
     let prefix = sanitize_fixture_label(label);
     let owner_group = create_groups_with_prefix(pool, &format!("{prefix}_owner"), 1)
         .await
@@ -391,7 +435,7 @@ async fn create_collection_fixture(pool: &DbPool, label: &str) -> CollectionFixt
 }
 
 async fn create_collection_fixtures(
-    pool: &DbPool,
+    pool: &PostgresPool,
     label: &str,
     count: usize,
 ) -> Vec<CollectionFixture> {
@@ -405,7 +449,7 @@ async fn create_collection_fixtures(
 }
 
 pub async fn create_class_fixture(
-    pool: &DbPool,
+    pool: &PostgresPool,
     collection: CollectionFixture,
     classes: Vec<NewHubuumClass>,
 ) -> Result<ClassFixture, ApiError> {
@@ -471,7 +515,7 @@ pub async fn cleanup_test_classes(classes: &ClassFixture) {
 }
 
 pub async fn create_object_fixture(
-    pool: &DbPool,
+    pool: &PostgresPool,
     collection: CollectionFixture,
     class: NewHubuumClass,
     objects: Vec<NewHubuumObject>,
@@ -500,7 +544,7 @@ pub async fn create_object_fixture(
     })
 }
 
-pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
+pub async fn create_user_with_params(pool: &PostgresPool, username: &str, password: &str) -> User {
     let new_user = NewUser {
         identity_scope: None,
         name: username.to_string(),
@@ -510,19 +554,25 @@ pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &s
     };
     let result = match password {
         "testpassword" => {
-            NewUser {
-                password: TEST_USER_PASSWORD_HASH.clone(),
-                ..new_user
-            }
-            .create_user_record_without_events(pool)
+            crate::services::identity::create_user_with_password_hash(
+                pool,
+                NewUser {
+                    password: TEST_USER_PASSWORD_HASH.clone(),
+                    ..new_user
+                },
+                &EventContext::system(),
+            )
             .await
         }
         "testadminpassword" => {
-            NewUser {
-                password: TEST_ADMIN_PASSWORD_HASH.clone(),
-                ..new_user
-            }
-            .create_user_record_without_events(pool)
+            crate::services::identity::create_user_with_password_hash(
+                pool,
+                NewUser {
+                    password: TEST_ADMIN_PASSWORD_HASH.clone(),
+                    ..new_user
+                },
+                &EventContext::system(),
+            )
             .await
         }
         _ => new_user.save_without_events(pool).await,
@@ -538,7 +588,7 @@ pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &s
 }
 
 /// Create a test user with a random username
-pub async fn create_test_user(pool: &DbPool) -> User {
+pub async fn create_test_user(pool: &PostgresPool) -> User {
     let username = "user".to_string() + &generate_random_password(16);
     create_user_with_params(pool, &username, "testpassword").await
 }
@@ -546,7 +596,7 @@ pub async fn create_test_user(pool: &DbPool) -> User {
 /// Create a test admin user with a random username.
 ///
 /// The user will be added to the admin group.
-pub async fn create_test_admin(pool: &DbPool) -> User {
+pub async fn create_test_admin(pool: &PostgresPool) -> User {
     let username = "admin".to_string() + &generate_random_password(16);
     let user = create_user_with_params(pool, &username, "testadminpassword").await;
     let admin_group = ensure_admin_group(pool).await;
@@ -563,25 +613,38 @@ pub async fn create_test_admin(pool: &DbPool) -> User {
 /// Create a test service account owned by `owner_group`. `created_by` records the
 /// human principal that created it (or `None`).
 pub async fn create_test_service_account(
-    pool: &DbPool,
+    pool: &PostgresPool,
     owner_group: &Group,
     created_by: Option<i32>,
 ) -> crate::models::ServiceAccount {
     let name = "sa-".to_string() + &generate_random_password(16);
-    crate::models::NewServiceAccount {
-        identity_scope: None,
-        name,
-        description: Some("test service account".to_string()),
-        owner_group_id: crate::models::GroupID::new(owner_group.id)
-            .expect("persisted owner group id should be positive"),
-    }
-    .save_without_events(pool, created_by)
-    .await
-    .expect("failed to create test service account")
+    let backend = crate::storage::StorageHandle::postgres(pool.clone());
+    let created = backend
+        .create_service_account(crate::storage::StorageServiceAccountCreate::new(
+            name,
+            "test service account",
+            hubuum_domain::GroupId::new(owner_group.id)
+                .expect("persisted owner group id should be positive"),
+            created_by.map(|id| {
+                hubuum_domain::PrincipalId::new(id)
+                    .expect("persisted creator principal id should be positive")
+            }),
+            EventContext::system(),
+        ))
+        .await
+        .expect("failed to create test service account")
+        .into_value();
+    crate::services::identity::get_service_account(pool, created.id().id())
+        .await
+        .expect("failed to create test service account")
 }
 
 /// Mint a scoped token for a principal id; returns the raw token string.
-pub async fn scoped_token(pool: &DbPool, principal_id: i32, permissions: &[Permissions]) -> String {
+pub async fn scoped_token(
+    pool: &PostgresPool,
+    principal_id: i32,
+    permissions: &[Permissions],
+) -> String {
     let scope = TokenScope::from_request_parts(Some(permissions.to_vec()), None)
         .expect("valid permission token scope")
         .expect("permission token scope is present");
@@ -590,7 +653,7 @@ pub async fn scoped_token(pool: &DbPool, principal_id: i32, permissions: &[Permi
 
 /// Mint a token narrowed to the supplied collection, class, or object entries.
 pub async fn resource_scoped_token(
-    pool: &DbPool,
+    pool: &PostgresPool,
     principal_id: i32,
     resource_scopes: Vec<TokenResourceScope>,
 ) -> String {
@@ -602,7 +665,7 @@ pub async fn resource_scoped_token(
 
 /// Mint a token narrowed by both permission and resource dimensions.
 pub async fn scoped_token_with_resources(
-    pool: &DbPool,
+    pool: &PostgresPool,
     principal_id: i32,
     permissions: &[Permissions],
     resource_scopes: Vec<TokenResourceScope>,
@@ -613,21 +676,47 @@ pub async fn scoped_token_with_resources(
     scoped_principal_token(pool, principal_id, scope).await
 }
 
-async fn scoped_principal_token(pool: &DbPool, principal_id: i32, scope: TokenScope) -> String {
+async fn scoped_principal_token(
+    pool: &PostgresPool,
+    principal_id: i32,
+    scope: TokenScope,
+) -> String {
     PrincipalTokenCreateRequest::new(
         PrincipalID::new(principal_id).expect("valid persisted principal id"),
     )
     .scope(Some(scope))
-    .create(pool, None)
+    .create(pool, &EventContext::system())
     .await
     .expect("failed to mint scoped token")
     .get_token()
 }
 
+/// Load the persisted row for a raw token inside the PostgreSQL test adapter.
+pub async fn persisted_test_token(pool: &PostgresPool, raw: &str) -> PrincipalToken {
+    let token_hash = Token::storage_hash_from_raw(raw);
+    let row = hubuum_storage_postgres::test_support::load_token_by_hash(pool, token_hash)
+        .await
+        .expect("failed to load persisted test token");
+    PrincipalToken {
+        id: row.id(),
+        token: row.token_hash().to_string(),
+        principal_id: row.principal_id(),
+        name: row.name().map(ToString::to_string),
+        description: row.description().map(ToString::to_string),
+        issued: row.issued(),
+        expires_at: row.expires_at(),
+        last_used_at: row.last_used_at(),
+        revoked_at: row.revoked_at(),
+        permission_scoped: row.permission_scoped(),
+        resource_scoped: row.resource_scoped(),
+        revision: row.revision(),
+    }
+}
+
 /// Mint a token for a service account with optional permission narrowing and
 /// expiry; returns the raw token string.
 pub async fn service_account_token(
-    pool: &DbPool,
+    pool: &PostgresPool,
     sa: &crate::models::ServiceAccount,
     permissions: Option<&[crate::models::Permissions]>,
     expires_at: Option<chrono::NaiveDateTime>,
@@ -640,21 +729,21 @@ pub async fn service_account_token(
     PrincipalTokenCreateRequest::new(PrincipalID::new(sa.id).expect("valid persisted principal id"))
         .expires_at(expires_at)
         .scope(scope)
-        .create(pool, None)
+        .create(pool, &EventContext::system())
         .await
         .expect("failed to mint service account token")
         .get_token()
 }
 
 /// Create a test group with a random name
-pub async fn create_test_group(pool: &DbPool) -> Group {
+pub async fn create_test_group(pool: &PostgresPool) -> Group {
     create_groups_with_prefix(pool, &generate_random_password(16), 1)
         .await
         .remove(0)
 }
 
 pub async fn create_groups_with_prefix(
-    pool: &DbPool,
+    pool: &PostgresPool,
     prefix: &str,
     num_groups: usize,
 ) -> Vec<Group> {
@@ -682,8 +771,10 @@ pub async fn create_groups_with_prefix(
     groups
 }
 
-pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
-    if let Ok(user) = User::get_by_name(pool, uname).await {
+pub async fn ensure_user(pool: &PostgresPool, uname: &str) -> User {
+    if let Ok(user) =
+        crate::services::identity::get_user_by_name(pool, LOCAL_IDENTITY_SCOPE, uname).await
+    {
         return user;
     }
 
@@ -700,9 +791,13 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return User::get_by_name(pool, uname)
-                    .await
-                    .expect("Failed to fetch user after conflict");
+                return crate::services::identity::get_user_by_name(
+                    pool,
+                    LOCAL_IDENTITY_SCOPE,
+                    uname,
+                )
+                .await
+                .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create user '{uname}': {e:?}"),
         }
@@ -711,7 +806,7 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     result.unwrap()
 }
 
-pub async fn ensure_admin_user(pool: &DbPool) -> User {
+pub async fn ensure_admin_user(pool: &PostgresPool) -> User {
     let user = ensure_user(pool, "admin").await;
 
     let admin_group = ensure_admin_group(pool).await;
@@ -721,26 +816,22 @@ pub async fn ensure_admin_user(pool: &DbPool) -> User {
     user
 }
 
-pub async fn ensure_normal_user(pool: &DbPool) -> User {
+pub async fn ensure_normal_user(pool: &PostgresPool) -> User {
     ensure_user(pool, "normal").await
 }
 
-pub async fn ensure_admin_group(pool: &DbPool) -> Group {
-    use crate::schema::groups::dsl::*;
+pub async fn ensure_admin_group(pool: &PostgresPool) -> Group {
     let admin_groupname = integration_test_config()
         .map(|config| config.admin_groupname.clone())
         .unwrap_or_else(|_| "admin".to_string());
 
-    let result = with_connection(pool, async |conn| {
-        groups
-            .filter(groupname.eq(&admin_groupname))
-            .first::<Group>(conn)
-            .await
-    })
-    .await;
+    let result =
+        hubuum_storage_postgres::test_support::load_group_by_name(pool, admin_groupname.clone())
+            .await;
 
     if let Ok(group) = result {
-        return group;
+        return crate::services::storage_boundary::group_from_storage(group)
+            .expect("persisted administrator group should be valid");
     }
 
     let result = NewGroup {
@@ -754,13 +845,14 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return with_connection(pool, async |conn| {
-                    groups
-                        .filter(groupname.eq(&admin_groupname))
-                        .first::<Group>(conn)
-                        .await
-                })
+                return hubuum_storage_postgres::test_support::load_group_by_name(
+                    pool,
+                    admin_groupname,
+                )
                 .await
+                .map_err(hubuum_storage_core::StorageError::from)
+                .map_err(ApiError::from)
+                .and_then(crate::services::storage_boundary::group_from_storage)
                 .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create admin group: {e:?}"),
@@ -770,14 +862,14 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     result.unwrap()
 }
 
-pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
+pub async fn get_pool_and_config() -> (PostgresPool, AppConfig) {
     let config = integration_test_config().unwrap();
     let pool = new_test_pool();
 
     (pool, config.clone())
 }
 
-pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
+pub async fn setup_pool_and_tokens() -> (PostgresPool, String, String) {
     let pool = new_test_pool();
     let admin_user = ensure_admin_user(&pool).await;
     let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();
@@ -787,7 +879,7 @@ pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
     (pool, admin_token, normal_token)
 }
 
-pub fn get_test_pool() -> web::Data<DbPool> {
+pub fn get_test_pool() -> web::Data<PostgresPool> {
     web::Data::new(new_test_pool())
 }
 
@@ -804,7 +896,7 @@ pub fn test_scope() -> TestScope {
 }
 
 async fn create_collection_for_group(
-    pool: &DbPool,
+    pool: &PostgresPool,
     collection_name: &str,
     group_id: i32,
 ) -> Result<Collection, ApiError> {

@@ -140,6 +140,41 @@
         "916f4ec01c6f",
         "e0c16243d888"
       ]
+    },
+    {
+      "id": "v0.0.9-equivalent-oneof-directionality",
+      "baseline": "v0.0.9",
+      "expires": "2027-01-31",
+      "reason": "Oasdiff 1.16 reports request/response directionality changes for reused tagged-enum components and treats the typed optional TaskID reference as a nullable widening even though those schemas accept the same JSON values as v0.0.9.",
+      "migration": "No client migration is required because the token-resource and remote-invocation `oneOf` variants are schema-identical to v0.0.9 and optional provenance task IDs retain the same integer-or-null representation.",
+      "changelog_entry": "token-resource and remote-invocation `oneOf` variants remain JSON-compatible",
+      "fingerprints": [
+        "0b60d388e8a9",
+        "1fcdaa57d414",
+        "2135343df8ff",
+        "30246da623ca",
+        "307dd5314ce6",
+        "43d72b211a80",
+        "45d82ecde9f5",
+        "46e99962eb8b",
+        "5375b7c16339",
+        "53876b0df318",
+        "5b5db5c7651f",
+        "79ed24352f4c",
+        "852c5a6f2615",
+        "8dec078244f5",
+        "9103f25b0ace",
+        "93610e75d7a4",
+        "9e9cda56e7e6",
+        "a3a8f5223e3f",
+        "b65db17f15b0",
+        "b910b0756c30",
+        "bf307df6d42c",
+        "ca27f7800a47",
+        "d69973be652d",
+        "df58eb5e835d",
+        "df42b18ec136"
+      ]
     }
   ]
 }

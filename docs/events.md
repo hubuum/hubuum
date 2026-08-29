@@ -8,6 +8,13 @@ The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
 
+At the storage boundary, ordinary audited mutations require an explicit actor
+context and return a committed receipt identifying that durable event. A
+receipt is non-sensitive proof of persistence, not an audit projection; event
+snapshots and provenance remain permission-scoped reads. The normative adapter
+guarantees and their reusable certification are documented in the
+[storage contract](storage_boundary/contract.md).
+
 Audited mutation paths compare the requested state with the stored state before
 writing. Requests that would leave domain state unchanged are no-ops: they do
 not advance `updated_at` or append lifecycle events. This includes identical
@@ -498,13 +505,20 @@ The purge path is the only application path allowed to bypass the append-only
 before deleting eligible event rows. Normal `DELETE` statements against
 `events` continue to fail.
 
-Worker replicas coordinate each retention batch with a transaction-scoped
-PostgreSQL advisory lock. One replica selects and locks eligible events through
-optional archival and deletion; other replicas skip that iteration instead of
-duplicating archive records or competing over the same rows. The configured
-batch size bounds both event deletion and independent terminal-delivery
-cleanup. A partial index on terminal delivery age keeps the latter lookup
-bounded to its eligible queue.
+Worker replicas coordinate claims with a PostgreSQL advisory lock. A claim
+transaction persists an immutable batch ID, the exact selected event IDs and
+documents, and the bounded terminal-delivery cutoff; it does not delete the
+events. Archive I/O then runs outside the database transaction. A completion
+transaction locks the same claim, deletes exactly its event IDs, performs the
+bounded terminal-delivery cleanup, and records the final counts. A partial
+index on terminal delivery age keeps that lookup bounded to its eligible queue.
+
+If archival fails or the process exits, the pending claim and source events
+remain durable. The next worker receives the same batch ID and documents.
+Archives must therefore be idempotent by batch ID, and completion is also
+idempotent. A purge-count mismatch, malformed claimed document, maintenance
+transition, or busy coordinator is an error rather than a successful empty
+batch.
 
 Events become purge-eligible after `HUBUUM_EVENT_RETENTION_DAYS`, but the purge
 will not delete an event while it has active `pending`, `failed`, or
@@ -516,20 +530,23 @@ terminal state.
 
 Local file archival is opt-in. Most deployments should export or consume audit
 events through the database or event sinks instead of writing container-local
-files. Enable local JSON Lines archival only when the configured path is durable
-and access-controlled:
+files. Enable local JSON Lines archival only when the configured directory is
+durable and access-controlled:
 
 ```text
 HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true
-HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
+HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive
 ```
 
-Each archive line contains `archived_at` and the full event row, including
-durable `initiator_user_id` and `task_id` values. Event `schema_version`
-is `2` for revision-aware mutation events; older stored events remain readable
-as version `1` with null revision fields. If archive writing or
-durable file synchronization fails, the worker does not delete that batch. On
-Unix, newly created archive files are created with mode `0600`; existing file
-permissions are restricted to `0600` before every append. An archive path whose
-final Unix path component is a symbolic link or another non-regular file is
-rejected so the worker cannot be redirected at that boundary.
+Each claim is written atomically to `<batch-uuid>.jsonl`. Every line contains
+`retention_batch_id`, `archived_at`, and the full event row, including durable
+`initiator_user_id` and `task_id` values. Event `schema_version` is `2` for
+revision-aware mutation events; older stored events remain readable as version
+`1` with null revision fields. If the final file already exists, the worker
+accepts it only after validating its batch ID, line count, and exact event
+documents against the claim; any mismatch is fatal.
+
+On Unix, the archive directory is a real non-symlink directory restricted to
+mode `0700`. Temporary and final batch files are regular non-symlink files with
+mode `0600`. The worker flushes and synchronizes file contents before atomic
+rename, then synchronizes the directory entry before acknowledging archival.

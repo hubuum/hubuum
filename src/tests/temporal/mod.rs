@@ -1,10 +1,11 @@
-use crate::db::prelude::*;
-use crate::db::with_connection;
 use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
 use crate::tests::TestScope;
-use crate::traits::{CanSave, CanUpdate};
+use crate::traits::{CanSave, CanUpdate, UserIdApplicationExt};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
+use hubuum_domain::{PrincipalId, TaskId};
+use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::with_connection;
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
 /// legacy actor GUC set must produce I/U/D history rows carrying compatible
@@ -378,7 +379,7 @@ async fn cascade_delete_records_history() {
     );
 }
 
-use crate::db::with_actor_scope;
+use crate::storage::with_mutation_provenance;
 
 #[actix_rt::test]
 async fn actor_scope_sets_actor_and_default_is_null() {
@@ -392,18 +393,24 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
     // Inside a scope -> actor recorded.
     let in_name = format!("actor_in_{}", scope.scope_id);
-    let in_class = with_actor_scope(Some(4242), async {
-        let event_context = hubuum_events_core::EventContext::system();
-        NewHubuumClass {
-            name: in_name.clone(),
-            collection_id,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "d".into(),
-        }
-        .save(&pool, &event_context)
-        .await
-    })
+    let in_class = with_mutation_provenance(
+        &pool,
+        Some(crate::events::MutationProvenance::user(
+            PrincipalId::new(4242).expect("test principal id must be positive"),
+        )),
+        async {
+            let event_context = hubuum_events_core::EventContext::system();
+            NewHubuumClass {
+                name: in_name.clone(),
+                collection_id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "d".into(),
+            }
+            .save(&pool, &event_context)
+            .await
+        },
+    )
     .await
     .unwrap();
 
@@ -449,18 +456,22 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
 #[actix_rt::test]
 async fn worker_mutation_scope_records_root_task_provenance() {
-    use crate::db::{with_connection, with_mutation_provenance_scope};
     use crate::events::{EventContext, MutationProvenance};
     use crate::models::NewHubuumClass;
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::with_connection;
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
     let collection_fixture = scope.collection_fixture("worker_provenance").await;
     let initiator_user_id = 5151;
     let task_id = 6161;
-    let class = with_mutation_provenance_scope(
-        Some(MutationProvenance::worker(Some(initiator_user_id), task_id)),
+    let class = with_mutation_provenance(
+        &pool,
+        Some(MutationProvenance::worker(
+            Some(PrincipalId::new(initiator_user_id).expect("test principal id must be positive")),
+            TaskId::new(task_id).expect("test task id must be positive"),
+        )),
         async {
             NewHubuumClass {
                 name: scope.scoped_name("worker_created_class"),
@@ -472,8 +483,11 @@ async fn worker_mutation_scope_records_root_task_provenance() {
             .save(
                 &pool,
                 &EventContext::from_mutation(MutationProvenance::worker(
-                    Some(initiator_user_id),
-                    task_id,
+                    Some(
+                        PrincipalId::new(initiator_user_id)
+                            .expect("test principal id must be positive"),
+                    ),
+                    TaskId::new(task_id).expect("test task id must be positive"),
                 )),
             )
             .await
@@ -513,10 +527,10 @@ async fn worker_mutation_scope_records_root_task_provenance() {
 
 #[actix_rt::test]
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
-    use crate::db::prelude::*;
-    use crate::db::{with_actor_scope, with_connection};
     use crate::models::{NewHubuumClass, NewUser, UserID};
     use crate::traits::CanSave;
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::with_connection;
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
@@ -531,31 +545,37 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
         proper_name: Some("Anon User".into()),
         email: Some("a@example.com".into()),
     }
-    .save(&pool, None)
+    .save(&pool, &crate::events::EventContext::system())
     .await
     .unwrap();
     let token = user.create_token(&pool).await.unwrap();
     let _ = token;
 
     let cname = format!("anon_class_{}", scope.scope_id);
-    let class = with_actor_scope(Some(user.id), async {
-        let event_context = hubuum_events_core::EventContext::system();
-        NewHubuumClass {
-            name: cname.clone(),
-            collection_id: collection_fixture.collection.id,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "d".into(),
-        }
-        .save(&pool, &event_context)
-        .await
-    })
+    let class = with_mutation_provenance(
+        &pool,
+        Some(crate::events::MutationProvenance::user(
+            PrincipalId::new(user.id).expect("persisted principal id must be positive"),
+        )),
+        async {
+            let event_context = hubuum_events_core::EventContext::system();
+            NewHubuumClass {
+                name: cname.clone(),
+                collection_id: collection_fixture.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "d".into(),
+            }
+            .save(&pool, &event_context)
+            .await
+        },
+    )
     .await
     .unwrap();
 
     UserID::new(user.id)
         .unwrap()
-        .anonymize(&pool)
+        .anonymize(&pool, &crate::events::EventContext::system())
         .await
         .unwrap();
 

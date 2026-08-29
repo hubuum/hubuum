@@ -28,6 +28,7 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
 const HTTP_REQUEST_DURATION: &str = "hubuum_http_request_duration";
 const DB_CONNECTION_ACQUIRE_DURATION: &str = "hubuum_db_connection_acquire_duration";
 const DB_OPERATION_DURATION: &str = "hubuum_db_operation_duration";
+const STORAGE_OPERATION_DURATION: &str = "hubuum_storage_operation_duration";
 const REMOTE_CALL_DURATION: &str = "hubuum_remote_call_duration";
 const TASK_QUEUE_WAIT_DURATION: &str = "hubuum_task_queue_wait_duration";
 const TASK_EXECUTION_DURATION: &str = "hubuum_task_execution_duration";
@@ -38,9 +39,10 @@ const IMPORT_PHASE_DURATION: &str = "hubuum_import_phase_duration";
 
 fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
     let boundaries = match instrument.name() {
-        HTTP_REQUEST_DURATION | DB_CONNECTION_ACQUIRE_DURATION | DB_OPERATION_DURATION => {
-            LATENCY_BUCKETS_SECONDS
-        }
+        HTTP_REQUEST_DURATION
+        | DB_CONNECTION_ACQUIRE_DURATION
+        | DB_OPERATION_DURATION
+        | STORAGE_OPERATION_DURATION => LATENCY_BUCKETS_SECONDS,
         REMOTE_CALL_DURATION => OUTBOUND_BUCKETS_SECONDS,
         TASK_QUEUE_WAIT_DURATION
         | TASK_EXECUTION_DURATION
@@ -180,6 +182,19 @@ pub fn init() -> Result<(), ApiError> {
         db_operation_errors: meter
             .u64_counter("hubuum_db_operation_errors")
             .with_description("Database helper operation failures")
+            .build(),
+        storage_backend_info: meter
+            .u64_gauge("hubuum_storage_backend_info")
+            .with_description("Selected complete storage backend")
+            .build(),
+        storage_operation_duration: duration_histogram(
+            &meter,
+            STORAGE_OPERATION_DURATION,
+            "Backend-neutral logical storage operation duration",
+        ),
+        storage_operation_errors: meter
+            .u64_counter("hubuum_storage_operation_errors")
+            .with_description("Backend-neutral logical storage operation failures")
             .build(),
         task_worker_iterations: meter
             .u64_counter("hubuum_task_worker_iterations")
@@ -436,7 +451,6 @@ pub fn runtime_identity(role: RuntimeRole) {
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::metrics::MeterProvider as _;
     use prometheus::{Encoder, TextEncoder};
 
     use super::*;
@@ -471,6 +485,19 @@ mod tests {
     #[test]
     fn request_histograms_use_subsecond_latency_buckets() {
         let bounds = histogram_bucket_bounds(HTTP_REQUEST_DURATION, 0.004);
+
+        assert_eq!(
+            bounds,
+            [
+                "0.0005", "0.001", "0.0025", "0.005", "0.01", "0.025", "0.05", "0.1", "0.25",
+                "0.5", "1", "2.5", "5", "10", "30", "+Inf",
+            ]
+        );
+    }
+
+    #[test]
+    fn storage_histograms_use_subsecond_latency_buckets() {
+        let bounds = histogram_bucket_bounds(STORAGE_OPERATION_DURATION, 0.004);
 
         assert_eq!(
             bounds,

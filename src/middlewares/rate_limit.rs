@@ -4,6 +4,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
+#[cfg(feature = "login-rate-limit-valkey")]
 use crate::models::REDACTED_DEBUG_VALUE;
 
 use std::collections::{HashMap, VecDeque};
@@ -14,7 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(feature = "login-rate-limit-valkey")]
+use tracing::warn;
 #[cfg(feature = "login-rate-limit-valkey")]
 use uuid::Uuid;
 

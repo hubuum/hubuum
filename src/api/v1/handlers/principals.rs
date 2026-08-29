@@ -6,11 +6,6 @@ use utoipa::ToSchema;
 use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
-use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::db::traits::service_account::{
-    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
-};
-use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
@@ -18,6 +13,7 @@ use crate::extractors::{
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{
     Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsPatchDocument,
+    apply_principal_settings_patch,
 };
 use crate::models::search::{
     QueryOptions, parse_query_parameter, parse_query_parameter_with_passthrough,
@@ -29,7 +25,14 @@ use crate::models::{
     TokenScopeDetails,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
-use crate::traits::{AuthzSubject, GroupAccessors};
+use crate::permissions::AppContext;
+use crate::services::identity::{
+    get_service_account, is_human_owner_group_member, is_service_account_disabled,
+    list_retained_tokens,
+};
+use crate::storage::StorageContext;
+use crate::storage::with_revision_precondition;
+use crate::traits::{AuthzSubject, GroupAccessors, PrincipalIdApplicationExt};
 use std::collections::BTreeMap;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -47,17 +50,17 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn ensure_can_manage_principal_settings(
-    pool: &DbPool,
+    context: &impl StorageContext,
     requestor: &Authenticated,
     target_principal_id: i32,
 ) -> Result<(), ApiError> {
-    if requestor.principal.id == target_principal_id {
+    if requestor.principal.id().id() == target_principal_id {
         return Ok(());
     }
 
     if requestor.scopes().is_none()
         && requestor.principal.is_human()
-        && requestor.principal.is_admin(pool).await?
+        && requestor.principal.is_admin(context).await?
     {
         return Ok(());
     }
@@ -132,18 +135,18 @@ pub(crate) fn parse_token_list_query(
 /// * human principal — self or admin;
 /// * service account — admin or a **human** member of its owner group.
 async fn ensure_can_manage_principal(
-    pool: &DbPool,
+    context: &impl StorageContext,
     requestor: &ManagementAccess,
     principal: &Principal,
 ) -> Result<(), ApiError> {
-    if requestor.user.is_admin(pool).await? {
+    if requestor.user.is_admin(context).await? {
         return Ok(());
     }
-    let permitted = match principal.principal_kind()? {
+    let permitted = match principal.principal_kind() {
         PrincipalKind::Human => requestor.user.id == principal.id,
         PrincipalKind::ServiceAccount => {
-            let sa = load_service_account_by_id(pool, principal.id).await?;
-            is_human_owner_group_member(pool, requestor.user.id, sa.owner_group_id).await?
+            let sa = get_service_account(context, principal.id).await?;
+            is_human_owner_group_member(context, requestor.user.id, sa.owner_group_id).await?
         }
     };
     if permitted {
@@ -155,10 +158,10 @@ async fn ensure_can_manage_principal(
 }
 
 pub(crate) async fn principal_permissions_response(
-    pool: &DbPool,
+    context: &impl StorageContext,
     principal: &impl AuthzSubject,
 ) -> Result<Vec<PrincipalCollectionPermissions>, ApiError> {
-    let rows = principal_all_permissions(pool, principal).await?;
+    let rows = principal_all_permissions(context, principal).await?;
 
     // Fold (collection, group, permission-row) tuples into a per-collection,
     // per-group export. BTreeMap keeps collections in a stable id order; groups
@@ -204,18 +207,18 @@ pub(crate) async fn principal_permissions_response(
 )]
 #[post("/{principal_id}/tokens")]
 pub async fn create_token(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     principal_id: web::Path<PrincipalID>,
     body: web::Json<NewTokenRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
-    let principal = principal_id.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = principal_id.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     // A disabled service account cannot mint credentials.
-    if principal_is_disabled(&pool, &principal).await? {
+    if is_service_account_disabled(&context, principal.id).await? {
         return Err(ApiError::Conflict(
             "Service account is disabled".to_string(),
         ));
@@ -232,7 +235,7 @@ pub async fn create_token(
 
     let event_context = requestor.event_context(&req);
     let issued = token_request
-        .create_issued(&pool, Some(&event_context))
+        .create_issued(&context, &event_context)
         .await?;
 
     Ok(ApiResponse::new(
@@ -258,25 +261,19 @@ pub async fn create_token(
 )]
 #[get("/{principal_id}/tokens")]
 pub async fn list_tokens(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     principal_id: web::Path<PrincipalID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let pid = principal_id.into_inner();
-    let principal = pid.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = pid.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
     let (metadata, total_count) =
-        retained_token_metadata_by_principal_id_paginated_with_total_count(
-            pid,
-            &pool,
-            &search_params,
-            state,
-        )
-        .await?;
+        list_retained_tokens(&context, pid.id(), search_params, state).await?;
     let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(
@@ -306,16 +303,19 @@ pub async fn list_tokens(
 )]
 #[get("/{principal_id}/tokens/{token_id}")]
 pub async fn get_token(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     path: web::Path<TokenPath>,
 ) -> Result<impl Responder, ApiError> {
     let path = path.into_inner();
-    let principal = path.principal_id.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
-    let token =
-        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
-            .await?;
+    let principal = path.principal_id.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
+    let token = PrincipalTokenMetadata::load_for_principal_token(
+        &context,
+        path.principal_id,
+        path.token_id,
+    )
+    .await?;
     ApiResponse::ok_revisioned(PrincipalTokenPointResponse::from(token))
 }
 
@@ -340,23 +340,23 @@ pub async fn get_token(
 )]
 #[post("/{principal_id}/tokens/{token_id}/renew")]
 pub async fn renew_token(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     path: web::Path<TokenPath>,
     body: web::Json<RenewTokenRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let path = path.into_inner();
-    let principal = path.principal_id.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = path.principal_id.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     let event_context = requestor.event_context(&req);
     let issued = renew_token_by_id_for_principal(
-        &pool,
+        &context,
         path.token_id,
         path.principal_id,
         body.into_inner().expires_at,
-        Some(&event_context),
+        &event_context,
     )
     .await?;
 
@@ -384,29 +384,33 @@ pub async fn renew_token(
 )]
 #[post("/{principal_id}/tokens/{token_id}/revoke")]
 pub async fn revoke_token(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     path: web::Path<TokenPath>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let path = path.into_inner();
-    let principal = path.principal_id.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = path.principal_id.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
-    let current =
-        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
-            .await?;
+    let current = PrincipalTokenMetadata::load_for_principal_token(
+        &context,
+        path.principal_id,
+        path.token_id,
+    )
+    .await?;
     let current = PrincipalTokenPointResponse::from(current);
     let precondition = revision_precondition(&req, &current)?;
 
     let event_context = requestor.event_context(&req);
-    let revoked = with_revision_precondition_scope(
+    let revoked = with_revision_precondition(
+        &context,
         precondition,
         revoke_token_by_id_for_principal(
-            &pool,
+            &context,
             path.token_id,
             path.principal_id,
-            Some(&event_context),
+            &event_context,
         ),
     )
     .await?;
@@ -415,9 +419,12 @@ pub async fn revoke_token(
             "Token not found for this principal".to_string(),
         ));
     }
-    let updated =
-        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
-            .await?;
+    let updated = PrincipalTokenMetadata::load_for_principal_token(
+        &context,
+        path.principal_id,
+        path.token_id,
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(
         PrincipalTokenPointResponse::from(updated).entity_tag()?,
     ))
@@ -437,21 +444,21 @@ pub async fn revoke_token(
 )]
 #[get("/{principal_id}/groups")]
 pub async fn list_principal_groups(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     principal_id: web::Path<PrincipalID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let pid = principal_id.into_inner();
-    let principal = pid.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = pid.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let (groups, total_count) = pid
-        .groups_paginated_with_total_count(&pool, &search_params)
+        .groups_paginated_with_total_count(&context, &search_params)
         .await?;
-    let response = GroupResponse::from_groups(&pool, groups).await?;
+    let response = GroupResponse::from_groups(&context, groups).await?;
     ApiResponse::paginated(response, total_count, &params)
 }
 
@@ -486,15 +493,15 @@ pub struct PrincipalCollectionPermissions {
 )]
 #[get("/{principal_id}/permissions")]
 pub async fn list_principal_permissions(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     principal_id: web::Path<PrincipalID>,
 ) -> Result<impl Responder, ApiError> {
     let pid = principal_id.into_inner();
-    let principal = pid.principal(&pool).await?;
-    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let principal = pid.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
-    let export = principal_permissions_response(&pool, &pid).await?;
+    let export = principal_permissions_response(&context, &pid).await?;
     Ok(ApiResponse::new(export, StatusCode::OK))
 }
 
@@ -512,13 +519,13 @@ pub async fn list_principal_permissions(
 )]
 #[get("/{principal_id}/settings")]
 pub async fn get_principal_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     principal_id: web::Path<PrincipalID>,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
-    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
-    ApiResponse::ok_revisioned(principal_id.settings(&pool).await?)
+    ensure_can_manage_principal_settings(&context, &requestor, principal_id.id()).await?;
+    ApiResponse::ok_revisioned(principal_id.settings(&context).await?)
 }
 
 #[utoipa::path(
@@ -537,20 +544,21 @@ pub async fn get_principal_settings(
 )]
 #[put("/{principal_id}/settings")]
 pub async fn put_principal_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     principal_id: web::Path<PrincipalID>,
     settings: web::Json<PrincipalSettings>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
-    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
-    let current = principal_id.settings(&pool).await?;
+    ensure_can_manage_principal_settings(&context, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
-        principal_id.replace_settings(&pool, settings.into_inner(), &event_context),
+        principal_id.replace_settings(&context, settings.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)
@@ -594,20 +602,21 @@ pub async fn put_principal_settings(
 )]
 #[patch("/{principal_id}/settings")]
 pub async fn patch_principal_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     principal_id: web::Path<PrincipalID>,
     patch: PrincipalSettingsPatchPayload,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
-    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
-    let current = principal_id.settings(&pool).await?;
+    ensure_can_manage_principal_settings(&context, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let settings = with_revision_precondition_scope(
+    let settings = with_revision_precondition(
+        &context,
         precondition,
-        principal_id.apply_settings_patch(&pool, patch.into_inner(), &event_context),
+        apply_principal_settings_patch(principal_id, &context, patch.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)
@@ -627,19 +636,20 @@ pub async fn patch_principal_settings(
 )]
 #[delete("/{principal_id}/settings")]
 pub async fn delete_principal_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     principal_id: web::Path<PrincipalID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
-    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
-    let current = principal_id.settings(&pool).await?;
+    ensure_can_manage_principal_settings(&context, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let reset = with_revision_precondition_scope(
+    let reset = with_revision_precondition(
+        &context,
         precondition,
-        principal_id.reset_settings(&pool, &event_context),
+        principal_id.reset_settings(&context, &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(reset.entity_tag()?))

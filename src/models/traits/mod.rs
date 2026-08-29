@@ -17,4 +17,5 @@ pub use crate::models::traits::collection::*;
 pub use crate::models::traits::object::*;
 pub use crate::models::traits::object_relation::*;
 pub use crate::models::traits::output::*;
+pub use crate::models::traits::task::*;
 pub use crate::models::traits::user::*;

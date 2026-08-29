@@ -23,7 +23,6 @@ use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::token_hash_key_is_ephemeral;
 use crate::config::{AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath};
-use crate::db::{DatabasePoolSettings, init_pool_with_settings};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
     EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
@@ -40,10 +39,14 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use crate::services::event_administration::count_enabled_event_sinks;
+use crate::storage::{
+    OperationalStateStorage, StorageBackendKind, StorageSettings, initialize_storage,
+};
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
-use crate::{api, db, logger, middlewares, observability, tls, utilities};
+use crate::{api, logger, middlewares, observability, tls, utilities};
 
 /// Build and run the configured Hubuum process until it shuts down.
 ///
@@ -100,21 +103,31 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
-    let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
-        .max_size(config.db_pool_size)
-        .statement_timeout_ms(config.db_statement_timeout_ms)
-        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-        .build()
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    let pool = init_pool_with_settings(&database_settings);
-    db::ensure_database_schema_ready(&pool)
+    let storage_settings = match config.storage_backend {
+        StorageBackendKind::Postgres => StorageSettings::postgres(config.database_url.clone())
+            .max_connections(config.db_pool_size)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
+    };
+    let storage = initialize_storage(&storage_settings)
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let readiness = storage
+        .get_readiness_snapshot()
         .await
         .unwrap_or_else(|error| {
             fatal_error(
-                &format!("Database schema is not ready: {error}"),
+                &format!("Storage backend is not ready: {error}"),
                 EXIT_CODE_DATABASE_ERROR,
             )
         });
+    if !readiness.storage_is_ready() {
+        fatal_error(
+            "Storage backend schema is not ready",
+            EXIT_CODE_DATABASE_ERROR,
+        );
+    }
 
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
@@ -137,14 +150,14 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     let initialization_settings =
         utilities::init::InitializationSettings::new(config.admin_groupname.clone())
             .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    if let Err(e) = utilities::init::init(pool.clone(), &initialization_settings).await {
+    if let Err(e) = utilities::init::init(&storage, &initialization_settings).await {
         fatal_error(
-            &format!("Critical database initialization failed: {}", e),
+            &format!("Critical storage initialization failed: {}", e),
             EXIT_CODE_INIT_ERROR,
         );
     }
 
-    let permission_backend = build_permission_backend(&config, pool.clone())
+    let permission_backend = build_permission_backend(&config, storage.clone())
         .await
         .unwrap_or_else(|error| {
             fatal_error(
@@ -152,28 +165,31 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
                 EXIT_CODE_PERMISSION_BACKEND_ERROR,
             )
         });
-    let app_context = AppContext::new(pool.clone(), permission_backend);
+    let app_context = AppContext::new(storage, permission_backend);
+    let storage_backend = app_context.storage_backend_descriptor();
+    if config.metrics_enabled {
+        observability::metrics::storage_backend_identity(storage_backend.kind().as_str());
+    }
     let authorization_backend = app_context.permission_backend().kind();
 
     // Every process that can serve or originate work must participate in the
     // restore drain barrier. In particular, API-only replicas need their own
     // heartbeat even though they do not run task or event workers.
-    ensure_restore_coordinator_running(app_context.db_pool.clone());
+    ensure_restore_coordinator_running(app_context.clone_backend());
 
-    let active_event_sinks =
-        match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
-            Ok(count) => Some(count),
-            Err(error) => {
-                warn!(
-                    message = "failed to count active event sinks for startup metadata",
-                    error = %error,
-                );
-                None
-            }
-        };
+    let active_event_sinks = match count_enabled_event_sinks(&app_context).await {
+        Ok(count) => Some(count),
+        Err(error) => {
+            warn!(
+                message = "failed to count active event sinks for startup metadata",
+                error = %error,
+            );
+            None
+        }
+    };
 
     if !config.runtime_role.serves_http() {
-        let metrics_server = start_worker_metrics_server(&config, pool.clone())?;
+        let metrics_server = start_worker_metrics_server(&config, app_context.clone())?;
         start_background_workers(&app_context, &backup_settings);
         info!(
             message = "worker startup",
@@ -183,7 +199,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             task_workers = config.task_workers,
             event_fanout_workers = config.event_fanout_workers,
             event_delivery_workers = config.event_delivery_workers,
-            db_backend = "postgresql",
+            db_backend = storage_backend.kind().as_str(),
+            storage_backend = storage_backend.kind().as_str(),
             authorization_backend,
             active_event_sinks,
             metrics_listener = metrics_server.is_some(),
@@ -197,7 +214,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
-        drop(pool);
         supervision_result?;
         return Ok(());
     }
@@ -219,10 +235,9 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         config.trusted_proxies.nets().to_vec(),
         config.trusted_proxy_hops,
     );
-    let running_config = RunningConfig::from(&config);
+    let running_config = RunningConfig::from_app_config_and_storage(&config, storage_backend);
     let metrics_enabled = config.metrics_enabled;
     let metrics_path = config.metrics_path.clone();
-    let app_pool = pool.clone();
     let server_app_context = app_context.clone();
     let background_worker_context = app_context.clone();
     let app_backup_settings = backup_settings.clone();
@@ -245,7 +260,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             .app_data(Data::new(running_config.clone()))
             .app_data(Data::new(app_backup_settings.clone()))
             .app_data(Data::new(app_restore_settings.clone()))
-            .app_data(Data::new(app_pool.clone()))
             .app_data(Data::new(server_app_context.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
@@ -313,7 +327,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         task_workers = config.task_workers,
         event_fanout_workers = config.event_fanout_workers,
         event_delivery_workers = config.event_delivery_workers,
-        db_backend = "postgresql",
+        db_backend = storage_backend.kind().as_str(),
+        storage_backend = storage_backend.kind().as_str(),
         authorization_backend,
         login_rate_limit_backend = config.login_rate_limit_backend.as_str(),
         active_event_sinks,
@@ -336,16 +351,15 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(app_context);
-    drop(pool);
     result
 }
 
 fn start_background_workers(context: &AppContext, backup_settings: &BackupSettings) {
     ensure_task_worker_running_with_settings(context.clone(), backup_settings.clone());
-    ensure_event_fanout_worker_running(context.db_pool.clone());
-    ensure_event_delivery_worker_running(context.db_pool.clone());
-    ensure_event_retention_worker_running(context.db_pool.clone());
-    ensure_token_retention_worker_running(context.db_pool.clone());
+    ensure_event_fanout_worker_running(context.clone_backend());
+    ensure_event_delivery_worker_running(context.clone_backend());
+    ensure_event_retention_worker_running(context.clone_backend());
+    ensure_token_retention_worker_running(context.clone_backend());
 }
 
 async fn wait_for_background_worker_failure() -> std::io::Error {
@@ -380,7 +394,7 @@ fn worker_metrics_service(
     client_allowlist: ClientAllowlist,
     proxy_trust: middlewares::ProxyTrust,
     metrics_path: MetricsPath,
-    pool: db::DbPool,
+    context: AppContext,
 ) -> impl HttpServiceFactory {
     web::scope("")
         .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
@@ -388,7 +402,7 @@ fn worker_metrics_service(
             proxy_trust.clone(),
         ))
         .wrap(middlewares::TracingMiddleware::new_with_trust(proxy_trust))
-        .app_data(Data::new(pool))
+        .app_data(Data::new(context))
         .route(
             metrics_path.as_str(),
             web::get().to(observability::metrics::scrape),
@@ -397,7 +411,7 @@ fn worker_metrics_service(
 
 fn start_worker_metrics_server(
     config: &AppConfig,
-    pool: db::DbPool,
+    context: AppContext,
 ) -> std::io::Result<Option<Server>> {
     if !config.metrics_enabled {
         return Ok(None);
@@ -415,7 +429,7 @@ fn start_worker_metrics_server(
             client_allowlist.clone(),
             proxy_trust.clone(),
             metrics_path.clone(),
-            pool.clone(),
+            context.clone(),
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
@@ -491,12 +505,18 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use actix_web::{http::StatusCode, test as actix_test};
+
+    use crate::permissions::LocalPermissionBackend;
+    use crate::storage::StorageHandle;
+    use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
 
     use super::*;
 
-    fn unreachable_pool() -> db::DbPool {
-        let settings = DatabasePoolSettings::builder(
+    fn unreachable_pool() -> PostgresPool {
+        let settings = PostgresPoolSettings::builder(
             "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_worker_metrics_unreachable",
         )
         .max_size(1)
@@ -504,7 +524,18 @@ mod tests {
         .acquire_timeout_ms(5)
         .build()
         .expect("unreachable test pool settings should be valid");
-        init_pool_with_settings(&settings)
+        build_postgres_pool(&settings).expect("unreachable test pool must be constructible")
+    }
+
+    fn unreachable_context() -> AppContext {
+        let pool = unreachable_pool();
+        crate::tests::app_context_with_permission_backend(
+            pool.clone(),
+            Arc::new(LocalPermissionBackend::new(
+                StorageHandle::postgres(pool),
+                "admin".to_string(),
+            )),
+        )
     }
 
     #[actix_web::test]
@@ -514,7 +545,7 @@ mod tests {
             ClientAllowlist::Any,
             middlewares::ProxyTrust::peer_only(),
             MetricsPath::new("/metrics").expect("metrics path should be valid"),
-            unreachable_pool(),
+            unreachable_context(),
         )))
         .await;
         let metrics_request = || {

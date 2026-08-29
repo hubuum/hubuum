@@ -1,11 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test as actix_test};
     use chrono::{NaiveDate, NaiveDateTime};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
     use rstest::rstest;
 
-    use crate::db::with_transaction;
     use crate::models::search::{DataType, SearchOperator};
     use crate::models::{
         Collection, GroupID, HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath,
@@ -20,6 +19,7 @@ mod tests {
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{CollectionFixture, TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave};
+    use hubuum_storage_postgres::with_transaction;
 
     const STRING_OPERATORS: &[&str] = &[
         "equals",
@@ -599,8 +599,9 @@ mod tests {
         let classes: Vec<crate::models::HubuumClassExpanded> =
             actix_test::read_body_json(resp).await;
 
-        let class_names: Vec<&str> = classes.iter().map(|class| class.name.as_str()).collect();
-        assert_eq!(class_names, expected_names);
+        let resolve_class_names: Vec<&str> =
+            classes.iter().map(|class| class.name.as_str()).collect();
+        assert_eq!(resolve_class_names, expected_names);
 
         collection.cleanup().await.unwrap();
     }

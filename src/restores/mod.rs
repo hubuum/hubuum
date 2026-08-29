@@ -5,33 +5,29 @@ use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{Duration, NaiveDateTime, Utc};
 use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, SEMANTICS_VERSION};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::db::traits::identity::identity_scope_name_by_id;
-use crate::db::traits::maintenance::maintenance_state_db;
-use crate::db::traits::restore::{
-    RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
-    expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
-    load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
-    maintenance_generation_and_instances_db, restore_coordinator_tick_db,
-    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
-};
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent};
 use crate::lifecycle::spawn_background_worker;
-use crate::models::backup::{
-    BACKUP_STATE_SECTIONS, backup_history_sections, is_backup_history_section,
-};
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
-    ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState, NewRestoreJobRecord,
-    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobRecord,
-    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
+    ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState,
+    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobStatus,
+    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
+};
+use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
+use crate::storage::storage_handle;
+use crate::storage::{
+    OperationalStateStorage, RestoreStorage, StorageBackupHistorySection, StorageBackupRow,
+    StorageBackupSnapshot, StorageBackupStateSection, StorageContext, StorageRestoreApply,
+    StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
+    StorageRestoreDocument, StorageRestoreDocumentMetadata, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStageCreate, StorageRestoreStatus,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -43,6 +39,98 @@ const MISSING_RESTORE_CAPABILITY_HASH: &str =
 // Keep this longer than the bounded drain so normal confirmations enter the
 // advisory-lock-protected restore transaction before recovery is eligible.
 const RESTORE_RECONCILIATION_GRACE_SECONDS: i64 = 60;
+
+struct RestoreJobSummaryData {
+    id: i64,
+    status: RestoreJobStatus,
+    requested_by: Option<i32>,
+    requested_by_identity_scope: String,
+    requested_by_name: String,
+    byte_size: i64,
+    sha256: String,
+    error: Option<String>,
+    expires_at: NaiveDateTime,
+    confirmed_at: Option<NaiveDateTime>,
+    finished_at: Option<NaiveDateTime>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+struct RestoreJobData {
+    summary: RestoreJobSummaryData,
+    document: Vec<u8>,
+    capability_hash: String,
+}
+
+struct RestoreStatusData {
+    summary: RestoreJobSummaryData,
+    capability_hash: String,
+    validation_summary: Value,
+}
+
+fn restore_status_from_storage(status: StorageRestoreJobStatus) -> RestoreJobStatus {
+    match status {
+        StorageRestoreJobStatus::Validated => RestoreJobStatus::Validated,
+        StorageRestoreJobStatus::Confirmed => RestoreJobStatus::Confirmed,
+        StorageRestoreJobStatus::Succeeded => RestoreJobStatus::Succeeded,
+        StorageRestoreJobStatus::Failed => RestoreJobStatus::Failed,
+        StorageRestoreJobStatus::Expired => RestoreJobStatus::Expired,
+    }
+}
+
+fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJobSummaryData {
+    let (id, status, initiator, artifact, error, timestamps) = summary.into_parts();
+    let initiator = initiator.into_parts();
+    let requested_by = initiator.principal_id();
+    let requested_by_identity_scope = initiator.identity_scope().to_owned();
+    let requested_by_name = initiator.name().to_owned();
+    let artifact = artifact.into_parts();
+    let byte_size = artifact.byte_size();
+    let sha256 = artifact.sha256().to_owned();
+    let timestamps = timestamps.into_parts();
+    let expires_at = timestamps.expires_at();
+    let confirmed_at = timestamps.confirmed_at();
+    let finished_at = timestamps.finished_at();
+    let created_at = timestamps.created_at();
+    let updated_at = timestamps.updated_at();
+    RestoreJobSummaryData {
+        id: id.id(),
+        status: restore_status_from_storage(status),
+        requested_by: requested_by.map(|id| id.id()),
+        requested_by_identity_scope,
+        requested_by_name,
+        byte_size,
+        sha256,
+        error,
+        expires_at: expires_at.naive_utc(),
+        confirmed_at: confirmed_at.map(|timestamp| timestamp.naive_utc()),
+        finished_at: finished_at.map(|timestamp| timestamp.naive_utc()),
+        created_at: created_at.naive_utc(),
+        updated_at: updated_at.naive_utc(),
+    }
+}
+
+fn restore_job_id_to_storage(id: i64) -> RestoreJobID {
+    RestoreJobID::new(id).expect("validated restore job id must be positive")
+}
+
+fn restore_job_from_storage(job: StorageRestoreJob) -> RestoreJobData {
+    let (summary, document, capability_hash) = job.into_parts();
+    RestoreJobData {
+        summary: restore_summary_from_storage(summary),
+        document,
+        capability_hash,
+    }
+}
+
+fn restore_status_data_from_storage(status: StorageRestoreStatus) -> RestoreStatusData {
+    let (summary, capability_hash, validation_summary) = status.into_parts();
+    RestoreStatusData {
+        summary: restore_summary_from_storage(summary),
+        capability_hash,
+        validation_summary,
+    }
+}
 
 /// Counts local request/worker activity across the maintenance state check and
 /// the work it protects. The restore coordinator reports this instance drained
@@ -138,41 +226,13 @@ fn invalid_restore_capability() -> ApiError {
 
 fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
-    for required in BACKUP_STATE_SECTIONS {
-        if !document.state.sections.contains_key(*required) {
-            return Err(ApiError::BadRequest(format!(
-                "Full backup is missing required state section '{required}'"
-            )));
-        }
-    }
-    if let Some(unknown) = document
-        .state
-        .sections
-        .keys()
-        .find(|name| !BACKUP_STATE_SECTIONS.contains(&name.as_str()))
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Full backup contains unknown state section '{unknown}'"
-        )));
-    }
-    if let Some(history) = &document.history {
-        for required in backup_history_sections() {
-            if !history.sections.contains_key(required) {
-                return Err(ApiError::BadRequest(format!(
-                    "Full backup history is missing required section '{required}'"
-                )));
-            }
-        }
-        if let Some(unknown) = history
-            .sections
-            .keys()
-            .find(|name| !is_backup_history_section(name))
-        {
-            return Err(ApiError::BadRequest(format!(
-                "Full backup contains unknown history section '{unknown}'"
-            )));
-        }
-    }
+    StorageBackupSnapshot::try_new(
+        document.state.sections.clone(),
+        document
+            .history
+            .as_ref()
+            .map(|history| history.sections.clone()),
+    )?;
     validate_required_seed_rows(document)?;
     validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
@@ -203,11 +263,15 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
 }
 
 fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiError> {
-    let current_classes = required_state_section(document, "hubuumclass")?;
+    let current_classes = required_state_section(document, StorageBackupStateSection::Classes)?;
     let historical_classes = document
         .history
         .as_ref()
-        .and_then(|history| history.sections.get("hubuumclass_history"))
+        .and_then(|history| {
+            history
+                .sections
+                .get(&StorageBackupHistorySection::ClassHistory)
+        })
         .map(Vec::as_slice)
         .unwrap_or(&[]);
 
@@ -237,35 +301,56 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
     Ok(())
 }
 
-const REVISION_STATE_SECTIONS: &[&str] = &[
-    "identity_scopes",
-    "groups",
-    "principals",
-    "group_memberships",
-    "collections",
-    "collection_authorization_state",
-    "hubuumclass",
-    "computed_field_definitions",
-    "hubuumclass_relation",
-    "hubuumobject",
-    "hubuumobject_relation",
-    "export_templates",
-    "remote_targets",
-    "event_sinks",
-    "event_subscriptions",
+const REVISION_STATE_SECTIONS: &[StorageBackupStateSection] = &[
+    StorageBackupStateSection::IdentityScopes,
+    StorageBackupStateSection::Groups,
+    StorageBackupStateSection::Principals,
+    StorageBackupStateSection::GroupMemberships,
+    StorageBackupStateSection::Collections,
+    StorageBackupStateSection::CollectionAuthorization,
+    StorageBackupStateSection::Classes,
+    StorageBackupStateSection::ComputedFieldDefinitions,
+    StorageBackupStateSection::ClassRelations,
+    StorageBackupStateSection::Objects,
+    StorageBackupStateSection::ObjectRelations,
+    StorageBackupStateSection::ExportTemplates,
+    StorageBackupStateSection::RemoteTargets,
+    StorageBackupStateSection::EventSinks,
+    StorageBackupStateSection::EventSubscriptions,
 ];
 
-const REVISION_HISTORY_SECTIONS: &[&str] = &[
-    "collections_history",
-    "hubuumclass_history",
-    "hubuumclass_relation_history",
-    "hubuumobject_history",
-    "hubuumobject_relation_history",
-    "export_templates_history",
-    "remote_targets_history",
+const REVISION_HISTORY_SECTIONS: &[(StorageBackupHistorySection, StorageBackupStateSection)] = &[
+    (
+        StorageBackupHistorySection::CollectionHistory,
+        StorageBackupStateSection::Collections,
+    ),
+    (
+        StorageBackupHistorySection::ClassHistory,
+        StorageBackupStateSection::Classes,
+    ),
+    (
+        StorageBackupHistorySection::ClassRelationHistory,
+        StorageBackupStateSection::ClassRelations,
+    ),
+    (
+        StorageBackupHistorySection::ObjectHistory,
+        StorageBackupStateSection::Objects,
+    ),
+    (
+        StorageBackupHistorySection::ObjectRelationHistory,
+        StorageBackupStateSection::ObjectRelations,
+    ),
+    (
+        StorageBackupHistorySection::ExportTemplateHistory,
+        StorageBackupStateSection::ExportTemplates,
+    ),
+    (
+        StorageBackupHistorySection::RemoteTargetHistory,
+        StorageBackupStateSection::RemoteTargets,
+    ),
 ];
 
-fn row_revision(section: &str, row: &Value) -> Result<i64, ApiError> {
+fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, ApiError> {
     row.get("revision")
         .and_then(Value::as_i64)
         .filter(|revision| (1..i64::MAX).contains(revision))
@@ -276,7 +361,7 @@ fn row_revision(section: &str, row: &Value) -> Result<i64, ApiError> {
         })
 }
 
-fn row_i64(section: &str, row: &Value, field: &str) -> Result<i64, ApiError> {
+fn row_i64(section: &str, row: &StorageBackupRow, field: &str) -> Result<i64, ApiError> {
     row.get(field).and_then(Value::as_i64).ok_or_else(|| {
         ApiError::BadRequest(format!(
             "Full backup section '{section}' contains an invalid {field}"
@@ -286,8 +371,8 @@ fn row_i64(section: &str, row: &Value, field: &str) -> Result<i64, ApiError> {
 
 fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> {
     for section in REVISION_STATE_SECTIONS {
-        for row in required_state_section(document, section)? {
-            row_revision(section, row)?;
+        for row in required_state_section(document, *section)? {
+            row_revision(section.as_str(), row)?;
         }
     }
 
@@ -296,29 +381,30 @@ fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> 
     let Some(history) = &document.history else {
         return validate_event_revisions(document);
     };
-    for section in REVISION_HISTORY_SECTIONS {
-        let rows = history.sections.get(*section).ok_or_else(|| {
+    for (history_section, state_section) in REVISION_HISTORY_SECTIONS {
+        let rows = history.sections.get(history_section).ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Full backup history is missing required section '{section}'"
+                "Full backup history is missing required section '{history_section}'"
             ))
         })?;
         for row in rows {
-            row_revision(section, row)?;
+            row_revision(history_section.as_str(), row)?;
         }
-        validate_live_history_revisions(document, section, rows)?;
+        validate_live_history_revisions(document, *history_section, *state_section, rows)?;
     }
     validate_event_revisions(document)
 }
 
 fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let collection_ids = required_state_section(document, "collections")?
+    let collection_ids = required_state_section(document, StorageBackupStateSection::Collections)?
         .iter()
         .map(|row| row_i64("collections", row, "id"))
         .collect::<Result<HashSet<_>, _>>()?;
-    let authorization_ids = required_state_section(document, "collection_authorization_state")?
-        .iter()
-        .map(|row| row_i64("collection_authorization_state", row, "collection_id"))
-        .collect::<Result<Vec<_>, _>>()?;
+    let authorization_ids =
+        required_state_section(document, StorageBackupStateSection::CollectionAuthorization)?
+            .iter()
+            .map(|row| row_i64("collection_authorization", row, "collection_id"))
+            .collect::<Result<Vec<_>, _>>()?;
     let unique_authorization_ids = authorization_ids.iter().copied().collect::<HashSet<_>>();
     if authorization_ids.len() != unique_authorization_ids.len()
         || unique_authorization_ids != collection_ids
@@ -332,16 +418,16 @@ fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(
 
 fn validate_live_history_revisions(
     document: &BackupDocument,
-    history_section: &str,
-    history_rows: &[Value],
+    history_section: StorageBackupHistorySection,
+    state_section: StorageBackupStateSection,
+    history_rows: &[StorageBackupRow],
 ) -> Result<(), ApiError> {
-    let state_section = history_section.trim_end_matches("_history");
     let live = required_state_section(document, state_section)?
         .iter()
         .map(|row| {
             Ok((
-                row_i64(state_section, row, "id")?,
-                row_revision(state_section, row)?,
+                row_i64(state_section.as_str(), row, "id")?,
+                row_revision(state_section.as_str(), row)?,
             ))
         })
         .collect::<Result<HashMap<_, _>, ApiError>>()?;
@@ -350,9 +436,10 @@ fn validate_live_history_revisions(
         .iter()
         .filter(|row| row.get("valid_to").is_some_and(Value::is_null))
     {
-        let id = row_i64(history_section, row, "id")?;
-        let revision = row_revision(history_section, row)?;
-        if row.get("op").and_then(Value::as_str) == Some("D") || open.insert(id, revision).is_some()
+        let id = row_i64(history_section.as_str(), row, "id")?;
+        let revision = row_revision(history_section.as_str(), row)?;
+        if row.get("operation").and_then(Value::as_str) == Some("delete")
+            || open.insert(id, revision).is_some()
         {
             return Err(ApiError::BadRequest(format!(
                 "Full backup history section '{history_section}' has an invalid open snapshot"
@@ -368,11 +455,11 @@ fn validate_live_history_revisions(
 }
 
 fn validate_event_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let Some(events) = document
-        .history
-        .as_ref()
-        .and_then(|history| history.sections.get("events"))
-    else {
+    let Some(events) = document.history.as_ref().and_then(|history| {
+        history
+            .sections
+            .get(&StorageBackupHistorySection::AuditEvents)
+    }) else {
         return Ok(());
     };
     for event in events {
@@ -430,12 +517,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
     let mut personal_counts = HashMap::<(i32, i32), usize>::new();
     let mut shared_keys = HashSet::<(i32, String)>::new();
     let mut personal_keys = HashSet::<(i32, i32, String)>::new();
-    for row in required_state_section(document, "computed_field_definitions")? {
-        let object = row.as_object().ok_or_else(|| {
-            ApiError::BadRequest(
-                "Full backup contains a non-object computed-field definition".to_string(),
-            )
-        })?;
+    for row in required_state_section(
+        document,
+        StorageBackupStateSection::ComputedFieldDefinitions,
+    )? {
+        let object = row.fields();
         let string = |field: &str| {
             object
                 .get(field)
@@ -523,11 +609,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
         match visibility.as_str() {
             COMPUTED_FIELD_VISIBILITY_SHARED => {
                 if object
-                    .get("owner_user_id")
+                    .get("owner_principal_id")
                     .is_some_and(|value| !value.is_null())
                 {
                     return Err(ApiError::BadRequest(
-                        "Full backup shared computed-field definition must not have an owner_user_id"
+                        "Full backup shared computed-field definition must not have an owner_principal_id"
                             .to_string(),
                     ));
                 }
@@ -545,7 +631,7 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                 }
             }
             COMPUTED_FIELD_VISIBILITY_PERSONAL => {
-                let owner_id = positive_id("owner_user_id")?;
+                let owner_id = positive_id("owner_principal_id")?;
                 if !personal_keys.insert((owner_id, class_id, key)) {
                     return Err(ApiError::BadRequest(format!(
                         "Full backup user {owner_id} contains a duplicate personal computed-field key for class {class_id}"
@@ -569,24 +655,24 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
     Ok(())
 }
 
-fn required_state_section<'a>(
-    document: &'a BackupDocument,
-    name: &str,
-) -> Result<&'a [Value], ApiError> {
+fn required_state_section(
+    document: &BackupDocument,
+    section: StorageBackupStateSection,
+) -> Result<&[StorageBackupRow], ApiError> {
     document
         .state
         .sections
-        .get(name)
+        .get(&section)
         .map(Vec::as_slice)
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Full backup is missing required state section '{name}'"
+                "Full backup is missing required state section '{section}'"
             ))
         })
 }
 
 fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError> {
-    let local_scopes = required_state_section(document, "identity_scopes")?
+    let local_scopes = required_state_section(document, StorageBackupStateSection::IdentityScopes)?
         .iter()
         .filter(|row| row.get("name").and_then(Value::as_str) == Some(LOCAL_IDENTITY_SCOPE))
         .collect::<Vec<_>>();
@@ -598,7 +684,7 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
         )));
     }
 
-    let roots = required_state_section(document, "collections")?
+    let roots = required_state_section(document, StorageBackupStateSection::Collections)?
         .iter()
         .filter(|row| row.get("parent_collection_id").is_some_and(Value::is_null))
         .collect::<Vec<_>>();
@@ -610,13 +696,14 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
     let root_id = roots[0].get("id").and_then(Value::as_i64).ok_or_else(|| {
         ApiError::BadRequest("Full backup root collection has an invalid id".to_string())
     })?;
-    let has_root_closure = required_state_section(document, "collection_closure")?
-        .iter()
-        .any(|row| {
-            row.get("ancestor_collection_id").and_then(Value::as_i64) == Some(root_id)
-                && row.get("descendant_collection_id").and_then(Value::as_i64) == Some(root_id)
-                && row.get("depth").and_then(Value::as_i64) == Some(0)
-        });
+    let has_root_closure =
+        required_state_section(document, StorageBackupStateSection::CollectionHierarchy)?
+            .iter()
+            .any(|row| {
+                row.get("ancestor_collection_id").and_then(Value::as_i64) == Some(root_id)
+                    && row.get("descendant_collection_id").and_then(Value::as_i64) == Some(root_id)
+                    && row.get("depth").and_then(Value::as_i64) == Some(0)
+            });
     if !has_root_closure {
         return Err(ApiError::BadRequest(
             "Full backup must contain the root collection's depth-zero closure row".to_string(),
@@ -627,7 +714,7 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
 }
 
 pub async fn stage_restore(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: &RestoreSettings,
     request: RestoreStageRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
@@ -652,22 +739,25 @@ pub async fn stage_restore(
     let validation_json = serde_json::to_value(&validation)?;
     let byte_size = i64::try_from(document_bytes.len()).unwrap_or(i64::MAX);
     let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
-    let job = insert_restore_job_db(
-        pool,
-        NewRestoreJobRecord {
-            status: RestoreJobStatus::Validated.as_str().to_string(),
-            requested_by,
-            requested_by_identity_scope,
-            requested_by_name,
-            document: document_bytes,
-            byte_size,
-            sha256: document_sha.clone(),
+    let job = storage_handle(pool)
+        .stage_restore(StorageRestoreStageCreate::new(
+            StorageRestoreInitiator::try_new(
+                requested_by.map(|id| {
+                    hubuum_domain::PrincipalId::new(id)
+                        .expect("validated restore initiator id must be positive")
+                }),
+                requested_by_identity_scope,
+                requested_by_name,
+            )?,
+            document_bytes,
+            StorageRestoreArtifactSummary::try_new(byte_size, document_sha.clone())?,
             capability_hash,
-            validation_summary: validation_json,
-            expires_at,
-        },
-    )
-    .await?;
+            validation_json,
+            expires_at.and_utc(),
+        ))
+        .await
+        .map(restore_job_from_storage)?;
+    let job = job.summary;
 
     Ok(RestoreStageResponse {
         id: job.id,
@@ -689,22 +779,26 @@ pub async fn stage_restore(
     })
 }
 
-pub async fn load_restore_job(
-    pool: &DbPool,
+async fn load_restore_job(
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
-) -> Result<RestoreJobRecord, ApiError> {
-    load_restore_job_db(pool, job_id.id()).await
+) -> Result<RestoreJobData, ApiError> {
+    storage_handle(pool)
+        .get_restore_job(job_id)
+        .await
+        .map(restore_job_from_storage)
+        .map_err(Into::into)
 }
 
 pub async fn restore_status(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = match load_restore_status_job_db(pool, job_id.id()).await {
-        Ok(job) => Some(job),
-        Err(ApiError::NotFound(_)) => None,
-        Err(error) => return Err(error),
+    let job = match storage_handle(pool).get_restore_status(job_id).await {
+        Ok(job) => Some(restore_status_data_from_storage(job)),
+        Err(error) if error.kind() == crate::storage::StorageErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
     };
     let capability_valid = restore_capability_matches(
         job.as_ref().map(|job| job.capability_hash.as_str()),
@@ -726,8 +820,9 @@ pub async fn restore_status(
         );
         return Err(invalid_restore_capability());
     }
-    let status = job.status.parse::<RestoreJobStatus>()?;
-    let validation = serde_json::from_value(job.validation_summary.clone())?;
+    let validation = serde_json::from_value(job.validation_summary)?;
+    let job = job.summary;
+    let status = job.status;
     Ok(RestoreStageResponse {
         id: job.id,
         status,
@@ -749,41 +844,37 @@ pub async fn restore_status(
 }
 
 async fn apply_restore(
-    pool: &DbPool,
-    job: &RestoreJobRecord,
-    document: &BackupDocument,
-) -> Result<RestoreCompletion, ApiError> {
-    let provenance = NewEvent::new(
-        EntityType::Restore,
-        Action::Succeeded,
-        ActorKind::System,
-        "System restore completed",
-    )?
-    .with_entity_name(job.sha256.clone())
-    .with_metadata(json!({
-        "restore_job_id": job.id,
-        "backup_sha256": job.sha256,
-        "backup_version": document.backup_version,
-        "backup_source_version": document.source_version,
-        "backup_created_at": document.created_at,
-        "includes_history": document.history.is_some(),
-        "initiated_by": {
-            "principal_id": job.requested_by,
-            "identity_scope": job.requested_by_identity_scope,
-            "name": job.requested_by_name,
-        },
-    }));
-    apply_restore_db(pool, job, document, &provenance).await
+    pool: &impl crate::storage::StorageContext,
+    job_id: RestoreJobID,
+    document: BackupDocument,
+) -> Result<StorageRestoreCompletion, ApiError> {
+    let metadata = StorageRestoreDocumentMetadata::new(
+        document.backup_version,
+        document.created_at,
+        document.source_version,
+    );
+    let snapshot = StorageBackupSnapshot::try_new(
+        document.state.sections,
+        document.history.map(|history| history.sections),
+    )?;
+    let document = StorageRestoreDocument::new(metadata, snapshot);
+    storage_handle(pool)
+        .apply_restore(StorageRestoreApply::new(job_id, document))
+        .await
+        .map_err(Into::into)
 }
 
 async fn fail_restore_and_resume(
-    pool: &DbPool,
-    job_id: i64,
+    pool: &impl crate::storage::StorageContext,
+    job_id: RestoreJobID,
     error: &ApiError,
 ) -> Result<(), ApiError> {
-    tracing::error!(message = "Restore failed", restore_job_id = job_id, error = %error);
+    tracing::error!(message = "Restore failed", restore_job_id = job_id.id(), error = %error);
     let stored_error = restore_error_for_storage(error);
-    fail_restore_and_resume_db(pool, job_id, &stored_error).await
+    storage_handle(pool)
+        .fail_restore_and_resume(StorageRestoreFailure::new(job_id, stored_error))
+        .await
+        .map_err(Into::into)
 }
 
 fn restore_error_for_storage(error: &ApiError) -> String {
@@ -791,7 +882,7 @@ fn restore_error_for_storage(error: &ApiError) -> String {
 }
 
 pub async fn confirm_restore(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
@@ -820,6 +911,11 @@ pub async fn confirm_restore(
         );
         return Err(invalid_restore_capability());
     }
+    let RestoreJobData {
+        summary: job,
+        document: document_bytes,
+        capability_hash: _,
+    } = job;
     if confirmation.sha256 != job.sha256 {
         return Err(ApiError::Conflict(
             "Restore SHA-256 does not match the staged document".to_string(),
@@ -830,22 +926,24 @@ pub async fn confirm_restore(
             "Restore confirmation must exactly equal '{RESTORE_CONFIRMATION_PHRASE}'"
         )));
     }
-    if job.status != RestoreJobStatus::Validated.as_str() {
+    if job.status != RestoreJobStatus::Validated {
         return Err(ApiError::Conflict(format!(
             "Restore stage cannot be confirmed from status '{}'",
-            job.status
+            job.status.as_str()
         )));
     }
     if job.expires_at <= Utc::now().naive_utc() {
-        let changed = expire_restore_stage_db(pool, job.id).await?;
-        if changed != 1 {
+        let changed = storage_handle(pool)
+            .expire_restore_stage(restore_job_id_to_storage(job.id))
+            .await?;
+        if !changed {
             return Err(ApiError::Conflict(
                 "Restore stage changed status concurrently".to_string(),
             ));
         }
         return Err(ApiError::Gone("Restore stage has expired".to_string()));
     }
-    let document: BackupDocument = serde_json::from_slice(&job.document).map_err(|error| {
+    let document: BackupDocument = serde_json::from_slice(&document_bytes).map_err(|error| {
         ApiError::InternalServerError(format!("Staged restore document became invalid: {error}"))
     })?;
     let validation = validation_summary(&document)?;
@@ -853,21 +951,23 @@ pub async fn confirm_restore(
     // allowing every instance to reject new work. ACCESS EXCLUSIVE table locks
     // in `apply_restore` are the final drain barrier for requests already in
     // flight. A failed restore rolls the data transaction back intact.
-    let confirmed_at = start_restore_draining_db(pool, job.id).await?;
+    let job_id = restore_job_id_to_storage(job.id);
+    let confirmed_at = storage_handle(pool).start_restore_draining(job_id).await?;
 
     if let Err(error) = wait_for_instances_drained(pool).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
 
-    let completion = match apply_restore(pool, &job, &document).await {
+    let completion = match apply_restore(pool, job_id, document).await {
         Ok(completion) => completion,
         Err(error) => {
-            fail_restore_and_resume(pool, job.id, &error).await?;
+            fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
 
+    let (started_at, finished_at) = completion.into_parts();
     Ok(RestoreStageResponse {
         id: job.id,
         status: RestoreJobStatus::Succeeded,
@@ -878,11 +978,11 @@ pub async fn confirm_restore(
         byte_size: job.byte_size,
         expires_at: job.expires_at,
         error: None,
-        confirmed_at: Some(confirmed_at),
-        started_at: Some(completion.started_at),
-        finished_at: Some(completion.finished_at),
+        confirmed_at: Some(confirmed_at.naive_utc()),
+        started_at: Some(started_at.naive_utc()),
+        finished_at: Some(finished_at.naive_utc()),
         created_at: job.created_at,
-        updated_at: completion.finished_at,
+        updated_at: finished_at.naive_utc(),
         validation,
         restore_capability: None,
     })
@@ -892,14 +992,18 @@ pub async fn confirm_restore(
 /// restart. The destructive transaction is guarded by an advisory lock and
 /// re-checks the job/maintenance state. Once one coordinator commits, the
 /// maintenance row is normal and every restore staging row has been removed.
-pub async fn reconcile_interrupted_restore(pool: &DbPool) -> Result<(), ApiError> {
-    let snapshot = load_restore_coordinator_snapshot_db(pool).await?;
+pub async fn reconcile_interrupted_restore(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
+    let snapshot = storage_handle(pool)
+        .get_restore_coordinator_snapshot()
+        .await?;
     reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
 }
 
 async fn reconcile_interrupted_restore_from_snapshot(
-    pool: &DbPool,
-    snapshot: RestoreCoordinatorSnapshot,
+    pool: &impl crate::storage::StorageContext,
+    snapshot: StorageRestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
     let maintenance_state = snapshot.maintenance_state();
     if maintenance_state.is_normal() {
@@ -914,24 +1018,35 @@ async fn reconcile_interrupted_restore_from_snapshot(
         let error = ApiError::InternalServerError(format!(
             "Maintenance state '{maintenance_state}' has no restore job"
         ));
-        resume_maintenance_without_job_db(pool).await?;
+        storage_handle(pool)
+            .resume_maintenance_without_restore()
+            .await?;
         return Err(error);
     };
-    let job = match load_restore_job_db(pool, job_id).await {
-        Ok(job) => job,
+    let job = match storage_handle(pool).get_restore_job(job_id).await {
+        Ok(job) => restore_job_from_storage(job),
         Err(error) => {
+            let error = ApiError::from(error);
             fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
-    if matches!(job.status.as_str(), "failed" | "expired") {
-        resume_terminal_restore_db(pool, job_id).await?;
+    let RestoreJobData {
+        summary: job,
+        document: document_bytes,
+        capability_hash: _,
+    } = job;
+    if matches!(
+        job.status,
+        RestoreJobStatus::Failed | RestoreJobStatus::Expired
+    ) {
+        storage_handle(pool).resume_terminal_restore(job_id).await?;
         return Ok(());
     }
-    if job.status != RestoreJobStatus::Confirmed.as_str() {
+    if job.status != RestoreJobStatus::Confirmed {
         let error = ApiError::Conflict(format!(
             "Maintenance references restore stage {job_id} in status '{}'",
-            job.status
+            job.status.as_str()
         ));
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
@@ -943,67 +1058,69 @@ async fn reconcile_interrupted_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     };
-    if !confirmation_is_stale(confirmed_at, snapshot.database_now()) {
+    if !confirmation_is_stale(confirmed_at, snapshot.backend_now().naive_utc()) {
         return Ok(());
     }
 
-    let document: BackupDocument = match serde_json::from_slice(&job.document) {
+    let document: BackupDocument = match serde_json::from_slice(&document_bytes) {
         Ok(document) => document,
         Err(parse_error) => {
             let error = ApiError::InternalServerError(format!(
                 "Staged restore document became invalid: {parse_error}"
             ));
-            fail_restore_and_resume(pool, job.id, &error).await?;
+            fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
     if let Err(error) = validation_summary(&document) {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
     if let Err(error) = wait_for_instances_drained(pool).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    if let Err(error) = apply_restore(pool, &job, &document).await {
-        fail_restore_and_resume(pool, job.id, &error).await?;
+    if let Err(error) = apply_restore(pool, job_id, document).await {
+        fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
     Ok(())
 }
 
 async fn heartbeat_instance(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     instance_id: Uuid,
     expire_validated_jobs: bool,
-) -> Result<RestoreCoordinatorSnapshot, ApiError> {
-    restore_coordinator_tick_db(
-        pool,
-        instance_id,
-        || active_maintenance_work() == 0,
-        expire_validated_jobs,
-    )
-    .await
+) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
+    let local_work_is_idle = || active_maintenance_work() == 0;
+    storage_handle(pool)
+        .tick_restore_coordinator(instance_id, &local_work_is_idle, expire_validated_jobs)
+        .await
+        .map_err(Into::into)
 }
 
-async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
+async fn wait_for_instances_drained(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
     let deadline = Instant::now() + StdDuration::from_secs(RESTORE_DRAIN_TIMEOUT_SECONDS);
     loop {
-        let cutoff = Utc::now().naive_utc() - Duration::seconds(10);
-        let (generation, instances) = maintenance_generation_and_instances_db(pool, cutoff).await?;
-        if instances
-            .iter()
-            .all(|instance| instance.drained && instance.maintenance_generation == generation)
-        {
+        let cutoff = Utc::now() - Duration::seconds(10);
+        let (generation, instances) = storage_handle(pool)
+            .get_restore_drain_state(cutoff)
+            .await?
+            .into_parts();
+        if instances.iter().all(|instance| {
+            instance.is_drained() && instance.maintenance_generation() == generation
+        }) {
             return Ok(());
         }
         if Instant::now() >= deadline {
             let pending = instances
                 .iter()
                 .filter(|instance| {
-                    !instance.drained || instance.maintenance_generation != generation
+                    !instance.is_drained() || instance.maintenance_generation() != generation
                 })
-                .map(|instance| instance.instance_id.to_string())
+                .map(|instance| instance.instance_id().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(ApiError::ServiceUnavailable(format!(
@@ -1015,9 +1132,9 @@ async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
 }
 
 async fn reconcile_interrupted_restore_with_heartbeat(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     instance_id: Uuid,
-    snapshot: RestoreCoordinatorSnapshot,
+    snapshot: StorageRestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
     let reconciliation = reconcile_interrupted_restore_from_snapshot(pool, snapshot);
     tokio::pin!(reconciliation);
@@ -1031,7 +1148,11 @@ async fn reconcile_interrupted_restore_with_heartbeat(
     }
 }
 
-pub fn ensure_restore_coordinator_running(pool: DbPool) {
+pub fn ensure_restore_coordinator_running<C>(backend: C)
+where
+    C: StorageContext,
+{
+    let pool = storage_handle(&backend);
     RESTORE_COORDINATOR.call_once(move || {
         spawn_background_worker("restore-coordinator", move |shutdown| {
             let system = actix_rt::System::new();
@@ -1043,23 +1164,17 @@ pub fn ensure_restore_coordinator_running(pool: DbPool) {
                         last_run.elapsed()
                             >= StdDuration::from_secs(RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS)
                     });
-                    let snapshot = with_db_call_site(
-                        DbCallSite::RestoreCoordinator,
-                        heartbeat_instance(&pool, instance_id, expire_validated_jobs),
-                    )
-                    .await;
+                    let snapshot =
+                        heartbeat_instance(&pool, instance_id, expire_validated_jobs).await;
                     match snapshot {
                         Ok(snapshot) => {
                             if expire_validated_jobs {
                                 last_expiry_run = Some(Instant::now());
                             }
-                            if let Err(error) = with_db_call_site(
-                                DbCallSite::RestoreCoordinator,
-                                reconcile_interrupted_restore_with_heartbeat(
-                                    &pool,
-                                    instance_id,
-                                    snapshot,
-                                ),
+                            if let Err(error) = reconcile_interrupted_restore_with_heartbeat(
+                                &pool,
+                                instance_id,
+                                snapshot,
                             )
                             .await
                             {
@@ -1083,27 +1198,30 @@ pub fn ensure_restore_coordinator_running(pool: DbPool) {
                         _ = actix_rt::time::sleep(StdDuration::from_secs(1)) => {}
                     }
                 }
-                let _ = delete_server_instance_db(&pool, instance_id).await;
+                let _ = pool.remove_restore_instance(instance_id).await;
             });
         });
     });
 }
 
-pub(crate) async fn current_maintenance_state(pool: &DbPool) -> Result<MaintenanceState, ApiError> {
-    maintenance_state_db(pool).await
+pub(crate) async fn current_maintenance_state(
+    storage: &(impl OperationalStateStorage + ?Sized),
+) -> Result<MaintenanceState, ApiError> {
+    storage.get_maintenance_state().await.map_err(Into::into)
 }
 
-pub async fn maintenance_state(pool: &DbPool) -> Result<String, ApiError> {
-    current_maintenance_state(pool)
+pub async fn get_maintenance_state(storage: &impl StorageContext) -> Result<String, ApiError> {
+    let storage = storage_handle(storage);
+    current_maintenance_state(&storage)
         .await
         .map(|state| state.as_str().to_string())
 }
 
-pub async fn identity_scope_name(
-    pool: &DbPool,
+pub async fn resolve_identity_scope_name(
+    pool: &impl crate::storage::StorageContext,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {
-    identity_scope_name_by_id(pool, identity_scope_id).await
+    load_identity_scope_name(pool, identity_scope_id).await
 }
 
 #[cfg(test)]
@@ -1124,12 +1242,23 @@ mod tests {
     use crate::models::{
         BackupDocument, BackupHistory, BackupManifest, BackupState, CURRENT_BACKUP_VERSION,
     };
+    use crate::storage::{
+        StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection,
+    };
+
+    fn backup_instant() -> chrono::DateTime<chrono::Utc> {
+        NaiveDate::from_ymd_opt(2026, 7, 16)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+    }
 
     fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
         json!({
             "class_id": class_id,
             "visibility": if owner_id.is_some() { "personal" } else { "shared" },
-            "owner_user_id": owner_id,
+            "owner_principal_id": owner_id,
             "key": key,
             "label": "Restored field",
             "description": "",
@@ -1144,13 +1273,17 @@ mod tests {
     fn document_with_computed_definitions(definitions: Vec<serde_json::Value>) -> BackupDocument {
         BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
+            created_at: backup_instant(),
             source_version: "test".to_string(),
             state: BackupState {
-                sections: BTreeMap::from([("computed_field_definitions".to_string(), definitions)]),
+                sections: BTreeMap::from([(
+                    StorageBackupStateSection::ComputedFieldDefinitions,
+                    definitions
+                        .into_iter()
+                        .map(StorageBackupRow::try_from_value)
+                        .collect::<Result<_, _>>()
+                        .unwrap(),
+                )]),
             },
             history: None,
             manifest: BackupManifest::default(),
@@ -1160,14 +1293,14 @@ mod tests {
     fn document_with_event(event: serde_json::Value) -> BackupDocument {
         BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
-            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
+            created_at: backup_instant(),
             source_version: "test".to_string(),
             state: BackupState::default(),
             history: Some(BackupHistory {
-                sections: BTreeMap::from([("events".to_string(), vec![event])]),
+                sections: BTreeMap::from([(
+                    StorageBackupHistorySection::AuditEvents,
+                    vec![StorageBackupRow::try_from_value(event).unwrap()],
+                )]),
             }),
             manifest: BackupManifest::default(),
         }
@@ -1305,7 +1438,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::validation(
+    #[case::validation_failed(
         ApiError::ValidationError("Backup manifest is invalid".to_string()),
         "Backup manifest is invalid"
     )]

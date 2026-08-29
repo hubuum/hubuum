@@ -2,10 +2,9 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
-use crate::db::traits::event_observability::load_event_metrics_snapshot;
-use crate::db::traits::metrics::EventMetricsSnapshot;
-use crate::models::{EventDeliveryStatusCounts, EventWorkerHealth};
+use crate::events::{event_delivery_worker_health, event_fanout_worker_health};
+use crate::models::EventWorkerHealth;
+use crate::storage::{EventDeliveryStatusSnapshot, EventMetricsSnapshot, MetricsStorage};
 
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
@@ -19,14 +18,17 @@ pub fn event_worker_wakeup(worker: &'static str, kind: &'static str) {
     }
 }
 
-pub(super) async fn refresh_event_gauges(metrics: &Metrics, pool: &DbPool) {
+pub(super) async fn refresh_event_gauges(
+    metrics: &Metrics,
+    backend: &(impl MetricsStorage + ?Sized),
+) {
     if let Some(snapshot) = cached_event_snapshot(metrics) {
         record_event_snapshot(metrics, &snapshot);
         return;
     }
 
     let refresh_started_at = Instant::now();
-    match load_event_metrics_snapshot(pool).await {
+    match backend.get_event_metrics_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,
@@ -75,39 +77,44 @@ fn store_event_snapshot(metrics: &Metrics, snapshot: EventMetricsSnapshot) {
 }
 
 fn record_event_snapshot(metrics: &Metrics, snapshot: &EventMetricsSnapshot) {
-    record_queue_item(metrics, "fanout", "pending", snapshot.fanout.pending_events);
+    record_queue_item(
+        metrics,
+        "fanout",
+        "pending",
+        snapshot.fanout().pending_events(),
+    );
     record_queue_item(
         metrics,
         "fanout",
         "in_flight",
-        snapshot.fanout.in_flight_events,
+        snapshot.fanout().in_flight_events(),
     );
-    record_delivery_counts(metrics, &snapshot.delivery.counts);
-    record_stale_claims(metrics, "fanout", snapshot.fanout.stale_claims);
-    record_stale_claims(metrics, "delivery", snapshot.delivery.stale_claims);
+    record_delivery_counts(metrics, snapshot.delivery().counts());
+    record_stale_claims(metrics, "fanout", snapshot.fanout().stale_claims());
+    record_stale_claims(metrics, "delivery", snapshot.delivery().stale_claims());
     record_oldest_age(
         metrics,
         "fanout",
-        snapshot.fanout.oldest_pending_age_seconds,
+        snapshot.fanout().oldest_pending_age_seconds(),
     );
     record_oldest_age(
         metrics,
         "delivery",
-        snapshot.delivery.oldest_due_age_seconds,
+        snapshot.delivery().oldest_due_age_seconds(),
     );
-    record_worker(metrics, "fanout", &snapshot.fanout.worker);
-    record_worker(metrics, "delivery", &snapshot.delivery.worker);
+    record_worker(metrics, "fanout", &event_fanout_worker_health());
+    record_worker(metrics, "delivery", &event_delivery_worker_health());
 }
 
-fn record_delivery_counts(metrics: &Metrics, counts: &EventDeliveryStatusCounts) {
+fn record_delivery_counts(metrics: &Metrics, counts: EventDeliveryStatusSnapshot) {
     for (state, value) in [
-        ("total", counts.total),
-        ("pending", counts.pending),
-        ("in_flight", counts.in_flight),
-        ("succeeded", counts.succeeded),
-        ("failed", counts.failed),
-        ("dead", counts.dead),
-        ("retryable", counts.retryable),
+        ("total", counts.total()),
+        ("pending", counts.pending()),
+        ("in_flight", counts.in_flight()),
+        ("succeeded", counts.succeeded()),
+        ("failed", counts.failed()),
+        ("dead", counts.dead()),
+        ("retryable", counts.retryable()),
     ] {
         record_queue_item(metrics, "delivery", state, value);
     }

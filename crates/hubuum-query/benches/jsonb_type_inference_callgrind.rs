@@ -1,5 +1,5 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use hubuum_query::{Operator, get_jsonb_field_type_from_value_and_operator};
+use hubuum_query::{Operator, infer_query_scalar_type};
 use std::hint::black_box;
 
 const CASES: [(&str, Operator); 7] = [
@@ -17,7 +17,7 @@ fn bench_jsonb_type_inference() -> usize {
     let mut total = 0;
 
     for (value, operator) in black_box(CASES) {
-        if get_jsonb_field_type_from_value_and_operator(value, operator).is_some() {
+        if infer_query_scalar_type(value, operator).is_some() {
             total += 1;
         }
     }

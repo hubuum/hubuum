@@ -2,25 +2,22 @@
 mod tests {
     use std::sync::Arc;
 
-    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use hubuum_storage_postgres::diesel_async_prelude::*;
 
-    use crate::db::traits::computed_field::{
-        class_computation_state_for, create_personal_definition, create_shared_definition,
-        enrich_objects_with_computed_query_snapshot, execute_computed_reindex_task,
-        request_class_rebuild, resolve_computed_query_fields, source_data_sha256,
-    };
-    use crate::db::traits::task::recover_expired_task_leases;
-    use crate::db::{capture_queries, with_connection};
     use crate::events::EventContext;
-    use crate::models::search::parse_query_parameter;
     use crate::models::{
         ComputedFieldDefinitionRequest, GroupID, HubuumClassID, NewHubuumClass, NewHubuumObject,
-        Permissions, TaskID, TaskStatus,
+        Permissions, TaskStatus,
     };
-    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, finalize_page};
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::services::computed_fields::{
+        class_computation_state_for, create_personal_definition, create_shared_definition,
+        request_class_rebuild,
+    };
+    use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
     use crate::tests::api_operations::{
         get_request, get_request_with_permission_backend, patch_request,
         patch_request_with_headers, post_request,
@@ -31,6 +28,7 @@ mod tests {
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
+    use hubuum_storage_postgres::{capture_queries, source_data_sha256, with_connection};
 
     #[derive(QueryableByName)]
     struct ComputedQuerySqlValue {
@@ -111,10 +109,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn active_rebuild_task(
-        context: &TestContext,
-        class_id: i32,
-    ) -> crate::models::TaskRecord {
+    async fn active_rebuild_task(context: &TestContext, class_id: i32) -> ClaimedTask {
         for _ in 0..50 {
             let state = class_computation_state_for(&context.pool, class_id)
                 .await
@@ -139,7 +134,10 @@ mod tests {
                     .expect("manual rebuild task")
                 }
             };
-            if let Ok(task) = TaskID::new(task_id).unwrap().instance(&context.pool).await {
+            if let Ok(task) =
+                crate::test_support::claim_persisted_test_task(context.pool.get_ref(), task_id)
+                    .await
+            {
                 return task;
             }
             tokio::task::yield_now().await;
@@ -156,7 +154,7 @@ mod tests {
                 return;
             }
             let task = active_rebuild_task(context, class_id).await;
-            let _ = execute_computed_reindex_task(&context.pool, &task).await;
+            let _ = execute_computed_field_rebuild(&context.pool, &task).await;
             tokio::task::yield_now().await;
         }
         panic!("computed-field rebuild did not reach ready state");

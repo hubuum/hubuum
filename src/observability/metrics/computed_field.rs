@@ -6,8 +6,17 @@ use opentelemetry::KeyValue;
 use super::current;
 
 pub fn computed_evaluation(scope: &'static str, result: &EvaluationResult) {
+    let error_codes = result
+        .errors
+        .values()
+        .map(|error| error.code.as_str())
+        .collect::<Vec<_>>();
+    computed_evaluation_summary(scope, &error_codes);
+}
+
+pub fn computed_evaluation_summary(scope: &'static str, error_codes: &[&'static str]) {
     if let Some(metrics) = current() {
-        let outcome = if result.errors.is_empty() {
+        let outcome = if error_codes.is_empty() {
             "success"
         } else {
             "field_error"
@@ -19,13 +28,10 @@ pub fn computed_evaluation(scope: &'static str, result: &EvaluationResult) {
                 KeyValue::new("outcome", outcome),
             ],
         );
-        for error in result.errors.values() {
+        for code in error_codes {
             metrics.computed_evaluator_errors.add(
                 1,
-                &[
-                    KeyValue::new("scope", scope),
-                    KeyValue::new("code", error.code.as_str()),
-                ],
+                &[KeyValue::new("scope", scope), KeyValue::new("code", *code)],
             );
         }
     }

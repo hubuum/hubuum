@@ -3,13 +3,11 @@ use hubuum_task_core::{IdempotencyKey, IdempotencyKeyError};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
-use crate::db::DbPool;
-use crate::db::traits::task::insert_import_results;
 use crate::errors::ApiError;
-use crate::models::{
-    Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
-    ImportPermissionPolicy,
-};
+#[cfg(test)]
+use crate::models::{HubuumClass, ImportMode};
+use crate::models::{ImportAtomicity, ImportCollisionPolicy, ImportPermissionPolicy};
+use crate::storage::{ImportStorage, storage_handle};
 
 use super::types::{
     ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,
@@ -72,7 +70,9 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
 
     match err {
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
-        ApiError::PreconditionFailed(msg, _) => format!("Stale resource: {msg}"),
+        ApiError::PreconditionFailed(msg, _) | ApiError::RevisionConflict(msg, _) => {
+            format!("Stale resource: {msg}")
+        }
         ApiError::Forbidden(msg) => format!("Permission denied: {}", msg),
         ApiError::NotFound(msg) => format!("Not found: {}", msg),
         ApiError::Gone(msg) => format!("Gone: {}", msg),
@@ -96,6 +96,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
     }
 }
 
+#[cfg(test)]
 pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMode) -> bool {
     match err {
         ApiError::Conflict(_) => matches!(
@@ -114,7 +115,9 @@ pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMo
 
 pub(super) fn import_failure_outcome(error: &ApiError) -> &'static str {
     match error {
-        ApiError::PreconditionFailed(message, _) if message.starts_with("stale_revision") => {
+        ApiError::PreconditionFailed(message, _) | ApiError::RevisionConflict(message, _)
+            if message.starts_with("stale_revision") =>
+        {
             "stale_revision"
         }
         _ => "failed",
@@ -157,16 +160,20 @@ pub(super) fn identifier_collection(collection: &CollectionResolution) -> String
     collection.name.clone()
 }
 
-pub(super) fn collection_to_resolution(collection: Collection) -> CollectionResolution {
+pub(super) fn storage_collection_to_resolution(
+    collection: crate::storage::StorageCollection,
+) -> CollectionResolution {
+    let (id, name, description, _, _, parent_collection_id, _) = collection.into_parts();
     CollectionResolution {
-        id: collection.id,
-        name: collection.name,
-        description: collection.description,
-        parent_collection_id: collection.parent_collection_id,
+        id: id.id(),
+        name,
+        description,
+        parent_collection_id: parent_collection_id.map(hubuum_domain::CollectionId::id),
         exists_in_db: true,
     }
 }
 
+#[cfg(test)]
 pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     ClassResolution {
         id: class.id,
@@ -178,18 +185,35 @@ pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     }
 }
 
-pub(super) fn object_to_resolution(object: HubuumObject) -> ObjectResolution {
+pub(super) fn storage_class_to_resolution(
+    class: crate::storage::StorageClassRecord,
+) -> ClassResolution {
+    let (id, name, collection_id, json_schema, validate_schema, _, _, _, _) = class.into_parts();
+    ClassResolution {
+        id: id.id(),
+        name,
+        collection_id: collection_id.id(),
+        json_schema,
+        validate_schema,
+        exists_in_db: true,
+    }
+}
+
+pub(super) fn storage_object_to_resolution(
+    object: crate::storage::StorageObject,
+) -> ObjectResolution {
+    let (id, name, collection_id, class_id, _, _, _, _, _) = object.into_parts();
     ObjectResolution {
-        id: object.id,
-        name: object.name,
-        collection_id: object.collection_id,
-        class_id: object.hubuum_class_id,
+        id: id.id(),
+        name,
+        collection_id: collection_id.id(),
+        class_id: class_id.id(),
         exists_in_db: true,
     }
 }
 
 pub(super) async fn flush_import_result_batches(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     accumulator: &mut ExecutionAccumulator,
     force: bool,
 ) -> Result<(), ApiError> {
@@ -198,12 +222,12 @@ pub(super) async fn flush_import_result_batches(
             .results
             .drain(..IMPORT_RESULTS_BATCH_SIZE)
             .collect::<Vec<_>>();
-        insert_import_results(pool, &batch).await?;
+        storage_handle(pool).record_import_results(batch).await?;
     }
 
     if force && !accumulator.results.is_empty() {
-        let batch = accumulator.results.drain(..).collect::<Vec<_>>();
-        insert_import_results(pool, &batch).await?;
+        let batch = std::mem::take(&mut accumulator.results);
+        storage_handle(pool).record_import_results(batch).await?;
     }
 
     Ok(())

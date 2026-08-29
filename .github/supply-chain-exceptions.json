@@ -1,4 +1,12 @@
 {
   "schema_version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "kind": "advisory",
+      "id": "RUSTSEC-2026-0258",
+      "reason": "Hubuum disables Actix's optional HTTP/2 feature, so h2 0.3 is not compiled even though Cargo.lock records it. Actix HTTP 3.x cannot use the fixed h2 0.4 series yet; remove this exception when a compatible Actix release is available.",
+      "owner": "Hubuum security maintainers",
+      "expires": "2026-11-30"
+    }
+  ]
 }
