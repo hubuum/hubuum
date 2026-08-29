@@ -25,7 +25,7 @@ fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
     }
 
     let mut decoded = [0_u8; 32];
-    for (byte, pair) in decoded.iter_mut().zip(encoded.chunks_exact(2)) {
+    for (byte, pair) in decoded.iter_mut().zip(encoded.as_chunks::<2>().0) {
         let high = decode_hex_nibble(pair[0]).ok_or_else(invalid_stored_sha256)?;
         let low = decode_hex_nibble(pair[1]).ok_or_else(invalid_stored_sha256)?;
         *byte = (high << 4) | low;

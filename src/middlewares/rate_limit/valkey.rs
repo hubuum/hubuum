@@ -405,7 +405,9 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
             )
             .await?;
         values
-            .chunks_exact(5)
+            .as_chunks::<5>()
+            .0
+            .iter()
             .map(|entry| {
                 let attempts = entry[1].parse::<usize>().map_err(|error| {
                     ApiError::InternalServerError(format!(

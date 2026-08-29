@@ -607,6 +607,7 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
                     AtomicUsize::load(self.sink_deliveries.as_ref(), Ordering::Relaxed),
                 ));
             }
+            tokio::task::yield_now().await;
         }
         Ok(FanoutProbe::new(0, 0))
     }
@@ -2881,18 +2882,16 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             .await
             .expect("certified backend should create a kind mismatch fixture");
         fixture_ids.push(mismatched_kind_task.id());
-        hubuum_storage_postgres::test_support::prioritize_task(
-            pool.get_ref(),
-            mismatched_kind_task.id(),
-        )
-        .await
-        .expect("kind mismatch fixture should be made claim-first");
-        let mismatched_kind_claim = backend
-            .claim_next_task(lease_duration)
+        // This subcase verifies completion validation, not queue scheduling. Claim the
+        // exact fixture so a concurrent task from another contract cannot be consumed.
+        let mismatched_kind_claim =
+            hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                pool.get_ref(),
+                mismatched_kind_task.id(),
+                lease_duration,
+            )
             .await
-            .expect("certified backend should claim the kind mismatch fixture")
-            .expect("the kind mismatch fixture should be claimable");
-        assert_eq!(mismatched_kind_claim.task().id(), mismatched_kind_task.id());
+            .expect("certified backend should claim the kind mismatch fixture");
         let mismatched_kind_error = backend
             .complete_task(
                 StorageTaskCompletion::try_new(

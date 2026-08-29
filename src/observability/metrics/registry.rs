@@ -451,7 +451,6 @@ pub fn runtime_identity(role: RuntimeRole) {
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::metrics::MeterProvider as _;
     use prometheus::{Encoder, TextEncoder};
 
     use super::*;

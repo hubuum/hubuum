@@ -226,7 +226,7 @@ pub(super) async fn flush_import_result_batches(
     }
 
     if force && !accumulator.results.is_empty() {
-        let batch = accumulator.results.drain(..).collect::<Vec<_>>();
+        let batch = std::mem::take(&mut accumulator.results);
         storage_handle(pool).record_import_results(batch).await?;
     }
 
