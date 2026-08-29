@@ -13,13 +13,13 @@ use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
-    Principal, TokenScope, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
-    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchQuery, UnifiedSearchResponse,
-    UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
-    parse_unified_search_query,
+    StorageUnifiedSearchQuery, TokenScope, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    execute_unified_search, execute_unified_search_batch, parse_unified_search_query,
 };
 use crate::pagination::PAGE_LIMIT_HEADER;
 use crate::permissions::AppContext;
+use crate::storage::StorageAuthenticationPrincipal;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
     let data = serde_json::to_string(payload).map_err(|error| {
@@ -101,9 +101,9 @@ fn search_event_stream(
 
 fn execute_unified_search_stream(
     context: AppContext,
-    principal: Principal,
+    principal: StorageAuthenticationPrincipal,
     scope: Option<TokenScope>,
-    params: UnifiedSearchQuery,
+    params: StorageUnifiedSearchQuery,
 ) -> impl Stream<Item = Result<Bytes, actix_web::Error>> {
     let searches = FuturesUnordered::new();
 
