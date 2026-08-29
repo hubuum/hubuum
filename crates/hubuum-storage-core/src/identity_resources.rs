@@ -6,9 +6,10 @@ use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, PrincipalKind, Resour
 use hubuum_events_core::EventContext;
 use serde_json::Value;
 
+use crate::validation::validate_sync_timestamps;
 use crate::{
     StorageError, StorageGroupListQuery, StorageIdentityGroup, StoragePage, StoragePrincipalGroup,
-    StorageRecordMetadata,
+    StorageRecordMetadata, StorageValidationError,
 };
 
 /// Portable principal record returned by identity-resource operations.
@@ -166,9 +167,14 @@ impl StoragePrincipalBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StoragePrincipal {
-        StoragePrincipal {
+    pub fn try_build(self) -> Result<StoragePrincipal, StorageValidationError> {
+        validate_sync_timestamps(self.last_sync_attempted_at, self.last_sync_success_at)?;
+        if !self.settings.is_object() {
+            return Err(StorageValidationError::invalid(
+                "principal settings must be a JSON object",
+            ));
+        }
+        Ok(StoragePrincipal {
             id: PrincipalId::from(self.metadata.id()),
             kind: self.kind,
             name: self.name,
@@ -181,7 +187,7 @@ impl StoragePrincipalBuilder {
             last_sync_attempted_at: self.last_sync_attempted_at,
             last_sync_success_at: self.last_sync_success_at,
             revision: self.metadata.revision(),
-        }
+        })
     }
 }
 
@@ -245,17 +251,21 @@ pub struct StoragePrincipalSettings {
 }
 
 impl StoragePrincipalSettings {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         principal_id: PrincipalId,
         revision: ResourceRevision,
         document: Value,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if !document.is_object() {
+            return Err(StorageValidationError::invalid(
+                "principal settings must be a JSON object",
+            ));
+        }
+        Ok(Self {
             principal_id,
             revision,
             document,
-        }
+        })
     }
 
     #[must_use]
@@ -286,12 +296,19 @@ pub struct StorageGroupMember {
 }
 
 impl StorageGroupMember {
-    #[must_use]
-    pub const fn new(membership: StoragePrincipalGroup, principal: StoragePrincipal) -> Self {
-        Self {
+    pub fn try_new(
+        membership: StoragePrincipalGroup,
+        principal: StoragePrincipal,
+    ) -> Result<Self, StorageValidationError> {
+        if membership.principal_id() != principal.id() {
+            return Err(StorageValidationError::invalid(
+                "group membership and principal ids must match",
+            ));
+        }
+        Ok(Self {
             membership,
             principal,
-        }
+        })
     }
 
     #[must_use]
@@ -331,20 +348,20 @@ pub trait GroupStorage: Send + Sync {
         &self,
         command: StorageGroupCreate,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError>;
 
     async fn update_group(
         &self,
         group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError>;
 
     async fn delete_group(
         &self,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<usize>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
 }
 
 /// Principal point and settings behavior required from every backend.
@@ -365,5 +382,37 @@ pub trait PrincipalStorage: Send + Sync {
         principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StoragePrincipalSettings>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<StoragePrincipalSettings>, StorageError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hubuum_domain::{ResourceId, ResourceRevision};
+
+    #[test]
+    fn principal_projection_rejects_success_without_an_attempt() {
+        let now = Utc::now();
+        let metadata = StorageRecordMetadata::try_new(
+            ResourceId::new(1).unwrap(),
+            now,
+            now,
+            ResourceRevision::INITIAL,
+        )
+        .unwrap();
+        let error = StoragePrincipal::builder(
+            metadata,
+            PrincipalKind::Human,
+            "principal",
+            IdentityScopeId::new(1).unwrap(),
+        )
+        .last_sync_success_at(Some(now))
+        .try_build()
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
 }

@@ -8,8 +8,8 @@ mod sql;
 
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    AuthorizationPermission, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
-    ObjectAggregateStorageQuery, StorageObjectAggregateCursor, StorageObjectAggregatePage,
+    ObjectAggregateAuthorizer, StorageAuthorizationPermission, StorageObjectAggregateAuthorization,
+    StorageObjectAggregateCursor, StorageObjectAggregatePage, StorageObjectAggregateQuery,
     StorageObjectAggregateSpec, StorageVisibility,
 };
 
@@ -49,7 +49,7 @@ struct ObjectAggregateExecution<'a> {
     target: ObjectAggregateRouteTarget,
     paging: ObjectAggregatePaging,
     personal_owner_id: Option<i32>,
-    required_permissions: Vec<AuthorizationPermission>,
+    required_permissions: Vec<StorageAuthorizationPermission>,
     visibility: StorageVisibility,
 }
 
@@ -97,8 +97,8 @@ impl ObjectAggregatePaging {
 /// construction to the application composition crate.
 pub async fn aggregate_objects(
     runtime: &PostgresRuntime,
-    query: ObjectAggregateStorageQuery,
-    authorization: ObjectAggregateAuthorization<'_>,
+    query: StorageObjectAggregateQuery,
+    authorization: StorageObjectAggregateAuthorization<'_>,
 ) -> Result<StorageObjectAggregatePage, PostgresStorageError> {
     let target = query.target();
     let class_id = target.class_id().id();
@@ -147,10 +147,10 @@ pub async fn aggregate_objects(
     };
 
     match authorization {
-        ObjectAggregateAuthorization::Storage => {
+        StorageObjectAggregateAuthorization::Storage => {
             aggregate_objects_with_local_authorization(execution).await
         }
-        ObjectAggregateAuthorization::Delegated(authorizer) => {
+        StorageObjectAggregateAuthorization::Delegated(authorizer) => {
             aggregate_visible_filtered_objects_with_external_batches(authorizer, execution).await
         }
     }

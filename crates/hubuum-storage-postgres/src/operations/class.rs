@@ -7,8 +7,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, validate_json_schema, validate_json_schema_for_instances};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    MutationOutcome, StorageClassCreate, StorageClassRecord, StorageClassSelector,
-    StorageClassUpdate, StorageResolvedClass,
+    StorageClass, StorageClassCreate, StorageClassSelector, StorageClassUpdate,
+    StorageMutationOutcome, StorageResolvedClass,
 };
 use serde_json::json;
 
@@ -32,8 +32,8 @@ pub(crate) struct ClassRow {
 }
 
 impl ClassRow {
-    pub(crate) fn into_storage(self) -> Result<StorageClassRecord, PostgresStorageError> {
-        Ok(StorageClassRecord::builder(
+    pub(crate) fn into_storage(self) -> Result<StorageClass, PostgresStorageError> {
+        Ok(StorageClass::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             CollectionId::new(self.collection_id)?,
@@ -115,14 +115,17 @@ pub(crate) async fn resolve_class_on(
 ) -> Result<StorageResolvedClass, PostgresStorageError> {
     validate_class_selector(&selector)?;
     let class = load_class_by_selector(connection, &selector).await?;
-    Ok(StorageResolvedClass::new(selector, class.into_storage()?))
+    crate::validate_persisted(
+        "resolved class",
+        StorageResolvedClass::try_new(selector, class.into_storage()?),
+    )
 }
 
 pub async fn create_class(
     runtime: &PostgresRuntime,
     command: StorageClassCreate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageClassRecord>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     validate_class_create(&command)?;
     let context = context.clone();
 
@@ -137,7 +140,7 @@ pub(crate) async fn create_class_on(
     connection: &mut PostgresConnection,
     command: StorageClassCreate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageClassRecord>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     validate_class_create(&command)?;
     let class = insert_class(connection, &command).await?;
     let event = class_event(
@@ -147,10 +150,11 @@ pub(crate) async fn create_class_on(
         format!("Class '{}' created", class.name),
     )?
     .with_after(class.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed(class.into_storage()?, audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed(
+        class.into_storage()?,
+        audit,
+    ))
 }
 
 pub async fn update_class(
@@ -158,7 +162,7 @@ pub async fn update_class(
     target: &StorageResolvedClass,
     changes: StorageClassUpdate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageClassRecord>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     let target = target.clone();
     let context = context.clone();
     runtime
@@ -173,12 +177,12 @@ pub(crate) async fn update_class_on(
     target: &StorageResolvedClass,
     changes: StorageClassUpdate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageClassRecord>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     let before = lock_resolved_class(connection, target).await?;
     validate_class_update(&changes, &before)?;
     let update = UpdateClassRow::from(&changes);
     if !update.changes(&before) {
-        return Ok(MutationOutcome::unchanged(before.into_storage()?));
+        return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
     }
     let updated = diesel::update(
         crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
@@ -194,17 +198,18 @@ pub(crate) async fn update_class_on(
     )?
     .with_before(before.snapshot())
     .with_after(updated.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed(updated.into_storage()?, audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed(
+        updated.into_storage()?,
+        audit,
+    ))
 }
 
 pub async fn delete_class(
     runtime: &PostgresRuntime,
     target: &StorageResolvedClass,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let target = target.clone();
     let context = context.clone();
 
@@ -219,7 +224,7 @@ pub(crate) async fn delete_class_on(
     connection: &mut PostgresConnection,
     target: &StorageResolvedClass,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let before = lock_resolved_class(connection, target).await?;
     diesel::delete(
         crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
@@ -233,10 +238,8 @@ pub(crate) async fn delete_class_on(
         format!("Class '{}' deleted", before.name),
     )?
     .with_before(before.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed((), audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed((), audit))
 }
 
 pub async fn resolve_class_names(

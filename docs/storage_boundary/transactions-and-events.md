@@ -103,9 +103,9 @@ polling the durable event and delivery state remains the recovery path.
 
 The lower-level lifecycle traits also require an `EventContext`; there is no
 optional-context escape hatch in the ordinary storage contract. A committed
-resource mutation returns `MutationOutcome::Committed` with an `AuditReceipt`
+resource mutation returns `StorageMutationOutcome::Committed` with an `StorageAuditReceipt`
 identifying the durable event written in the same atomic operation. A genuine
-no-op returns `MutationOutcome::Unchanged` and appends no event.
+no-op returns `StorageMutationOutcome::Unchanged` and appends no event.
 
 Fixture compatibility helpers use explicit system attribution. Import and
 restore behavior belongs to explicit workflow capabilities because those
@@ -135,7 +135,7 @@ configuration mutation is not eligible for an exception.
   `ExternalIdentityStorage::mark_external_sync_attempted` is synchronization
   telemetry; and `ExternalIdentityStorage::sync_external_user` is an
   identity-provider reconciliation operation that emits a system-attributed
-  audit event and returns its `MutationOutcome`.
+  audit event and returns its `StorageMutationOutcome`.
 - Workflow state machines:
   `ComputedFieldStorage::request_computed_field_rebuild`,
   `ComputedFieldStorage::execute_computed_field_rebuild`, and
@@ -182,7 +182,7 @@ against rollback-only state and does not durably write. `ExecutionStorage`
 scope changes are native execution context, not durable storage mutations.
 Personal and shared computed-field definition lifecycle, administrator local
 password reset, and every other ordinary mutation require `EventContext` and
-return `MutationOutcome`.
+return `StorageMutationOutcome`.
 
 ## Example
 

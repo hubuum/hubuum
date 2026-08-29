@@ -1,13 +1,13 @@
-use crate::StorageError;
+use crate::StorageValidationError;
 
 pub(crate) fn validate_page_total(
     row_count: usize,
     total: Option<i64>,
-) -> Result<(), StorageError> {
+) -> Result<(), StorageValidationError> {
     let row_count = i64::try_from(row_count)
-        .map_err(|_| StorageError::internal("A storage page contains too many rows"))?;
+        .map_err(|_| StorageValidationError::invalid("A storage page contains too many rows"))?;
     if total.is_some_and(|value| value < row_count) {
-        return Err(StorageError::internal(
+        return Err(StorageValidationError::invalid(
             "A storage page total must be at least the number of returned rows",
         ));
     }
@@ -46,7 +46,7 @@ pub struct StoragePage<T> {
 }
 
 impl<T> StoragePage<T> {
-    pub fn try_new(rows: Vec<T>, total: Option<i64>) -> Result<Self, StorageError> {
+    pub fn try_new(rows: Vec<T>, total: Option<i64>) -> Result<Self, StorageValidationError> {
         validate_page_total(rows.len(), total)?;
         Ok(Self { rows, total })
     }

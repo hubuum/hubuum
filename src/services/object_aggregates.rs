@@ -18,14 +18,14 @@ use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
 };
 use crate::storage::{
-    AuthorizationPermission, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, StorageComputedFieldSelector,
-    StorageError, StorageObjectAggregateAuthorizationCandidate,
-    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,
-    StorageObjectAggregateMeasure, StorageObjectAggregateMeasureField,
-    StorageObjectAggregateMeasureOperation, StorageObjectAggregateMeasureState,
-    StorageObjectAggregateRow, StorageObjectAggregateScalarField, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, storage_handle,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, StorageAuthorizationPermission,
+    StorageComputedFieldSelector, StorageError, StorageObjectAggregateAuthorization,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateDimension, StorageObjectAggregateMeasure,
+    StorageObjectAggregateMeasureField, StorageObjectAggregateMeasureOperation,
+    StorageObjectAggregateMeasureState, StorageObjectAggregateQuery, StorageObjectAggregateRow,
+    StorageObjectAggregateScalarField, StorageObjectAggregateSort, StorageObjectAggregateSpec,
+    StorageObjectAggregateTarget, storage_handle,
 };
 use crate::traits::{AuthzSubject, PrincipalIdAccessor};
 
@@ -52,7 +52,7 @@ pub(crate) async fn aggregate_objects(
         token_scopes,
     } = authorization.into_parts();
     let response_spec = spec.clone();
-    let storage_spec = StorageObjectAggregateSpec::new(
+    let storage_spec = StorageObjectAggregateSpec::try_new(
         spec.dimensions()
             .iter()
             .map(dimension_to_storage)
@@ -74,7 +74,7 @@ pub(crate) async fn aggregate_objects(
     };
     let is_admin = AuthzSubject::is_admin(principal, backend).await?;
     let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
-    let query = ObjectAggregateStorageQuery::builder(
+    let query = StorageObjectAggregateQuery::builder(
         StorageObjectAggregateTarget::new(
             class_id_to_storage(class_id.id()),
             class_name,
@@ -93,7 +93,7 @@ pub(crate) async fn aggregate_objects(
     )
     .page_limit(page_limit)
     .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
-    .build()?;
+    .try_build()?;
 
     let page = if let Some(permission_backend) = permission_backend {
         let principal = PrincipalRef::load(backend, principal).await?;
@@ -102,11 +102,14 @@ pub(crate) async fn aggregate_objects(
             principal,
         };
         storage_handle(backend)
-            .aggregate_objects(query, ObjectAggregateAuthorization::Delegated(&authorizer))
+            .aggregate_objects(
+                query,
+                StorageObjectAggregateAuthorization::Delegated(&authorizer),
+            )
             .await?
     } else {
         storage_handle(backend)
-            .aggregate_objects(query, ObjectAggregateAuthorization::Storage)
+            .aggregate_objects(query, StorageObjectAggregateAuthorization::Storage)
             .await?
     };
     page_from_storage(page, &response_spec)
@@ -155,7 +158,7 @@ fn measure_to_storage(
 fn computed_selector_to_storage(
     selector: &ComputedFieldSelector,
 ) -> Result<StorageComputedFieldSelector, StorageError> {
-    StorageComputedFieldSelector::new(selector.scope(), selector.key())
+    StorageComputedFieldSelector::try_new(selector.scope(), selector.key())
 }
 
 const fn scalar_field_to_storage(
@@ -180,7 +183,7 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
     async fn authorize_target(
         &self,
         target: StorageObjectAggregateAuthorizationTarget,
-        required_permissions: Vec<AuthorizationPermission>,
+        required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<bool, StorageError> {
         let permissions = required_permissions
             .into_iter()
@@ -244,7 +247,7 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
     async fn authorize_objects(
         &self,
         candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
-        required_permissions: Vec<AuthorizationPermission>,
+        required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<Vec<bool>, StorageError> {
         let object_permissions = required_permissions
             .into_iter()

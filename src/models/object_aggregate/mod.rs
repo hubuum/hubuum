@@ -778,7 +778,7 @@ pub struct ObjectAggregateRequest {
     query_options: QueryOptions,
     spec: ObjectAggregateSpec,
     personal_owner_id: Option<UserID>,
-    authorization: ObjectAggregateAuthorization,
+    authorization: StorageObjectAggregateAuthorization,
     cursor_budget: ObjectAggregateCursorBudget,
 }
 
@@ -786,7 +786,7 @@ pub struct ObjectAggregateRequestBuilder {
     target: ObjectAggregateTarget,
     query: ObjectAggregateQuery,
     personal_owner_id: Option<UserID>,
-    authorization: Option<ObjectAggregateAuthorization>,
+    authorization: Option<StorageObjectAggregateAuthorization>,
     cursor_budget: Option<ObjectAggregateCursorBudget>,
 }
 
@@ -795,11 +795,11 @@ pub(crate) struct ObjectAggregateRequestParts {
     pub query_options: QueryOptions,
     pub spec: ObjectAggregateSpec,
     pub personal_owner_id: Option<UserID>,
-    pub authorization: ObjectAggregateAuthorization,
+    pub authorization: StorageObjectAggregateAuthorization,
     pub cursor_budget: ObjectAggregateCursorBudget,
 }
 
-pub struct ObjectAggregateAuthorization {
+pub struct StorageObjectAggregateAuthorization {
     required_permissions: Vec<Permissions>,
     token_scopes: Option<TokenScope>,
 }
@@ -809,7 +809,7 @@ pub(crate) struct ObjectAggregateAuthorizationParts {
     pub token_scopes: Option<TokenScope>,
 }
 
-impl ObjectAggregateAuthorization {
+impl StorageObjectAggregateAuthorization {
     pub fn new(
         required_permissions: Vec<Permissions>,
         token_scopes: Option<TokenScope>,
@@ -868,7 +868,7 @@ impl ObjectAggregateRequestBuilder {
         self
     }
 
-    pub fn authorization(mut self, authorization: ObjectAggregateAuthorization) -> Self {
+    pub fn authorization(mut self, authorization: StorageObjectAggregateAuthorization) -> Self {
         self.authorization = Some(authorization);
         self
     }

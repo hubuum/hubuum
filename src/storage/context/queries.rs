@@ -7,7 +7,7 @@ impl HistoryStorage for StorageHandle {
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,
-    ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
+    ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -23,8 +23,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn list_collection_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<CollectionHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -40,8 +40,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn get_collection_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -57,8 +57,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn list_class_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ClassHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -72,8 +72,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn get_class_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ClassHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageClassHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -89,8 +89,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn list_object_history(
         &self,
-        query: ObjectHistoryListQuery,
-    ) -> Result<StoragePage<ObjectHistoryRecord>, StorageError> {
+        query: StorageObjectHistoryListQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -104,8 +104,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn get_object_history_as_of(
         &self,
-        query: ObjectHistoryAsOfQuery,
-    ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
+        query: StorageObjectHistoryAsOfQuery,
+    ) -> Result<Option<StorageObjectHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -121,8 +121,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn list_export_template_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ExportTemplateHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -138,8 +138,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn get_export_template_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -155,8 +155,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn list_remote_target_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<RemoteTargetHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -172,8 +172,8 @@ impl HistoryStorage for StorageHandle {
 
     async fn get_remote_target_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,
@@ -192,7 +192,7 @@ impl HistoryStorage for StorageHandle {
 impl CatalogStorage for StorageHandle {
     async fn list_collections(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -205,8 +205,8 @@ impl CatalogStorage for StorageHandle {
 
     async fn list_classes(
         &self,
-        query: CatalogListQuery,
-    ) -> Result<StoragePage<StorageClass>, StorageError> {
+        query: StorageCatalogListQuery,
+    ) -> Result<StoragePage<StorageClassWithCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Catalog,
@@ -218,7 +218,7 @@ impl CatalogStorage for StorageHandle {
 
     async fn list_objects(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -234,8 +234,8 @@ impl CatalogStorage for StorageHandle {
 impl ComputedObjectStorage for StorageHandle {
     async fn list_computed_objects(
         &self,
-        query: ComputedObjectListQuery,
-    ) -> Result<ComputedObjectPage, StorageError> {
+        query: StorageComputedObjectListQuery,
+    ) -> Result<StorageComputedObjectPage, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedObject,
@@ -251,7 +251,7 @@ impl ComputedObjectStorage for StorageHandle {
 
     async fn enrich_objects_with_computed(
         &self,
-        query: ComputedObjectEnrichmentQuery,
+        query: StorageComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

@@ -9,7 +9,7 @@
 # durably write without accepting an EventContext. The guard verifies that
 # every listed name is a real method, but does not yet infer every writer from
 # method bodies. Every entry is a non-ordinary mutation; ordinary domain
-# mutations are required to carry context and return a MutationOutcome. Keep
+# mutations are required to carry context and return a StorageMutationOutcome. Keep
 # this inventory and transactions-and-events.md aligned.
 [context_free_mutations]
 best_effort_observation = [
@@ -319,7 +319,7 @@ source = "crates/hubuum-storage-core/src/relation_query.rs"
 variants = ["Path", "Name", "CreatedAt"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_queries"]
 
-[enums.ObjectAggregateAuthorization]
+[enums.StorageObjectAggregateAuthorization]
 source = "crates/hubuum-storage-core/src/object_aggregate.rs"
 variants = ["Storage", "Delegated"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_object_aggregates"]

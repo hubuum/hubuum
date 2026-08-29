@@ -5,7 +5,7 @@ use hubuum_domain::{
     TokenId, UserId,
 };
 
-use crate::StorageError;
+use crate::{StorageAuthorizationPermission, StorageError, StorageValidationError};
 
 /// Opaque, redacted lookup material for one presented bearer credential.
 ///
@@ -14,20 +14,20 @@ use crate::StorageError;
 /// representation, but neither the raw token nor a backend row crosses the
 /// storage boundary.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticationCredential {
+pub struct StorageAuthenticationCredential {
     lookup_value: String,
 }
 
-impl std::fmt::Debug for AuthenticationCredential {
+impl std::fmt::Debug for StorageAuthenticationCredential {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationCredential")
+            .debug_struct("StorageAuthenticationCredential")
             .field("lookup_value", &"<redacted>")
             .finish()
     }
 }
 
-impl AuthenticationCredential {
+impl StorageAuthenticationCredential {
     #[must_use]
     pub fn new(lookup_value: impl Into<String>) -> Self {
         Self {
@@ -47,16 +47,16 @@ impl AuthenticationCredential {
 /// resulting window explicitly keeps storage adapters independent of global
 /// configuration and makes compatibility tests deterministic.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticationAttempt {
-    credential: AuthenticationCredential,
+pub struct StorageAuthenticationAttempt {
+    credential: StorageAuthenticationCredential,
     observed_at: DateTime<Utc>,
     legacy_valid_after: DateTime<Utc>,
 }
 
-impl std::fmt::Debug for AuthenticationAttempt {
+impl std::fmt::Debug for StorageAuthenticationAttempt {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationAttempt")
+            .debug_struct("StorageAuthenticationAttempt")
             .field("credential", &self.credential)
             .field("observed_at", &"<redacted>")
             .field("legacy_valid_after", &"<redacted>")
@@ -64,14 +64,16 @@ impl std::fmt::Debug for AuthenticationAttempt {
     }
 }
 
-impl AuthenticationAttempt {
-    pub fn new(
-        credential: AuthenticationCredential,
+impl StorageAuthenticationAttempt {
+    pub fn try_new(
+        credential: StorageAuthenticationCredential,
         observed_at: DateTime<Utc>,
         legacy_valid_after: DateTime<Utc>,
-    ) -> Result<Self, AuthenticationAttemptError> {
+    ) -> Result<Self, StorageValidationError> {
         if legacy_valid_after > observed_at {
-            return Err(AuthenticationAttemptError);
+            return Err(StorageValidationError::invalid(
+                "legacy token validity cutoff cannot be after the observation time",
+            ));
         }
         Ok(Self {
             credential,
@@ -81,21 +83,16 @@ impl AuthenticationAttempt {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (AuthenticationCredential, DateTime<Utc>, DateTime<Utc>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageAuthenticationCredential,
+        DateTime<Utc>,
+        DateTime<Utc>,
+    ) {
         (self.credential, self.observed_at, self.legacy_valid_after)
     }
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuthenticationAttemptError;
-
-impl std::fmt::Display for AuthenticationAttemptError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("legacy token validity cutoff cannot be after the observation time")
-    }
-}
-
-impl std::error::Error for AuthenticationAttemptError {}
 
 /// Hash-free successful bearer-token authentication result.
 ///
@@ -104,7 +101,7 @@ impl std::error::Error for AuthenticationAttemptError {}
 /// public descriptive metadata, revision, and scope flags needed by the
 /// authenticated-principal and current-token APIs.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticatedToken {
+pub struct StorageAuthenticatedToken {
     id: TokenId,
     principal_id: PrincipalId,
     name: Option<String>,
@@ -117,10 +114,10 @@ pub struct AuthenticatedToken {
     revision: ResourceRevision,
 }
 
-impl std::fmt::Debug for AuthenticatedToken {
+impl std::fmt::Debug for StorageAuthenticatedToken {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticatedToken")
+            .debug_struct("StorageAuthenticatedToken")
             .field("id", &"<redacted>")
             .field("principal_id", &"<redacted>")
             .field("name", &self.name.as_ref().map(|_| "<redacted>"))
@@ -144,15 +141,15 @@ impl std::fmt::Debug for AuthenticatedToken {
     }
 }
 
-impl AuthenticatedToken {
+impl StorageAuthenticatedToken {
     #[must_use]
     pub const fn builder(
         id: TokenId,
         principal_id: PrincipalId,
         issued: DateTime<Utc>,
         revision: ResourceRevision,
-    ) -> AuthenticatedTokenBuilder {
-        AuthenticatedTokenBuilder {
+    ) -> StorageAuthenticatedTokenBuilder {
+        StorageAuthenticatedTokenBuilder {
             id,
             principal_id,
             name: None,
@@ -224,7 +221,7 @@ impl AuthenticatedToken {
 
 /// Builder for the hash-free token projection returned after successful
 /// authentication.
-pub struct AuthenticatedTokenBuilder {
+pub struct StorageAuthenticatedTokenBuilder {
     id: TokenId,
     principal_id: PrincipalId,
     name: Option<String>,
@@ -237,7 +234,7 @@ pub struct AuthenticatedTokenBuilder {
     revision: ResourceRevision,
 }
 
-impl AuthenticatedTokenBuilder {
+impl StorageAuthenticatedTokenBuilder {
     #[must_use]
     pub fn name(mut self, name: Option<String>) -> Self {
         self.name = name;
@@ -274,9 +271,18 @@ impl AuthenticatedTokenBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> AuthenticatedToken {
-        AuthenticatedToken {
+    pub fn try_build(self) -> Result<StorageAuthenticatedToken, StorageValidationError> {
+        if self.expires_at.is_some_and(|value| value < self.issued) {
+            return Err(StorageValidationError::invalid(
+                "authenticated token expiry must not precede issuance",
+            ));
+        }
+        if self.last_used_at.is_some_and(|value| value < self.issued) {
+            return Err(StorageValidationError::invalid(
+                "authenticated token last-use timestamp must not precede issuance",
+            ));
+        }
+        Ok(StorageAuthenticatedToken {
             id: self.id,
             principal_id: self.principal_id,
             name: self.name,
@@ -287,7 +293,7 @@ impl AuthenticatedTokenBuilder {
             permission_scoped: self.permission_scoped,
             resource_scoped: self.resource_scoped,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -296,17 +302,17 @@ impl AuthenticatedTokenBuilder {
 /// Persistence metadata, settings documents, revisions, and provider sync
 /// state deliberately stay behind the storage boundary.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticationPrincipal {
+pub struct StorageAuthenticationPrincipal {
     id: PrincipalId,
     kind: PrincipalKind,
     name: String,
     identity_scope_id: IdentityScopeId,
 }
 
-impl std::fmt::Debug for AuthenticationPrincipal {
+impl std::fmt::Debug for StorageAuthenticationPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationPrincipal")
+            .debug_struct("StorageAuthenticationPrincipal")
             .field("id", &"<redacted>")
             .field("kind", &self.kind)
             .field("name", &"<redacted>")
@@ -315,7 +321,7 @@ impl std::fmt::Debug for AuthenticationPrincipal {
     }
 }
 
-impl AuthenticationPrincipal {
+impl StorageAuthenticationPrincipal {
     #[must_use]
     pub fn new(
         id: PrincipalId,
@@ -368,7 +374,7 @@ impl AuthenticationPrincipal {
 /// contract and therefore cannot accidentally cross into request handling or
 /// diagnostics.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticationHuman {
+pub struct StorageAuthenticationHuman {
     id: UserId,
     proper_name: Option<String>,
     email: Option<String>,
@@ -377,10 +383,10 @@ pub struct AuthenticationHuman {
     anonymized_at: Option<DateTime<Utc>>,
 }
 
-impl std::fmt::Debug for AuthenticationHuman {
+impl std::fmt::Debug for StorageAuthenticationHuman {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationHuman")
+            .debug_struct("StorageAuthenticationHuman")
             .field("id", &"<redacted>")
             .field(
                 "proper_name",
@@ -397,24 +403,33 @@ impl std::fmt::Debug for AuthenticationHuman {
     }
 }
 
-impl AuthenticationHuman {
-    #[must_use]
-    pub const fn new(
+impl StorageAuthenticationHuman {
+    pub fn try_new(
         id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         anonymized_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "authentication human updated_at must not precede created_at",
+            ));
+        }
+        if anonymized_at.is_some_and(|value| value < created_at || value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "authentication human anonymized_at must be within its creation and update timestamps",
+            ));
+        }
+        Ok(Self {
             id,
             proper_name,
             email,
             created_at,
             updated_at,
             anonymized_at,
-        }
+        })
     }
 
     #[must_use]
@@ -451,38 +466,51 @@ impl AuthenticationHuman {
 /// One consistent authentication read of a principal and its optional human
 /// subtype.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthenticationIdentity {
-    principal: AuthenticationPrincipal,
-    human: Option<AuthenticationHuman>,
+pub struct StorageAuthenticationIdentity {
+    principal: StorageAuthenticationPrincipal,
+    human: Option<StorageAuthenticationHuman>,
 }
 
-impl AuthenticationIdentity {
-    #[must_use]
-    pub const fn new(
-        principal: AuthenticationPrincipal,
-        human: Option<AuthenticationHuman>,
-    ) -> Self {
-        Self { principal, human }
+impl StorageAuthenticationIdentity {
+    pub fn try_new(
+        principal: StorageAuthenticationPrincipal,
+        human: Option<StorageAuthenticationHuman>,
+    ) -> Result<Self, StorageValidationError> {
+        if principal.is_human() != human.is_some()
+            || human
+                .as_ref()
+                .is_some_and(|human| human.id().id() != principal.id().id())
+        {
+            return Err(StorageValidationError::invalid(
+                "authentication principal kind, id, and human projection are inconsistent",
+            ));
+        }
+        Ok(Self { principal, human })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (AuthenticationPrincipal, Option<AuthenticationHuman>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageAuthenticationPrincipal,
+        Option<StorageAuthenticationHuman>,
+    ) {
         (self.principal, self.human)
     }
 }
 
 /// Complete information needed to load the narrowing dimensions of one token.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct AuthenticationTokenScopeQuery {
+pub struct StorageAuthenticationTokenScopeQuery {
     token_id: TokenId,
     permission_scoped: bool,
     resource_scoped: bool,
 }
 
-impl std::fmt::Debug for AuthenticationTokenScopeQuery {
+impl std::fmt::Debug for StorageAuthenticationTokenScopeQuery {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationTokenScopeQuery")
+            .debug_struct("StorageAuthenticationTokenScopeQuery")
             .field("token_id", &"<redacted>")
             .field("permission_scoped", &self.permission_scoped)
             .field("resource_scoped", &self.resource_scoped)
@@ -490,7 +518,7 @@ impl std::fmt::Debug for AuthenticationTokenScopeQuery {
     }
 }
 
-impl AuthenticationTokenScopeQuery {
+impl StorageAuthenticationTokenScopeQuery {
     #[must_use]
     pub const fn new(token_id: TokenId, permission_scoped: bool, resource_scoped: bool) -> Self {
         Self {
@@ -523,16 +551,16 @@ impl AuthenticationTokenScopeQuery {
 
 /// Resource ids in one token's enabled resource-scope dimension.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub struct AuthenticationResourceScope {
+pub struct StorageAuthenticationResourceScope {
     collection_ids: Vec<CollectionId>,
     class_ids: Vec<ClassId>,
     object_ids: Vec<ObjectId>,
 }
 
-impl std::fmt::Debug for AuthenticationResourceScope {
+impl std::fmt::Debug for StorageAuthenticationResourceScope {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationResourceScope")
+            .debug_struct("StorageAuthenticationResourceScope")
             .field("collection_count", &self.collection_ids.len())
             .field("class_count", &self.class_ids.len())
             .field("object_count", &self.object_ids.len())
@@ -540,13 +568,19 @@ impl std::fmt::Debug for AuthenticationResourceScope {
     }
 }
 
-impl AuthenticationResourceScope {
+impl StorageAuthenticationResourceScope {
     #[must_use]
-    pub const fn new(
-        collection_ids: Vec<CollectionId>,
-        class_ids: Vec<ClassId>,
-        object_ids: Vec<ObjectId>,
+    pub fn new(
+        mut collection_ids: Vec<CollectionId>,
+        mut class_ids: Vec<ClassId>,
+        mut object_ids: Vec<ObjectId>,
     ) -> Self {
+        collection_ids.sort_unstable();
+        collection_ids.dedup();
+        class_ids.sort_unstable();
+        class_ids.dedup();
+        object_ids.sort_unstable();
+        object_ids.dedup();
         Self {
             collection_ids,
             class_ids,
@@ -565,27 +599,32 @@ impl AuthenticationResourceScope {
 /// `None` means that a dimension is disabled. `Some(empty)` means that it is
 /// enabled but grants nothing; adapters must preserve that distinction.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthenticationTokenScope {
-    permissions: Option<Vec<String>>,
-    resources: Option<AuthenticationResourceScope>,
+pub struct StorageAuthenticationTokenScope {
+    permissions: Option<Vec<StorageAuthorizationPermission>>,
+    resources: Option<StorageAuthenticationResourceScope>,
 }
 
-impl std::fmt::Debug for AuthenticationTokenScope {
+impl std::fmt::Debug for StorageAuthenticationTokenScope {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("AuthenticationTokenScope")
+            .debug_struct("StorageAuthenticationTokenScope")
             .field("permission_count", &self.permissions.as_ref().map(Vec::len))
             .field("resources", &self.resources)
             .finish()
     }
 }
 
-impl AuthenticationTokenScope {
+impl StorageAuthenticationTokenScope {
     #[must_use]
-    pub const fn new(
-        permissions: Option<Vec<String>>,
-        resources: Option<AuthenticationResourceScope>,
+    pub fn new(
+        permissions: Option<Vec<StorageAuthorizationPermission>>,
+        resources: Option<StorageAuthenticationResourceScope>,
     ) -> Self {
+        let permissions = permissions.map(|mut permissions| {
+            permissions.sort_unstable();
+            permissions.dedup();
+            permissions
+        });
         Self {
             permissions,
             resources,
@@ -593,7 +632,12 @@ impl AuthenticationTokenScope {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Option<Vec<String>>, Option<AuthenticationResourceScope>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        Option<Vec<StorageAuthorizationPermission>>,
+        Option<StorageAuthenticationResourceScope>,
+    ) {
         (self.permissions, self.resources)
     }
 }
@@ -612,18 +656,18 @@ pub trait AuthenticationStorage: Send + Sync {
     /// usage telemetry without failing an otherwise successful validation.
     async fn authenticate_bearer_token(
         &self,
-        attempt: AuthenticationAttempt,
-    ) -> Result<AuthenticatedToken, StorageError>;
+        attempt: StorageAuthenticationAttempt,
+    ) -> Result<StorageAuthenticatedToken, StorageError>;
 
     async fn get_authentication_identity(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthenticationIdentity, StorageError>;
+    ) -> Result<StorageAuthenticationIdentity, StorageError>;
 
     async fn get_authentication_token_scope(
         &self,
-        query: AuthenticationTokenScopeQuery,
-    ) -> Result<Option<AuthenticationTokenScope>, StorageError>;
+        query: StorageAuthenticationTokenScopeQuery,
+    ) -> Result<Option<StorageAuthenticationTokenScope>, StorageError>;
 }
 
 #[cfg(test)]
@@ -632,22 +676,23 @@ mod tests {
 
     #[test]
     fn enabled_empty_scope_dimensions_remain_present() {
-        let scope = AuthenticationTokenScope::new(
+        let scope = StorageAuthenticationTokenScope::new(
             Some(Vec::new()),
-            Some(AuthenticationResourceScope::default()),
+            Some(StorageAuthenticationResourceScope::default()),
         );
 
         let (permissions, resources) = scope.into_parts();
         assert_eq!(permissions, Some(Vec::new()));
         assert_eq!(
-            resources.map(AuthenticationResourceScope::into_parts),
+            resources.map(StorageAuthenticationResourceScope::into_parts),
             Some((Vec::new(), Vec::new(), Vec::new()))
         );
     }
 
     #[test]
     fn unscoped_query_has_no_enabled_dimensions() {
-        let query = AuthenticationTokenScopeQuery::new(TokenId::new(7).unwrap(), false, false);
+        let query =
+            StorageAuthenticationTokenScopeQuery::new(TokenId::new(7).unwrap(), false, false);
 
         assert!(!query.is_scoped());
         assert!(!query.is_permission_scoped());
@@ -660,8 +705,8 @@ mod tests {
         let valid_after = observed_at + chrono::Duration::seconds(1);
 
         assert!(
-            AuthenticationAttempt::new(
-                AuthenticationCredential::new("lookup"),
+            StorageAuthenticationAttempt::try_new(
+                StorageAuthenticationCredential::new("lookup"),
                 observed_at,
                 valid_after,
             )
@@ -671,7 +716,7 @@ mod tests {
 
     #[test]
     fn authentication_dto_debug_output_redacts_identity_values() {
-        let principal = AuthenticationPrincipal::new(
+        let principal = StorageAuthenticationPrincipal::new(
             PrincipalId::new(42).unwrap(),
             PrincipalKind::Human,
             "sensitive-name",
@@ -686,8 +731,8 @@ mod tests {
 
     #[test]
     fn authentication_credentials_and_results_redact_identifiers() {
-        let credential = AuthenticationCredential::new("sensitive-lookup-value");
-        let token = AuthenticatedToken::builder(
+        let credential = StorageAuthenticationCredential::new("sensitive-lookup-value");
+        let token = StorageAuthenticatedToken::builder(
             TokenId::new(42).unwrap(),
             PrincipalId::new(17).unwrap(),
             DateTime::<Utc>::default(),
@@ -695,7 +740,8 @@ mod tests {
         )
         .name(Some("sensitive-name".to_string()))
         .permission_scoped(true)
-        .build();
+        .try_build()
+        .unwrap();
 
         let credential_debug = format!("{credential:?}");
         assert!(!credential_debug.contains("sensitive-lookup-value"));

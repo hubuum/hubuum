@@ -11,7 +11,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, UserId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    MutationOutcome, StorageExternalPrincipalState, StorageExternalUserSync, StorageSyncedHuman,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageMutationOutcome,
+    StorageSyncedHuman,
 };
 use serde_json::json;
 
@@ -46,14 +47,17 @@ struct ExternalUserRow {
 
 impl ExternalUserRow {
     fn into_storage(self) -> Result<StorageSyncedHuman, PostgresStorageError> {
-        Ok(StorageSyncedHuman::new(
-            UserId::new(self.id)?,
-            self.proper_name,
-            self.email,
-            self.created_at.and_utc(),
-            self.updated_at.and_utc(),
-            self.anonymized_at.map(|timestamp| timestamp.and_utc()),
-        ))
+        crate::validate_persisted(
+            "synchronized human",
+            StorageSyncedHuman::try_new(
+                UserId::new(self.id)?,
+                self.proper_name,
+                self.email,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+                self.anonymized_at.map(|timestamp| timestamp.and_utc()),
+            ),
+        )
     }
 }
 
@@ -151,13 +155,17 @@ pub async fn get_external_principal_state(
     let external_subject = external_subject.ok_or_else(|| {
         PostgresStorageError::unavailable("External user is missing provider subject")
     })?;
-    Ok(Some(StorageExternalPrincipalState::new(
-        identity_scope,
-        username,
-        external_subject,
-        last_sync_attempted_at.map(|timestamp| timestamp.and_utc()),
-        last_sync_success_at.map(|timestamp| timestamp.and_utc()),
-    )))
+    crate::validate_persisted(
+        "external principal synchronization state",
+        StorageExternalPrincipalState::try_new(
+            identity_scope,
+            username,
+            external_subject,
+            last_sync_attempted_at.map(|timestamp| timestamp.and_utc()),
+            last_sync_success_at.map(|timestamp| timestamp.and_utc()),
+        ),
+    )
+    .map(Some)
 }
 
 pub async fn mark_external_sync_attempted(
@@ -182,7 +190,7 @@ pub async fn mark_external_sync_attempted(
 pub async fn sync_external_user(
     runtime: &PostgresRuntime,
     request: StorageExternalUserSync,
-) -> Result<MutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
     let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
         request.into_parts();
     validate_required(&scope_name, "identity scope")?;
@@ -263,10 +271,11 @@ pub async fn sync_external_user(
                 "external_subject": subject,
                 "synced_group_count": synced_group_count,
             }));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(user.into_storage()?, audit))
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+                user.into_storage()?,
+                audit,
+            ))
         })
         .await
 }

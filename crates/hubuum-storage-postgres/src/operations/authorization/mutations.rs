@@ -3,8 +3,8 @@ use diesel::{AsChangeset, Insertable};
 use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    AuditReceipt, AuthorizationGrant, AuthorizationGrantDelete, AuthorizationGrantMutation,
-    AuthorizationPermission, MutationOutcome,
+    StorageAuditReceipt, StorageAuthorizationGrant, StorageAuthorizationGrantDelete,
+    StorageAuthorizationGrantMutation, StorageAuthorizationPermission, StorageMutationOutcome,
 };
 use serde_json::json;
 
@@ -57,43 +57,45 @@ impl NewPermission {
     pub(crate) fn new(
         collection_id: i32,
         group_id: i32,
-        permissions: &[AuthorizationPermission],
+        permissions: &[StorageAuthorizationPermission],
     ) -> Self {
         let has = |permission| permissions.contains(&permission);
         Self {
             collection_id,
             group_id,
-            has_read_collection: has(AuthorizationPermission::ReadCollection),
-            has_update_collection: has(AuthorizationPermission::UpdateCollection),
-            has_delete_collection: has(AuthorizationPermission::DeleteCollection),
-            has_delegate_collection: has(AuthorizationPermission::DelegateCollection),
-            has_create_class: has(AuthorizationPermission::CreateClass),
-            has_read_class: has(AuthorizationPermission::ReadClass),
-            has_update_class: has(AuthorizationPermission::UpdateClass),
-            has_delete_class: has(AuthorizationPermission::DeleteClass),
-            has_create_object: has(AuthorizationPermission::CreateObject),
-            has_read_object: has(AuthorizationPermission::ReadObject),
-            has_update_object: has(AuthorizationPermission::UpdateObject),
-            has_delete_object: has(AuthorizationPermission::DeleteObject),
-            has_create_class_relation: has(AuthorizationPermission::CreateClassRelation),
-            has_read_class_relation: has(AuthorizationPermission::ReadClassRelation),
-            has_update_class_relation: has(AuthorizationPermission::UpdateClassRelation),
-            has_delete_class_relation: has(AuthorizationPermission::DeleteClassRelation),
-            has_create_object_relation: has(AuthorizationPermission::CreateObjectRelation),
-            has_read_object_relation: has(AuthorizationPermission::ReadObjectRelation),
-            has_update_object_relation: has(AuthorizationPermission::UpdateObjectRelation),
-            has_delete_object_relation: has(AuthorizationPermission::DeleteObjectRelation),
-            has_read_template: has(AuthorizationPermission::ReadTemplate),
-            has_create_template: has(AuthorizationPermission::CreateTemplate),
-            has_update_template: has(AuthorizationPermission::UpdateTemplate),
-            has_delete_template: has(AuthorizationPermission::DeleteTemplate),
-            has_read_remote_target: has(AuthorizationPermission::ReadRemoteTarget),
-            has_create_remote_target: has(AuthorizationPermission::CreateRemoteTarget),
-            has_update_remote_target: has(AuthorizationPermission::UpdateRemoteTarget),
-            has_delete_remote_target: has(AuthorizationPermission::DeleteRemoteTarget),
-            has_execute_remote_target: has(AuthorizationPermission::ExecuteRemoteTarget),
-            has_read_audit: has(AuthorizationPermission::ReadAudit),
-            has_manage_event_subscription: has(AuthorizationPermission::ManageEventSubscription),
+            has_read_collection: has(StorageAuthorizationPermission::ReadCollection),
+            has_update_collection: has(StorageAuthorizationPermission::UpdateCollection),
+            has_delete_collection: has(StorageAuthorizationPermission::DeleteCollection),
+            has_delegate_collection: has(StorageAuthorizationPermission::DelegateCollection),
+            has_create_class: has(StorageAuthorizationPermission::CreateClass),
+            has_read_class: has(StorageAuthorizationPermission::ReadClass),
+            has_update_class: has(StorageAuthorizationPermission::UpdateClass),
+            has_delete_class: has(StorageAuthorizationPermission::DeleteClass),
+            has_create_object: has(StorageAuthorizationPermission::CreateObject),
+            has_read_object: has(StorageAuthorizationPermission::ReadObject),
+            has_update_object: has(StorageAuthorizationPermission::UpdateObject),
+            has_delete_object: has(StorageAuthorizationPermission::DeleteObject),
+            has_create_class_relation: has(StorageAuthorizationPermission::CreateClassRelation),
+            has_read_class_relation: has(StorageAuthorizationPermission::ReadClassRelation),
+            has_update_class_relation: has(StorageAuthorizationPermission::UpdateClassRelation),
+            has_delete_class_relation: has(StorageAuthorizationPermission::DeleteClassRelation),
+            has_create_object_relation: has(StorageAuthorizationPermission::CreateObjectRelation),
+            has_read_object_relation: has(StorageAuthorizationPermission::ReadObjectRelation),
+            has_update_object_relation: has(StorageAuthorizationPermission::UpdateObjectRelation),
+            has_delete_object_relation: has(StorageAuthorizationPermission::DeleteObjectRelation),
+            has_read_template: has(StorageAuthorizationPermission::ReadTemplate),
+            has_create_template: has(StorageAuthorizationPermission::CreateTemplate),
+            has_update_template: has(StorageAuthorizationPermission::UpdateTemplate),
+            has_delete_template: has(StorageAuthorizationPermission::DeleteTemplate),
+            has_read_remote_target: has(StorageAuthorizationPermission::ReadRemoteTarget),
+            has_create_remote_target: has(StorageAuthorizationPermission::CreateRemoteTarget),
+            has_update_remote_target: has(StorageAuthorizationPermission::UpdateRemoteTarget),
+            has_delete_remote_target: has(StorageAuthorizationPermission::DeleteRemoteTarget),
+            has_execute_remote_target: has(StorageAuthorizationPermission::ExecuteRemoteTarget),
+            has_read_audit: has(StorageAuthorizationPermission::ReadAudit),
+            has_manage_event_subscription: has(
+                StorageAuthorizationPermission::ManageEventSubscription,
+            ),
         }
     }
 }
@@ -135,7 +137,10 @@ pub(crate) struct UpdatePermission {
 }
 
 impl UpdatePermission {
-    pub(crate) fn grant(permissions: &[AuthorizationPermission], replace_existing: bool) -> Self {
+    pub(crate) fn grant(
+        permissions: &[StorageAuthorizationPermission],
+        replace_existing: bool,
+    ) -> Self {
         let value = |permission| {
             let requested = permissions.contains(&permission);
             if replace_existing {
@@ -147,43 +152,45 @@ impl UpdatePermission {
         Self::from_values(value)
     }
 
-    fn revoke(permissions: &[AuthorizationPermission]) -> Self {
+    fn revoke(permissions: &[StorageAuthorizationPermission]) -> Self {
         Self::from_values(|permission| permissions.contains(&permission).then_some(false))
     }
 
-    fn from_values(mut value: impl FnMut(AuthorizationPermission) -> Option<bool>) -> Self {
+    fn from_values(mut value: impl FnMut(StorageAuthorizationPermission) -> Option<bool>) -> Self {
         Self {
-            has_read_collection: value(AuthorizationPermission::ReadCollection),
-            has_update_collection: value(AuthorizationPermission::UpdateCollection),
-            has_delete_collection: value(AuthorizationPermission::DeleteCollection),
-            has_delegate_collection: value(AuthorizationPermission::DelegateCollection),
-            has_create_class: value(AuthorizationPermission::CreateClass),
-            has_read_class: value(AuthorizationPermission::ReadClass),
-            has_update_class: value(AuthorizationPermission::UpdateClass),
-            has_delete_class: value(AuthorizationPermission::DeleteClass),
-            has_create_object: value(AuthorizationPermission::CreateObject),
-            has_read_object: value(AuthorizationPermission::ReadObject),
-            has_update_object: value(AuthorizationPermission::UpdateObject),
-            has_delete_object: value(AuthorizationPermission::DeleteObject),
-            has_create_class_relation: value(AuthorizationPermission::CreateClassRelation),
-            has_read_class_relation: value(AuthorizationPermission::ReadClassRelation),
-            has_update_class_relation: value(AuthorizationPermission::UpdateClassRelation),
-            has_delete_class_relation: value(AuthorizationPermission::DeleteClassRelation),
-            has_create_object_relation: value(AuthorizationPermission::CreateObjectRelation),
-            has_read_object_relation: value(AuthorizationPermission::ReadObjectRelation),
-            has_update_object_relation: value(AuthorizationPermission::UpdateObjectRelation),
-            has_delete_object_relation: value(AuthorizationPermission::DeleteObjectRelation),
-            has_read_template: value(AuthorizationPermission::ReadTemplate),
-            has_create_template: value(AuthorizationPermission::CreateTemplate),
-            has_update_template: value(AuthorizationPermission::UpdateTemplate),
-            has_delete_template: value(AuthorizationPermission::DeleteTemplate),
-            has_read_remote_target: value(AuthorizationPermission::ReadRemoteTarget),
-            has_create_remote_target: value(AuthorizationPermission::CreateRemoteTarget),
-            has_update_remote_target: value(AuthorizationPermission::UpdateRemoteTarget),
-            has_delete_remote_target: value(AuthorizationPermission::DeleteRemoteTarget),
-            has_execute_remote_target: value(AuthorizationPermission::ExecuteRemoteTarget),
-            has_read_audit: value(AuthorizationPermission::ReadAudit),
-            has_manage_event_subscription: value(AuthorizationPermission::ManageEventSubscription),
+            has_read_collection: value(StorageAuthorizationPermission::ReadCollection),
+            has_update_collection: value(StorageAuthorizationPermission::UpdateCollection),
+            has_delete_collection: value(StorageAuthorizationPermission::DeleteCollection),
+            has_delegate_collection: value(StorageAuthorizationPermission::DelegateCollection),
+            has_create_class: value(StorageAuthorizationPermission::CreateClass),
+            has_read_class: value(StorageAuthorizationPermission::ReadClass),
+            has_update_class: value(StorageAuthorizationPermission::UpdateClass),
+            has_delete_class: value(StorageAuthorizationPermission::DeleteClass),
+            has_create_object: value(StorageAuthorizationPermission::CreateObject),
+            has_read_object: value(StorageAuthorizationPermission::ReadObject),
+            has_update_object: value(StorageAuthorizationPermission::UpdateObject),
+            has_delete_object: value(StorageAuthorizationPermission::DeleteObject),
+            has_create_class_relation: value(StorageAuthorizationPermission::CreateClassRelation),
+            has_read_class_relation: value(StorageAuthorizationPermission::ReadClassRelation),
+            has_update_class_relation: value(StorageAuthorizationPermission::UpdateClassRelation),
+            has_delete_class_relation: value(StorageAuthorizationPermission::DeleteClassRelation),
+            has_create_object_relation: value(StorageAuthorizationPermission::CreateObjectRelation),
+            has_read_object_relation: value(StorageAuthorizationPermission::ReadObjectRelation),
+            has_update_object_relation: value(StorageAuthorizationPermission::UpdateObjectRelation),
+            has_delete_object_relation: value(StorageAuthorizationPermission::DeleteObjectRelation),
+            has_read_template: value(StorageAuthorizationPermission::ReadTemplate),
+            has_create_template: value(StorageAuthorizationPermission::CreateTemplate),
+            has_update_template: value(StorageAuthorizationPermission::UpdateTemplate),
+            has_delete_template: value(StorageAuthorizationPermission::DeleteTemplate),
+            has_read_remote_target: value(StorageAuthorizationPermission::ReadRemoteTarget),
+            has_create_remote_target: value(StorageAuthorizationPermission::CreateRemoteTarget),
+            has_update_remote_target: value(StorageAuthorizationPermission::UpdateRemoteTarget),
+            has_delete_remote_target: value(StorageAuthorizationPermission::DeleteRemoteTarget),
+            has_execute_remote_target: value(StorageAuthorizationPermission::ExecuteRemoteTarget),
+            has_read_audit: value(StorageAuthorizationPermission::ReadAudit),
+            has_manage_event_subscription: value(
+                StorageAuthorizationPermission::ManageEventSubscription,
+            ),
         }
     }
 }
@@ -197,7 +204,7 @@ pub(crate) async fn insert_full_collection_grant(
         .values(NewPermission::new(
             collection_id,
             group_id,
-            &AuthorizationPermission::ALL,
+            &StorageAuthorizationPermission::ALL,
         ))
         .execute(connection)
         .await?;
@@ -206,8 +213,8 @@ pub(crate) async fn insert_full_collection_grant(
 
 pub async fn apply_local_collection_grant(
     runtime: &PostgresRuntime,
-    mutation: AuthorizationGrantMutation,
-) -> Result<MutationOutcome<AuthorizationGrant>, PostgresStorageError> {
+    mutation: StorageAuthorizationGrantMutation,
+) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, PostgresStorageError> {
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
     let replace_existing = mutation.replace_existing();
@@ -221,7 +228,7 @@ pub async fn apply_local_collection_grant(
             if let Some(current) = before
                 && !grant_changes(&current, &requested, replace_existing)
             {
-                return Ok(MutationOutcome::unchanged(current.into_storage()?));
+                return Ok(StorageMutationOutcome::unchanged(current.into_storage()?));
             }
 
             let after = match before {
@@ -258,15 +265,18 @@ pub async fn apply_local_collection_grant(
                 },
             )
             .await?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+                after.into_storage()?,
+                audit,
+            ))
         })
         .await
 }
 
 pub async fn revoke_local_collection_grant(
     runtime: &PostgresRuntime,
-    mutation: AuthorizationGrantMutation,
-) -> Result<MutationOutcome<AuthorizationGrant>, PostgresStorageError> {
+    mutation: StorageAuthorizationGrantMutation,
+) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, PostgresStorageError> {
     let key = mutation.key();
     let requested = mutation.permissions().to_vec();
     let event_context = mutation.event_context().clone();
@@ -279,7 +289,7 @@ pub async fn revoke_local_collection_grant(
                 .await?
                 .ok_or_else(|| PostgresStorageError::not_found("Entity not found"))?;
             if !revoke_changes(&before, &requested) {
-                return Ok(MutationOutcome::unchanged(before.into_storage()?));
+                return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
             }
             let after = diesel::update(
                 crate::schema::permissions::table
@@ -305,15 +315,18 @@ pub async fn revoke_local_collection_grant(
                 },
             )
             .await?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+                after.into_storage()?,
+                audit,
+            ))
         })
         .await
 }
 
 pub async fn revoke_all_local_collection_grants(
     runtime: &PostgresRuntime,
-    request: AuthorizationGrantDelete,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+    request: StorageAuthorizationGrantDelete,
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let key = request.key();
     let event_context = request.event_context().clone();
     let collection_id = key.collection_id().id();
@@ -330,7 +343,7 @@ pub async fn revoke_all_local_collection_grants(
             .execute(connection)
             .await?;
             let Some(before) = before.as_ref() else {
-                return Ok(MutationOutcome::unchanged(()));
+                return Ok(StorageMutationOutcome::unchanged(()));
             };
             let after_revision = permission_owner_revision(connection, collection_id).await?;
             let requested = before.permissions();
@@ -349,7 +362,7 @@ pub async fn revoke_all_local_collection_grants(
                 },
             )
             .await?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit))
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed((), audit))
         })
         .await
 }
@@ -402,7 +415,7 @@ async fn lock_grant(
 
 fn grant_changes(
     current: &PermissionRow,
-    requested: &[AuthorizationPermission],
+    requested: &[StorageAuthorizationPermission],
     replace_existing: bool,
 ) -> bool {
     let granted = current.permissions();
@@ -415,7 +428,7 @@ fn grant_changes(
     }
 }
 
-fn revoke_changes(current: &PermissionRow, requested: &[AuthorizationPermission]) -> bool {
+fn revoke_changes(current: &PermissionRow, requested: &[StorageAuthorizationPermission]) -> bool {
     let granted = current.permissions();
     requested
         .iter()
@@ -429,7 +442,7 @@ struct PermissionEvent<'event> {
     after: &'event PermissionRow,
     before_revision: PostgresRevision,
     after_revision: PostgresRevision,
-    requested: &'event [AuthorizationPermission],
+    requested: &'event [StorageAuthorizationPermission],
     replace_existing: Option<bool>,
     removes_grant: bool,
 }
@@ -437,7 +450,7 @@ struct PermissionEvent<'event> {
 async fn append_permission_event(
     connection: &mut PostgresConnection,
     details: PermissionEvent<'_>,
-) -> Result<AuditReceipt, PostgresStorageError> {
+) -> Result<StorageAuditReceipt, PostgresStorageError> {
     let summary = match details.action {
         Action::Granted => format!(
             "Permissions granted to group {} on collection {}",
@@ -492,10 +505,7 @@ async fn append_permission_event(
     } else {
         permission_snapshot(details.after, details.after_revision)
     });
-    append_event(connection, &event)
-        .await?
-        .into_audit_receipt()
-        .map_err(Into::into)
+    Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 
 fn permission_snapshot(
@@ -526,7 +536,7 @@ fn empty_permission_snapshot(
     })
 }
 
-fn permission_names(permissions: &[AuthorizationPermission]) -> Vec<&'static str> {
+fn permission_names(permissions: &[StorageAuthorizationPermission]) -> Vec<&'static str> {
     permissions
         .iter()
         .map(|permission| permission.as_str())
@@ -545,12 +555,13 @@ mod tests {
             None
         });
 
-        assert_eq!(visited, AuthorizationPermission::ALL);
+        assert_eq!(visited, StorageAuthorizationPermission::ALL);
     }
 
     #[test]
     fn additive_grants_change_only_requested_permissions() {
-        let changes = UpdatePermission::grant(&[AuthorizationPermission::ReadCollection], false);
+        let changes =
+            UpdatePermission::grant(&[StorageAuthorizationPermission::ReadCollection], false);
 
         assert_eq!(changes.has_read_collection, Some(true));
         assert_eq!(changes.has_update_collection, None);
@@ -559,7 +570,8 @@ mod tests {
 
     #[test]
     fn replacement_grants_clear_unrequested_permissions() {
-        let changes = UpdatePermission::grant(&[AuthorizationPermission::ReadCollection], true);
+        let changes =
+            UpdatePermission::grant(&[StorageAuthorizationPermission::ReadCollection], true);
 
         assert_eq!(changes.has_read_collection, Some(true));
         assert_eq!(changes.has_update_collection, Some(false));
@@ -569,8 +581,8 @@ mod tests {
     #[test]
     fn revocation_changes_only_requested_permissions() {
         let changes = UpdatePermission::revoke(&[
-            AuthorizationPermission::UpdateCollection,
-            AuthorizationPermission::ManageEventSubscription,
+            StorageAuthorizationPermission::UpdateCollection,
+            StorageAuthorizationPermission::ManageEventSubscription,
         ]);
 
         assert_eq!(changes.has_read_collection, None);

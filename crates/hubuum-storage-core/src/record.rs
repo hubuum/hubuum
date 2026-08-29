@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{ResourceId, ResourceRevision};
 
-use crate::StorageError;
+use crate::StorageValidationError;
 
 /// Backend-neutral identity and revision metadata shared by stored records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,10 +18,10 @@ impl StorageRecordMetadata {
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: ResourceRevision,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if updated_at < created_at {
-            return Err(StorageError::internal(
-                "Persisted record updated_at must not be earlier than created_at",
+            return Err(StorageValidationError::invalid(
+                "record updated_at must not be earlier than created_at",
             ));
         }
         Ok(Self {

@@ -6,8 +6,8 @@ use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    AuthenticationTokenScope, MutationOutcome, StorageError, StoragePage, StorageTokenListQuery,
-    StorageTokenMetadata, StorageTokenObservation,
+    StorageAuthenticationTokenScope, StorageError, StorageMutationOutcome, StoragePage,
+    StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation,
 };
 
 /// Named token-creation fields exposed to an adapter.
@@ -17,7 +17,7 @@ pub struct StorageTokenCreateParts {
     name: Option<String>,
     description: Option<String>,
     expires_at: Option<DateTime<Utc>>,
-    scope: Option<AuthenticationTokenScope>,
+    scope: Option<StorageAuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
 }
@@ -49,7 +49,7 @@ impl StorageTokenCreateParts {
     }
 
     #[must_use]
-    pub const fn scope(&self) -> Option<&AuthenticationTokenScope> {
+    pub const fn scope(&self) -> Option<&StorageAuthenticationTokenScope> {
         self.scope.as_ref()
     }
 
@@ -73,7 +73,7 @@ pub struct StorageTokenIssuancePolicy {
 }
 
 impl StorageTokenIssuancePolicy {
-    pub const fn new(
+    pub const fn try_new(
         default_lifetime_hours: i64,
         maximum_lifetime_hours: i64,
     ) -> Result<Self, StorageTokenIssuancePolicyError> {
@@ -128,7 +128,7 @@ pub struct StorageTokenCreate {
     name: Option<String>,
     description: Option<String>,
     expires_at: Option<DateTime<Utc>>,
-    scope: Option<AuthenticationTokenScope>,
+    scope: Option<StorageAuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
 }
@@ -172,7 +172,7 @@ impl StorageTokenCreate {
     }
 
     #[must_use]
-    pub fn scope(mut self, value: Option<AuthenticationTokenScope>) -> Self {
+    pub fn scope(mut self, value: Option<StorageAuthenticationTokenScope>) -> Self {
         self.scope = value;
         self
     }
@@ -397,12 +397,12 @@ pub trait TokenStorage: Send + Sync {
     async fn create_token(
         &self,
         request: StorageTokenCreate,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError>;
 
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError>;
 
     async fn get_token_metadata(
         &self,
@@ -421,17 +421,17 @@ pub trait TokenStorage: Send + Sync {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 }
 
 #[cfg(test)]
@@ -443,7 +443,7 @@ mod tests {
         let request = StorageTokenCreate::new(
             PrincipalId::new(42).unwrap(),
             "sensitive-token-hash",
-            StorageTokenIssuancePolicy::new(24, 48).unwrap(),
+            StorageTokenIssuancePolicy::try_new(24, 48).unwrap(),
             EventContext::system(),
         )
         .name(Some("sensitive-name".to_string()));
@@ -457,15 +457,15 @@ mod tests {
     #[test]
     fn token_issuance_policy_rejects_invalid_lifetimes() {
         assert_eq!(
-            StorageTokenIssuancePolicy::new(0, 48),
+            StorageTokenIssuancePolicy::try_new(0, 48),
             Err(StorageTokenIssuancePolicyError::NonPositiveDefault)
         );
         assert_eq!(
-            StorageTokenIssuancePolicy::new(24, 0),
+            StorageTokenIssuancePolicy::try_new(24, 0),
             Err(StorageTokenIssuancePolicyError::NonPositiveMaximum)
         );
         assert_eq!(
-            StorageTokenIssuancePolicy::new(49, 48),
+            StorageTokenIssuancePolicy::try_new(49, 48),
             Err(StorageTokenIssuancePolicyError::DefaultExceedsMaximum)
         );
     }

@@ -6,7 +6,8 @@ use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
-use crate::{MutationOutcome, StorageError, StoragePage};
+use crate::validation::validate_sync_timestamps;
+use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageValidationError};
 
 /// Named fields returned when a storage user crosses an API boundary.
 pub struct StorageUserParts {
@@ -162,8 +163,7 @@ pub struct StorageUser {
 }
 
 impl StorageUser {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         id: UserId,
         password_hash: Option<String>,
         proper_name: Option<String>,
@@ -171,8 +171,18 @@ impl StorageUser {
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         anonymized_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "user updated_at must not precede created_at",
+            ));
+        }
+        if anonymized_at.is_some_and(|value| value < created_at || value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "user anonymized_at must be within its creation and update timestamps",
+            ));
+        }
+        Ok(Self {
             id,
             password_hash,
             proper_name,
@@ -180,7 +190,7 @@ impl StorageUser {
             created_at,
             updated_at,
             anonymized_at,
-        }
+        })
     }
 
     #[must_use]
@@ -290,9 +300,9 @@ impl StorageUserListItemBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageUserListItem {
-        StorageUserListItem {
+    pub fn try_build(self) -> Result<StorageUserListItem, StorageValidationError> {
+        validate_sync_timestamps(self.last_sync_attempted_at, self.last_sync_success_at)?;
+        Ok(StorageUserListItem {
             user: self.user,
             identity_scope: self.identity_scope,
             provider_kind: self.provider_kind,
@@ -301,7 +311,7 @@ impl StorageUserListItemBuilder {
             last_sync_attempted_at: self.last_sync_attempted_at,
             last_sync_success_at: self.last_sync_success_at,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -403,9 +413,13 @@ impl StorageUserDetailsBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageUserDetails {
-        StorageUserDetails {
+    pub fn try_build(self) -> Result<StorageUserDetails, StorageValidationError> {
+        if self.updated_at < self.created_at {
+            return Err(StorageValidationError::invalid(
+                "user details updated_at must not precede created_at",
+            ));
+        }
+        Ok(StorageUserDetails {
             id: self.id,
             proper_name: self.proper_name,
             email: self.email,
@@ -415,7 +429,7 @@ impl StorageUserDetailsBuilder {
             provider_managed: self.provider_managed,
             name: self.name,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -707,28 +721,28 @@ pub trait UserStorage: Send + Sync {
     async fn create_user(
         &self,
         request: StorageUserCreate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
 
     async fn update_user(
         &self,
         request: StorageUserUpdate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
 
     /// Replace a local password and revoke active credentials atomically.
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 
     async fn delete_user(
         &self,
         request: StorageUserDelete,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 
     async fn anonymize_user(
         &self,
         request: StorageUserAnonymize,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]

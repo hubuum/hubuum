@@ -4,9 +4,47 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{StorageBackupSnapshot, StorageError};
+use crate::{StorageBackupSnapshot, StorageError, StorageValidationError};
+
+fn validate_sha256(value: &str, description: &'static str) -> Result<(), StorageValidationError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(StorageValidationError::invalid(format!(
+            "{description} must contain exactly 64 lowercase hexadecimal characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_document_identity(
+    document: &[u8],
+    artifact: &StorageRestoreArtifactSummary,
+) -> Result<(), StorageValidationError> {
+    let byte_size = i64::try_from(document.len()).map_err(|_| {
+        StorageValidationError::too_large("Restore document exceeds the supported byte-size range")
+    })?;
+    if byte_size != artifact.byte_size {
+        return Err(StorageValidationError::invalid(
+            "Restore artifact byte size must match the document length",
+        ));
+    }
+    let sha256 = Sha256::digest(document)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if sha256 != artifact.sha256 {
+        return Err(StorageValidationError::invalid(
+            "Restore artifact SHA-256 digest must match the document",
+        ));
+    }
+    Ok(())
+}
 
 /// Persisted restore lifecycle state, independent of an adapter's encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,14 +68,14 @@ impl StorageRestoreJobStatus {
         }
     }
 
-    pub fn from_stored(value: &str) -> Result<Self, StorageError> {
+    pub fn from_stored(value: &str) -> Result<Self, StorageValidationError> {
         match value {
             "validated" => Ok(Self::Validated),
             "confirmed" => Ok(Self::Confirmed),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "expired" => Ok(Self::Expired),
-            _ => Err(StorageError::internal(format!(
+            _ => Err(StorageValidationError::invalid(format!(
                 "Unknown persisted restore status '{value}'"
             ))),
         }
@@ -81,16 +119,16 @@ impl StorageRestoreInitiator {
         principal_id: Option<PrincipalId>,
         identity_scope: impl Into<String>,
         name: impl Into<String>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         let identity_scope = identity_scope.into();
         let name = name.into();
         if identity_scope.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Restore initiator identity scope must not be empty",
             ));
         }
         if name.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Restore initiator name must not be empty",
             ));
         }
@@ -147,18 +185,17 @@ impl StorageRestoreArtifactSummaryParts {
 }
 
 impl StorageRestoreArtifactSummary {
-    pub fn try_new(byte_size: i64, sha256: impl Into<String>) -> Result<Self, StorageError> {
+    pub fn try_new(
+        byte_size: i64,
+        sha256: impl Into<String>,
+    ) -> Result<Self, StorageValidationError> {
         let sha256 = sha256.into();
         if byte_size < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Restore artifact byte size must not be negative",
             ));
         }
-        if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(StorageError::invalid_input(
-                "Restore artifact SHA-256 digest must contain exactly 64 hexadecimal characters",
-            ));
-        }
+        validate_sha256(&sha256, "Restore artifact SHA-256 digest")?;
         Ok(Self { byte_size, sha256 })
     }
 
@@ -168,6 +205,16 @@ impl StorageRestoreArtifactSummary {
             byte_size: self.byte_size,
             sha256: self.sha256,
         }
+    }
+
+    #[must_use]
+    pub const fn byte_size(&self) -> i64 {
+        self.byte_size
+    }
+
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
     }
 }
 
@@ -192,7 +239,7 @@ pub struct StorageRestoreTimestamps {
 }
 
 /// Named lifecycle timestamps for a staged restore.
-pub struct StorageRestoreTimestampParts {
+pub struct StorageRestoreTimestampsParts {
     expires_at: DateTime<Utc>,
     confirmed_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
@@ -200,7 +247,7 @@ pub struct StorageRestoreTimestampParts {
     updated_at: DateTime<Utc>,
 }
 
-impl StorageRestoreTimestampParts {
+impl StorageRestoreTimestampsParts {
     #[must_use]
     pub const fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
@@ -234,28 +281,38 @@ impl StorageRestoreTimestamps {
         finished_at: Option<DateTime<Utc>>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if updated_at < created_at {
-            return Err(StorageError::internal(
-                "Persisted restore updated_at must not be earlier than created_at",
+            return Err(StorageValidationError::invalid(
+                "restore updated_at must not be earlier than created_at",
             ));
         }
         if confirmed_at.is_some_and(|value| value < created_at) {
-            return Err(StorageError::internal(
-                "Persisted restore confirmed_at must not be earlier than created_at",
+            return Err(StorageValidationError::invalid(
+                "restore confirmed_at must not be earlier than created_at",
+            ));
+        }
+        if confirmed_at.is_some_and(|value| value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "restore confirmed_at must not be later than updated_at",
             ));
         }
         if finished_at.is_some_and(|value| value < created_at) {
-            return Err(StorageError::internal(
-                "Persisted restore finished_at must not be earlier than created_at",
+            return Err(StorageValidationError::invalid(
+                "restore finished_at must not be earlier than created_at",
+            ));
+        }
+        if finished_at.is_some_and(|value| value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "restore finished_at must not be later than updated_at",
             ));
         }
         if confirmed_at
             .zip(finished_at)
             .is_some_and(|(confirmed, finished)| finished < confirmed)
         {
-            return Err(StorageError::internal(
-                "Persisted restore finished_at must not be earlier than confirmed_at",
+            return Err(StorageValidationError::invalid(
+                "restore finished_at must not be earlier than confirmed_at",
             ));
         }
         Ok(Self {
@@ -273,8 +330,8 @@ impl StorageRestoreTimestamps {
     }
 
     #[must_use]
-    pub const fn into_parts(self) -> StorageRestoreTimestampParts {
-        StorageRestoreTimestampParts {
+    pub const fn into_parts(self) -> StorageRestoreTimestampsParts {
+        StorageRestoreTimestampsParts {
             expires_at: self.expires_at,
             confirmed_at: self.confirmed_at,
             finished_at: self.finished_at,
@@ -296,23 +353,45 @@ pub struct StorageRestoreJobSummary {
 }
 
 impl StorageRestoreJobSummary {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         id: RestoreJobId,
         status: StorageRestoreJobStatus,
         initiator: StorageRestoreInitiator,
         artifact: StorageRestoreArtifactSummary,
         error: Option<String>,
         timestamps: StorageRestoreTimestamps,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let timestamps_valid = match status {
+            StorageRestoreJobStatus::Validated | StorageRestoreJobStatus::Expired => {
+                timestamps.confirmed_at.is_none()
+                    && timestamps.finished_at.is_none()
+                    && error.is_none()
+            }
+            StorageRestoreJobStatus::Confirmed => {
+                timestamps.confirmed_at.is_some()
+                    && timestamps.finished_at.is_none()
+                    && error.is_none()
+            }
+            StorageRestoreJobStatus::Succeeded => {
+                timestamps.confirmed_at.is_some()
+                    && timestamps.finished_at.is_some()
+                    && error.is_none()
+            }
+            StorageRestoreJobStatus::Failed => timestamps.finished_at.is_some() && error.is_some(),
+        };
+        if !timestamps_valid {
+            return Err(StorageValidationError::invalid(
+                "restore status, timestamps, and error are inconsistent",
+            ));
+        }
+        Ok(Self {
             id,
             status,
             initiator,
             artifact,
             error,
             timestamps,
-        }
+        })
     }
 
     #[must_use]
@@ -378,23 +457,30 @@ pub struct StorageRestoreStageCreate {
 }
 
 impl StorageRestoreStageCreate {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         initiator: StorageRestoreInitiator,
         document: Vec<u8>,
         artifact: StorageRestoreArtifactSummary,
         capability_hash: impl Into<String>,
         validation_summary: Value,
         expires_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_document_identity(&document, &artifact)?;
+        let capability_hash = capability_hash.into();
+        validate_sha256(&capability_hash, "Restore capability hash")?;
+        if !validation_summary.is_object() {
+            return Err(StorageValidationError::invalid(
+                "Restore validation summary must be a JSON object",
+            ));
+        }
+        Ok(Self {
             initiator,
             document,
             artifact,
-            capability_hash: capability_hash.into(),
+            capability_hash,
             validation_summary,
             expires_at,
-        }
+        })
     }
 
     #[must_use]
@@ -441,17 +527,30 @@ pub struct StorageRestoreJob {
 }
 
 impl StorageRestoreJob {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         summary: StorageRestoreJobSummary,
         document: Vec<u8>,
         capability_hash: impl Into<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if matches!(
+            summary.status,
+            StorageRestoreJobStatus::Failed | StorageRestoreJobStatus::Expired
+        ) {
+            if !document.is_empty() {
+                return Err(StorageValidationError::invalid(
+                    "terminal restore jobs whose artifact was erased must have an empty document",
+                ));
+            }
+        } else {
+            validate_document_identity(&document, &summary.artifact)?;
+        }
+        let capability_hash = capability_hash.into();
+        validate_sha256(&capability_hash, "Restore capability hash")?;
+        Ok(Self {
             summary,
             document,
-            capability_hash: capability_hash.into(),
-        }
+            capability_hash,
+        })
     }
 
     #[must_use]
@@ -490,17 +589,23 @@ pub struct StorageRestoreStatus {
 }
 
 impl StorageRestoreStatus {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         summary: StorageRestoreJobSummary,
         capability_hash: impl Into<String>,
         validation_summary: Value,
-    ) -> Self {
-        Self {
-            summary,
-            capability_hash: capability_hash.into(),
-            validation_summary,
+    ) -> Result<Self, StorageValidationError> {
+        let capability_hash = capability_hash.into();
+        validate_sha256(&capability_hash, "Restore capability hash")?;
+        if !validation_summary.is_object() {
+            return Err(StorageValidationError::invalid(
+                "Restore validation summary must be a JSON object",
+            ));
         }
+        Ok(Self {
+            summary,
+            capability_hash,
+            validation_summary,
+        })
     }
 
     #[must_use]
@@ -623,9 +728,9 @@ impl StorageRestoreCompletion {
     pub fn try_new(
         started_at: DateTime<Utc>,
         finished_at: DateTime<Utc>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if finished_at < started_at {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Restore completion finished_at must not be earlier than started_at",
             ));
         }
@@ -718,13 +823,21 @@ pub struct StorageRestoreInstance {
 }
 
 impl StorageRestoreInstance {
-    #[must_use]
-    pub const fn new(instance_id: Uuid, maintenance_generation: i64, drained: bool) -> Self {
-        Self {
+    pub fn try_new(
+        instance_id: Uuid,
+        maintenance_generation: i64,
+        drained: bool,
+    ) -> Result<Self, StorageValidationError> {
+        if maintenance_generation < 0 {
+            return Err(StorageValidationError::invalid(
+                "restore instance maintenance generation must not be negative",
+            ));
+        }
+        Ok(Self {
             instance_id,
             maintenance_generation,
             drained,
-        }
+        })
     }
 
     #[must_use]
@@ -750,12 +863,28 @@ pub struct StorageRestoreDrainState {
 }
 
 impl StorageRestoreDrainState {
-    #[must_use]
-    pub const fn new(generation: i64, instances: Vec<StorageRestoreInstance>) -> Self {
-        Self {
+    pub fn try_new(
+        generation: i64,
+        instances: Vec<StorageRestoreInstance>,
+    ) -> Result<Self, StorageValidationError> {
+        if generation < 0 {
+            return Err(StorageValidationError::invalid(
+                "restore drain generation must not be negative",
+            ));
+        }
+        let mut instance_ids = std::collections::HashSet::with_capacity(instances.len());
+        if instances.iter().any(|instance| {
+            instance.maintenance_generation != generation
+                || !instance_ids.insert(instance.instance_id)
+        }) {
+            return Err(StorageValidationError::invalid(
+                "restore drain instances must have unique ids and match the drain generation",
+            ));
+        }
+        Ok(Self {
             generation,
             instances,
-        }
+        })
     }
 
     #[must_use]
@@ -876,19 +1005,25 @@ mod tests {
 
     #[test]
     fn restore_dtos_redact_documents_capabilities_and_identity() {
-        let request = StorageRestoreStageCreate::new(
+        let document_bytes = b"secret-document".to_vec();
+        let artifact_digest = Sha256::digest(&document_bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let request = StorageRestoreStageCreate::try_new(
             StorageRestoreInitiator::try_new(
                 PrincipalId::new(3).ok(),
                 "secret-scope",
                 "secret-name",
             )
             .unwrap(),
-            b"secret-document".to_vec(),
-            StorageRestoreArtifactSummary::try_new(15, "a".repeat(64)).unwrap(),
-            "secret-capability-hash",
+            document_bytes,
+            StorageRestoreArtifactSummary::try_new(15, artifact_digest).unwrap(),
+            "a".repeat(64),
             serde_json::json!({"secret-validation": true}),
             timestamp(),
-        );
+        )
+        .unwrap();
         let document = StorageRestoreDocument::new(
             StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
             StorageBackupSnapshot::try_new(
@@ -933,14 +1068,20 @@ mod tests {
     fn restore_initiators_reject_blank_identity_fields() {
         let error = StorageRestoreInitiator::try_new(None, " ", "operator").unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
     fn restore_artifacts_reject_malformed_sha256_digests() {
         let error = StorageRestoreArtifactSummary::try_new(15, "not-a-digest").unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -954,20 +1095,44 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
-    fn restore_timestamps_allow_lifecycle_markers_after_the_last_row_update() {
-        let timestamps = StorageRestoreTimestamps::try_new(
+    fn restore_timestamps_reject_confirmation_after_the_last_row_update() {
+        let error = StorageRestoreTimestamps::try_new(
             timestamp() + chrono::Duration::hours(1),
             Some(timestamp() + chrono::Duration::seconds(1)),
-            Some(timestamp() + chrono::Duration::seconds(2)),
+            None,
             timestamp(),
             timestamp(),
-        );
+        )
+        .unwrap_err();
 
-        assert!(timestamps.is_ok());
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn restore_timestamps_reject_finish_after_the_last_row_update() {
+        let error = StorageRestoreTimestamps::try_new(
+            timestamp() + chrono::Duration::hours(1),
+            None,
+            Some(timestamp() + chrono::Duration::seconds(1)),
+            timestamp(),
+            timestamp(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -978,6 +1143,9 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 }

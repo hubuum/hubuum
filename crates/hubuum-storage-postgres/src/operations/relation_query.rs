@@ -16,18 +16,19 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SortParam};
 use hubuum_storage_core::{
-    AuthorizationPermission, BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery,
-    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
-    RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageGraphClass,
-    StorageGraphObject, StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StorageAuthorizationPermission, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
+    StorageClassRelation, StorageGraphClass, StorageGraphObject, StorageGraphResource,
+    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery,
     StoragePage, StorageRelatedDirection, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRelatedSort, StorageVisibility,
+    StorageRelatedObjectIncludeRow, StorageRelatedObjectsForRootsQuery, StorageRelatedSort,
+    StorageRelationGraphQuery, StorageRelationIdsQuery, StorageRelationListQuery,
+    StorageRelationTouchingQuery, StorageVisibility,
 };
 
-const CLASS_RELATION_PERMISSION: AuthorizationPermission =
-    AuthorizationPermission::ReadClassRelation;
-const OBJECT_RELATION_PERMISSION: AuthorizationPermission =
-    AuthorizationPermission::ReadObjectRelation;
+const CLASS_RELATION_PERMISSION: StorageAuthorizationPermission =
+    StorageAuthorizationPermission::ReadClassRelation;
+const OBJECT_RELATION_PERMISSION: StorageAuthorizationPermission =
+    StorageAuthorizationPermission::ReadObjectRelation;
 
 macro_rules! bind_raw_sql_query {
     ($spec:expr) => {{
@@ -49,7 +50,7 @@ macro_rules! bind_raw_sql_query {
 /// List visible class relations with stable cursor paging and an optional count.
 pub async fn list_class_relations(
     runtime: &PostgresRuntime,
-    query: RelationListQuery,
+    query: StorageRelationListQuery,
 ) -> Result<StoragePage<StorageClassRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
@@ -106,7 +107,7 @@ pub async fn list_class_relations(
 /// List visible object relations with stable cursor paging and an optional count.
 pub async fn list_object_relations(
     runtime: &PostgresRuntime,
-    query: RelationListQuery,
+    query: StorageRelationListQuery,
 ) -> Result<StoragePage<StorageObjectRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
@@ -153,7 +154,7 @@ pub async fn list_object_relations(
 /// List class relations touching one class.
 pub async fn list_class_relations_touching(
     runtime: &PostgresRuntime,
-    query: RelationTouchingQuery,
+    query: StorageRelationTouchingQuery,
 ) -> Result<StoragePage<StorageClassRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (class_id, options, visibility) = query.into_parts();
@@ -209,7 +210,7 @@ pub async fn list_class_relations_touching(
 /// List object relations touching one object.
 pub async fn list_object_relations_touching(
     runtime: &PostgresRuntime,
-    query: RelationTouchingQuery,
+    query: StorageRelationTouchingQuery,
 ) -> Result<StoragePage<StorageObjectRelation>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (object_id, options, visibility) = query.into_parts();
@@ -263,7 +264,7 @@ pub async fn list_object_relations_touching(
 /// Return visible class relations touching any supplied class id.
 pub async fn list_class_relations_touching_ids(
     runtime: &PostgresRuntime,
-    query: RelationIdsQuery,
+    query: StorageRelationIdsQuery,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
     class_relations_for_ids(runtime, query, IdMatch::Touching).await
 }
@@ -271,7 +272,7 @@ pub async fn list_class_relations_touching_ids(
 /// Return visible class relations whose endpoints are both supplied ids.
 pub async fn list_class_relations_between_ids(
     runtime: &PostgresRuntime,
-    query: RelationIdsQuery,
+    query: StorageRelationIdsQuery,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
     class_relations_for_ids(runtime, query, IdMatch::Between).await
 }
@@ -279,7 +280,7 @@ pub async fn list_class_relations_between_ids(
 /// Return visible object relations whose endpoints are both supplied ids.
 pub async fn list_object_relations_between_ids(
     runtime: &PostgresRuntime,
-    query: RelationIdsQuery,
+    query: StorageRelationIdsQuery,
 ) -> Result<Vec<StorageObjectRelation>, PostgresStorageError> {
     let (ids, visibility) = query.into_parts();
     if ids.is_empty() || !visibility.allows_permissions(&[OBJECT_RELATION_PERMISSION]) {
@@ -309,7 +310,7 @@ pub async fn list_object_relations_between_ids(
 /// Return a bounded set of visible object relations touching supplied ids.
 pub async fn list_object_relations_touching_ids(
     runtime: &PostgresRuntime,
-    query: ObjectRelationsTouchingIdsQuery,
+    query: StorageObjectRelationsTouchingIdsQuery,
 ) -> Result<Vec<StorageObjectRelation>, PostgresStorageError> {
     let (ids, excluded_ids, max_results, visibility) = query.into_parts();
     if ids.is_empty()
@@ -359,7 +360,7 @@ pub async fn list_object_relations_touching_ids(
 /// Return classes reachable from one class, with PostgreSQL-native filtering and paging.
 pub async fn list_related_classes(
     runtime: &PostgresRuntime,
-    query: RelationGraphQuery,
+    query: StorageRelationGraphQuery,
 ) -> Result<StoragePage<StorageClassGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
@@ -367,8 +368,8 @@ pub async fn list_related_classes(
     let permissions = required_permissions(
         &options,
         [
-            AuthorizationPermission::ReadClass,
-            AuthorizationPermission::ReadClassRelation,
+            StorageAuthorizationPermission::ReadClass,
+            StorageAuthorizationPermission::ReadClassRelation,
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
@@ -422,7 +423,7 @@ pub async fn list_related_classes(
 /// Return objects reachable from one object, with PostgreSQL-native filtering and paging.
 pub async fn list_related_objects(
     runtime: &PostgresRuntime,
-    query: RelationGraphQuery,
+    query: StorageRelationGraphQuery,
 ) -> Result<StoragePage<StorageObjectGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (root_id, options, visibility) = query.into_parts();
@@ -430,8 +431,8 @@ pub async fn list_related_objects(
     let permissions = required_permissions(
         &options,
         [
-            AuthorizationPermission::ReadObject,
-            AuthorizationPermission::ReadObjectRelation,
+            StorageAuthorizationPermission::ReadObject,
+            StorageAuthorizationPermission::ReadObjectRelation,
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
@@ -485,7 +486,7 @@ pub async fn list_related_objects(
 /// Walk directional object relations for several roots in one bounded query.
 pub async fn list_related_objects_for_roots(
     runtime: &PostgresRuntime,
-    query: RelatedObjectsForRootsQuery,
+    query: StorageRelatedObjectsForRootsQuery,
 ) -> Result<Vec<StorageRelatedObjectIncludeRow>, PostgresStorageError> {
     let (
         root_ids,
@@ -503,8 +504,8 @@ pub async fn list_related_objects_for_roots(
     }
     validate_graph_bounds(max_depth, limit)?;
     let permissions = [
-        AuthorizationPermission::ReadObject,
-        AuthorizationPermission::ReadObjectRelation,
+        StorageAuthorizationPermission::ReadObject,
+        StorageAuthorizationPermission::ReadObjectRelation,
     ];
     if !visibility.allows_permissions(&permissions) {
         return Ok(Vec::new());
@@ -557,7 +558,7 @@ pub async fn list_related_objects_for_roots(
 /// Walk bidirectional object relations for several roots in one bounded query.
 pub async fn list_bidirectionally_related_objects_for_roots(
     runtime: &PostgresRuntime,
-    query: BidirectionalRelatedObjectsQuery,
+    query: StorageBidirectionalRelatedObjectsQuery,
 ) -> Result<Vec<StorageRelatedObjectForRootRow>, PostgresStorageError> {
     let (root_ids, max_depth, per_root_cap, preserve_alternative_paths, visibility) =
         query.into_parts();
@@ -566,8 +567,8 @@ pub async fn list_bidirectionally_related_objects_for_roots(
     }
     validate_graph_bounds(max_depth, per_root_cap)?;
     let permissions = [
-        AuthorizationPermission::ReadObject,
-        AuthorizationPermission::ReadObjectRelation,
+        StorageAuthorizationPermission::ReadObject,
+        StorageAuthorizationPermission::ReadObjectRelation,
     ];
     if !visibility.allows_permissions(&permissions) {
         return Ok(Vec::new());
@@ -1653,23 +1654,26 @@ impl ClassGraphQueryRow {
             CollectionId::new(self.descendant_collection_id)?,
             self.descendant_description,
         );
-        Ok(StorageClassGraphRow::new(
-            StorageGraphClass::new(
-                ancestor_resource,
-                self.ancestor_json_schema,
-                self.ancestor_validate_schema,
+        crate::validate_persisted(
+            "class graph row",
+            StorageClassGraphRow::try_new(
+                StorageGraphClass::new(
+                    ancestor_resource,
+                    self.ancestor_json_schema,
+                    self.ancestor_validate_schema,
+                ),
+                StorageGraphClass::new(
+                    descendant_resource,
+                    self.descendant_json_schema,
+                    self.descendant_validate_schema,
+                ),
+                self.depth,
+                self.path
+                    .into_iter()
+                    .map(ClassId::new)
+                    .collect::<Result<Vec<_>, _>>()?,
             ),
-            StorageGraphClass::new(
-                descendant_resource,
-                self.descendant_json_schema,
-                self.descendant_validate_schema,
-            ),
-            self.depth,
-            self.path
-                .into_iter()
-                .map(ClassId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-        ))
+        )
     }
 }
 
@@ -1743,15 +1747,18 @@ impl ObjectGraphQueryRow {
             revision: self.descendant_revision,
         }
         .into_storage()?;
-        Ok(StorageObjectGraphRow::new(
-            ancestor,
-            descendant,
-            self.depth,
-            self.path
-                .into_iter()
-                .map(ObjectId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-        ))
+        crate::validate_persisted(
+            "object graph row",
+            StorageObjectGraphRow::try_new(
+                ancestor,
+                descendant,
+                self.depth,
+                self.path
+                    .into_iter()
+                    .map(ObjectId::new)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        )
     }
 }
 
@@ -1765,10 +1772,13 @@ struct RelatedObjectIncludeQueryRow {
 
 impl RelatedObjectIncludeQueryRow {
     fn into_storage(self) -> Result<StorageRelatedObjectIncludeRow, PostgresStorageError> {
-        Ok(StorageRelatedObjectIncludeRow::new(
-            ObjectId::new(self.root_object_id)?,
-            self.graph.into_storage()?,
-        ))
+        crate::validate_persisted(
+            "related object include row",
+            StorageRelatedObjectIncludeRow::try_new(
+                ObjectId::new(self.root_object_id)?,
+                self.graph.into_storage()?,
+            ),
+        )
     }
 }
 
@@ -1814,15 +1824,18 @@ impl RelatedObjectForRootQueryRow {
             revision: self.descendant_revision,
         }
         .into_storage()?;
-        Ok(StorageRelatedObjectForRootRow::new(
-            ObjectId::new(self.root_object_id)?,
-            descendant,
-            self.depth,
-            self.path
-                .into_iter()
-                .map(ObjectId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-        ))
+        crate::validate_persisted(
+            "related object for-root row",
+            StorageRelatedObjectForRootRow::try_new(
+                ObjectId::new(self.root_object_id)?,
+                descendant,
+                self.depth,
+                self.path
+                    .into_iter()
+                    .map(ObjectId::new)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        )
     }
 }
 
@@ -1868,7 +1881,7 @@ enum IdMatch {
 
 async fn class_relations_for_ids(
     runtime: &PostgresRuntime,
-    query: RelationIdsQuery,
+    query: StorageRelationIdsQuery,
     mode: IdMatch,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
     let (ids, visibility) = query.into_parts();
@@ -2133,8 +2146,8 @@ async fn class_name_filter_ids(
         return Ok((None, None));
     }
     let class_permissions = [
-        AuthorizationPermission::ReadCollection,
-        AuthorizationPermission::ReadClass,
+        StorageAuthorizationPermission::ReadCollection,
+        StorageAuthorizationPermission::ReadClass,
     ];
     if !visibility.allows_permissions(&class_permissions) {
         return Ok((from.map(|_| Vec::new()), to.map(|_| Vec::new())));

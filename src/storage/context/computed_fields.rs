@@ -73,7 +73,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,
@@ -90,7 +90,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,
@@ -107,7 +107,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClassComputationState>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,
@@ -124,7 +124,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,
@@ -141,7 +141,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,
@@ -158,7 +158,7 @@ impl ComputedFieldStorage for StorageHandle {
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ComputedField,

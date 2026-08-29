@@ -12,8 +12,8 @@ use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, resource_id_to_storage,
 };
 use crate::storage::{
-    RemoteTargetStorage, StorageContext, StorageRemoteHttpMethod, StorageRemoteTarget,
-    StorageRemoteTargetCreate, StorageRemoteTargetDefinition, StorageRemoteTargetDelete,
+    RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetHttpMethod,
     StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
     StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
     StorageRemoteTargetUpdate, storage_handle,
@@ -79,14 +79,16 @@ pub(crate) async fn create_remote_target(
             input.body_template,
             serde_json::to_value(input.auth_config)?,
             input.timeout_ms,
-        )?,
+        )
+        .map_err(|error| ApiError::from(error.into_request_error()))?,
         StorageRemoteTargetPolicy::try_new(
             input
                 .class_id
                 .map(|class_id| class_id_to_storage(class_id.id())),
             subject_types_to_storage(input.allowed_subject_types),
             input.enabled,
-        )?,
+        )
+        .map_err(|error| ApiError::from(error.into_request_error()))?,
     );
     let target = storage_handle(backend)
         .create_remote_target(StorageRemoteTargetCreate::new(
@@ -208,12 +210,12 @@ pub(crate) async fn record_remote_target_invocation(
     Ok(())
 }
 
-fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteHttpMethod {
+fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteTargetHttpMethod {
     match method {
-        RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
-        RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
-        RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
-        RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+        RemoteHttpMethod::Get => StorageRemoteTargetHttpMethod::Get,
+        RemoteHttpMethod::Post => StorageRemoteTargetHttpMethod::Post,
+        RemoteHttpMethod::Patch => StorageRemoteTargetHttpMethod::Patch,
+        RemoteHttpMethod::Delete => StorageRemoteTargetHttpMethod::Delete,
     }
 }
 

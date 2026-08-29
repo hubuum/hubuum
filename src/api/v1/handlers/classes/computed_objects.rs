@@ -20,7 +20,7 @@ use crate::services::computed_objects::{
     ComputedObjectAccess, ComputedObjectListResult, list_computed_objects,
 };
 use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
-use crate::storage::ComputedObjectProjection;
+use crate::storage::StorageComputedObjectProjection;
 use crate::traits::AuthzSubject;
 use crate::traits::scope_allows;
 
@@ -45,13 +45,11 @@ impl ResolvedComputedObjectQuery<'_> {
         include_computed: bool,
     ) -> Result<ComputedObjectListResult, ApiError> {
         let projection = if include_computed {
-            ComputedObjectProjection::All
+            StorageComputedObjectProjection::All
         } else if self.sorts_by_computed {
-            ComputedObjectProjection::CursorBoundary {
-                page_limit: effective_page_limit(self.params)?,
-            }
+            StorageComputedObjectProjection::CursorBoundary
         } else {
-            ComputedObjectProjection::None
+            StorageComputedObjectProjection::None
         };
         let access = match visibility {
             ComputedListVisibility::SqlPushdown => ComputedObjectAccess::Storage {

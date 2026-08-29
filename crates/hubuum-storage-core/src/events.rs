@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::{AuditReceipt, StorageError};
+use crate::{StorageAuditReceipt, StorageError, StorageValidationError};
 
 /// One committed event returned by a storage adapter after an append or read.
 ///
@@ -47,16 +47,17 @@ impl StorageRecordedEvent {
 
     /// Reduce the committed event to the non-sensitive proof returned by
     /// ordinary mutation APIs.
-    pub fn into_audit_receipt(self) -> Result<AuditReceipt, StorageError> {
+    #[must_use]
+    pub fn into_audit_receipt(self) -> StorageAuditReceipt {
         let (envelope, before_revision, after_revision) = self.into_parts();
-        Ok(AuditReceipt::new(
+        StorageAuditReceipt::new(
             envelope.id(),
             EventId::from(envelope.event_id()),
             envelope.entity_type(),
             envelope.action(),
             before_revision,
             after_revision,
-        ))
+        )
     }
 }
 
@@ -77,20 +78,20 @@ pub trait EventFanoutStorage: Send + Sync {
 /// Consumers return this value when acknowledging success or failure. The
 /// claim token is intentionally private and redacted from diagnostics.
 #[derive(Clone, PartialEq, Eq)]
-pub struct EventDeliveryClaim {
+pub struct StorageEventDeliveryClaim {
     delivery_id: EventDeliveryId,
     attempts: i32,
     token: Uuid,
 }
 
-impl EventDeliveryClaim {
+impl StorageEventDeliveryClaim {
     pub fn try_new(
         delivery_id: EventDeliveryId,
         attempts: i32,
         token: Uuid,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if attempts < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "An event delivery claim cannot have a negative attempt count",
             ));
         }
@@ -117,10 +118,10 @@ impl EventDeliveryClaim {
     }
 }
 
-impl std::fmt::Debug for EventDeliveryClaim {
+impl std::fmt::Debug for StorageEventDeliveryClaim {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("EventDeliveryClaim")
+            .debug_struct("StorageEventDeliveryClaim")
             .field("delivery_id", &self.delivery_id)
             .field("attempts", &self.attempts)
             .field("token", &"<redacted>")
@@ -130,7 +131,7 @@ impl std::fmt::Debug for EventDeliveryClaim {
 
 /// Sink settings required by a delivery transport.
 #[derive(Clone, PartialEq, Eq)]
-pub struct EventDeliverySink {
+pub struct StorageEventDeliverySink {
     id: EventSinkId,
     name: String,
     kind: String,
@@ -138,28 +139,28 @@ pub struct EventDeliverySink {
     secret_ref: Option<String>,
 }
 
-impl EventDeliverySink {
+impl StorageEventDeliverySink {
     pub fn try_new(
         id: EventSinkId,
         name: impl Into<String>,
         kind: impl Into<String>,
         configuration: Value,
         secret_ref: Option<String>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         let name = name.into();
         if name.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery sink name must not be empty",
             ));
         }
         let kind = kind.into();
         if kind.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery sink kind must not be empty",
             ));
         }
         if !configuration.is_object() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery sink configuration must be a JSON object",
             ));
         }
@@ -167,7 +168,7 @@ impl EventDeliverySink {
             .as_deref()
             .is_some_and(|value| value.trim().is_empty())
         {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery sink secret_ref must not be empty",
             ));
         }
@@ -206,10 +207,10 @@ impl EventDeliverySink {
     }
 }
 
-impl std::fmt::Debug for EventDeliverySink {
+impl std::fmt::Debug for StorageEventDeliverySink {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("EventDeliverySink")
+            .debug_struct("StorageEventDeliverySink")
             .field("id", &self.id)
             .field("name", &self.name)
             .field("kind", &self.kind)
@@ -224,26 +225,26 @@ impl std::fmt::Debug for EventDeliverySink {
 
 /// Subscription routing settings required by a delivery transport.
 #[derive(Clone, PartialEq, Eq)]
-pub struct EventDeliverySubscription {
+pub struct StorageEventDeliverySubscription {
     id: EventSubscriptionId,
     name: String,
     routing: Value,
 }
 
-impl EventDeliverySubscription {
+impl StorageEventDeliverySubscription {
     pub fn try_new(
         id: EventSubscriptionId,
         name: impl Into<String>,
         routing: Value,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         let name = name.into();
         if name.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery subscription name must not be empty",
             ));
         }
         if !routing.is_object() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery subscription routing must be a JSON object",
             ));
         }
@@ -266,10 +267,10 @@ impl EventDeliverySubscription {
     }
 }
 
-impl std::fmt::Debug for EventDeliverySubscription {
+impl std::fmt::Debug for StorageEventDeliverySubscription {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("EventDeliverySubscription")
+            .debug_struct("StorageEventDeliverySubscription")
             .field("id", &self.id)
             .field("name", &self.name)
             .field("routing", &"<redacted>")
@@ -279,20 +280,20 @@ impl std::fmt::Debug for EventDeliverySubscription {
 
 /// Complete, backend-neutral work item handed to the delivery application.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EventDeliveryWorkItem {
-    claim: EventDeliveryClaim,
+pub struct StorageEventDeliveryWorkItem {
+    claim: StorageEventDeliveryClaim,
     envelope: EventEnvelope,
-    subscription: EventDeliverySubscription,
-    sink: EventDeliverySink,
+    subscription: StorageEventDeliverySubscription,
+    sink: StorageEventDeliverySink,
 }
 
-impl EventDeliveryWorkItem {
+impl StorageEventDeliveryWorkItem {
     #[must_use]
     pub const fn new(
-        claim: EventDeliveryClaim,
+        claim: StorageEventDeliveryClaim,
         envelope: EventEnvelope,
-        subscription: EventDeliverySubscription,
-        sink: EventDeliverySink,
+        subscription: StorageEventDeliverySubscription,
+        sink: StorageEventDeliverySink,
     ) -> Self {
         Self {
             claim,
@@ -306,10 +307,10 @@ impl EventDeliveryWorkItem {
     pub fn into_parts(
         self,
     ) -> (
-        EventDeliveryClaim,
+        StorageEventDeliveryClaim,
         EventEnvelope,
-        EventDeliverySubscription,
-        EventDeliverySink,
+        StorageEventDeliverySubscription,
+        StorageEventDeliverySink,
     ) {
         (self.claim, self.envelope, self.subscription, self.sink)
     }
@@ -317,15 +318,15 @@ impl EventDeliveryWorkItem {
 
 /// One claim operation and its earliest scheduled retry, if no rows were due.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EventDeliveryBatch {
-    deliveries: Vec<EventDeliveryWorkItem>,
+pub struct StorageEventDeliveryBatch {
+    deliveries: Vec<StorageEventDeliveryWorkItem>,
     next_wakeup_in: Option<Duration>,
 }
 
-impl EventDeliveryBatch {
+impl StorageEventDeliveryBatch {
     #[must_use]
     pub const fn new(
-        deliveries: Vec<EventDeliveryWorkItem>,
+        deliveries: Vec<StorageEventDeliveryWorkItem>,
         next_wakeup_in: Option<Duration>,
     ) -> Self {
         Self {
@@ -335,7 +336,7 @@ impl EventDeliveryBatch {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<EventDeliveryWorkItem>, Option<Duration>) {
+    pub fn into_parts(self) -> (Vec<StorageEventDeliveryWorkItem>, Option<Duration>) {
         (self.deliveries, self.next_wakeup_in)
     }
 }
@@ -352,16 +353,16 @@ pub trait EventDeliveryWorkerStorage: Send + Sync {
     async fn claim_event_delivery_batch(
         &self,
         settings: hubuum_domain::EventDeliverySettings,
-    ) -> Result<EventDeliveryBatch, StorageError>;
+    ) -> Result<StorageEventDeliveryBatch, StorageError>;
 
     async fn mark_event_delivery_succeeded(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError>;
 
     async fn mark_event_delivery_failed(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
         settings: hubuum_domain::EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError>;
@@ -373,19 +374,22 @@ pub trait EventDeliveryWorkerStorage: Send + Sync {
 /// transport-neutral JSON document. Consumers can persist the document
 /// without depending on a backend row type or inspecting claim metadata.
 #[derive(Clone, PartialEq, Eq)]
-pub struct RetainedEvent {
+pub struct StorageRetainedEvent {
     id: EventSequence,
     json: String,
 }
 
-impl RetainedEvent {
-    pub fn try_new(id: EventSequence, json: impl Into<String>) -> Result<Self, StorageError> {
+impl StorageRetainedEvent {
+    pub fn try_new(
+        id: EventSequence,
+        json: impl Into<String>,
+    ) -> Result<Self, StorageValidationError> {
         let json = json.into();
         let document: serde_json::Value = serde_json::from_str(&json).map_err(|error| {
-            StorageError::internal(format!("Retained event is not valid JSON: {error}"))
+            StorageValidationError::invalid(format!("Retained event is not valid JSON: {error}"))
         })?;
         if !document.is_object() {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Retained event JSON must be an object",
             ));
         }
@@ -403,10 +407,10 @@ impl RetainedEvent {
     }
 }
 
-impl std::fmt::Debug for RetainedEvent {
+impl std::fmt::Debug for StorageRetainedEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("RetainedEvent")
+            .debug_struct("StorageRetainedEvent")
             .field("id", &self.id)
             .field("json", &"<redacted>")
             .finish()
@@ -415,9 +419,9 @@ impl std::fmt::Debug for RetainedEvent {
 
 /// Stable identifier for a durably claimed event-retention batch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EventRetentionBatchId(Uuid);
+pub struct StorageEventRetentionBatchId(Uuid);
 
-impl EventRetentionBatchId {
+impl StorageEventRetentionBatchId {
     #[must_use]
     pub const fn new(id: Uuid) -> Self {
         Self(id)
@@ -431,24 +435,24 @@ impl EventRetentionBatchId {
 
 /// A durably claimed, retryable batch of events awaiting archival and purge.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EventRetentionBatch {
-    id: EventRetentionBatchId,
-    events: Vec<RetainedEvent>,
+pub struct StorageEventRetentionBatch {
+    id: StorageEventRetentionBatchId,
+    events: Vec<StorageRetainedEvent>,
 }
 
-impl EventRetentionBatch {
+impl StorageEventRetentionBatch {
     #[must_use]
-    pub const fn new(id: EventRetentionBatchId, events: Vec<RetainedEvent>) -> Self {
+    pub const fn new(id: StorageEventRetentionBatchId, events: Vec<StorageRetainedEvent>) -> Self {
         Self { id, events }
     }
 
     #[must_use]
-    pub const fn id(&self) -> EventRetentionBatchId {
+    pub const fn id(&self) -> StorageEventRetentionBatchId {
         self.id
     }
 
     #[must_use]
-    pub fn events(&self) -> &[RetainedEvent] {
+    pub fn events(&self) -> &[StorageRetainedEvent] {
         &self.events
     }
 
@@ -460,21 +464,21 @@ impl EventRetentionBatch {
 
 /// Application-owned destination for durably claimed retention batches.
 ///
-/// Implementations must be idempotent by [`EventRetentionBatch::id`]. A
+/// Implementations must be idempotent by [`StorageEventRetentionBatch::id`]. A
 /// retry of the same batch must succeed without duplicating archived events.
 #[async_trait]
 pub trait EventArchiveSink: Send + Sync {
-    async fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError>;
+    async fn archive(&self, batch: &StorageEventRetentionBatch) -> Result<(), StorageError>;
 }
 
 /// Counts produced by one bounded retention operation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct EventRetentionSummary {
+pub struct StorageEventRetentionSummary {
     purged_events: usize,
     purged_terminal_deliveries: usize,
 }
 
-impl EventRetentionSummary {
+impl StorageEventRetentionSummary {
     #[must_use]
     pub const fn new(purged_events: usize, purged_terminal_deliveries: usize) -> Self {
         Self {
@@ -509,12 +513,12 @@ pub trait EventRetentionStorage: Send + Sync {
     async fn claim_event_retention_batch(
         &self,
         settings: EventRetentionSettings,
-    ) -> Result<Option<EventRetentionBatch>, StorageError>;
+    ) -> Result<Option<StorageEventRetentionBatch>, StorageError>;
 
     async fn complete_event_retention_batch(
         &self,
-        batch_id: EventRetentionBatchId,
-    ) -> Result<EventRetentionSummary, StorageError>;
+        batch_id: StorageEventRetentionBatchId,
+    ) -> Result<StorageEventRetentionSummary, StorageError>;
 }
 
 /// Execute the application-owned claim/archive/ack protocol.
@@ -526,12 +530,12 @@ pub async fn execute_event_retention_batch<S>(
     storage: &S,
     settings: EventRetentionSettings,
     archive: &dyn EventArchiveSink,
-) -> Result<EventRetentionSummary, StorageError>
+) -> Result<StorageEventRetentionSummary, StorageError>
 where
     S: EventRetentionStorage + ?Sized,
 {
     let Some(batch) = storage.claim_event_retention_batch(settings).await? else {
-        return Ok(EventRetentionSummary::default());
+        return Ok(StorageEventRetentionSummary::default());
     };
     if !batch.is_empty() {
         archive.archive(&batch).await?;
@@ -547,8 +551,8 @@ mod tests {
     fn delivery_dto_debug_output_redacts_claim_and_transport_secrets() {
         let token = Uuid::new_v4();
         let claim =
-            EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), 2, token).unwrap();
-        let sink = EventDeliverySink::try_new(
+            StorageEventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), 2, token).unwrap();
+        let sink = StorageEventDeliverySink::try_new(
             EventSinkId::new(8).unwrap(),
             "webhook",
             "webhook",
@@ -556,7 +560,7 @@ mod tests {
             Some("secret-reference".to_string()),
         )
         .unwrap();
-        let subscription = EventDeliverySubscription::try_new(
+        let subscription = StorageEventDeliverySubscription::try_new(
             EventSubscriptionId::new(9).unwrap(),
             "subscription",
             serde_json::json!({"url": "https://routing-secret.invalid"}),
@@ -574,15 +578,19 @@ mod tests {
     #[test]
     fn delivery_claim_rejects_negative_attempts() {
         assert!(
-            EventDeliveryClaim::try_new(EventDeliveryId::new(7).unwrap(), -1, Uuid::new_v4(),)
-                .is_err()
+            StorageEventDeliveryClaim::try_new(
+                EventDeliveryId::new(7).unwrap(),
+                -1,
+                Uuid::new_v4(),
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn delivery_transport_values_reject_invalid_shapes() {
         assert!(
-            EventDeliverySink::try_new(
+            StorageEventDeliverySink::try_new(
                 EventSinkId::new(8).unwrap(),
                 "sink",
                 "webhook",
@@ -592,7 +600,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            EventDeliverySubscription::try_new(
+            StorageEventDeliverySubscription::try_new(
                 EventSubscriptionId::new(9).unwrap(),
                 "subscription",
                 serde_json::json!([]),
@@ -603,7 +611,7 @@ mod tests {
 
     #[test]
     fn retained_event_debug_output_redacts_the_serialized_payload() {
-        let event = RetainedEvent::try_new(
+        let event = StorageRetainedEvent::try_new(
             EventSequence::new(11).unwrap(),
             r#"{"metadata":"payload-secret"}"#,
         )
@@ -617,15 +625,19 @@ mod tests {
 
     #[test]
     fn retained_events_reject_non_object_json() {
-        let error = RetainedEvent::try_new(EventSequence::new(11).unwrap(), "[]").unwrap_err();
+        let error =
+            StorageRetainedEvent::try_new(EventSequence::new(11).unwrap(), "[]").unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
     fn retention_summary_reports_whether_the_backend_did_work() {
-        assert!(!EventRetentionSummary::default().did_work());
-        assert!(EventRetentionSummary::new(1, 0).did_work());
-        assert!(EventRetentionSummary::new(0, 1).did_work());
+        assert!(!StorageEventRetentionSummary::default().did_work());
+        assert!(StorageEventRetentionSummary::new(1, 0).did_work());
+        assert!(StorageEventRetentionSummary::new(0, 1).did_work());
     }
 }

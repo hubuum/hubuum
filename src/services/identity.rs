@@ -9,10 +9,10 @@ use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::search::QueryOptions;
 use crate::models::{
     CollectionID, Group, HubuumClassID, HubuumObjectID, IdentityScope, NewServiceAccount,
-    Permissions, PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, ServiceAccount, ServiceAccountWithName, TokenListState,
-    TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount, UpdateUser, User,
-    UserPointResponse, UserWithName, configured_token_lifetime,
+    PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
+    ServiceAccount, ServiceAccountWithName, TokenListState, TokenResourceScope, TokenScope,
+    TokenScopeDetails, UpdateServiceAccount, UpdateUser, User, UserPointResponse, UserWithName,
+    configured_token_lifetime,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::services::storage_boundary::{
@@ -20,19 +20,20 @@ use crate::services::storage_boundary::{
     principal_id_to_storage,
 };
 use crate::storage::{
-    AuthenticationResourceScope, AuthenticationTokenScope, ExternalIdentityStorage,
-    GroupMembershipStorage, IdentityScopeStorage, LocalIdentityCredentialStorage,
-    ServiceAccountStorage, StorageContext, StorageExternalGroup, StorageExternalPrincipalState,
-    StorageExternalUserSync, StorageIdentityGroup, StorageIdentityScope,
-    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
-    StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountDetails, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy,
-    StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata, StorageTokenObservation,
-    StorageTokenRenew, StorageTokenRevoke, StorageUser, StorageUserAnonymize, StorageUserCreate,
-    StorageUserDelete, StorageUserDetails, StorageUserListItem, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserUpdate, TokenStorage, UserStorage, storage_handle,
+    ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
+    LocalIdentityCredentialStorage, ServiceAccountStorage, StorageAuthenticationResourceScope,
+    StorageAuthenticationTokenScope, StorageContext, StorageExternalGroup,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityGroup,
+    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
+    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke,
+    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser,
+    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
+    TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -129,17 +130,15 @@ fn token_state(state: TokenListState) -> StorageTokenListState {
 }
 
 fn token_scope_from_storage(
-    scope: AuthenticationTokenScope,
+    scope: StorageAuthenticationTokenScope,
 ) -> Result<TokenScopeDetails, ApiError> {
     let (permissions, resources) = scope.into_parts();
-    let permissions = permissions
-        .map(|permissions| {
-            permissions
-                .into_iter()
-                .map(|permission| Permissions::from_string(&permission))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
+    let permissions = permissions.map(|permissions| {
+        permissions
+            .into_iter()
+            .map(crate::permissions::permission_from_storage)
+            .collect::<Vec<_>>()
+    });
     let resources = resources
         .map(|resources| {
             let (collections, classes, objects) = resources.into_parts();
@@ -233,15 +232,16 @@ fn user_point_from_storage(point: StorageUserDetails) -> Result<UserPointRespons
     })
 }
 
-pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenScope {
+pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> StorageAuthenticationTokenScope {
     let permissions = scope.permissions().map(|permissions| {
         permissions
             .iter()
-            .map(ToString::to_string)
+            .copied()
+            .map(crate::permissions::permission_to_storage)
             .collect::<Vec<_>>()
     });
     let resources = scope.resource_ids().map(|resources| {
-        AuthenticationResourceScope::new(
+        StorageAuthenticationResourceScope::new(
             resources
                 .collection_ids()
                 .iter()
@@ -262,11 +262,11 @@ pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> AuthenticationTokenS
                 .collect(),
         )
     });
-    AuthenticationTokenScope::new(permissions, resources)
+    StorageAuthenticationTokenScope::new(permissions, resources)
 }
 
 fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssuancePolicy {
-    StorageTokenIssuancePolicy::new(
+    StorageTokenIssuancePolicy::try_new(
         policy.default_lifetime().hours(),
         policy.maximum_lifetime().hours(),
     )
@@ -276,7 +276,7 @@ fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssua
 fn token_observation() -> Result<StorageTokenObservation, ApiError> {
     let observed_at = chrono::Utc::now().naive_utc().trunc_subsecs(6);
     let legacy_valid_after = configured_token_lifetime()?.cutoff_from(observed_at)?;
-    StorageTokenObservation::new(observed_at.and_utc(), legacy_valid_after.and_utc())
+    StorageTokenObservation::try_new(observed_at.and_utc(), legacy_valid_after.and_utc())
         .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
@@ -831,7 +831,7 @@ pub async fn disable_service_account(
     let (account, cancelled_task_kinds) = outcome.into_value().into_parts();
     for task_kind in cancelled_task_kinds {
         crate::observability::metrics::task_completed(
-            &task_kind,
+            task_kind.as_str(),
             crate::models::TaskStatus::Cancelled.as_str(),
             None,
         );

@@ -12,7 +12,7 @@ impl CollectionStorage for PostgresStorage {
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::create_collection(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -23,7 +23,7 @@ impl CollectionStorage for PostgresStorage {
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::update_collection(self.runtime(), id.id(), changes, context)
             .await
             .map_err(StorageError::from)
@@ -33,7 +33,7 @@ impl CollectionStorage for PostgresStorage {
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::collection::delete_collection(self.runtime(), id.id(), context)
             .await
             .map_err(StorageError::from)
@@ -62,7 +62,7 @@ impl CollectionStorage for PostgresStorage {
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         crate::operations::collection::move_collection(
             self.runtime(),
             id.id(),
@@ -89,7 +89,7 @@ impl ClassStorage for PostgresStorage {
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         crate::operations::class::create_class(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -100,7 +100,7 @@ impl ClassStorage for PostgresStorage {
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         crate::operations::class::update_class(self.runtime(), target, changes, context)
             .await
             .map_err(StorageError::from)
@@ -110,7 +110,7 @@ impl ClassStorage for PostgresStorage {
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::class::delete_class(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -161,7 +161,7 @@ impl ClassRelationStorage for PostgresStorage {
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         crate::operations::relation::create_class_relation(self.runtime(), prepared, context)
             .await
             .map_err(StorageError::from)
@@ -171,7 +171,7 @@ impl ClassRelationStorage for PostgresStorage {
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_class_relation(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -202,7 +202,7 @@ impl ObjectRelationStorage for PostgresStorage {
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         crate::operations::relation::create_object_relation(self.runtime(), prepared, context)
             .await
             .map_err(StorageError::from)
@@ -212,7 +212,7 @@ impl ObjectRelationStorage for PostgresStorage {
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::relation::delete_object_relation(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -241,7 +241,7 @@ impl ObjectStorage for PostgresStorage {
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::create_object(self.runtime(), class, command, context)
             .await
             .map_err(StorageError::from)
@@ -252,7 +252,7 @@ impl ObjectStorage for PostgresStorage {
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::update_object(self.runtime(), target, changes, context)
             .await
             .map_err(StorageError::from)
@@ -263,7 +263,7 @@ impl ObjectStorage for PostgresStorage {
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         crate::operations::object::patch_object_data(self.runtime(), target, patch, context)
             .await
             .map_err(StorageError::from)
@@ -273,7 +273,7 @@ impl ObjectStorage for PostgresStorage {
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::object::delete_object(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)

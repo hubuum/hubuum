@@ -4,14 +4,14 @@ use crate::models::token::Token;
 use crate::models::user::User;
 use crate::models::{
     CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
-    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, Permissions, PrincipalKind,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope,
-    TokenScope,
+    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, PrincipalKind, PrincipalSettings,
+    PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope, TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::storage::{
-    AuthenticatedToken, AuthenticationHuman, AuthenticationPrincipal, AuthenticationResourceScope,
-    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery, StorageContext,
+    AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationHuman,
+    StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
+    StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery, StorageContext,
     storage_handle,
 };
 
@@ -184,8 +184,8 @@ fn patch_payload_error(error: JsonPayloadError, context: PatchPayloadErrorContex
 pub struct Authenticated {
     /// The raw bearer token (e.g. for current-token logout).
     pub token: Token,
-    pub token_meta: AuthenticatedToken,
-    pub principal: AuthenticationPrincipal,
+    pub token_meta: StorageAuthenticatedToken,
+    pub principal: StorageAuthenticationPrincipal,
     /// `None` = unscoped (full principal authority); `Some(..)` = the token's
     /// permission and/or resource narrowing boundary.
     pub scope: Option<TokenScope>,
@@ -305,7 +305,7 @@ async fn build_authenticated(
 async fn build_authenticated_from_meta(
     backend: &impl StorageContext,
     token: Token,
-    token_meta: AuthenticatedToken,
+    token_meta: StorageAuthenticatedToken,
 ) -> Result<Authenticated, ApiError> {
     crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
     let storage = storage_handle(backend);
@@ -314,7 +314,7 @@ async fn build_authenticated_from_meta(
         .await?;
     let (principal, _) = identity.into_parts();
     let scope = storage
-        .get_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+        .get_authentication_token_scope(StorageAuthenticationTokenScopeQuery::new(
             token_meta.id(),
             token_meta.is_permission_scoped(),
             token_meta.is_resource_scoped(),
@@ -330,7 +330,7 @@ async fn build_authenticated_from_meta(
     })
 }
 
-fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<AuthenticatedToken> {
+fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<StorageAuthenticatedToken> {
     match req.extensions().get::<ResolvedAuth>() {
         Some(ResolvedAuth::Authenticated {
             token: resolved_token,
@@ -348,7 +348,7 @@ fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<AuthenticatedToken>
 /// unscoped token) can never act through a human/IAM extractor.
 async fn human_unscoped_user_from_meta(
     backend: &impl StorageContext,
-    token_meta: AuthenticatedToken,
+    token_meta: StorageAuthenticatedToken,
 ) -> Result<User, ApiError> {
     if token_meta.is_scoped() {
         return Err(ApiError::Forbidden(
@@ -376,7 +376,7 @@ async fn human_unscoped_user_from_meta(
         .ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
 }
 
-fn authentication_human_to_user(human: AuthenticationHuman) -> User {
+fn authentication_human_to_user(human: StorageAuthenticationHuman) -> User {
     User {
         id: human.id().id(),
         kind: PrincipalKind::Human,
@@ -389,16 +389,16 @@ fn authentication_human_to_user(human: AuthenticationHuman) -> User {
     }
 }
 
-fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScope, ApiError> {
+fn token_scope_from_storage(
+    scope: StorageAuthenticationTokenScope,
+) -> Result<TokenScope, ApiError> {
     let (permissions, resources) = scope.into_parts();
-    let permissions = permissions
-        .map(|permissions| {
-            permissions
-                .iter()
-                .map(|permission| Permissions::from_string(permission))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
+    let permissions = permissions.map(|permissions| {
+        permissions
+            .into_iter()
+            .map(crate::permissions::permission_from_storage)
+            .collect::<Vec<_>>()
+    });
     let resources = resources
         .map(authentication_resources_from_storage)
         .transpose()?;
@@ -407,7 +407,7 @@ fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScop
 }
 
 fn authentication_resources_from_storage(
-    resources: AuthenticationResourceScope,
+    resources: StorageAuthenticationResourceScope,
 ) -> Result<Vec<TokenResourceScope>, ApiError> {
     let (collection_ids, class_ids, object_ids) = resources.into_parts();
     collection_ids

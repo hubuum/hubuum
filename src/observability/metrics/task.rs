@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 
-use crate::storage::{MetricsStorage, StorageTaskKind, StorageTaskStatus, TaskGaugeSnapshot};
+use crate::storage::{
+    MetricsStorage, StorageTaskGaugeSnapshot, StorageTaskKind, StorageTaskStatus,
+};
 
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
@@ -154,7 +156,7 @@ pub(super) async fn refresh_task_gauges(
     }
 }
 
-fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
+fn cached_task_snapshot(metrics: &Metrics) -> Option<StorageTaskGaugeSnapshot> {
     let now = Instant::now();
     metrics
         .scrape_cache
@@ -163,7 +165,7 @@ fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
         .and_then(|cache| cache.tasks.fresh_value(now))
 }
 
-fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
+fn stale_task_snapshot(metrics: &Metrics) -> Option<StorageTaskGaugeSnapshot> {
     metrics
         .scrape_cache
         .lock()
@@ -171,13 +173,13 @@ fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
         .and_then(|cache| cache.tasks.cached_value())
 }
 
-fn store_task_snapshot(metrics: &Metrics, snapshot: TaskGaugeSnapshot) {
+fn store_task_snapshot(metrics: &Metrics, snapshot: StorageTaskGaugeSnapshot) {
     if let Ok(mut cache) = metrics.scrape_cache.lock() {
         cache.tasks.store(snapshot, Instant::now());
     }
 }
 
-fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
+fn record_task_snapshot(metrics: &Metrics, snapshot: &StorageTaskGaugeSnapshot) {
     let now = chrono::Utc::now().naive_utc();
     let mut counts = HashMap::new();
     let mut last_terminal = HashMap::new();
@@ -206,7 +208,6 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
                     last_terminal
                         .get(&(kind, status))
                         .copied()
-                        .flatten()
                         .map(|timestamp| timestamp.naive_utc()),
                 ),
             );

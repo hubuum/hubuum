@@ -669,9 +669,10 @@ async fn snapshot_history(
 
 fn backup_rows(rows: Vec<Value>) -> Result<Vec<StorageBackupRow>, PostgresStorageError> {
     rows.into_iter()
-        .map(StorageBackupRow::try_from_value)
-        .collect::<Result<_, _>>()
-        .map_err(Into::into)
+        .map(|row| {
+            crate::validate_persisted("backup section row", StorageBackupRow::try_from_value(row))
+        })
+        .collect()
 }
 
 pub async fn capture_backup_snapshot(
@@ -686,7 +687,10 @@ pub async fn capture_backup_snapshot(
             } else {
                 None
             };
-            StorageBackupSnapshot::try_new(state, history).map_err(Into::into)
+            crate::validate_persisted(
+                "backup snapshot",
+                StorageBackupSnapshot::try_new(state, history),
+            )
         })
         .await
 }

@@ -64,69 +64,74 @@ use crate::permissions::{AppContext, LocalPermissionBackend};
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::{
-    ApplicationImportOperation, AuditEventStorage, AuthenticationAttempt, AuthenticationCredential,
-    AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
-    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery, AuthorizationDataStorage,
-    AuthorizationGrantDelete, AuthorizationGrantKey, AuthorizationGrantMutation,
-    AuthorizationGroupCandidateQuery, AuthorizationGroupCollectionQuery,
-    AuthorizationGroupMembershipQuery, AuthorizationPermission, AuthorizationPermissionSetQuery,
-    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
-    AuthorizationResourceIds, BackupSnapshotStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogStorage, CollectionAuthorizationQueryStorage, ComputedFieldStorage,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
-    ComputedObjectQueryOptions, ComputedObjectStorage, ComputedObjectVisibility, EventArchiveSink,
-    EventConfigurationStorage, EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionBatch, ExecutionStorage,
-    ExportTemplateStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
-    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage,
-    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
-    MetricsStorage, ObjectAggregateAuthorization, ObjectAggregateAuthorizer,
-    ObjectAggregateStorage, ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery, OperationalStateStorage,
-    PrincipalStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RemoteTargetStorage,
-    RestoreStorage, ServiceAccountStorage, StorageAuditEvent, StorageAuditEventFilters,
-    StorageAuditEventListQuery, StorageBackendKind, StorageBackupTaskArtifact, StorageCallSite,
-    StorageClassCreate, StorageClassSelector, StorageClassUpdate, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
-    StorageComputedFieldVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
-    StorageEventDeliveryListQuery, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
-    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
-    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
-    StorageGroupListQuery, StorageGroupUpdate, StorageImportPlan, StorageImportPlanItem,
-    StorageImportResult, StorageLocalPasswordReset, StorageObject,
-    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    ApplicationImportOperation, AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage,
+    BackupSnapshotStorage, CatalogStorage, CollectionAuthorizationQueryStorage,
+    ComputedFieldStorage, ComputedObjectStorage, EventArchiveSink, EventConfigurationStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
+    EventHealthStorage, ExecutionStorage, ExportTemplateStorage, ExternalIdentityStorage,
+    GroupMembershipStorage, GroupStorage, HistoryStorage, IdentityScopeStorage, ImportStorage,
+    InventoryStorage, LocalIdentityCredentialStorage, MetricsStorage, ObjectAggregateAuthorizer,
+    ObjectAggregateStorage, OperationalStateStorage, PrincipalStorage, RelationQueryStorage,
+    RemoteTargetStorage, RestoreStorage, ServiceAccountStorage, StorageAuditEvent,
+    StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuthenticationAttempt,
+    StorageAuthenticationCredential, StorageAuthenticationTokenScopeQuery,
+    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionGrantListQuery,
+    StorageAuthorizationCollectionGroupsPageQuery, StorageAuthorizationCollectionGroupsQuery,
+    StorageAuthorizationCollectionVisibilityQuery, StorageAuthorizationCollectionsAccessQuery,
+    StorageAuthorizationCollectionsQuery, StorageAuthorizationGrantDelete,
+    StorageAuthorizationGrantKey, StorageAuthorizationGrantMutation,
+    StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupCollectionQuery,
+    StorageAuthorizationGroupMembershipQuery, StorageAuthorizationPermission,
+    StorageAuthorizationPermissionSetQuery, StorageAuthorizationPrincipalCollectionPageQuery,
+    StorageAuthorizationPrincipalCollectionQuery, StorageAuthorizationResourceIds,
+    StorageBackendKind, StorageBackupTaskArtifact, StorageBidirectionalRelatedObjectsQuery,
+    StorageCallSite, StorageCatalogListQuery, StorageClassCreate, StorageClassSelector,
+    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
+    StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
+    StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
+    StorageComputedObjectVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
+    StorageEventDeliveryListQuery, StorageEventRetentionBatch, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
+    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
+    StorageHistoryCollectionScope, StorageHistoryListQuery, StorageImportPlan,
+    StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
+    StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateQuery,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
-    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection, StorageRelatedSort,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
-    StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery,
+    StorageObjectRelationsTouchingIdsQuery, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery,
+    StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke, StorageQueryBudget,
+    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectsForRootsQuery,
+    StorageRelatedSort, StorageRelationGraphQuery, StorageRelationIdsQuery,
+    StorageRelationListQuery, StorageRelationTouchingQuery, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageRevisionPrecondition, StorageRevisionTarget, StorageServiceAccountCreate,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate, StorageTaskChildListQuery,
     StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
     StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
     StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUserAnonymize,
-    StorageUserCreate, StorageUserDelete, StorageUserListQuery, StorageUserPasswordUpdate,
-    StorageUserUpdate, StorageVisibility, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, UnifiedSearchQuery, UnifiedSearchStorage, UserStorage,
+    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUnifiedSearchQuery,
+    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
+    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
 use hubuum_query::QueryFilters;
@@ -145,7 +150,7 @@ impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
     async fn authorize_target(
         &self,
         _target: StorageObjectAggregateAuthorizationTarget,
-        _required_permissions: Vec<AuthorizationPermission>,
+        _required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<bool, StorageError> {
         Ok(true)
     }
@@ -153,7 +158,7 @@ impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
     async fn authorize_objects(
         &self,
         candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
-        _required_permissions: Vec<AuthorizationPermission>,
+        _required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<Vec<bool>, StorageError> {
         Ok(vec![true; candidates.len()])
     }
@@ -180,7 +185,7 @@ impl ObjectAggregateAuthorizer for PausingObjectAggregateAuthorizer {
     async fn authorize_target(
         &self,
         _target: StorageObjectAggregateAuthorizationTarget,
-        _required_permissions: Vec<AuthorizationPermission>,
+        _required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<bool, StorageError> {
         Ok(true)
     }
@@ -188,7 +193,7 @@ impl ObjectAggregateAuthorizer for PausingObjectAggregateAuthorizer {
     async fn authorize_objects(
         &self,
         candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
-        _required_permissions: Vec<AuthorizationPermission>,
+        _required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<Vec<bool>, StorageError> {
         if self.authorization_calls.fetch_add(1, Ordering::SeqCst) == 0 {
             self.first_batch_seen.notify_one();
@@ -283,8 +288,8 @@ impl Sink for ContractRecordingSink {
     fn deliver<'a>(
         &'a self,
         _envelope: &'a EventEnvelope,
-        _subscription: &'a crate::storage::EventDeliverySubscription,
-        _sink: &'a crate::storage::EventDeliverySink,
+        _subscription: &'a crate::storage::StorageEventDeliverySubscription,
+        _sink: &'a crate::storage::StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliveries.fetch_add(1, Ordering::Relaxed);
@@ -300,8 +305,8 @@ impl Sink for ContractDiscardSink {
     fn deliver<'a>(
         &'a self,
         _envelope: &'a EventEnvelope,
-        _subscription: &'a crate::storage::EventDeliverySubscription,
-        _sink: &'a crate::storage::EventDeliverySink,
+        _subscription: &'a crate::storage::StorageEventDeliverySubscription,
+        _sink: &'a crate::storage::StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async { Ok(()) }.boxed()
     }
@@ -497,7 +502,7 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
             .await?;
         let receipt = outcome
             .audits()
-            .map(hubuum_storage_core::AuditReceipts::first)
+            .map(hubuum_storage_core::StorageAuditReceipts::first)
             .ok_or_else(|| std::io::Error::other("committed update had no receipt"))?;
         let event = self
             .collection_events(self.collection_id)
@@ -794,16 +799,22 @@ impl RestoreCoordinationFaultFixture for PostgresRestoreCoordinationFaultFixture
             .all(|instance| instance.instance_id() != instance_id);
 
         let job = backend
-            .stage_restore(StorageRestoreStageCreate::new(
-                StorageRestoreInitiator::try_new(None, "fault-test", prefix("restore_fault"))
-                    .expect("valid restore initiator"),
-                b"{}".to_vec(),
-                StorageRestoreArtifactSummary::try_new(2, "e".repeat(64))
+            .stage_restore(
+                StorageRestoreStageCreate::try_new(
+                    StorageRestoreInitiator::try_new(None, "fault-test", prefix("restore_fault"))
+                        .expect("valid restore initiator"),
+                    b"{}".to_vec(),
+                    StorageRestoreArtifactSummary::try_new(
+                        2,
+                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                    )
                     .expect("valid restore artifact"),
-                "f".repeat(64),
-                serde_json::json!({"compatible": true}),
-                now + chrono::Duration::try_hours(1).expect("valid test duration"),
-            ))
+                    "f".repeat(64),
+                    serde_json::json!({"compatible": true}),
+                    now + chrono::Duration::try_hours(1).expect("valid test duration"),
+                )
+                .expect("valid restore staging request"),
+            )
             .await?;
         let job_id = job.summary().id();
         let transition_error =
@@ -862,7 +873,7 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
                 ))
                 .request_hash(Some(prefix("lease_loss_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(1)
+                .try_build(1)
                 .expect("lease-loss task request should be valid"),
             )
             .await?;
@@ -1186,7 +1197,7 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
             ))
             .request_hash(Some(prefix("task_failpoint_hash")))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10)
+            .try_build(10)
             .expect("failpoint task request should be valid"),
         )
         .await
@@ -1236,7 +1247,7 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
         .into_parts();
     assert_eq!(persisted.status(), StorageTaskStatus::Validating);
     let events = backend
-        .list_task_events(StorageTaskPageQuery::new(
+        .list_task_events(StorageTaskChildListQuery::new(
             task.id(),
             QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
                 .expect("contract query must be valid"),
@@ -1281,7 +1292,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10)
+            .try_build(10)
             .expect("initial snapshot task request should be valid"),
         )
         .await
@@ -1322,7 +1333,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(10)
+            .try_build(10)
             .expect("concurrent snapshot task request should be valid"),
         )
         .await
@@ -1469,10 +1480,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         let list_options = QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
             .expect("contract query must be valid");
         let (listed, total_count) = backend
-            .list_groups(
-                StorageGroupListQuery::try_new(list_options.clone(), Some(list_options))
-                    .expect("group page and count queries should be coherent"),
-            )
+            .list_groups(StorageGroupListQuery::new(list_options))
             .await
             .expect("certified backend should list and count groups")
             .into_parts();
@@ -1630,8 +1638,8 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
 
     for backend in available_backends() {
         let observed_at = chrono::Utc::now();
-        let attempt = AuthenticationAttempt::new(
-            AuthenticationCredential::new(token.storage_hash()),
+        let attempt = StorageAuthenticationAttempt::try_new(
+            StorageAuthenticationCredential::new(token.storage_hash()),
             observed_at,
             observed_at - chrono::Duration::days(1),
         )
@@ -1654,7 +1662,7 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         assert!(human.is_some());
 
         let scope = backend
-            .get_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+            .get_authentication_token_scope(StorageAuthenticationTokenScopeQuery::new(
                 hubuum_domain::TokenId::new(i32::MAX).unwrap(),
                 true,
                 false,
@@ -1846,10 +1854,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should replace local passwords")
             .into_value();
 
-        let token_policy =
-            StorageTokenIssuancePolicy::new(24, 24).expect("contract token policy should be valid");
+        let token_policy = StorageTokenIssuancePolicy::try_new(24, 24)
+            .expect("contract token policy should be valid");
         let token_observed_at = chrono::Utc::now() + chrono::Duration::seconds(1);
-        let token_observation = StorageTokenObservation::new(
+        let token_observation = StorageTokenObservation::try_new(
             token_observed_at,
             token_observed_at - chrono::Duration::hours(24),
         )
@@ -2065,7 +2073,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .request_hash(Some(prefix("identity_contract_sa_task_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(10)
+                .try_build(10)
                 .expect("identity contract task request should be valid"),
             )
             .await
@@ -2080,7 +2088,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .into_value()
             .into_parts();
         assert!(disabled.is_disabled());
-        assert_eq!(cancelled_task_kinds, vec![StorageTaskKind::Import.as_str()]);
+        assert_eq!(cancelled_task_kinds, vec![StorageTaskKind::Import]);
         let (cancelled_task, _) = backend
             .get_task_access(queued_task.id())
             .await
@@ -2457,7 +2465,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 .expect("certified backend should look up import groups")
         );
 
-        let preflight_plan = StorageImportPlan::new(vec![StorageImportPlanItem::new(
+        let preflight_plan = StorageImportPlan::try_new(vec![StorageImportPlanItem::new(
             0,
             crate::services::import_boundary::import_operation_to_storage(
                 ApplicationImportOperation::CreateCollection(collection_input(
@@ -2501,7 +2509,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .await
             .expect("certified backend should atomically apply a strict import");
 
-        let rollback_plan = StorageImportPlan::new(vec![
+        let rollback_plan = StorageImportPlan::try_new(vec![
             StorageImportPlanItem::new(
                 0,
                 crate::services::import_boundary::import_operation_to_storage(
@@ -2543,7 +2551,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
 
         let best_effort = backend
             .apply_import_best_effort(
-                StorageImportPlan::new(vec![
+                StorageImportPlan::try_new(vec![
                     StorageImportPlanItem::new(
                         0,
                         crate::services::import_boundary::import_operation_to_storage(
@@ -2631,7 +2639,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                 ))
                 .request_hash(Some(prefix("task_queue_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(10)
+                .try_build(10)
                 .expect("task queue request should be valid"),
             )
             .await
@@ -2660,7 +2668,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
         assert_eq!(tasks.len(), 1);
 
         let (events, event_total) = backend
-            .list_task_events(StorageTaskPageQuery::new(task_id, options()))
+            .list_task_events(StorageTaskChildListQuery::new(task_id, options()))
             .await
             .expect("certified backend should list task events")
             .into_parts();
@@ -2668,7 +2676,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
         assert_eq!(events.len(), 1);
 
         let (results, result_total) = backend
-            .list_import_task_results(StorageTaskPageQuery::new(task_id, options()))
+            .list_import_task_results(StorageTaskChildListQuery::new(task_id, options()))
             .await
             .expect("certified backend should list import results")
             .into_parts();
@@ -2684,7 +2692,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
             .await
             .expect("certified backend should persist import results");
         let (results, result_total) = backend
-            .list_import_task_results(StorageTaskPageQuery::new(task_id, options()))
+            .list_import_task_results(StorageTaskChildListQuery::new(task_id, options()))
             .await
             .expect("certified backend should return persisted import results")
             .into_parts();
@@ -2766,7 +2774,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .build(10)
+                    .try_build(10)
                     .expect("task execution request should be valid"),
                 )
                 .await
@@ -2876,7 +2884,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 ))
                 .request_hash(Some(prefix("task_execution_kind_mismatch_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .build(10)
+                .try_build(10)
                 .expect("task kind mismatch request should be valid"),
             )
             .await
@@ -2942,7 +2950,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .build(10)
+                    .try_build(10)
                     .expect("task execution failure request should be valid"),
                 )
                 .await
@@ -3017,7 +3025,7 @@ fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskComple
                     None,
                     crate::storage::StorageRemoteTargetSubjectType::Collection,
                     ResourceId::new(1).unwrap(),
-                    Some(crate::storage::StorageRemoteHttpMethod::Get),
+                    Some(crate::storage::StorageRemoteTargetHttpMethod::Get),
                     "https://compatibility.invalid",
                 ),
                 StorageRemoteCallArtifactResponse::new(
@@ -3214,7 +3222,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
                 StorageRemoteTargetDefinition::new(
                     "Compatibility remote target",
                     StorageRemoteTargetTransport::try_new(
-                        crate::storage::StorageRemoteHttpMethod::Get,
+                        crate::storage::StorageRemoteTargetHttpMethod::Get,
                         "https://compatibility.invalid/collections/{{ collection.id }}",
                         serde_json::json!({}),
                         None,
@@ -3327,16 +3335,22 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
     for backend in available_backends() {
         let label = prefix("restore");
         let job = backend
-            .stage_restore(StorageRestoreStageCreate::new(
-                StorageRestoreInitiator::try_new(None, "compatibility", label.clone())
-                    .expect("valid restore initiator"),
-                b"{}".to_vec(),
-                StorageRestoreArtifactSummary::try_new(2, "a".repeat(64))
+            .stage_restore(
+                StorageRestoreStageCreate::try_new(
+                    StorageRestoreInitiator::try_new(None, "compatibility", label.clone())
+                        .expect("valid restore initiator"),
+                    b"{}".to_vec(),
+                    StorageRestoreArtifactSummary::try_new(
+                        2,
+                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                    )
                     .expect("valid restore artifact"),
-                "b".repeat(64),
-                serde_json::json!({"compatible": true}),
-                now + chrono::Duration::try_hours(1).expect("valid duration"),
-            ))
+                    "b".repeat(64),
+                    serde_json::json!({"compatible": true}),
+                    now + chrono::Duration::try_hours(1).expect("valid duration"),
+                )
+                .expect("valid restore staging request"),
+            )
             .await
             .expect("certified backend should stage a restore artifact");
         let job_id = job.summary().id();
@@ -3415,16 +3429,22 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
 
         let expired_label = prefix("expired_restore");
         let expired = backend
-            .stage_restore(StorageRestoreStageCreate::new(
-                StorageRestoreInitiator::try_new(None, "compatibility", expired_label.clone())
-                    .expect("valid restore initiator"),
-                b"{}".to_vec(),
-                StorageRestoreArtifactSummary::try_new(2, "c".repeat(64))
+            .stage_restore(
+                StorageRestoreStageCreate::try_new(
+                    StorageRestoreInitiator::try_new(None, "compatibility", expired_label.clone())
+                        .expect("valid restore initiator"),
+                    b"{}".to_vec(),
+                    StorageRestoreArtifactSummary::try_new(
+                        2,
+                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                    )
                     .expect("valid restore artifact"),
-                "d".repeat(64),
-                serde_json::json!({"compatible": true}),
-                now - chrono::Duration::try_minutes(1).expect("valid duration"),
-            ))
+                    "d".repeat(64),
+                    serde_json::json!({"compatible": true}),
+                    now - chrono::Duration::try_minutes(1).expect("valid duration"),
+                )
+                .expect("valid restore staging request"),
+            )
             .await
             .expect("certified backend should stage an expiring restore artifact");
         let expired_id = expired.summary().id();
@@ -3662,7 +3682,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .expect("certified backend should supply authorization principal facts");
         assert!(principal.group_ids().contains(&group_id));
 
-        let membership = AuthorizationGroupMembershipQuery::new(
+        let membership = StorageAuthorizationGroupMembershipQuery::new(
             principal_id,
             &group.groupname,
             LOCAL_IDENTITY_SCOPE,
@@ -3675,7 +3695,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let classes = backend
-            .list_authorization_classes(AuthorizationResourceIds::new([
+            .list_authorization_classes(StorageAuthorizationResourceIds::new([
                 ResourceId::new(fixture.class.id).unwrap(),
                 ResourceId::new(fixture.class.id).unwrap(),
             ]))
@@ -3686,7 +3706,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert_eq!(classes[0].collection_id(), collection_id);
 
         let objects = backend
-            .list_authorization_objects(AuthorizationResourceIds::new([
+            .list_authorization_objects(StorageAuthorizationResourceIds::new([
                 ResourceId::new(fixture.objects[0].id).unwrap(),
                 ResourceId::new(fixture.objects[0].id).unwrap(),
             ]))
@@ -3705,17 +3725,17 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert_eq!(objects[0].name(), fixture.objects[0].name);
 
         let access_query = || {
-            AuthorizationCollectionAccessQuery::new(
+            StorageAuthorizationCollectionAccessQuery::new(
                 principal_id,
                 collection_id,
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
             )
         };
         let batch_access_query = || {
-            AuthorizationCollectionsAccessQuery::new(
+            StorageAuthorizationCollectionsAccessQuery::new(
                 principal_id,
                 [collection_id, collection_id],
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
             )
         };
         assert!(
@@ -3731,11 +3751,11 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .expect("missing local batch grant should deny")
         );
 
-        let key = AuthorizationGrantKey::new(collection_id, group_id);
+        let key = StorageAuthorizationGrantKey::new(collection_id, group_id);
         backend
-            .apply_local_collection_grant(AuthorizationGrantMutation::new(
+            .apply_local_collection_grant(StorageAuthorizationGrantMutation::new(
                 key,
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
                 false,
                 EventContext::system(),
             ))
@@ -3750,10 +3770,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(
             grant
                 .permissions()
-                .contains(&AuthorizationPermission::ReadCollection)
+                .contains(&StorageAuthorizationPermission::ReadCollection)
         );
         let (permission_collection_id, permission_revision, permission_grants) = backend
-            .get_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
+            .get_local_collection_permission_set(StorageAuthorizationPermissionSetQuery::new(
                 collection_id,
                 Some(group_id),
             ))
@@ -3782,7 +3802,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .expect("contract query must be valid")
         };
         let principal_query =
-            || AuthorizationPrincipalCollectionQuery::new(principal_id, collection_id);
+            || StorageAuthorizationPrincipalCollectionQuery::new(principal_id, collection_id);
 
         let principal_permissions = backend
             .load_principal_collection_permissions(principal_query())
@@ -3805,10 +3825,12 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         }));
 
         let (principal_page, principal_total) = backend
-            .list_principal_collection_permissions(AuthorizationPrincipalCollectionPageQuery::new(
-                principal_query(),
-                page_options(),
-            ))
+            .list_principal_collection_permissions(
+                StorageAuthorizationPrincipalCollectionPageQuery::new(
+                    principal_query(),
+                    page_options(),
+                ),
+            )
             .await
             .expect("certified backend should page principal collection grants")
             .into_parts();
@@ -3827,10 +3849,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let visible = backend
-            .list_visible_collections(AuthorizationCollectionVisibilityQuery::new(
+            .list_visible_collections(StorageAuthorizationCollectionVisibilityQuery::new(
                 principal_id,
                 false,
-                AuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::ReadCollection,
                 None,
             ))
             .await
@@ -3841,10 +3863,10 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .any(|collection| collection.id() == collection_id)
         );
 
-        let group_query = AuthorizationGroupCollectionQuery::new(
+        let group_query = StorageAuthorizationGroupCollectionQuery::new(
             collection_id,
             group_id,
-            AuthorizationPermission::ReadCollection,
+            StorageAuthorizationPermission::ReadCollection,
         );
         assert!(
             backend
@@ -3860,9 +3882,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(!effective_group.is_empty());
 
         let groups_query = || {
-            AuthorizationCollectionGroupsQuery::new(
+            StorageAuthorizationCollectionGroupsQuery::new(
                 collection_id,
-                AuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::ReadCollection,
             )
         };
         let groups = backend
@@ -3872,10 +3894,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(groups.iter().any(|candidate| candidate.id() == group_id));
 
         let (groups_page, groups_total) = backend
-            .list_groups_with_collection_permission(AuthorizationCollectionGroupsPageQuery::new(
-                groups_query(),
-                page_options(),
-            ))
+            .list_groups_with_collection_permission(
+                StorageAuthorizationCollectionGroupsPageQuery::new(groups_query(), page_options()),
+            )
             .await
             .expect("certified backend should page groups with collection grants")
             .into_parts();
@@ -3883,9 +3904,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(!groups_page.is_empty());
 
         let collections = backend
-            .list_local_authorized_collections(AuthorizationCollectionsQuery::new(
+            .list_local_authorized_collections(StorageAuthorizationCollectionsQuery::new(
                 principal_id,
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
             ))
             .await
             .expect("certified backend should run reverse authorization queries");
@@ -3896,9 +3917,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let page = backend
-            .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+            .list_local_collection_grants(StorageAuthorizationCollectionGrantListQuery::new(
                 collection_id,
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
                 QueryOptions::new(Vec::new(), Vec::new(), None, None, true)
                     .expect("contract query must be valid"),
             ))
@@ -3919,7 +3940,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         );
 
         let group_candidates = backend
-            .load_authorization_group_candidates(AuthorizationGroupCandidateQuery::new(
+            .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
                 QueryFilters::default(),
             ))
             .await
@@ -3942,9 +3963,9 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         }));
 
         backend
-            .revoke_local_collection_grant(AuthorizationGrantMutation::new(
+            .revoke_local_collection_grant(StorageAuthorizationGrantMutation::new(
                 key,
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
                 false,
                 EventContext::system(),
             ))
@@ -3958,7 +3979,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 .expect("revoked local grant should deny")
         );
         backend
-            .revoke_all_local_collection_grants(AuthorizationGrantDelete::new(
+            .revoke_all_local_collection_grants(StorageAuthorizationGrantDelete::new(
                 key,
                 EventContext::system(),
             ))
@@ -4003,10 +4024,10 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         )
         .expect("collection history pagination should prepare");
         let collection_page = backend
-            .list_collection_history(HistoryListQuery::new(
+            .list_collection_history(StorageHistoryListQuery::new(
                 ResourceId::new(fixture.collection.id).unwrap(),
                 collection_options,
-                HistoryCollectionScope::All,
+                StorageHistoryCollectionScope::All,
             ))
             .await
             .expect("certified backend should list collection history");
@@ -4015,7 +4036,7 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         assert!(total_count.is_some_and(|total| total >= 1));
         assert!(
             backend
-                .get_collection_history_as_of(HistoryAsOfQuery::new(
+                .get_collection_history_as_of(StorageHistoryAsOfQuery::new(
                     ResourceId::new(fixture.collection.id).unwrap(),
                     at,
                 ))
@@ -4030,16 +4051,16 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         )
         .expect("class history pagination should prepare");
         backend
-            .list_class_history(HistoryListQuery::new(
+            .list_class_history(StorageHistoryListQuery::new(
                 ResourceId::new(i32::MAX).unwrap(),
                 class_options,
-                HistoryCollectionScope::All,
+                StorageHistoryCollectionScope::All,
             ))
             .await
             .expect("certified backend should list class history");
         assert!(
             backend
-                .get_class_history_as_of(HistoryAsOfQuery::new(
+                .get_class_history_as_of(StorageHistoryAsOfQuery::new(
                     ResourceId::new(i32::MAX).unwrap(),
                     at,
                 ))
@@ -4054,17 +4075,17 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         )
         .expect("object history pagination should prepare");
         backend
-            .list_object_history(ObjectHistoryListQuery::new(
+            .list_object_history(StorageObjectHistoryListQuery::new(
                 ObjectId::new(i32::MAX).unwrap(),
                 ClassId::new(i32::MAX).unwrap(),
                 object_options,
-                HistoryCollectionScope::All,
+                StorageHistoryCollectionScope::All,
             ))
             .await
             .expect("certified backend should list object history");
         assert!(
             backend
-                .get_object_history_as_of(ObjectHistoryAsOfQuery::new(
+                .get_object_history_as_of(StorageObjectHistoryAsOfQuery::new(
                     ObjectId::new(i32::MAX).unwrap(),
                     ClassId::new(i32::MAX).unwrap(),
                     at,
@@ -4080,16 +4101,16 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         )
         .expect("template history pagination should prepare");
         backend
-            .list_export_template_history(HistoryListQuery::new(
+            .list_export_template_history(StorageHistoryListQuery::new(
                 ResourceId::new(i32::MAX).unwrap(),
                 template_options,
-                HistoryCollectionScope::All,
+                StorageHistoryCollectionScope::All,
             ))
             .await
             .expect("certified backend should list template history");
         assert!(
             backend
-                .get_export_template_history_as_of(HistoryAsOfQuery::new(
+                .get_export_template_history_as_of(StorageHistoryAsOfQuery::new(
                     ResourceId::new(i32::MAX).unwrap(),
                     at,
                 ))
@@ -4104,16 +4125,16 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         )
         .expect("remote-target history pagination should prepare");
         backend
-            .list_remote_target_history(HistoryListQuery::new(
+            .list_remote_target_history(StorageHistoryListQuery::new(
                 ResourceId::new(i32::MAX).unwrap(),
                 remote_target_options,
-                HistoryCollectionScope::All,
+                StorageHistoryCollectionScope::All,
             ))
             .await
             .expect("certified backend should list remote-target history");
         assert!(
             backend
-                .get_remote_target_history_as_of(HistoryAsOfQuery::new(
+                .get_remote_target_history_as_of(StorageHistoryAsOfQuery::new(
                     ResourceId::new(i32::MAX).unwrap(),
                     at,
                 ))
@@ -4171,7 +4192,7 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
 
     for backend in available_backends() {
         let request = || {
-            CatalogListQuery::new(
+            StorageCatalogListQuery::new(
                 QueryOptions::new(
                     vec![ParsedQueryParam {
                         field: FilterField::Name,
@@ -4187,7 +4208,7 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
                 StorageVisibility::new(
                     principal_id(i32::MAX),
                     true,
-                    None::<Vec<AuthorizationPermission>>,
+                    None::<Vec<StorageAuthorizationPermission>>,
                     None,
                 ),
             )
@@ -4291,17 +4312,21 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
         let visibility = StorageVisibility::new(
             principal_id(i32::MAX),
             true,
-            None::<Vec<AuthorizationPermission>>,
+            None::<Vec<StorageAuthorizationPermission>>,
             None,
         );
+        let page_limit = crate::pagination::effective_page_limit(&options)
+            .expect("computed-object page limit should be valid");
+        let execution_options = prepare_db_pagination::<crate::models::HubuumObject>(&options)
+            .expect("computed-object execution query should be valid");
         let (rows, total, computed, _) = backend
-            .list_computed_objects(ComputedObjectListQuery::new(
+            .list_computed_objects(StorageComputedObjectListQuery::new(
                 ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
                 None,
-                ComputedObjectQueryOptions::try_new(options.clone(), options)
+                StorageComputedObjectQueryOptions::try_new(options, execution_options, page_limit)
                     .expect("computed-object queries should be coherent"),
-                ComputedObjectVisibility::storage(visibility),
-                ComputedObjectProjection::All,
+                StorageComputedObjectVisibility::storage(visibility),
+                StorageComputedObjectProjection::All,
             ))
             .await
             .expect("certified backend should query computed objects")
@@ -4312,7 +4337,7 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
 
         let object = &fixture.objects[0];
         let enriched = backend
-            .enrich_objects_with_computed(ComputedObjectEnrichmentQuery::new(
+            .enrich_objects_with_computed(StorageComputedObjectEnrichmentQuery::new(
                 vec![StorageObject::new(
                     StorageRecordMetadata::try_new(
                         ResourceId::new(object.id).expect("persisted resource id must be positive"),
@@ -4588,12 +4613,12 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
         StorageVisibility::new(
             principal_id(i32::MAX),
             true,
-            None::<Vec<AuthorizationPermission>>,
+            None::<Vec<StorageAuthorizationPermission>>,
             None,
         )
     };
     let query = || {
-        ObjectAggregateStorageQuery::builder(
+        StorageObjectAggregateQuery::builder(
             StorageObjectAggregateTarget::new(
                 ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
                 fixture.class.name.clone(),
@@ -4618,7 +4643,7 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
                 true,
             )
             .expect("contract query must be valid"),
-            StorageObjectAggregateSpec::new(
+            StorageObjectAggregateSpec::try_new(
                 [StorageObjectAggregateDimension::Scalar(
                     StorageObjectAggregateScalarField::Name,
                 )],
@@ -4629,18 +4654,18 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
             visibility(),
         )
         .required_permissions([
-            AuthorizationPermission::ReadObject,
-            AuthorizationPermission::ReadCollection,
+            StorageAuthorizationPermission::ReadObject,
+            StorageAuthorizationPermission::ReadCollection,
         ])
         .page_limit(50)
         .cursor_max_encoded_bytes(4_096)
-        .build()
+        .try_build()
         .expect("compatibility aggregate query should be valid")
     };
 
     for backend in available_backends() {
         let storage_page = backend
-            .aggregate_objects(query(), ObjectAggregateAuthorization::Storage)
+            .aggregate_objects(query(), StorageObjectAggregateAuthorization::Storage)
             .await
             .expect("certified backend should aggregate with storage authorization");
         let (rows, total, next_cursor) = storage_page.into_parts();
@@ -4651,7 +4676,7 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
         let delegated_page = backend
             .aggregate_objects(
                 query(),
-                ObjectAggregateAuthorization::Delegated(&AllowAllObjectAggregateAuthorizer),
+                StorageObjectAggregateAuthorization::Delegated(&AllowAllObjectAggregateAuthorizer),
             )
             .await
             .expect("certified backend should aggregate with delegated authorization");
@@ -4698,7 +4723,7 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
     )
     .await
     .expect("delegated aggregate snapshot fixture should be created");
-    let query = ObjectAggregateStorageQuery::builder(
+    let query = StorageObjectAggregateQuery::builder(
         StorageObjectAggregateTarget::new(
             ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
             fixture.class.name.clone(),
@@ -4706,7 +4731,7 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
         ),
         QueryOptions::new(Vec::new(), Vec::new(), Some(50), None, true)
             .expect("snapshot aggregate query must be valid"),
-        StorageObjectAggregateSpec::new(
+        StorageObjectAggregateSpec::try_new(
             [StorageObjectAggregateDimension::Scalar(
                 StorageObjectAggregateScalarField::Name,
             )],
@@ -4717,17 +4742,17 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
         StorageVisibility::new(
             principal_id(i32::MAX),
             true,
-            None::<Vec<AuthorizationPermission>>,
+            None::<Vec<StorageAuthorizationPermission>>,
             None,
         ),
     )
     .required_permissions([
-        AuthorizationPermission::ReadObject,
-        AuthorizationPermission::ReadCollection,
+        StorageAuthorizationPermission::ReadObject,
+        StorageAuthorizationPermission::ReadCollection,
     ])
     .page_limit(50)
     .cursor_max_encoded_bytes(4_096)
-    .build()
+    .try_build()
     .expect("snapshot aggregate query must be valid");
     let authorizer = Arc::new(PausingObjectAggregateAuthorizer::new());
     let storage = StorageHandle::postgres(pool.get_ref().clone());
@@ -4737,7 +4762,7 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
             storage
                 .aggregate_objects(
                     query,
-                    ObjectAggregateAuthorization::Delegated(authorizer.as_ref()),
+                    StorageObjectAggregateAuthorization::Delegated(authorizer.as_ref()),
                 )
                 .await
         }
@@ -4860,7 +4885,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             StorageVisibility::new(
                 principal_id(i32::MAX),
                 true,
-                None::<Vec<AuthorizationPermission>>,
+                None::<Vec<StorageAuthorizationPermission>>,
                 None,
             )
         };
@@ -4870,7 +4895,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         };
 
         let (class_relations, class_total) = backend
-            .list_class_relations(RelationListQuery::new(options(), visibility()))
+            .list_class_relations(StorageRelationListQuery::new(options(), visibility()))
             .await
             .expect("certified backend should list class relations")
             .into_parts();
@@ -4881,7 +4906,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         }));
 
         let (object_relations, object_total) = backend
-            .list_object_relations(RelationListQuery::new(options(), visibility()))
+            .list_object_relations(StorageRelationListQuery::new(options(), visibility()))
             .await
             .expect("certified backend should list object relations")
             .into_parts();
@@ -4892,7 +4917,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         }));
 
         let (touching_classes, _) = backend
-            .list_class_relations_touching(RelationTouchingQuery::new(
+            .list_class_relations_touching(StorageRelationTouchingQuery::new(
                 class_one_id,
                 options(),
                 visibility(),
@@ -4903,7 +4928,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         assert_eq!(touching_classes.len(), 1);
 
         let (touching_objects, _) = backend
-            .list_object_relations_touching(RelationTouchingQuery::new(
+            .list_object_relations_touching(StorageRelationTouchingQuery::new(
                 object_one_resource_id,
                 options(),
                 visibility(),
@@ -4916,7 +4941,10 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         let class_ids = [class_one_id, class_two_id];
         assert_eq!(
             backend
-                .list_class_relations_touching_ids(RelationIdsQuery::new(class_ids, visibility(),))
+                .list_class_relations_touching_ids(StorageRelationIdsQuery::new(
+                    class_ids,
+                    visibility(),
+                ))
                 .await
                 .expect("certified backend should query class relations touching ids")
                 .len(),
@@ -4924,7 +4952,10 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         );
         assert_eq!(
             backend
-                .list_class_relations_between_ids(RelationIdsQuery::new(class_ids, visibility(),))
+                .list_class_relations_between_ids(StorageRelationIdsQuery::new(
+                    class_ids,
+                    visibility(),
+                ))
                 .await
                 .expect("certified backend should query class relations between ids")
                 .len(),
@@ -4934,7 +4965,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         let object_ids = [object_one_resource_id, object_two_resource_id];
         assert_eq!(
             backend
-                .list_object_relations_touching_ids(ObjectRelationsTouchingIdsQuery::new(
+                .list_object_relations_touching_ids(StorageObjectRelationsTouchingIdsQuery::new(
                     [object_one_id],
                     10,
                     visibility(),
@@ -4947,7 +4978,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         assert!(
             backend
                 .list_object_relations_touching_ids(
-                    ObjectRelationsTouchingIdsQuery::new([object_one_id], 10, visibility(),)
+                    StorageObjectRelationsTouchingIdsQuery::new([object_one_id], 10, visibility(),)
                         .excluding_relation_ids([object_relation_id]),
                 )
                 .await
@@ -4956,7 +4987,10 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         );
         assert_eq!(
             backend
-                .list_object_relations_between_ids(RelationIdsQuery::new(object_ids, visibility(),))
+                .list_object_relations_between_ids(StorageRelationIdsQuery::new(
+                    object_ids,
+                    visibility(),
+                ))
                 .await
                 .expect("certified backend should query object relations between ids")
                 .len(),
@@ -4964,7 +4998,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         );
 
         let (list_related_classes, _) = backend
-            .list_related_classes(RelationGraphQuery::new(
+            .list_related_classes(StorageRelationGraphQuery::new(
                 class_one_id,
                 options(),
                 visibility(),
@@ -4975,7 +5009,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         assert!(!list_related_classes.is_empty());
 
         let (list_related_objects, _) = backend
-            .list_related_objects(RelationGraphQuery::new(
+            .list_related_objects(StorageRelationGraphQuery::new(
                 object_one_resource_id,
                 options(),
                 visibility(),
@@ -4987,25 +5021,31 @@ async fn every_available_storage_backend_supplies_relation_queries() {
 
         let included = backend
             .list_related_objects_for_roots(
-                RelatedObjectsForRootsQuery::new([object_one_id], class_two_typed_id, visibility())
-                    .class_relation_id(Some(class_relation_id))
-                    .direction(StorageRelatedDirection::Any)
-                    .sort(StorageRelatedSort::Path)
-                    .max_depth(1)
-                    .limit(10),
+                StorageRelatedObjectsForRootsQuery::new(
+                    [object_one_id],
+                    class_two_typed_id,
+                    visibility(),
+                )
+                .class_relation_id(Some(class_relation_id))
+                .direction(StorageRelatedDirection::Any)
+                .sort(StorageRelatedSort::Path)
+                .max_depth(1)
+                .limit(10),
             )
             .await
             .expect("certified backend should traverse directional root graphs");
         assert_eq!(included.len(), 1);
 
         let bidirectional = backend
-            .list_bidirectionally_related_objects_for_roots(BidirectionalRelatedObjectsQuery::new(
-                [object_one_id],
-                1,
-                10,
-                false,
-                visibility(),
-            ))
+            .list_bidirectionally_related_objects_for_roots(
+                StorageBidirectionalRelatedObjectsQuery::new(
+                    [object_one_id],
+                    1,
+                    10,
+                    false,
+                    visibility(),
+                ),
+            )
             .await
             .expect("certified backend should traverse bidirectional root graphs");
         assert_eq!(bidirectional.len(), 1);
@@ -5046,13 +5086,13 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
 
     for backend in available_backends() {
         let request = || {
-            UnifiedSearchQuery::new(
+            StorageUnifiedSearchQuery::new(
                 needle.clone(),
                 10,
                 StorageVisibility::new(
                     principal_id(i32::MAX),
                     true,
-                    None::<Vec<AuthorizationPermission>>,
+                    None::<Vec<StorageAuthorizationPermission>>,
                     None,
                 ),
             )
@@ -5357,7 +5397,7 @@ async fn every_available_storage_backend_processes_event_retention() {
 
     #[async_trait]
     impl EventArchiveSink for DiscardArchive {
-        async fn archive(&self, _batch: &EventRetentionBatch) -> Result<(), StorageError> {
+        async fn archive(&self, _batch: &StorageEventRetentionBatch) -> Result<(), StorageError> {
             Ok(())
         }
     }

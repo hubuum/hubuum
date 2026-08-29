@@ -9,14 +9,15 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use hubuum_query::{QueryFilters, QueryOptions};
 
-use crate::{MutationOutcome, StorageError, StoragePage};
+use crate::validation::validate_sync_timestamps;
+use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageValidationError};
 
 /// Permission vocabulary persisted by a local authorization store.
 ///
 /// Keeping this enum in the storage contract prevents adapters from accepting
 /// application enums or unvalidated strings at the boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AuthorizationPermission {
+pub enum StorageAuthorizationPermission {
     ReadCollection,
     UpdateCollection,
     DeleteCollection,
@@ -50,7 +51,7 @@ pub enum AuthorizationPermission {
     ManageEventSubscription,
 }
 
-impl AuthorizationPermission {
+impl StorageAuthorizationPermission {
     pub const ALL: [Self; 31] = [
         Self::ReadCollection,
         Self::UpdateCollection,
@@ -132,12 +133,12 @@ impl AuthorizationPermission {
 
 /// Principal facts required by policy engines.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationPrincipal {
+pub struct StorageAuthorizationPrincipal {
     principal_id: PrincipalId,
     group_ids: Vec<GroupId>,
 }
 
-impl AuthorizationPrincipal {
+impl StorageAuthorizationPrincipal {
     #[must_use]
     pub fn new(principal_id: PrincipalId, group_ids: impl IntoIterator<Item = GroupId>) -> Self {
         let mut group_ids = group_ids.into_iter().collect::<Vec<_>>();
@@ -165,10 +166,10 @@ impl AuthorizationPrincipal {
     }
 }
 
-impl fmt::Debug for AuthorizationPrincipal {
+impl fmt::Debug for StorageAuthorizationPrincipal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationPrincipal")
+            .debug_struct("StorageAuthorizationPrincipal")
             .field("principal_id", &"[redacted]")
             .field("group_count", &self.group_ids.len())
             .finish()
@@ -177,13 +178,13 @@ impl fmt::Debug for AuthorizationPrincipal {
 
 /// Membership lookup by stable principal id and configured group identity.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGroupMembershipQuery {
+pub struct StorageAuthorizationGroupMembershipQuery {
     principal_id: PrincipalId,
     group_name: String,
     identity_scope: String,
 }
 
-impl AuthorizationGroupMembershipQuery {
+impl StorageAuthorizationGroupMembershipQuery {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
@@ -213,10 +214,10 @@ impl AuthorizationGroupMembershipQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationGroupMembershipQuery {
+impl fmt::Debug for StorageAuthorizationGroupMembershipQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGroupMembershipQuery")
+            .debug_struct("StorageAuthorizationGroupMembershipQuery")
             .field("principal_id", &"[redacted]")
             .field("group_name", &"[redacted]")
             .field("identity_scope", &"[redacted]")
@@ -225,18 +226,18 @@ impl fmt::Debug for AuthorizationGroupMembershipQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationCollectionAccessQuery {
+pub struct StorageAuthorizationCollectionAccessQuery {
     principal_id: PrincipalId,
     collection_id: CollectionId,
-    permissions: Vec<AuthorizationPermission>,
+    permissions: Vec<StorageAuthorizationPermission>,
 }
 
-impl AuthorizationCollectionAccessQuery {
+impl StorageAuthorizationCollectionAccessQuery {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
         collection_id: CollectionId,
-        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
     ) -> Self {
         Self {
             principal_id,
@@ -256,15 +257,15 @@ impl AuthorizationCollectionAccessQuery {
     }
 
     #[must_use]
-    pub fn permissions(&self) -> &[AuthorizationPermission] {
+    pub fn permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.permissions
     }
 }
 
-impl fmt::Debug for AuthorizationCollectionAccessQuery {
+impl fmt::Debug for StorageAuthorizationCollectionAccessQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionAccessQuery")
+            .debug_struct("StorageAuthorizationCollectionAccessQuery")
             .field("principal_id", &"[redacted]")
             .field("collection_id", &"[redacted]")
             .field("permission_count", &self.permissions.len())
@@ -278,18 +279,18 @@ impl fmt::Debug for AuthorizationCollectionAccessQuery {
 /// available on every requested collection. Collection identifiers and
 /// permissions are normalized so adapters receive a deterministic query.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationCollectionsAccessQuery {
+pub struct StorageAuthorizationCollectionsAccessQuery {
     principal_id: PrincipalId,
     collection_ids: Vec<CollectionId>,
-    permissions: Vec<AuthorizationPermission>,
+    permissions: Vec<StorageAuthorizationPermission>,
 }
 
-impl AuthorizationCollectionsAccessQuery {
+impl StorageAuthorizationCollectionsAccessQuery {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
         collection_ids: impl IntoIterator<Item = CollectionId>,
-        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
     ) -> Self {
         let mut collection_ids = collection_ids.into_iter().collect::<Vec<_>>();
         collection_ids.sort_unstable();
@@ -312,15 +313,15 @@ impl AuthorizationCollectionsAccessQuery {
     }
 
     #[must_use]
-    pub fn permissions(&self) -> &[AuthorizationPermission] {
+    pub fn permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.permissions
     }
 }
 
-impl fmt::Debug for AuthorizationCollectionsAccessQuery {
+impl fmt::Debug for StorageAuthorizationCollectionsAccessQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionsAccessQuery")
+            .debug_struct("StorageAuthorizationCollectionsAccessQuery")
             .field("principal_id", &"[redacted]")
             .field("collection_count", &self.collection_ids.len())
             .field("permission_count", &self.permissions.len())
@@ -329,16 +330,16 @@ impl fmt::Debug for AuthorizationCollectionsAccessQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationCollectionsQuery {
+pub struct StorageAuthorizationCollectionsQuery {
     principal_id: PrincipalId,
-    permissions: Vec<AuthorizationPermission>,
+    permissions: Vec<StorageAuthorizationPermission>,
 }
 
-impl AuthorizationCollectionsQuery {
+impl StorageAuthorizationCollectionsQuery {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
-        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
     ) -> Self {
         Self {
             principal_id,
@@ -352,15 +353,15 @@ impl AuthorizationCollectionsQuery {
     }
 
     #[must_use]
-    pub fn permissions(&self) -> &[AuthorizationPermission] {
+    pub fn permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.permissions
     }
 }
 
-impl fmt::Debug for AuthorizationCollectionsQuery {
+impl fmt::Debug for StorageAuthorizationCollectionsQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionsQuery")
+            .debug_struct("StorageAuthorizationCollectionsQuery")
             .field("principal_id", &"[redacted]")
             .field("permission_count", &self.permissions.len())
             .finish()
@@ -368,7 +369,7 @@ impl fmt::Debug for AuthorizationCollectionsQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationCollection {
+pub struct StorageAuthorizationCollection {
     id: CollectionId,
     name: String,
     description: String,
@@ -378,9 +379,8 @@ pub struct AuthorizationCollection {
     revision: ResourceRevision,
 }
 
-impl AuthorizationCollection {
-    #[must_use]
-    pub fn new(
+impl StorageAuthorizationCollection {
+    pub fn try_new(
         id: CollectionId,
         name: impl Into<String>,
         description: impl Into<String>,
@@ -388,8 +388,18 @@ impl AuthorizationCollection {
         updated_at: DateTime<Utc>,
         parent_collection_id: Option<CollectionId>,
         revision: ResourceRevision,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "authorization collection updated_at must not precede created_at",
+            ));
+        }
+        if parent_collection_id == Some(id) {
+            return Err(StorageValidationError::invalid(
+                "authorization collection must not be its own parent",
+            ));
+        }
+        Ok(Self {
             id,
             name: name.into(),
             description: description.into(),
@@ -397,7 +407,7 @@ impl AuthorizationCollection {
             updated_at,
             parent_collection_id,
             revision,
-        }
+        })
     }
 
     #[must_use]
@@ -436,10 +446,10 @@ impl AuthorizationCollection {
     }
 }
 
-impl fmt::Debug for AuthorizationCollection {
+impl fmt::Debug for StorageAuthorizationCollection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollection")
+            .debug_struct("StorageAuthorizationCollection")
             .field("id", &"[redacted]")
             .field("name", &"[redacted]")
             .field("description", &"[redacted]")
@@ -455,7 +465,7 @@ impl fmt::Debug for AuthorizationCollection {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGroupIdentity {
+pub struct StorageAuthorizationGroupIdentity {
     id: GroupId,
     group_name: String,
     identity_scope_id: IdentityScopeId,
@@ -463,7 +473,7 @@ pub struct AuthorizationGroupIdentity {
     external_key: Option<String>,
 }
 
-impl AuthorizationGroupIdentity {
+impl StorageAuthorizationGroupIdentity {
     #[must_use]
     pub fn new(
         id: GroupId,
@@ -482,10 +492,10 @@ impl AuthorizationGroupIdentity {
     }
 }
 
-impl fmt::Debug for AuthorizationGroupIdentity {
+impl fmt::Debug for StorageAuthorizationGroupIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGroupIdentity")
+            .debug_struct("StorageAuthorizationGroupIdentity")
             .field("id", &"[redacted]")
             .field("group_name", &"[redacted]")
             .field("identity_scope_id", &"[redacted]")
@@ -504,11 +514,11 @@ impl fmt::Debug for AuthorizationGroupIdentity {
 /// policy backend must see every matching group before it can authorize and
 /// paginate the result.
 #[derive(Clone, PartialEq)]
-pub struct AuthorizationGroupCandidateQuery {
+pub struct StorageAuthorizationGroupCandidateQuery {
     filters: QueryFilters,
 }
 
-impl AuthorizationGroupCandidateQuery {
+impl StorageAuthorizationGroupCandidateQuery {
     #[must_use]
     pub const fn new(filters: QueryFilters) -> Self {
         Self { filters }
@@ -520,44 +530,48 @@ impl AuthorizationGroupCandidateQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationGroupCandidateQuery {
+impl fmt::Debug for StorageAuthorizationGroupCandidateQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGroupCandidateQuery")
+            .debug_struct("StorageAuthorizationGroupCandidateQuery")
             .field("filter_count", &self.filters.len())
             .finish_non_exhaustive()
     }
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGroupProfile {
+pub struct StorageAuthorizationGroupProfile {
     description: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     revision: ResourceRevision,
 }
 
-impl AuthorizationGroupProfile {
-    #[must_use]
-    pub fn new(
+impl StorageAuthorizationGroupProfile {
+    pub fn try_new(
         description: impl Into<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: ResourceRevision,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "authorization group updated_at must not precede created_at",
+            ));
+        }
+        Ok(Self {
             description: description.into(),
             created_at,
             updated_at,
             revision,
-        }
+        })
     }
 }
 
-impl fmt::Debug for AuthorizationGroupProfile {
+impl fmt::Debug for StorageAuthorizationGroupProfile {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGroupProfile")
+            .debug_struct("StorageAuthorizationGroupProfile")
             .field("description", &"[redacted]")
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
@@ -567,37 +581,37 @@ impl fmt::Debug for AuthorizationGroupProfile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuthorizationGroupSyncState {
+pub struct StorageAuthorizationGroupSyncState {
     last_attempted_at: Option<DateTime<Utc>>,
     last_succeeded_at: Option<DateTime<Utc>>,
 }
 
-impl AuthorizationGroupSyncState {
-    #[must_use]
-    pub const fn new(
+impl StorageAuthorizationGroupSyncState {
+    pub fn try_new(
         last_attempted_at: Option<DateTime<Utc>>,
         last_succeeded_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_sync_timestamps(last_attempted_at, last_succeeded_at)?;
+        Ok(Self {
             last_attempted_at,
             last_succeeded_at,
-        }
+        })
     }
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGroup {
-    identity: AuthorizationGroupIdentity,
-    profile: AuthorizationGroupProfile,
-    sync: AuthorizationGroupSyncState,
+pub struct StorageAuthorizationGroup {
+    identity: StorageAuthorizationGroupIdentity,
+    profile: StorageAuthorizationGroupProfile,
+    sync: StorageAuthorizationGroupSyncState,
 }
 
-impl AuthorizationGroup {
+impl StorageAuthorizationGroup {
     #[must_use]
     pub const fn new(
-        identity: AuthorizationGroupIdentity,
-        profile: AuthorizationGroupProfile,
-        sync: AuthorizationGroupSyncState,
+        identity: StorageAuthorizationGroupIdentity,
+        profile: StorageAuthorizationGroupProfile,
+        sync: StorageAuthorizationGroupSyncState,
     ) -> Self {
         Self {
             identity,
@@ -652,10 +666,10 @@ impl AuthorizationGroup {
     }
 }
 
-impl fmt::Debug for AuthorizationGroup {
+impl fmt::Debug for StorageAuthorizationGroup {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGroup")
+            .debug_struct("StorageAuthorizationGroup")
             .field("identity", &self.identity)
             .field("profile", &self.profile)
             .field("sync", &self.sync)
@@ -664,19 +678,19 @@ impl fmt::Debug for AuthorizationGroup {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGrant {
+pub struct StorageAuthorizationGrant {
     id: AuthorizationGrantId,
     collection_id: CollectionId,
     group_id: GroupId,
-    permissions: Vec<AuthorizationPermission>,
+    permissions: Vec<StorageAuthorizationPermission>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
-impl fmt::Debug for AuthorizationGrant {
+impl fmt::Debug for StorageAuthorizationGrant {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGrant")
+            .debug_struct("StorageAuthorizationGrant")
             .field("id", &"[redacted]")
             .field("collection_id", &"[redacted]")
             .field("group_id", &"[redacted]")
@@ -687,24 +701,28 @@ impl fmt::Debug for AuthorizationGrant {
     }
 }
 
-impl AuthorizationGrant {
-    #[must_use]
-    pub fn new(
+impl StorageAuthorizationGrant {
+    pub fn try_new(
         id: AuthorizationGrantId,
         collection_id: CollectionId,
         group_id: GroupId,
-        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "authorization grant updated_at must not precede created_at",
+            ));
+        }
+        Ok(Self {
             id,
             collection_id,
             group_id,
             permissions: normalized_permissions(permissions),
             created_at,
             updated_at,
-        }
+        })
     }
 
     #[must_use]
@@ -720,7 +738,7 @@ impl AuthorizationGrant {
         self.group_id
     }
     #[must_use]
-    pub fn permissions(&self) -> &[AuthorizationPermission] {
+    pub fn permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.permissions
     }
     #[must_use]
@@ -734,68 +752,79 @@ impl AuthorizationGrant {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizationGroupGrant {
-    group: AuthorizationGroup,
-    grant: AuthorizationGrant,
+pub struct StorageAuthorizationGroupGrant {
+    group: StorageAuthorizationGroup,
+    grant: StorageAuthorizationGrant,
 }
 
-impl AuthorizationGroupGrant {
-    #[must_use]
-    pub const fn new(group: AuthorizationGroup, grant: AuthorizationGrant) -> Self {
-        Self { group, grant }
+impl StorageAuthorizationGroupGrant {
+    pub fn try_new(
+        group: StorageAuthorizationGroup,
+        grant: StorageAuthorizationGrant,
+    ) -> Result<Self, StorageValidationError> {
+        if group.id() != grant.group_id() {
+            return Err(StorageValidationError::invalid(
+                "authorization group grant ids must match",
+            ));
+        }
+        Ok(Self { group, grant })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (AuthorizationGroup, AuthorizationGrant) {
+    pub fn into_parts(self) -> (StorageAuthorizationGroup, StorageAuthorizationGrant) {
         (self.group, self.grant)
     }
 }
 
 /// One complete local-policy row for backend-neutral policy export.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizationPolicySnapshotRow {
-    grant: AuthorizationGrant,
-    group: AuthorizationGroup,
-    collection: AuthorizationCollection,
+pub struct StorageAuthorizationPolicySnapshotRow {
+    grant: StorageAuthorizationGrant,
+    group: StorageAuthorizationGroup,
+    collection: StorageAuthorizationCollection,
 }
 
-impl AuthorizationPolicySnapshotRow {
-    #[must_use]
-    pub const fn new(
-        grant: AuthorizationGrant,
-        group: AuthorizationGroup,
-        collection: AuthorizationCollection,
-    ) -> Self {
-        Self {
+impl StorageAuthorizationPolicySnapshotRow {
+    pub fn try_new(
+        grant: StorageAuthorizationGrant,
+        group: StorageAuthorizationGroup,
+        collection: StorageAuthorizationCollection,
+    ) -> Result<Self, StorageValidationError> {
+        if grant.group_id() != group.id() || grant.collection_id() != collection.id() {
+            return Err(StorageValidationError::invalid(
+                "authorization policy grant, group, and collection ids must match",
+            ));
+        }
+        Ok(Self {
             grant,
             group,
             collection,
-        }
+        })
     }
 
     #[must_use]
     pub fn into_parts(
         self,
     ) -> (
-        AuthorizationGrant,
-        AuthorizationGroup,
-        AuthorizationCollection,
+        StorageAuthorizationGrant,
+        StorageAuthorizationGroup,
+        StorageAuthorizationCollection,
     ) {
         (self.grant, self.group, self.collection)
     }
 }
 
 #[derive(Clone, PartialEq)]
-pub struct AuthorizationCollectionGrantListQuery {
+pub struct StorageAuthorizationCollectionGrantListQuery {
     collection_id: CollectionId,
-    required_permissions: Vec<AuthorizationPermission>,
+    required_permissions: Vec<StorageAuthorizationPermission>,
     query_options: QueryOptions,
 }
 
-impl fmt::Debug for AuthorizationCollectionGrantListQuery {
+impl fmt::Debug for StorageAuthorizationCollectionGrantListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionGrantListQuery")
+            .debug_struct("StorageAuthorizationCollectionGrantListQuery")
             .field("collection_id", &"[redacted]")
             .field(
                 "required_permission_count",
@@ -810,11 +839,11 @@ impl fmt::Debug for AuthorizationCollectionGrantListQuery {
     }
 }
 
-impl AuthorizationCollectionGrantListQuery {
+impl StorageAuthorizationCollectionGrantListQuery {
     #[must_use]
     pub fn new(
         collection_id: CollectionId,
-        required_permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        required_permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
         query_options: QueryOptions,
     ) -> Self {
         Self {
@@ -829,7 +858,7 @@ impl AuthorizationCollectionGrantListQuery {
         self.collection_id
     }
     #[must_use]
-    pub fn required_permissions(&self) -> &[AuthorizationPermission] {
+    pub fn required_permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.required_permissions
     }
     #[must_use]
@@ -839,22 +868,22 @@ impl AuthorizationCollectionGrantListQuery {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct AuthorizationGrantKey {
+pub struct StorageAuthorizationGrantKey {
     collection_id: CollectionId,
     group_id: GroupId,
 }
 
-impl fmt::Debug for AuthorizationGrantKey {
+impl fmt::Debug for StorageAuthorizationGrantKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGrantKey")
+            .debug_struct("StorageAuthorizationGrantKey")
             .field("collection_id", &"[redacted]")
             .field("group_id", &"[redacted]")
             .finish()
     }
 }
 
-impl AuthorizationGrantKey {
+impl StorageAuthorizationGrantKey {
     #[must_use]
     pub const fn new(collection_id: CollectionId, group_id: GroupId) -> Self {
         Self {
@@ -873,17 +902,17 @@ impl AuthorizationGrantKey {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGrantMutation {
-    key: AuthorizationGrantKey,
-    permissions: Vec<AuthorizationPermission>,
+pub struct StorageAuthorizationGrantMutation {
+    key: StorageAuthorizationGrantKey,
+    permissions: Vec<StorageAuthorizationPermission>,
     replace_existing: bool,
     event_context: EventContext,
 }
 
-impl fmt::Debug for AuthorizationGrantMutation {
+impl fmt::Debug for StorageAuthorizationGrantMutation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGrantMutation")
+            .debug_struct("StorageAuthorizationGrantMutation")
             .field("key", &self.key)
             .field("permission_count", &self.permissions.len())
             .field("replace_existing", &self.replace_existing)
@@ -892,11 +921,11 @@ impl fmt::Debug for AuthorizationGrantMutation {
     }
 }
 
-impl AuthorizationGrantMutation {
+impl StorageAuthorizationGrantMutation {
     #[must_use]
     pub fn new(
-        key: AuthorizationGrantKey,
-        permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        key: StorageAuthorizationGrantKey,
+        permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
         replace_existing: bool,
         event_context: EventContext,
     ) -> Self {
@@ -908,11 +937,11 @@ impl AuthorizationGrantMutation {
         }
     }
     #[must_use]
-    pub const fn key(&self) -> AuthorizationGrantKey {
+    pub const fn key(&self) -> StorageAuthorizationGrantKey {
         self.key
     }
     #[must_use]
-    pub fn permissions(&self) -> &[AuthorizationPermission] {
+    pub fn permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.permissions
     }
     #[must_use]
@@ -932,12 +961,12 @@ impl AuthorizationGrantMutation {
 /// revision, so conditional requests still describe the complete permission
 /// set for the collection.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct AuthorizationPermissionSetQuery {
+pub struct StorageAuthorizationPermissionSetQuery {
     collection_id: CollectionId,
     group_id: Option<GroupId>,
 }
 
-impl AuthorizationPermissionSetQuery {
+impl StorageAuthorizationPermissionSetQuery {
     #[must_use]
     pub const fn new(collection_id: CollectionId, group_id: Option<GroupId>) -> Self {
         Self {
@@ -957,10 +986,10 @@ impl AuthorizationPermissionSetQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationPermissionSetQuery {
+impl fmt::Debug for StorageAuthorizationPermissionSetQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationPermissionSetQuery")
+            .debug_struct("StorageAuthorizationPermissionSetQuery")
             .field("collection_id", &"[redacted]")
             .field("has_group_filter", &self.group_id.is_some())
             .finish()
@@ -969,36 +998,49 @@ impl fmt::Debug for AuthorizationPermissionSetQuery {
 
 /// Revisioned local permission set returned without database row types.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationPermissionSet {
+pub struct StorageAuthorizationPermissionSet {
     collection_id: CollectionId,
     revision: ResourceRevision,
-    grants: Vec<AuthorizationGrant>,
+    grants: Vec<StorageAuthorizationGrant>,
 }
 
-impl AuthorizationPermissionSet {
-    #[must_use]
-    pub const fn new(
+impl StorageAuthorizationPermissionSet {
+    pub fn try_new(
         collection_id: CollectionId,
         revision: ResourceRevision,
-        grants: Vec<AuthorizationGrant>,
-    ) -> Self {
-        Self {
+        grants: Vec<StorageAuthorizationGrant>,
+    ) -> Result<Self, StorageValidationError> {
+        let mut group_ids = std::collections::HashSet::with_capacity(grants.len());
+        if grants.iter().any(|grant| {
+            grant.collection_id() != collection_id || !group_ids.insert(grant.group_id())
+        }) {
+            return Err(StorageValidationError::invalid(
+                "authorization permission-set grants must have the owning collection and unique groups",
+            ));
+        }
+        Ok(Self {
             collection_id,
             revision,
             grants,
-        }
+        })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (CollectionId, ResourceRevision, Vec<AuthorizationGrant>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        CollectionId,
+        ResourceRevision,
+        Vec<StorageAuthorizationGrant>,
+    ) {
         (self.collection_id, self.revision, self.grants)
     }
 }
 
-impl fmt::Debug for AuthorizationPermissionSet {
+impl fmt::Debug for StorageAuthorizationPermissionSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationPermissionSet")
+            .debug_struct("StorageAuthorizationPermissionSet")
             .field("collection_id", &"[redacted]")
             .field("revision", &self.revision)
             .field("grant_count", &self.grants.len())
@@ -1008,19 +1050,19 @@ impl fmt::Debug for AuthorizationPermissionSet {
 
 /// Delete-all request with mandatory atomic event provenance.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationGrantDelete {
-    key: AuthorizationGrantKey,
+pub struct StorageAuthorizationGrantDelete {
+    key: StorageAuthorizationGrantKey,
     event_context: EventContext,
 }
 
-impl AuthorizationGrantDelete {
+impl StorageAuthorizationGrantDelete {
     #[must_use]
-    pub const fn new(key: AuthorizationGrantKey, event_context: EventContext) -> Self {
+    pub const fn new(key: StorageAuthorizationGrantKey, event_context: EventContext) -> Self {
         Self { key, event_context }
     }
 
     #[must_use]
-    pub const fn key(&self) -> AuthorizationGrantKey {
+    pub const fn key(&self) -> StorageAuthorizationGrantKey {
         self.key
     }
 
@@ -1030,10 +1072,10 @@ impl AuthorizationGrantDelete {
     }
 }
 
-impl fmt::Debug for AuthorizationGrantDelete {
+impl fmt::Debug for StorageAuthorizationGrantDelete {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationGrantDelete")
+            .debug_struct("StorageAuthorizationGrantDelete")
             .field("key", &self.key)
             .field("event_context", &"[redacted]")
             .finish()
@@ -1041,8 +1083,8 @@ impl fmt::Debug for AuthorizationGrantDelete {
 }
 
 fn normalized_permissions(
-    permissions: impl IntoIterator<Item = AuthorizationPermission>,
-) -> Vec<AuthorizationPermission> {
+    permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
+) -> Vec<StorageAuthorizationPermission> {
     let mut permissions = permissions.into_iter().collect::<Vec<_>>();
     permissions.sort_unstable();
     permissions.dedup();
@@ -1051,11 +1093,11 @@ fn normalized_permissions(
 
 /// Deduplicated resource identifiers requested for authorization enrichment.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationResourceIds {
+pub struct StorageAuthorizationResourceIds {
     ids: Vec<ResourceId>,
 }
 
-impl AuthorizationResourceIds {
+impl StorageAuthorizationResourceIds {
     #[must_use]
     pub fn new(ids: impl IntoIterator<Item = ResourceId>) -> Self {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
@@ -1070,10 +1112,10 @@ impl AuthorizationResourceIds {
     }
 }
 
-impl fmt::Debug for AuthorizationResourceIds {
+impl fmt::Debug for StorageAuthorizationResourceIds {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationResourceIds")
+            .debug_struct("StorageAuthorizationResourceIds")
             .field("resource_count", &self.ids.len())
             .finish()
     }
@@ -1081,12 +1123,12 @@ impl fmt::Debug for AuthorizationResourceIds {
 
 /// Class facts needed to construct an authorization resource.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationClassResource {
+pub struct StorageAuthorizationClassResource {
     id: ClassId,
     collection_id: CollectionId,
 }
 
-impl AuthorizationClassResource {
+impl StorageAuthorizationClassResource {
     #[must_use]
     pub const fn new(id: ClassId, collection_id: CollectionId) -> Self {
         Self { id, collection_id }
@@ -1103,10 +1145,10 @@ impl AuthorizationClassResource {
     }
 }
 
-impl fmt::Debug for AuthorizationClassResource {
+impl fmt::Debug for StorageAuthorizationClassResource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationClassResource")
+            .debug_struct("StorageAuthorizationClassResource")
             .field("id", &"[redacted]")
             .field("collection_id", &"[redacted]")
             .finish()
@@ -1115,14 +1157,14 @@ impl fmt::Debug for AuthorizationClassResource {
 
 /// Object facts needed to construct an authorization resource.
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationObjectResource {
+pub struct StorageAuthorizationObjectResource {
     id: ObjectId,
     collection_id: CollectionId,
     class_id: ClassId,
     name: String,
 }
 
-impl AuthorizationObjectResource {
+impl StorageAuthorizationObjectResource {
     #[must_use]
     pub fn new(
         id: ObjectId,
@@ -1159,10 +1201,10 @@ impl AuthorizationObjectResource {
     }
 }
 
-impl fmt::Debug for AuthorizationObjectResource {
+impl fmt::Debug for StorageAuthorizationObjectResource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationObjectResource")
+            .debug_struct("StorageAuthorizationObjectResource")
             .field("id", &"[redacted]")
             .field("collection_id", &"[redacted]")
             .field("class_id", &"[redacted]")
@@ -1182,80 +1224,80 @@ pub trait AuthorizationDataStorage: Send + Sync {
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthorizationPrincipal, StorageError>;
+    ) -> Result<StorageAuthorizationPrincipal, StorageError>;
 
     async fn is_authorization_principal_group_member(
         &self,
-        query: AuthorizationGroupMembershipQuery,
+        query: StorageAuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError>;
 
     async fn list_authorization_classes(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationClassResource>, StorageError>;
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationClassResource>, StorageError>;
 
     async fn list_authorization_objects(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationObjectResource>, StorageError>;
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError>;
 
     async fn authorize_local_collection(
         &self,
-        query: AuthorizationCollectionAccessQuery,
+        query: StorageAuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError>;
 
     async fn authorize_local_collections(
         &self,
-        query: AuthorizationCollectionsAccessQuery,
+        query: StorageAuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError>;
 
     async fn list_local_authorized_collections(
         &self,
-        query: AuthorizationCollectionsQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError>;
+        query: StorageAuthorizationCollectionsQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError>;
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError>;
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError>;
 
     async fn load_authorization_group_candidates(
         &self,
-        query: AuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError>;
+        query: StorageAuthorizationGroupCandidateQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError>;
 
     async fn get_authorization_policy_snapshot(
         &self,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError>;
 
     async fn list_local_collection_grants(
         &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
+        query: StorageAuthorizationCollectionGrantListQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError>;
 
     async fn get_local_collection_grant(
         &self,
-        key: AuthorizationGrantKey,
-    ) -> Result<Option<AuthorizationGrant>, StorageError>;
+        key: StorageAuthorizationGrantKey,
+    ) -> Result<Option<StorageAuthorizationGrant>, StorageError>;
 
     async fn get_local_collection_permission_set(
         &self,
-        query: AuthorizationPermissionSetQuery,
-    ) -> Result<AuthorizationPermissionSet, StorageError>;
+        query: StorageAuthorizationPermissionSetQuery,
+    ) -> Result<StorageAuthorizationPermissionSet, StorageError>;
 
     async fn apply_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError>;
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError>;
 
     async fn revoke_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError>;
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError>;
 
     async fn revoke_all_local_collection_grants(
         &self,
-        request: AuthorizationGrantDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+        request: StorageAuthorizationGrantDelete,
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
@@ -1276,15 +1318,15 @@ mod tests {
 
     #[test]
     fn principal_groups_are_normalized() {
-        let principal = AuthorizationPrincipal::new(principal(7), [3, 1, 3, 2].map(group));
+        let principal = StorageAuthorizationPrincipal::new(principal(7), [3, 1, 3, 2].map(group));
         assert_eq!(principal.group_ids(), &[group(1), group(2), group(3)]);
     }
 
     #[test]
     fn permission_names_round_trip_for_the_complete_contract_vocabulary() {
-        for permission in AuthorizationPermission::ALL {
+        for permission in StorageAuthorizationPermission::ALL {
             assert_eq!(
-                AuthorizationPermission::from_name(permission.as_str()),
+                StorageAuthorizationPermission::from_name(permission.as_str()),
                 Ok(permission)
             );
         }
@@ -1292,7 +1334,7 @@ mod tests {
 
     #[test]
     fn unknown_permission_names_are_rejected_at_the_contract_boundary() {
-        let error = AuthorizationPermission::from_name("read_collection")
+        let error = StorageAuthorizationPermission::from_name("read_collection")
             .expect_err("permission names are case-sensitive persisted vocabulary");
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
     }
@@ -1301,7 +1343,7 @@ mod tests {
     fn principal_debug_redacts_identity() {
         let debug = format!(
             "{:?}",
-            AuthorizationPrincipal::new(principal(987_654), [group(123), group(456)])
+            StorageAuthorizationPrincipal::new(principal(987_654), [group(123), group(456)])
         );
         assert!(!debug.contains("987654"));
         assert!(!debug.contains("123"));
@@ -1312,7 +1354,7 @@ mod tests {
     fn membership_debug_redacts_lookup_values() {
         let debug = format!(
             "{:?}",
-            AuthorizationGroupMembershipQuery::new(
+            StorageAuthorizationGroupMembershipQuery::new(
                 principal(987_654),
                 "secret-admins",
                 "private-scope",
@@ -1325,19 +1367,20 @@ mod tests {
 
     #[test]
     fn authorization_dto_debug_redacts_resource_identity() {
-        let query = AuthorizationCollectionAccessQuery::new(
+        let query = StorageAuthorizationCollectionAccessQuery::new(
             principal(987_654),
             collection(876_543),
-            [AuthorizationPermission::ReadCollection],
+            [StorageAuthorizationPermission::ReadCollection],
         );
-        let grant = AuthorizationGrant::new(
+        let grant = StorageAuthorizationGrant::try_new(
             AuthorizationGrantId::new(765_432).unwrap(),
             collection(876_543),
             group(654_321),
-            [AuthorizationPermission::ReadCollection],
+            [StorageAuthorizationPermission::ReadCollection],
             DateTime::<Utc>::default(),
             DateTime::<Utc>::default(),
-        );
+        )
+        .unwrap();
         let debug = format!("{query:?} {grant:?}");
 
         for sensitive in ["987654", "876543", "765432", "654321"] {
@@ -1348,33 +1391,33 @@ mod tests {
 
     #[test]
     fn permission_sets_are_normalized() {
-        let query = AuthorizationCollectionAccessQuery::new(
+        let query = StorageAuthorizationCollectionAccessQuery::new(
             principal(1),
             collection(2),
             [
-                AuthorizationPermission::UpdateCollection,
-                AuthorizationPermission::ReadCollection,
-                AuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::UpdateCollection,
             ],
         );
         assert_eq!(
             query.permissions(),
             &[
-                AuthorizationPermission::ReadCollection,
-                AuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::UpdateCollection,
             ]
         );
     }
 
     #[test]
     fn batch_access_query_normalizes_collection_and_permission_sets() {
-        let query = AuthorizationCollectionsAccessQuery::new(
+        let query = StorageAuthorizationCollectionsAccessQuery::new(
             principal(1),
             [9, 3, 9, 5].map(collection),
             [
-                AuthorizationPermission::UpdateCollection,
-                AuthorizationPermission::ReadCollection,
-                AuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::UpdateCollection,
             ],
         );
 
@@ -1385,8 +1428,8 @@ mod tests {
         assert_eq!(
             query.permissions(),
             &[
-                AuthorizationPermission::ReadCollection,
-                AuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::UpdateCollection,
             ]
         );
     }
@@ -1395,10 +1438,10 @@ mod tests {
     fn batch_access_query_debug_redacts_identity() {
         let debug = format!(
             "{:?}",
-            AuthorizationCollectionsAccessQuery::new(
+            StorageAuthorizationCollectionsAccessQuery::new(
                 principal(987_654),
                 [collection(876_543), collection(765_432)],
-                [AuthorizationPermission::ReadCollection],
+                [StorageAuthorizationPermission::ReadCollection],
             )
         );
 
@@ -1411,15 +1454,17 @@ mod tests {
 
     #[test]
     fn authorization_resource_debug_redacts_projected_values() {
-        let class =
-            AuthorizationClassResource::new(ClassId::new(987_654).unwrap(), collection(876_543));
-        let object = AuthorizationObjectResource::new(
+        let class = StorageAuthorizationClassResource::new(
+            ClassId::new(987_654).unwrap(),
+            collection(876_543),
+        );
+        let object = StorageAuthorizationObjectResource::new(
             ObjectId::new(765_432).unwrap(),
             collection(654_321),
             ClassId::new(543_210).unwrap(),
             "sensitive-object-name",
         );
-        let ids = AuthorizationResourceIds::new([
+        let ids = StorageAuthorizationResourceIds::new([
             ResourceId::new(432_109).unwrap(),
             ResourceId::new(321_098).unwrap(),
         ]);
@@ -1442,15 +1487,16 @@ mod tests {
 
     #[test]
     fn permission_set_and_mutation_debug_redact_identifiers() {
-        let key = AuthorizationGrantKey::new(collection(987_654), group(876_543));
-        let query = AuthorizationPermissionSetQuery::new(collection(987_654), Some(group(876_543)));
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(collection(987_654), group(876_543));
+        let query =
+            StorageAuthorizationPermissionSetQuery::new(collection(987_654), Some(group(876_543)));
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
-            [AuthorizationPermission::ReadCollection],
+            [StorageAuthorizationPermission::ReadCollection],
             false,
             EventContext::system(),
         );
-        let delete = AuthorizationGrantDelete::new(key, EventContext::system());
+        let delete = StorageAuthorizationGrantDelete::new(key, EventContext::system());
         let debug = format!("{query:?} {mutation:?} {delete:?}");
 
         for sensitive in ["987654", "876543"] {

@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    EventRetentionBatchId, EventRetentionSummary, MutationOutcome, StorageError, StorageErrorKind,
-    StorageObservation, StorageObserver, StorageRecordedEvent,
+    StorageError, StorageErrorKind, StorageEventRetentionBatchId, StorageEventRetentionSummary,
+    StorageMutationOutcome, StorageObservation, StorageObserver, StorageRecordedEvent,
 };
 
 /// Thread-safe application observer used by backend contract fixtures.
@@ -184,13 +184,13 @@ pub trait ApplicationCompatibilityFixture {
 
 /// Evidence for one committed state change and its durable event row.
 pub struct CommittedMutationProbe {
-    outcome: MutationOutcome<()>,
+    outcome: StorageMutationOutcome<()>,
     persisted_events: Vec<StorageRecordedEvent>,
 }
 
 impl CommittedMutationProbe {
     #[must_use]
-    pub fn new(outcome: MutationOutcome<()>, persisted_event: StorageRecordedEvent) -> Self {
+    pub fn new(outcome: StorageMutationOutcome<()>, persisted_event: StorageRecordedEvent) -> Self {
         Self {
             outcome,
             persisted_events: vec![persisted_event],
@@ -201,7 +201,7 @@ impl CommittedMutationProbe {
     /// event, such as bulk revocation.
     #[must_use]
     pub const fn with_events(
-        outcome: MutationOutcome<()>,
+        outcome: StorageMutationOutcome<()>,
         persisted_events: Vec<StorageRecordedEvent>,
     ) -> Self {
         Self {
@@ -229,21 +229,21 @@ impl RevisionConflictProbe {
 
 /// Evidence for the durable retention claim/archive/complete protocol.
 pub struct RetentionRetryProbe {
-    failed_batch_id: EventRetentionBatchId,
-    retried_batch_id: EventRetentionBatchId,
+    failed_batch_id: StorageEventRetentionBatchId,
+    retried_batch_id: StorageEventRetentionBatchId,
     event_survived_archive_failure: bool,
-    first_completion: EventRetentionSummary,
-    repeated_completion: EventRetentionSummary,
+    first_completion: StorageEventRetentionSummary,
+    repeated_completion: StorageEventRetentionSummary,
 }
 
 impl RetentionRetryProbe {
     #[must_use]
     pub const fn new(
-        failed_batch_id: EventRetentionBatchId,
-        retried_batch_id: EventRetentionBatchId,
+        failed_batch_id: StorageEventRetentionBatchId,
+        retried_batch_id: StorageEventRetentionBatchId,
         event_survived_archive_failure: bool,
-        first_completion: EventRetentionSummary,
-        repeated_completion: EventRetentionSummary,
+        first_completion: StorageEventRetentionSummary,
+        repeated_completion: StorageEventRetentionSummary,
     ) -> Self {
         Self {
             failed_batch_id,
@@ -257,13 +257,13 @@ impl RetentionRetryProbe {
 
 /// Evidence that a genuine no-op did not append an audit event.
 pub struct UnchangedMutationProbe {
-    outcome: MutationOutcome<()>,
+    outcome: StorageMutationOutcome<()>,
     appended_event_count: usize,
 }
 
 impl UnchangedMutationProbe {
     #[must_use]
-    pub const fn new(outcome: MutationOutcome<()>, appended_event_count: usize) -> Self {
+    pub const fn new(outcome: StorageMutationOutcome<()>, appended_event_count: usize) -> Self {
         Self {
             outcome,
             appended_event_count,
@@ -913,13 +913,13 @@ mod tests {
     use hubuum_events_core::{
         Action, ActorKind, EntityType, EventEnvelope, EventId, EventSequence,
     };
-    use hubuum_storage_core::{AuditReceipt, AuditReceipts};
+    use hubuum_storage_core::{StorageAuditReceipt, StorageAuditReceipts};
 
     use super::*;
 
     #[test]
     fn unchanged_probe_rejects_an_appended_event() {
-        let probe = UnchangedMutationProbe::new(MutationOutcome::unchanged(()), 1);
+        let probe = UnchangedMutationProbe::new(StorageMutationOutcome::unchanged(()), 1);
 
         assert!(matches!(
             verify_unchanged_mutation(probe),
@@ -929,21 +929,18 @@ mod tests {
 
     #[test]
     fn committed_probe_requires_a_receipt() {
-        let _receipt_type_is_part_of_the_contract: Option<AuditReceipt> = None;
-        let outcome = MutationOutcome::unchanged(());
+        let _receipt_type_is_part_of_the_contract: Option<StorageAuditReceipt> = None;
+        let outcome = StorageMutationOutcome::unchanged(());
         assert!(outcome.audits().is_none());
     }
 
     #[test]
     fn committed_probe_rejects_duplicate_receipts_that_hide_a_persisted_event() {
         let first_event = recorded_event(1);
-        let duplicated_receipt = first_event
-            .clone()
-            .into_audit_receipt()
-            .expect("valid audit receipt");
-        let outcome = MutationOutcome::committed_with_audits(
+        let duplicated_receipt = first_event.clone().into_audit_receipt();
+        let outcome = StorageMutationOutcome::committed_with_audits(
             (),
-            AuditReceipts::new(duplicated_receipt.clone(), vec![duplicated_receipt]),
+            StorageAuditReceipts::new(duplicated_receipt.clone(), vec![duplicated_receipt]),
         );
         let probe =
             CommittedMutationProbe::with_events(outcome, vec![first_event, recorded_event(2)]);

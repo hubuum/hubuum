@@ -21,9 +21,10 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         ResourceRevision::INITIAL,
     )
     .unwrap();
-    let collection = StorageCollection::new(metadata, "collection", "description", None);
+    let collection =
+        StorageCollection::try_new(metadata, "collection", "description", None).unwrap();
     let class_record =
-        StorageClassRecord::builder(metadata, "class", collection_id, "description").build();
+        StorageClass::builder(metadata, "class", collection_id, "description").build();
     let object = StorageObject::new(
         metadata,
         "object",
@@ -32,15 +33,16 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         serde_json::json!({}),
         "description",
     );
-    let restore_summary = StorageRestoreJobSummary::new(
+    let restore_summary = StorageRestoreJobSummary::try_new(
         RestoreJobId::new(1).unwrap(),
         StorageRestoreJobStatus::Validated,
         StorageRestoreInitiator::try_new(None, "local", "administrator").unwrap(),
         StorageRestoreArtifactSummary::try_new(0, "0".repeat(64)).unwrap(),
         None,
         StorageRestoreTimestamps::try_new(now, None, None, now, now).unwrap(),
-    );
-    let service_account = StorageServiceAccount::new(
+    )
+    .unwrap();
+    let service_account = StorageServiceAccount::try_new(
         ServiceAccountId::new(1).unwrap(),
         "description",
         GroupId::new(1).unwrap(),
@@ -48,13 +50,15 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         None,
         now,
         now,
-    );
-    let user = StorageUser::new(UserId::new(1).unwrap(), None, None, None, now, now, None);
-    let _ = AuthenticatedToken::builder;
-    let _ = AuthenticationIdentity::new;
-    let _ = AuthenticationTokenScope::new;
-    let _ = AuthorizationClassResource::new;
-    let _ = AuthorizationCollection::new(
+    )
+    .unwrap();
+    let user =
+        StorageUser::try_new(UserId::new(1).unwrap(), None, None, None, now, now, None).unwrap();
+    let _ = StorageAuthenticatedToken::builder;
+    let _ = StorageAuthenticationIdentity::try_new;
+    let _ = StorageAuthenticationTokenScope::new;
+    let _ = StorageAuthorizationClassResource::new;
+    let _ = StorageAuthorizationCollection::try_new(
         collection_id,
         "collection",
         "description",
@@ -63,30 +67,30 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         None,
         ResourceRevision::INITIAL,
     );
-    let _ = AuthorizationEffectiveGroupGrant::new;
-    let _ = AuthorizationGrant::new(
+    let _ = StorageAuthorizationEffectiveGroupGrant::new;
+    let _ = StorageAuthorizationGrant::try_new(
         AuthorizationGrantId::new(1).unwrap(),
         collection_id,
         GroupId::new(1).unwrap(),
-        Vec::<AuthorizationPermission>::new(),
+        Vec::<StorageAuthorizationPermission>::new(),
         now,
         now,
     );
-    let _ = AuthorizationGroup::new;
-    let _ = AuthorizationGroupGrant::new;
-    let _ = AuthorizationObjectResource::new(
+    let _ = StorageAuthorizationGroup::new;
+    let _ = StorageAuthorizationGroupGrant::try_new;
+    let _ = StorageAuthorizationObjectResource::new(
         ObjectId::new(1).unwrap(),
         collection_id,
         ClassId::new(1).unwrap(),
         "object",
     );
-    let _ = AuthorizationPermissionSet::new;
-    let _ = AuthorizationPolicySnapshotRow::new;
-    let _ = AuthorizationPrincipal::new(PrincipalId::new(1).unwrap(), Vec::<GroupId>::new());
-    let _ = ComputedObjectPage::try_new;
-    let _ = EventDeliveryBatch::new;
-    let _ = EventDeliveryClaim::try_new;
-    let _ = EventDeliverySink::try_new(
+    let _ = StorageAuthorizationPermissionSet::try_new;
+    let _ = StorageAuthorizationPolicySnapshotRow::try_new;
+    let _ = StorageAuthorizationPrincipal::new(PrincipalId::new(1).unwrap(), Vec::<GroupId>::new());
+    let _ = StorageComputedObjectPage::try_new;
+    let _ = StorageEventDeliveryBatch::new;
+    let _ = StorageEventDeliveryClaim::try_new;
+    let _ = StorageEventDeliverySink::try_new(
         EventSinkId::new(1).unwrap(),
         "sink",
         "webhook",
@@ -94,26 +98,26 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         None,
     )
     .unwrap();
-    let _ = EventDeliverySubscription::try_new(
+    let _ = StorageEventDeliverySubscription::try_new(
         EventSubscriptionId::new(1).unwrap(),
         "subscription",
         serde_json::json!({}),
     )
     .unwrap();
-    let _ = EventDeliveryWorkItem::new;
-    let _ = EventDeliveryHealthSnapshot::new;
-    let _ = EventMetricsSnapshot::new;
-    let _ = EventRetentionBatch::new;
-    let _ = EventRetentionSummary::new;
-    let _ = CollectionHistoryRecord::new;
-    let _ = ClassHistoryRecord::new;
-    let _ = ExportTemplateHistoryRecord::new;
-    let _ = HistoryMetadata::try_new;
-    let _ = HistoryPrincipalName::new(PrincipalId::new(1).unwrap(), "principal");
-    let _ = InventoryGaugeSnapshot::new;
+    let _ = StorageEventDeliveryWorkItem::new;
+    let _ = StorageEventDeliveryHealthSnapshot::new;
+    let _ = StorageEventMetricsSnapshot::new;
+    let _ = StorageEventRetentionBatch::new;
+    let _ = StorageEventRetentionSummary::new;
+    let _ = StorageCollectionHistoryRecord::try_new;
+    let _ = StorageClassHistoryRecord::try_new;
+    let _ = StorageExportTemplateHistoryRecord::try_new;
+    let _ = StorageHistoryMetadata::try_new;
+    let _ = StorageHistoryPrincipalName::new(PrincipalId::new(1).unwrap(), "principal");
+    let _ = StorageInventoryGaugeSnapshot::try_new;
     let _ = MaintenanceState::Normal;
-    let _ = MutationOutcome::<()>::unchanged;
-    let audit = AuditReceipt::new(
+    let _ = StorageMutationOutcome::<()>::unchanged;
+    let audit = StorageAuditReceipt::new(
         EventSequence::new(1).unwrap(),
         EventId::from(uuid::Uuid::nil()),
         EntityType::Collection,
@@ -121,26 +125,28 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         None,
         Some(ResourceRevision::INITIAL),
     );
-    let committed = MutationOutcome::committed((), audit.clone());
+    let committed = StorageMutationOutcome::committed((), audit.clone());
     assert!(committed.is_committed());
-    assert_eq!(committed.audits().map(AuditReceipts::len), Some(1));
-    let audits = AuditReceipts::new(audit.clone(), vec![audit]);
-    let committed_with_audits = MutationOutcome::committed_with_audits((), audits);
+    assert_eq!(committed.audits().map(StorageAuditReceipts::len), Some(1));
+    let audits = StorageAuditReceipts::new(audit.clone(), vec![audit]);
+    let committed_with_audits = StorageMutationOutcome::committed_with_audits((), audits);
     assert_eq!(
-        committed_with_audits.audits().map(AuditReceipts::len),
+        committed_with_audits
+            .audits()
+            .map(StorageAuditReceipts::len),
         Some(2)
     );
-    let _ = OperationalExportTemplateAuditEntry::new(
+    let _ = StorageOperationalExportTemplateAuditEntry::new(
         ExportTemplateId::new(1).unwrap(),
         collection_id,
         "template",
         "{{ object }}",
         "application/json",
     );
-    let _ = OperationalExportTemplateHealth::new;
-    let _ = OperationalTaskQueueSnapshot::new;
-    let _ = ReadinessSnapshot::new;
-    let _ = RemoteTargetHistoryRecord::new;
+    let _ = StorageOperationalExportTemplateHealth::try_new;
+    let _ = StorageOperationalTaskQueueSnapshot::try_new;
+    let _ = StorageReadinessSnapshot::new;
+    let _ = StorageRemoteTargetHistoryRecord::try_new;
     let event = EventEnvelope::builder()
         .id(EventSequence::new(1).unwrap())
         .event_id(uuid::Uuid::nil())
@@ -154,14 +160,26 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         .try_build()
         .unwrap();
     let _ = StorageRecordedEvent::new(event, None, None);
-    let _ = StorageBackupOutput::new(TaskId::new(1).unwrap(), Vec::new(), 0, "sha256", now, now);
-    let _ = StorageBackupOutputSummary::new(TaskId::new(1).unwrap(), 0, "sha256", now);
+    let empty_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let _ = StorageBackupOutput::try_new(
+        TaskId::new(1).unwrap(),
+        Vec::new(),
+        0,
+        empty_sha256,
+        now,
+        now,
+    )
+    .unwrap();
+    let _ =
+        StorageBackupOutputSummary::try_new(TaskId::new(1).unwrap(), 0, empty_sha256, now).unwrap();
     let _ = StorageBackupSnapshot::try_new;
-    let _ = StorageClass::builder(metadata, "class", collection.clone(), "description").build();
+    let _ =
+        StorageClassWithCollection::builder(metadata, "class", collection.clone(), "description")
+            .build();
     let _ = StorageClassComputationState::builder;
-    let _ = StorageClassGraphRow::new;
+    let _ = StorageClassGraphRow::try_new;
     let _ = class_record.clone();
-    let _ = StorageClassRelation::new;
+    let _ = StorageClassRelation::try_new;
     let _ = collection;
     let _ = StorageComputedFieldDefinition::new;
     let _ = StorageComputedFieldMutation::new;
@@ -198,8 +216,10 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         now,
         now,
     )
-    .build();
-    let _ = StorageExportOutputSummary::new(
+    .output(Some(serde_json::json!({})), None)
+    .try_build()
+    .unwrap();
+    let _ = StorageExportOutputSummary::try_new(
         TaskId::new(1).unwrap(),
         None,
         "application/json",
@@ -207,7 +227,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         false,
         now,
         StorageTaskDurations::default(),
-    );
+    )
+    .unwrap();
     let _ = StorageExportTemplate::new(
         metadata,
         collection_id,
@@ -219,8 +240,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
             "object",
         ),
     );
-    let _ = StorageExternalPrincipalState::new("scope", "user", "subject", None, None);
-    let _ = StorageGroupMember::new;
+    let _ = StorageExternalPrincipalState::try_new("scope", "user", "subject", None, None);
+    let _ = StorageGroupMember::try_new;
     let _ = StorageIdentityGroup::builder(
         metadata,
         "group",
@@ -228,8 +249,9 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         IdentityScopeId::new(1).unwrap(),
         "local",
     )
-    .build();
-    let _ = StorageIdentityScope::new(
+    .try_build()
+    .unwrap();
+    let _ = StorageIdentityScope::try_new(
         IdentityScopeId::new(1).unwrap(),
         "local",
         "local",
@@ -249,29 +271,30 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     )
     .build();
     let _ = StorageInventoryCounts::try_new;
-    let _ = StorageObjectsByClassCount::try_new;
+    let _ = StorageObjectCountByClass::try_new;
     let _ = object.clone();
-    let _ = ObjectHistoryRecord::new;
+    let _ = StorageObjectHistoryRecord::try_new;
     let _ = StorageObjectAggregateCursor::try_new;
     let _ = StorageObjectAggregateMeasureValue::try_new;
     let _ = StorageObjectAggregatePage::try_new;
     let _ = StorageObjectAggregateRow::try_new;
-    let _ = StorageObjectGraphRow::new;
-    let _ = StorageObjectRelation::new;
+    let _ = StorageObjectGraphRow::try_new;
+    let _ = StorageObjectRelation::try_new;
     let _ = StoragePage::<()>::try_new;
-    let _ = StoragePreparedClassRelation::new;
-    let _ = StoragePreparedObjectRelation::new;
+    let _ = StoragePreparedClassRelation::try_new;
+    let _ = StoragePreparedObjectRelation::try_new;
     let _ = StoragePrincipal::builder(
         metadata,
         PrincipalKind::Human,
         "principal",
         IdentityScopeId::new(1).unwrap(),
     )
-    .build();
-    let _ = StoragePrincipalGroup::new;
-    let _ = StoragePrincipalSettings::new;
-    let _ = StorageRelatedObjectForRootRow::new;
-    let _ = StorageRelatedObjectIncludeRow::new;
+    .try_build()
+    .unwrap();
+    let _ = StoragePrincipalGroup::try_new;
+    let _ = StoragePrincipalSettings::try_new;
+    let _ = StorageRelatedObjectForRootRow::try_new;
+    let _ = StorageRelatedObjectIncludeRow::try_new;
     let _ = StorageRemoteTarget::new(
         metadata,
         collection_id,
@@ -279,7 +302,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         StorageRemoteTargetDefinition::new(
             "description",
             StorageRemoteTargetTransport::try_new(
-                StorageRemoteHttpMethod::Post,
+                StorageRemoteTargetHttpMethod::Post,
                 "https://example.invalid",
                 serde_json::json!({}),
                 None,
@@ -295,15 +318,15 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
             .unwrap(),
         ),
     );
-    let _ = StorageResolvedClass::new;
-    let _ = StorageResolvedClassRelation::new;
-    let _ = StorageResolvedObject::new;
-    let _ = StorageResolvedObjectRelation::new;
+    let _ = StorageResolvedClass::try_new;
+    let _ = StorageResolvedClassRelation::try_new;
+    let _ = StorageResolvedObject::try_new;
+    let _ = StorageResolvedObjectRelation::try_new;
     let _ = StorageRestoreCompletion::try_new;
     let _ = StorageRestoreCoordinatorSnapshot::new;
-    let _ = StorageRestoreDrainState::new;
-    let _ = StorageRestoreJob::new(restore_summary.clone(), Vec::new(), "capability-hash");
-    let _ = StorageRestoreStatus::new(restore_summary, "capability-hash", serde_json::json!({}));
+    let _ = StorageRestoreDrainState::try_new;
+    let _ = StorageRestoreJob::try_new(restore_summary.clone(), Vec::new(), "0".repeat(64));
+    let _ = StorageRestoreStatus::try_new(restore_summary, "0".repeat(64), serde_json::json!({}));
     let _ = service_account.clone();
     let _ = StorageServiceAccountDetails::new(
         service_account.clone(),
@@ -318,7 +341,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         "service-account",
         ResourceRevision::INITIAL,
     );
-    let _ = StorageSyncedHuman::new;
+    let _ = StorageSyncedHuman::try_new;
     let _ = StorageTask::builder;
     let _ = StorageTaskBuilder::try_build;
     let _ = StorageTaskProgress::try_new;
@@ -342,7 +365,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageTaskOutputLookup::<StorageExportOutput>::Missing;
     let _ = StorageTaskOutputLookup::<StorageExportOutputSummary>::Missing;
     let _ = StorageTokenMetadata::builder;
-    let _ = TaskGaugeSnapshot::new;
+    let _ = StorageTaskGaugeSnapshot::try_new;
     let _ = user.clone();
     let _ = StorageUserDetails::builder(
         UserId::new(1).unwrap(),
@@ -352,25 +375,28 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
         "user",
         ResourceRevision::INITIAL,
     )
-    .build();
+    .try_build()
+    .unwrap();
     let _ = StorageUserListItem::builder(user, "local", "local", "user", ResourceRevision::INITIAL)
-        .build();
+        .try_build()
+        .unwrap();
 
     // A public builder entrypoint is insufficient if its private fields cannot
     // be turned into the boundary value. Keep every terminal method nameable
     // from this downstream integration-test crate as well.
-    let _ = AuthenticatedTokenBuilder::build;
-    let _ = StorageClassBuilder::build;
+    let _ = StorageAuthenticatedTokenBuilder::try_build;
+    let _ = StorageClassWithCollectionBuilder::build;
     let _ = StorageClassComputationStateBuilder::try_build;
-    let _ = StorageClassRecordBuilder::build;
+    let _ = StorageClassBuilder::build;
     let _ = StorageEventDeliveryBuilder::try_build;
     let _ = StorageEventSinkBuilder::try_build;
     let _ = StorageEventSubscriptionBuilder::try_build;
-    let _ = StorageExportOutputBuilder::build;
-    let _ = StorageIdentityGroupBuilder::build;
+    let _ = StorageExportOutputBuilder::try_build;
+    let _ = StorageIdentityGroupBuilder::try_build;
     let _ = StorageImportTaskResultBuilder::build;
-    let _ = StoragePrincipalBuilder::build;
+    let _ = StoragePrincipalBuilder::try_build;
     let _ = StorageTaskBuilder::try_build;
     let _ = StorageTaskEventBuilder::build;
-    let _ = StorageTokenMetadataBuilder::build;
+    let _ = StorageTokenMetadataBuilder::try_build;
+    let _ = StorageUserListItemBuilder::try_build;
 }

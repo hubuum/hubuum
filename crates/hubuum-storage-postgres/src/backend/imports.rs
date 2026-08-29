@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId, ObjectId};
 
 use hubuum_storage_core::{
-    ImportStorage, StorageClassRecord, StorageCollection, StorageError, StorageImportApply,
+    ImportStorage, StorageClass, StorageCollection, StorageError, StorageImportApply,
     StorageImportCollectionKey, StorageImportMode, StorageImportPlan, StorageImportPreflight,
     StorageImportResult, StorageObject,
 };
@@ -59,7 +59,7 @@ impl ImportStorage for PostgresStorage {
         &self,
         collection_id: CollectionId,
         name: &str,
-    ) -> Result<Option<StorageClassRecord>, StorageError> {
+    ) -> Result<Option<StorageClass>, StorageError> {
         import_workflow::class_by_name(self.runtime(), collection_id.id(), name)
             .await
             .map_err(StorageError::from)
@@ -69,7 +69,7 @@ impl ImportStorage for PostgresStorage {
         &self,
         collection_id: CollectionId,
         names: &[String],
-    ) -> Result<Vec<StorageClassRecord>, StorageError> {
+    ) -> Result<Vec<StorageClass>, StorageError> {
         import_workflow::classes_by_names(self.runtime(), collection_id.id(), names)
             .await
             .map_err(StorageError::from)

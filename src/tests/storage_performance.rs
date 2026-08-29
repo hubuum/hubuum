@@ -14,10 +14,10 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
     HubuumObjectRelationID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, ObjectAggregateAuthorization,
-    ObjectAggregateCursorBudget, ObjectAggregateRequest, ObjectAggregateTarget,
-    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, Permissions,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID, parse_object_aggregate_query,
+    NewHubuumObject, NewHubuumObjectRelation, ObjectAggregateCursorBudget, ObjectAggregateRequest,
+    ObjectAggregateTarget, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
+    Permissions, StorageObjectAggregateAuthorization, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject, UserID, parse_object_aggregate_query,
 };
 use crate::services::Services;
 use crate::services::history::{
@@ -1119,7 +1119,7 @@ async fn object_aggregate_query_count_is_constant_with_page_size() {
             parse_object_aggregate_query(&query_string).expect("aggregate query should be valid"),
         )
         .authorization(
-            ObjectAggregateAuthorization::new(
+            StorageObjectAggregateAuthorization::new(
                 vec![Permissions::ReadObject, Permissions::ReadCollection],
                 None,
             )

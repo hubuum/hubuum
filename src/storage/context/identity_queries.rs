@@ -46,7 +46,7 @@ impl GroupStorage for StorageHandle {
         &self,
         command: StorageGroupCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Group,
@@ -65,7 +65,7 @@ impl GroupStorage for StorageHandle {
         group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Group,
@@ -83,7 +83,7 @@ impl GroupStorage for StorageHandle {
         &self,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Group,
@@ -139,7 +139,7 @@ impl PrincipalStorage for StorageHandle {
         principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StoragePrincipalSettings>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Principal,
@@ -160,8 +160,8 @@ impl PrincipalStorage for StorageHandle {
 impl CollectionAuthorizationQueryStorage for StorageHandle {
     async fn load_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -178,7 +178,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
     async fn list_all_principal_collection_permissions(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -196,8 +196,8 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn list_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -213,8 +213,8 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn list_effective_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -232,8 +232,8 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn list_visible_collections(
         &self,
-        query: AuthorizationCollectionVisibilityQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionVisibilityQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -249,7 +249,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn has_group_collection_permission(
         &self,
-        query: AuthorizationGroupCollectionQuery,
+        query: StorageAuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -268,7 +268,7 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
         &self,
         collection_id: CollectionId,
         group_id: GroupId,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -286,8 +286,8 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn load_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,
@@ -303,8 +303,8 @@ impl CollectionAuthorizationQueryStorage for StorageHandle {
 
     async fn list_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::CollectionAuthorizationQuery,

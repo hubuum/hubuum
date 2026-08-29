@@ -8,8 +8,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::CollectionId;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
-    AuthorizationPermission, CatalogListQuery, StorageClass, StorageCollection, StorageObject,
-    StoragePage, StorageResourceScope,
+    StorageAuthorizationPermission, StorageCatalogListQuery, StorageClassWithCollection,
+    StorageCollection, StorageObject, StoragePage, StorageResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -36,14 +36,17 @@ struct CollectionCatalogRow {
 
 impl CollectionCatalogRow {
     fn into_storage(self) -> Result<StorageCollection, PostgresStorageError> {
-        Ok(StorageCollection::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
-            self.name,
-            self.description,
-            self.parent_collection_id
-                .map(CollectionId::new)
-                .transpose()?,
-        ))
+        crate::validate_persisted(
+            "catalog collection",
+            StorageCollection::try_new(
+                record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+                self.name,
+                self.description,
+                self.parent_collection_id
+                    .map(CollectionId::new)
+                    .transpose()?,
+            ),
+        )
     }
 }
 
@@ -51,12 +54,12 @@ impl CollectionCatalogRow {
 /// the optional exact count entirely inside the adapter.
 pub async fn list_collections(
     runtime: &PostgresRuntime,
-    query: CatalogListQuery,
+    query: StorageCatalogListQuery,
 ) -> Result<StoragePage<StorageCollection>, PostgresStorageError> {
     let include_total = query.options().include_total();
     if !query
         .visibility()
-        .allows_permissions(&[AuthorizationPermission::ReadCollection])
+        .allows_permissions(&[StorageAuthorizationPermission::ReadCollection])
     {
         return crate::persisted_page(Vec::new(), include_total.then_some(0));
     }
@@ -111,15 +114,15 @@ pub async fn list_collections(
 /// authorization, filters, paging, and counting executed by PostgreSQL.
 pub async fn list_classes(
     runtime: &PostgresRuntime,
-    query: CatalogListQuery,
-) -> Result<StoragePage<StorageClass>, PostgresStorageError> {
+    query: StorageCatalogListQuery,
+) -> Result<StoragePage<StorageClassWithCollection>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
         &options,
         [
-            AuthorizationPermission::ReadCollection,
-            AuthorizationPermission::ReadClass,
+            StorageAuthorizationPermission::ReadCollection,
+            StorageAuthorizationPermission::ReadClass,
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
@@ -181,15 +184,15 @@ pub async fn list_classes(
 /// filters, stable cursor paging, and an optional exact count.
 pub async fn list_objects(
     runtime: &PostgresRuntime,
-    query: CatalogListQuery,
+    query: StorageCatalogListQuery,
 ) -> Result<StoragePage<StorageObject>, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (options, visibility) = query.into_parts();
     let permissions = required_permissions(
         &options,
         [
-            AuthorizationPermission::ReadCollection,
-            AuthorizationPermission::ReadObject,
+            StorageAuthorizationPermission::ReadCollection,
+            StorageAuthorizationPermission::ReadObject,
         ],
     )?;
     if !visibility.allows_permissions(&permissions) {
@@ -579,7 +582,7 @@ async fn load_collection_map_for_classes(
 fn class_to_storage(
     row: ClassRow,
     collections: &HashMap<i32, StorageCollection>,
-) -> Result<StorageClass, PostgresStorageError> {
+) -> Result<StorageClassWithCollection, PostgresStorageError> {
     let collection = collections
         .get(&row.collection_id)
         .cloned()
@@ -589,7 +592,7 @@ fn class_to_storage(
                 row.id, row.collection_id
             ))
         })?;
-    Ok(StorageClass::builder(
+    Ok(StorageClassWithCollection::builder(
         record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
         row.name,
         collection,
@@ -679,12 +682,12 @@ fn apply_collection_filters<'query>(
 
 fn validate_permission_filters(
     filters: &[ParsedQueryParam],
-) -> Result<Vec<AuthorizationPermission>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     filters
         .iter()
         .filter(|parameter| parameter.field == FilterField::Permissions)
         .map(|parameter| {
-            AuthorizationPermission::from_name(&parameter.value)
+            StorageAuthorizationPermission::from_name(&parameter.value)
                 .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
         })
         .collect()

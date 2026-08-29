@@ -7,8 +7,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    StorageError, StorageRemoteHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
-    StorageTaskDurations, StorageTaskKind, StorageTaskStatus,
+    StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
+    StorageTaskDurations, StorageTaskKind, StorageTaskStatus, StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -100,20 +100,23 @@ pub struct StorageTaskClaim {
 
 impl StorageTaskClaim {
     /// Pair a task projection with the ownership proof for that exact task.
-    pub fn try_new(task: StorageTask, lease: StorageTaskLease) -> Result<Self, StorageError> {
+    pub fn try_new(
+        task: StorageTask,
+        lease: StorageTaskLease,
+    ) -> Result<Self, StorageValidationError> {
         if task.id() != lease.task_id() {
-            return Err(StorageError::backend_failure(
-                "Storage adapter returned a task claim with mismatched task and lease identifiers",
+            return Err(StorageValidationError::invalid(
+                "Task claim task and lease identifiers must match",
             ));
         }
         if !task.status().is_active() {
-            return Err(StorageError::backend_failure(
-                "Storage adapter returned a task claim with a non-active status",
+            return Err(StorageValidationError::invalid(
+                "Task claim must contain an active task",
             ));
         }
         if !task.has_lease() {
-            return Err(StorageError::backend_failure(
-                "Storage adapter returned a task claim without a lease expiry",
+            return Err(StorageValidationError::invalid(
+                "Task claim must contain a lease expiry",
             ));
         }
         Ok(Self { task, lease })
@@ -157,19 +160,23 @@ impl StorageTaskResultCounts {
     ///
     /// `processed` may differ from `succeeded + failed` while work is running
     /// or recovering, so only the per-field invariant is enforced here.
-    pub fn try_new(processed: i32, succeeded: i32, failed: i32) -> Result<Self, StorageError> {
+    pub fn try_new(
+        processed: i32,
+        succeeded: i32,
+        failed: i32,
+    ) -> Result<Self, StorageValidationError> {
         if processed < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Task processed count must not be negative",
             ));
         }
         if succeeded < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Task succeeded count must not be negative",
             ));
         }
         if failed < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Task failed count must not be negative",
             ));
         }
@@ -602,7 +609,7 @@ pub struct StorageRemoteCallArtifactTarget {
     target_id: Option<RemoteTargetId>,
     subject_type: StorageRemoteTargetSubjectType,
     subject_id: ResourceId,
-    method: Option<StorageRemoteHttpMethod>,
+    method: Option<StorageRemoteTargetHttpMethod>,
     rendered_url: String,
 }
 
@@ -611,7 +618,7 @@ pub struct StorageRemoteCallArtifactTargetParts {
     target_id: Option<RemoteTargetId>,
     subject_type: StorageRemoteTargetSubjectType,
     subject_id: ResourceId,
-    method: Option<StorageRemoteHttpMethod>,
+    method: Option<StorageRemoteTargetHttpMethod>,
     rendered_url: String,
 }
 
@@ -632,7 +639,7 @@ impl StorageRemoteCallArtifactTargetParts {
     }
 
     #[must_use]
-    pub const fn method(&self) -> Option<StorageRemoteHttpMethod> {
+    pub const fn method(&self) -> Option<StorageRemoteTargetHttpMethod> {
         self.method
     }
 
@@ -648,7 +655,7 @@ impl StorageRemoteCallArtifactTarget {
         target_id: Option<RemoteTargetId>,
         subject_type: StorageRemoteTargetSubjectType,
         subject_id: ResourceId,
-        method: Option<StorageRemoteHttpMethod>,
+        method: Option<StorageRemoteTargetHttpMethod>,
         rendered_url: impl Into<String>,
     ) -> Self {
         Self {
@@ -973,6 +980,7 @@ mod tests {
         .request_payload(Some(serde_json::json!({"secret": "payload"})))
         .progress(StorageTaskProgress::try_new(1, 0, 0, 0).unwrap())
         .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+        .started_at(Some(now))
         .lease_expires_at(Some(now))
         .try_build()
         .unwrap();
@@ -997,7 +1005,7 @@ mod tests {
                 Some(RemoteTargetId::new(7).unwrap()),
                 StorageRemoteTargetSubjectType::Object,
                 ResourceId::new(8).unwrap(),
-                Some(StorageRemoteHttpMethod::Post),
+                Some(StorageRemoteTargetHttpMethod::Post),
                 "https://example.invalid/?secret=url",
             ),
             StorageRemoteCallArtifactResponse::new(
@@ -1038,6 +1046,7 @@ mod tests {
             now,
             now,
         )
+        .started_at(Some(now))
         .lease_expires_at(Some(now))
         .try_build()
         .unwrap()
@@ -1057,7 +1066,10 @@ mod tests {
         )
         .expect_err("a lease for another task must not form a claim");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Backend);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1071,10 +1083,14 @@ mod tests {
         ] {
             let task_id = TaskId::new(88_103).unwrap();
             let now = chrono::Utc::now();
-            let task = StorageTask::builder(task_id, StorageTaskKind::Export, status, now, now)
-                .lease_expires_at(Some(now))
-                .try_build()
-                .unwrap();
+            let builder = StorageTask::builder(task_id, StorageTaskKind::Export, status, now, now);
+            let task = if status.is_terminal() {
+                builder.finished_at(Some(now))
+            } else {
+                builder
+            }
+            .try_build()
+            .unwrap();
 
             let error = StorageTaskClaim::try_new(
                 task,
@@ -1082,31 +1098,32 @@ mod tests {
             )
             .expect_err("a non-active task must not form a claim");
 
-            assert_eq!(error.kind(), crate::StorageErrorKind::Backend);
+            assert_eq!(
+                error.kind(),
+                crate::StorageValidationErrorKind::InvalidValue
+            );
         }
     }
 
     #[test]
-    fn task_claim_rejects_a_projection_without_lease_expiry() {
+    fn active_task_projection_rejects_missing_lease_before_claim() {
         let task_id = TaskId::new(88_104).unwrap();
         let now = chrono::Utc::now();
-        let task = StorageTask::builder(
+        let error = StorageTask::builder(
             task_id,
             StorageTaskKind::Export,
             StorageTaskStatus::Running,
             now,
             now,
         )
+        .started_at(Some(now))
         .try_build()
-        .unwrap();
+        .expect_err("an active projection without a lease expiry must be rejected");
 
-        let error = StorageTaskClaim::try_new(
-            task,
-            StorageTaskLease::new(task_id, StorageTaskClaimToken::new("missing-expiry")),
-        )
-        .expect_err("a claim without a projected lease expiry must be rejected");
-
-        assert_eq!(error.kind(), crate::StorageErrorKind::Backend);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1202,7 +1219,10 @@ mod tests {
         let error = StorageTaskResultCounts::try_new(-1, 0, 0)
             .expect_err("a negative processed count must be rejected");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1210,7 +1230,10 @@ mod tests {
         let error = StorageTaskResultCounts::try_new(0, -1, 0)
             .expect_err("a negative succeeded count must be rejected");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1218,7 +1241,10 @@ mod tests {
         let error = StorageTaskResultCounts::try_new(0, 0, -1)
             .expect_err("a negative failed count must be rejected");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]

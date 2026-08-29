@@ -4,8 +4,8 @@ use super::*;
 impl ObjectAggregateStorage for StorageHandle {
     async fn aggregate_objects(
         &self,
-        query: ObjectAggregateStorageQuery,
-        authorization: ObjectAggregateAuthorization<'_>,
+        query: StorageObjectAggregateQuery,
+        authorization: StorageObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -25,7 +25,7 @@ impl ObjectAggregateStorage for StorageHandle {
 impl RelationQueryStorage for StorageHandle {
     async fn list_class_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -42,7 +42,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_object_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -59,7 +59,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_class_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -76,7 +76,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_object_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -93,7 +93,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_class_relations_touching_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -110,7 +110,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_class_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -127,7 +127,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_object_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -144,7 +144,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_object_relations_touching_ids(
         &self,
-        query: ObjectRelationsTouchingIdsQuery,
+        query: StorageObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -161,7 +161,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_related_classes(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -174,7 +174,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_related_objects(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -187,7 +187,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_related_objects_for_roots(
         &self,
-        query: RelatedObjectsForRootsQuery,
+        query: StorageRelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -204,7 +204,7 @@ impl RelationQueryStorage for StorageHandle {
 
     async fn list_bidirectionally_related_objects_for_roots(
         &self,
-        query: BidirectionalRelatedObjectsQuery,
+        query: StorageBidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -226,7 +226,7 @@ impl RelationQueryStorage for StorageHandle {
 impl UnifiedSearchStorage for StorageHandle {
     async fn search_collections(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -241,8 +241,8 @@ impl UnifiedSearchStorage for StorageHandle {
 
     async fn search_classes(
         &self,
-        query: UnifiedSearchQuery,
-    ) -> Result<Vec<StorageClass>, StorageError> {
+        query: StorageUnifiedSearchQuery,
+    ) -> Result<Vec<StorageClassWithCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
@@ -254,7 +254,7 @@ impl UnifiedSearchStorage for StorageHandle {
 
     async fn search_objects(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageObject>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

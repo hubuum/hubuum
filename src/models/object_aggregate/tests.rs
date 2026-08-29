@@ -206,7 +206,7 @@ fn parses_computed_source_filters() {
 fn aggregate_authorization_requires_object_and_collection_access(
     #[case] permissions: Vec<Permissions>,
 ) {
-    let error = ObjectAggregateAuthorization::new(permissions, None)
+    let error = StorageObjectAggregateAuthorization::new(permissions, None)
         .err()
         .expect("incomplete authorization must fail");
 

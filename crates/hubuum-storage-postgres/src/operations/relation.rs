@@ -7,7 +7,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, ClassRelationId, ObjectId, normalize_template_alias};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    MutationOutcome, StorageClassRelation, StorageClassRelationCreate, StorageObject,
+    StorageClassRelation, StorageClassRelationCreate, StorageMutationOutcome, StorageObject,
     StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
     StoragePreparedObjectRelation, StorageResolvedClassRelation, StorageResolvedObjectRelation,
@@ -37,13 +37,25 @@ pub(crate) struct ClassRelationRow {
 
 impl ClassRelationRow {
     pub(crate) fn into_storage(self) -> Result<StorageClassRelation, PostgresStorageError> {
-        Ok(StorageClassRelation::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
-            ClassId::new(self.from_hubuum_class_id)?,
-            ClassId::new(self.to_hubuum_class_id)?,
+        let relation = crate::validate_persisted(
+            "class relation endpoints",
+            StorageClassRelation::try_new(
+                record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+                ClassId::new(self.from_hubuum_class_id)?,
+                ClassId::new(self.to_hubuum_class_id)?,
+            ),
+        )?;
+        let relation = crate::validate_persisted(
+            "class relation template aliases",
+            relation.try_with_template_aliases(
+                self.forward_template_alias,
+                self.reverse_template_alias,
+            ),
+        )?;
+        crate::validate_persisted(
+            "class relation limits",
+            relation.try_with_relation_limits(self.from_max_relations, self.to_max_relations),
         )
-        .with_template_aliases(self.forward_template_alias, self.reverse_template_alias)
-        .with_relation_limits(self.from_max_relations, self.to_max_relations))
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -100,12 +112,15 @@ pub(crate) struct ObjectRelationRow {
 
 impl ObjectRelationRow {
     pub(crate) fn into_storage(self) -> Result<StorageObjectRelation, PostgresStorageError> {
-        Ok(StorageObjectRelation::new(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
-            ObjectId::new(self.from_hubuum_object_id)?,
-            ObjectId::new(self.to_hubuum_object_id)?,
-            ClassRelationId::new(self.class_relation_id)?,
-        ))
+        crate::validate_persisted(
+            "object relation",
+            StorageObjectRelation::try_new(
+                record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+                ObjectId::new(self.from_hubuum_object_id)?,
+                ObjectId::new(self.to_hubuum_object_id)?,
+                ClassRelationId::new(self.class_relation_id)?,
+            ),
+        )
     }
 
     fn snapshot(self) -> serde_json::Value {
@@ -163,11 +178,14 @@ pub(crate) async fn prepare_class_relation_on(
         command.to_class_id().id(),
     )
     .await?;
-    Ok(StoragePreparedClassRelation::new(
-        command,
-        from_class.into_storage()?,
-        to_class.into_storage()?,
-    ))
+    crate::validate_persisted(
+        "prepared class relation",
+        StoragePreparedClassRelation::try_new(
+            command,
+            from_class.into_storage()?,
+            to_class.into_storage()?,
+        ),
+    )
 }
 
 /// Resolve a persisted class relation and both endpoint classes.
@@ -196,7 +214,7 @@ pub async fn create_class_relation(
     runtime: &PostgresRuntime,
     prepared: &StoragePreparedClassRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
     let prepared = prepared.clone();
     let context = context.clone();
     runtime
@@ -210,7 +228,7 @@ pub(crate) async fn create_class_relation_on(
     connection: &mut PostgresConnection,
     prepared: &StoragePreparedClassRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
     let command = normalize_class_relation_create(prepared.command().clone())?;
     let from_class = lock_class(connection, command.from_class_id().id()).await?;
     let to_class = lock_class(connection, command.to_class_id().id()).await?;
@@ -224,15 +242,16 @@ pub(crate) async fn create_class_relation_on(
     let relation = insert_class_relation(connection, &command).await?;
     let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
         .with_after(relation.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed(
-        StorageResolvedClassRelation::new(
-            relation.into_storage()?,
-            from_class.into_storage()?,
-            to_class.into_storage()?,
-        ),
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed(
+        crate::validate_persisted(
+            "resolved class relation",
+            StorageResolvedClassRelation::try_new(
+                relation.into_storage()?,
+                from_class.into_storage()?,
+                to_class.into_storage()?,
+            ),
+        )?,
         audit,
     ))
 }
@@ -242,7 +261,7 @@ pub async fn delete_class_relation(
     runtime: &PostgresRuntime,
     target: &StorageResolvedClassRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
     let target = target.clone();
     let context = context.clone();
@@ -257,7 +276,7 @@ pub(crate) async fn delete_class_relation_on(
     connection: &mut PostgresConnection,
     target: &StorageResolvedClassRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "class relation id")?;
     let relation = lock_class_relation(connection, target.relation().metadata().id().id()).await?;
     let from_class = lock_class(connection, relation.from_hubuum_class_id).await?;
@@ -273,10 +292,8 @@ pub(crate) async fn delete_class_relation_on(
     delete_class_relation_row(connection, relation.id).await?;
     let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
         .with_before(relation.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed((), audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed((), audit))
 }
 
 /// Resolve and validate a prospective object relation before authorization.
@@ -328,12 +345,15 @@ pub(crate) async fn prepare_object_relation_on(
         }
     };
     validate_object_relation_membership(command, &from_object, &to_object, &class_relation)?;
-    Ok(StoragePreparedObjectRelation::new(
-        command,
-        from_object.into_storage()?,
-        to_object.into_storage()?,
-        class_relation,
-    ))
+    crate::validate_persisted(
+        "prepared object relation",
+        StoragePreparedObjectRelation::try_new(
+            command,
+            from_object.into_storage()?,
+            to_object.into_storage()?,
+            class_relation,
+        ),
+    )
 }
 
 /// Resolve a persisted object relation and its authorization aggregate.
@@ -397,12 +417,15 @@ pub(crate) async fn resolve_object_relation_on(
         &to_object,
         &class_relation,
     )?;
-    Ok(StorageResolvedObjectRelation::new(
-        relation.into_storage()?,
-        from_object.into_storage()?,
-        to_object.into_storage()?,
-        class_relation,
-    ))
+    crate::validate_persisted(
+        "resolved object relation",
+        StorageResolvedObjectRelation::try_new(
+            relation.into_storage()?,
+            from_object.into_storage()?,
+            to_object.into_storage()?,
+            class_relation,
+        ),
+    )
 }
 
 /// Create an object relation from the aggregate that was authorized.
@@ -410,7 +433,7 @@ pub async fn create_object_relation(
     runtime: &PostgresRuntime,
     prepared: &StoragePreparedObjectRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
     let prepared = prepared.clone();
     let context = context.clone();
     runtime
@@ -424,7 +447,7 @@ pub(crate) async fn create_object_relation_on(
     connection: &mut PostgresConnection,
     prepared: &StoragePreparedObjectRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, PostgresStorageError> {
     let command = normalize_object_relation_create(*prepared.command())?;
     let (from_object, to_object) = load_object_endpoints(
         connection,
@@ -456,16 +479,17 @@ pub(crate) async fn create_object_relation_on(
     let event =
         object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
             .with_after(relation.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed(
-        StorageResolvedObjectRelation::new(
-            relation.into_storage()?,
-            from_object.into_storage()?,
-            to_object.into_storage()?,
-            prepared.class_relation().clone(),
-        ),
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed(
+        crate::validate_persisted(
+            "resolved object relation",
+            StorageResolvedObjectRelation::try_new(
+                relation.into_storage()?,
+                from_object.into_storage()?,
+                to_object.into_storage()?,
+                prepared.class_relation().clone(),
+            ),
+        )?,
         audit,
     ))
 }
@@ -475,7 +499,7 @@ pub async fn delete_object_relation(
     runtime: &PostgresRuntime,
     target: &StorageResolvedObjectRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
     let target = target.clone();
     let context = context.clone();
@@ -490,7 +514,7 @@ pub(crate) async fn delete_object_relation_on(
     connection: &mut PostgresConnection,
     target: &StorageResolvedObjectRelation,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     validate_positive_id(target.relation().metadata().id().id(), "object relation id")?;
     let relation = lock_object_relation(connection, target.relation().metadata().id().id()).await?;
     let (from_object, to_object) = load_object_endpoints(
@@ -511,10 +535,8 @@ pub(crate) async fn delete_object_relation_on(
     let event =
         object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
             .with_before(relation.snapshot());
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed((), audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed((), audit))
 }
 
 pub(crate) fn normalize_class_relation_create(
@@ -822,11 +844,14 @@ async fn load_resolved_class_relation(
         relation.to_hubuum_class_id,
     )
     .await?;
-    Ok(StorageResolvedClassRelation::new(
-        relation.into_storage()?,
-        from_class.into_storage()?,
-        to_class.into_storage()?,
-    ))
+    crate::validate_persisted(
+        "resolved class relation",
+        StorageResolvedClassRelation::try_new(
+            relation.into_storage()?,
+            from_class.into_storage()?,
+            to_class.into_storage()?,
+        ),
+    )
 }
 
 async fn load_direct_class_relation(
@@ -849,11 +874,14 @@ async fn load_direct_class_relation(
         })?;
     let (from_class, to_class) =
         load_class_endpoints(connection, from_class_id, to_class_id).await?;
-    Ok(StorageResolvedClassRelation::new(
-        relation.into_storage()?,
-        from_class.into_storage()?,
-        to_class.into_storage()?,
-    ))
+    crate::validate_persisted(
+        "resolved class relation",
+        StorageResolvedClassRelation::try_new(
+            relation.into_storage()?,
+            from_class.into_storage()?,
+            to_class.into_storage()?,
+        ),
+    )
 }
 
 async fn insert_class_relation(

@@ -7,8 +7,9 @@ use hubuum_events_core::EventSequence;
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
-use crate::{StorageError, StoragePage};
+use crate::{StorageError, StoragePage, StorageValidationError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageTaskKind {
@@ -137,24 +138,24 @@ impl StorageTaskProgress {
         processed: i32,
         succeeded: i32,
         failed: i32,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if total < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task total count must not be negative",
             ));
         }
         if processed < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task processed count must not be negative",
             ));
         }
         if succeeded < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task succeeded count must not be negative",
             ));
         }
         if failed < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task failed count must not be negative",
             ));
         }
@@ -356,7 +357,7 @@ impl StorageTaskCreateRequestBuilder {
         self
     }
 
-    pub fn build(
+    pub fn try_build(
         self,
         maximum_active_tasks: usize,
     ) -> Result<StorageTaskCreateRequest, StorageError> {
@@ -663,14 +664,14 @@ impl StorageTaskBuilder {
     }
 
     /// Validate and build a task projection returned by a storage adapter.
-    pub fn try_build(self) -> Result<StorageTask, StorageError> {
+    pub fn try_build(self) -> Result<StorageTask, StorageValidationError> {
         if self.task.attempt_count < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task attempt count must not be negative",
             ));
         }
         if self.task.updated_at < self.task.created_at {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task update timestamp must not precede its creation timestamp",
             ));
         }
@@ -679,7 +680,7 @@ impl StorageTaskBuilder {
             .started_at
             .is_some_and(|started_at| started_at < self.task.created_at)
         {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task start timestamp must not precede its creation timestamp",
             ));
         }
@@ -688,7 +689,7 @@ impl StorageTaskBuilder {
             .started_at
             .is_some_and(|started_at| started_at > self.task.updated_at)
         {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task start timestamp must not follow its update timestamp",
             ));
         }
@@ -697,7 +698,7 @@ impl StorageTaskBuilder {
             .finished_at
             .is_some_and(|finished_at| finished_at < self.task.created_at)
         {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task finish timestamp must not precede its creation timestamp",
             ));
         }
@@ -706,7 +707,7 @@ impl StorageTaskBuilder {
             .finished_at
             .is_some_and(|finished_at| finished_at > self.task.updated_at)
         {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task finish timestamp must not follow its update timestamp",
             ));
         }
@@ -714,8 +715,31 @@ impl StorageTaskBuilder {
             (self.task.started_at, self.task.finished_at),
             (Some(started_at), Some(finished_at)) if finished_at < started_at
         ) {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Task finish timestamp must not precede its start timestamp",
+            ));
+        }
+        let lifecycle_is_consistent = match self.task.status {
+            StorageTaskStatus::Queued => {
+                self.task.started_at.is_none()
+                    && self.task.finished_at.is_none()
+                    && self.task.lease_expires_at.is_none()
+            }
+            StorageTaskStatus::Validating | StorageTaskStatus::Running => {
+                self.task.started_at.is_some()
+                    && self.task.finished_at.is_none()
+                    && self.task.lease_expires_at.is_some()
+            }
+            StorageTaskStatus::Succeeded
+            | StorageTaskStatus::Failed
+            | StorageTaskStatus::PartiallySucceeded
+            | StorageTaskStatus::Cancelled => {
+                self.task.finished_at.is_some() && self.task.lease_expires_at.is_none()
+            }
+        };
+        if !lifecycle_is_consistent {
+            return Err(StorageValidationError::invalid(
+                "Task status, lifecycle timestamps, and lease state are inconsistent",
             ));
         }
         for (label, timestamp) in [
@@ -723,12 +747,12 @@ impl StorageTaskBuilder {
             ("deletion", self.task.deleted_at),
         ] {
             if timestamp.is_some_and(|timestamp| timestamp < self.task.created_at) {
-                return Err(StorageError::internal(format!(
+                return Err(StorageValidationError::invalid(format!(
                     "Task {label} timestamp must not precede its creation timestamp"
                 )));
             }
             if timestamp.is_some_and(|timestamp| timestamp > self.task.updated_at) {
-                return Err(StorageError::internal(format!(
+                return Err(StorageValidationError::invalid(format!(
                     "Task {label} timestamp must not follow its update timestamp"
                 )));
             }
@@ -812,12 +836,12 @@ impl fmt::Debug for StorageTaskListQuery {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct StorageTaskPageQuery {
+pub struct StorageTaskChildListQuery {
     task_id: TaskId,
     options: QueryOptions,
 }
 
-impl StorageTaskPageQuery {
+impl StorageTaskChildListQuery {
     #[must_use]
     pub const fn new(task_id: TaskId, options: QueryOptions) -> Self {
         Self { task_id, options }
@@ -1095,12 +1119,12 @@ impl StorageTaskDurations {
         query_ms: i32,
         hydration_ms: i32,
         render_ms: i32,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if [total_ms, query_ms, hydration_ms, render_ms]
             .into_iter()
             .any(|duration| duration < 0)
         {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Task output durations must not be negative",
             ));
         }
@@ -1208,8 +1232,7 @@ pub struct StorageExportOutputSummary {
 }
 
 impl StorageExportOutputSummary {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         task_id: TaskId,
         template_name: Option<String>,
         content_type: impl Into<String>,
@@ -1217,8 +1240,13 @@ impl StorageExportOutputSummary {
         truncated: bool,
         output_expires_at: DateTime<Utc>,
         durations: StorageTaskDurations,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if warning_count < 0 {
+            return Err(StorageValidationError::invalid(
+                "Export output warning count must not be negative",
+            ));
+        }
+        Ok(Self {
             task_id,
             template_name,
             content_type: content_type.into(),
@@ -1226,7 +1254,7 @@ impl StorageExportOutputSummary {
             truncated,
             output_expires_at,
             durations,
-        }
+        })
     }
 
     task_output_accessors!();
@@ -1241,19 +1269,20 @@ pub struct StorageBackupOutputSummary {
 }
 
 impl StorageBackupOutputSummary {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         task_id: TaskId,
         byte_size: i64,
         sha256: impl Into<String>,
         output_expires_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let sha256 = sha256.into();
+        validate_backup_output_identity(byte_size, &sha256)?;
+        Ok(Self {
             task_id,
             byte_size,
-            sha256: sha256.into(),
+            sha256,
             output_expires_at,
-        }
+        })
     }
 
     backup_output_accessors!();
@@ -1362,9 +1391,18 @@ impl StorageExportOutputBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageExportOutput {
-        self.output
+    pub fn try_build(self) -> Result<StorageExportOutput, StorageValidationError> {
+        if self.output.warning_count < 0 {
+            return Err(StorageValidationError::invalid(
+                "Export output warning count must not be negative",
+            ));
+        }
+        match (&self.output.json_output, &self.output.text_output) {
+            (Some(_), None) | (None, Some(_)) => Ok(self.output),
+            _ => Err(StorageValidationError::invalid(
+                "Export output must contain exactly one of JSON or text output",
+            )),
+        }
     }
 }
 
@@ -1379,23 +1417,43 @@ pub struct StorageBackupOutput {
 }
 
 impl StorageBackupOutput {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         task_id: TaskId,
         document: Vec<u8>,
         byte_size: i64,
         sha256: impl Into<String>,
         output_expires_at: DateTime<Utc>,
         created_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let sha256 = sha256.into();
+        validate_backup_output_identity(byte_size, &sha256)?;
+        let document_size = i64::try_from(document.len()).map_err(|_| {
+            StorageValidationError::too_large(
+                "Backup output document exceeds the supported byte-size range",
+            )
+        })?;
+        if byte_size != document_size {
+            return Err(StorageValidationError::invalid(
+                "Backup output byte size must match the document length",
+            ));
+        }
+        let expected_sha256 = Sha256::digest(&document)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if sha256 != expected_sha256 {
+            return Err(StorageValidationError::invalid(
+                "Backup output SHA-256 digest must match the document",
+            ));
+        }
+        Ok(Self {
             task_id,
             document,
             byte_size,
-            sha256: sha256.into(),
+            sha256,
             output_expires_at,
             created_at,
-        }
+        })
     }
 
     backup_output_accessors!();
@@ -1409,6 +1467,27 @@ impl StorageBackupOutput {
     pub const fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
+}
+
+fn validate_backup_output_identity(
+    byte_size: i64,
+    sha256: &str,
+) -> Result<(), StorageValidationError> {
+    if byte_size < 0 {
+        return Err(StorageValidationError::invalid(
+            "Backup output byte size must not be negative",
+        ));
+    }
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(StorageValidationError::invalid(
+            "Backup output SHA-256 digest must contain exactly 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, PartialEq)]
@@ -1434,12 +1513,12 @@ pub trait TaskQueueStorage: Send + Sync {
 
     async fn list_task_events(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError>;
 
     async fn list_import_task_results(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError>;
 
     async fn list_export_output_summaries(
@@ -1477,6 +1556,156 @@ pub trait TaskQueueStorage: Send + Sync {
 mod tests {
     use super::*;
 
+    fn export_output_builder() -> StorageExportOutputBuilder {
+        let now = chrono::Utc::now();
+        StorageExportOutput::builder(
+            TaskId::new(91_000).unwrap(),
+            "application/json",
+            serde_json::json!({}),
+            serde_json::json!([]),
+            now,
+            now,
+        )
+        .output(Some(serde_json::json!({})), None)
+    }
+
+    #[test]
+    fn export_output_summary_rejects_a_negative_warning_count() {
+        let error = StorageExportOutputSummary::try_new(
+            TaskId::new(91_000).unwrap(),
+            None,
+            "application/json",
+            -1,
+            false,
+            chrono::Utc::now(),
+            StorageTaskDurations::default(),
+        )
+        .err()
+        .expect("negative warning counts must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn export_output_rejects_a_negative_warning_count() {
+        let error = export_output_builder()
+            .warning_state(-1, false)
+            .try_build()
+            .err()
+            .expect("negative warning counts must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn export_output_rejects_missing_content() {
+        let error = export_output_builder()
+            .output(None, None)
+            .try_build()
+            .err()
+            .expect("missing export output must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn export_output_rejects_multiple_content_representations() {
+        let error = export_output_builder()
+            .output(
+                Some(serde_json::json!({})),
+                Some("duplicate output".to_string()),
+            )
+            .try_build()
+            .err()
+            .expect("ambiguous export output must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn backup_output_summary_rejects_a_negative_size() {
+        let error = StorageBackupOutputSummary::try_new(
+            TaskId::new(91_000).unwrap(),
+            -1,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            chrono::Utc::now(),
+        )
+        .err()
+        .expect("negative backup output size must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn backup_output_summary_rejects_a_malformed_digest() {
+        let error = StorageBackupOutputSummary::try_new(
+            TaskId::new(91_000).unwrap(),
+            0,
+            "not-a-digest",
+            chrono::Utc::now(),
+        )
+        .err()
+        .expect("malformed backup output digest must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn backup_output_rejects_a_size_that_disagrees_with_the_document() {
+        let error = StorageBackupOutput::try_new(
+            TaskId::new(91_000).unwrap(),
+            b"{}".to_vec(),
+            3,
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            chrono::Utc::now(),
+            chrono::Utc::now(),
+        )
+        .err()
+        .expect("mismatched backup output size must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn backup_output_rejects_a_digest_that_disagrees_with_the_document() {
+        let error = StorageBackupOutput::try_new(
+            TaskId::new(91_000).unwrap(),
+            b"{}".to_vec(),
+            2,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            chrono::Utc::now(),
+            chrono::Utc::now(),
+        )
+        .err()
+        .expect("mismatched backup output digest must be rejected");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
     #[test]
     fn task_durations_reject_negative_phases() {
         for durations in [(-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1)] {
@@ -1484,7 +1713,10 @@ mod tests {
                 StorageTaskDurations::try_new(durations.0, durations.1, durations.2, durations.3)
                     .expect_err("negative task durations must be rejected");
 
-            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+            assert_eq!(
+                error.kind(),
+                crate::StorageValidationErrorKind::InvalidValue
+            );
         }
     }
 
@@ -1496,7 +1728,7 @@ mod tests {
             serde_json::json!({}),
             -1,
         )
-        .build(1)
+        .try_build(1)
         .expect_err("negative task totals must be rejected");
 
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
@@ -1510,7 +1742,7 @@ mod tests {
             serde_json::json!({}),
             0,
         )
-        .build(0)
+        .try_build(0)
         .expect_err("zero task capacity must be rejected");
 
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
@@ -1522,7 +1754,10 @@ mod tests {
             let error = StorageTaskProgress::try_new(counts.0, counts.1, counts.2, counts.3)
                 .expect_err("negative persisted progress must be rejected");
 
-            assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+            assert_eq!(
+                error.kind(),
+                crate::StorageValidationErrorKind::InvalidValue
+            );
         }
     }
 
@@ -1540,7 +1775,10 @@ mod tests {
         .try_build()
         .expect_err("a negative persisted attempt count must be rejected");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1557,7 +1795,105 @@ mod tests {
         .try_build()
         .expect_err("a reversed persisted task interval must be rejected");
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn queued_task_projection_rejects_a_start_timestamp() {
+        let now = chrono::Utc::now();
+        let error = StorageTask::builder(
+            TaskId::new(91_012).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Queued,
+            now,
+            now,
+        )
+        .started_at(Some(now))
+        .try_build()
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn active_task_projection_requires_a_start_timestamp_and_lease() {
+        let now = chrono::Utc::now();
+        let error = StorageTask::builder(
+            TaskId::new(91_013).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Running,
+            now,
+            now,
+        )
+        .try_build()
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn terminal_task_projection_requires_a_finish_timestamp() {
+        let now = chrono::Utc::now();
+        let error = StorageTask::builder(
+            TaskId::new(91_014).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Succeeded,
+            now,
+            now,
+        )
+        .try_build()
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn terminal_task_projection_rejects_a_lease() {
+        let now = chrono::Utc::now();
+        let error = StorageTask::builder(
+            TaskId::new(91_015).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Succeeded,
+            now,
+            now,
+        )
+        .finished_at(Some(now))
+        .lease_expires_at(Some(now))
+        .try_build()
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn cancelled_task_projection_allows_cancellation_before_claim() {
+        let now = chrono::Utc::now();
+        let task = StorageTask::builder(
+            TaskId::new(91_016).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Cancelled,
+            now,
+            now,
+        )
+        .finished_at(Some(now))
+        .try_build();
+
+        assert!(task.is_ok());
     }
 
     #[test]

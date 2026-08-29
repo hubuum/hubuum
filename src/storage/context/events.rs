@@ -2,7 +2,9 @@ use super::*;
 
 #[async_trait]
 impl EventHealthStorage for StorageHandle {
-    async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+    async fn get_event_delivery_health(
+        &self,
+    ) -> Result<StorageEventDeliveryHealthSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventHealth,
@@ -75,7 +77,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn create_event_sink(
         &self,
         request: StorageEventSinkCreate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -90,7 +92,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -105,7 +107,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn delete_event_sink(
         &self,
         request: StorageEventSinkDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -157,7 +159,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn create_event_subscription(
         &self,
         request: StorageEventSubscriptionCreate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -174,7 +176,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -191,7 +193,7 @@ impl EventConfigurationStorage for StorageHandle {
     async fn delete_event_subscription(
         &self,
         request: StorageEventSubscriptionDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventConfiguration,
@@ -282,7 +284,7 @@ impl EventDeliveryWorkerStorage for StorageHandle {
     async fn claim_event_delivery_batch(
         &self,
         settings: EventDeliverySettings,
-    ) -> Result<EventDeliveryBatch, StorageError> {
+    ) -> Result<StorageEventDeliveryBatch, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventDeliveryWorker,
@@ -298,7 +300,7 @@ impl EventDeliveryWorkerStorage for StorageHandle {
 
     async fn mark_event_delivery_succeeded(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -315,7 +317,7 @@ impl EventDeliveryWorkerStorage for StorageHandle {
 
     async fn mark_event_delivery_failed(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
         settings: EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError> {
@@ -360,7 +362,7 @@ impl EventRetentionStorage for StorageHandle {
     async fn claim_event_retention_batch(
         &self,
         settings: EventRetentionSettings,
-    ) -> Result<Option<EventRetentionBatch>, StorageError> {
+    ) -> Result<Option<StorageEventRetentionBatch>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventRetention,
@@ -376,8 +378,8 @@ impl EventRetentionStorage for StorageHandle {
 
     async fn complete_event_retention_batch(
         &self,
-        batch_id: EventRetentionBatchId,
-    ) -> Result<EventRetentionSummary, StorageError> {
+        batch_id: StorageEventRetentionBatchId,
+    ) -> Result<StorageEventRetentionSummary, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventRetention,

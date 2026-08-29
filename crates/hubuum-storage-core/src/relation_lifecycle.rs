@@ -3,8 +3,8 @@ use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    MutationOutcome, StorageClassRecord, StorageClassRelation, StorageError, StorageObject,
-    StorageObjectRelation,
+    StorageClass, StorageClassRelation, StorageError, StorageMutationOutcome, StorageObject,
+    StorageObjectRelation, StorageValidationError,
 };
 
 /// Data required to create one class relation.
@@ -96,22 +96,31 @@ impl StorageClassRelationCreateBuilder {
 #[derive(Clone, PartialEq)]
 pub struct StoragePreparedClassRelation {
     command: StorageClassRelationCreate,
-    from_class: StorageClassRecord,
-    to_class: StorageClassRecord,
+    from_class: StorageClass,
+    to_class: StorageClass,
 }
 
 impl StoragePreparedClassRelation {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         command: StorageClassRelationCreate,
-        from_class: StorageClassRecord,
-        to_class: StorageClassRecord,
-    ) -> Self {
-        Self {
+        from_class: StorageClass,
+        to_class: StorageClass,
+    ) -> Result<Self, StorageValidationError> {
+        if command.from_class_id() >= command.to_class_id()
+            || command.from_class_id() != from_class.id()
+            || command.to_class_id() != to_class.id()
+            || command.from_max_relations().is_some_and(|value| value <= 0)
+            || command.to_max_relations().is_some_and(|value| value <= 0)
+        {
+            return Err(StorageValidationError::invalid(
+                "prepared class relation command and endpoints are inconsistent",
+            ));
+        }
+        Ok(Self {
             command,
             from_class,
             to_class,
-        }
+        })
     }
 
     #[must_use]
@@ -120,23 +129,17 @@ impl StoragePreparedClassRelation {
     }
 
     #[must_use]
-    pub const fn from_class(&self) -> &StorageClassRecord {
+    pub const fn from_class(&self) -> &StorageClass {
         &self.from_class
     }
 
     #[must_use]
-    pub const fn to_class(&self) -> &StorageClassRecord {
+    pub const fn to_class(&self) -> &StorageClass {
         &self.to_class
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        StorageClassRelationCreate,
-        StorageClassRecord,
-        StorageClassRecord,
-    ) {
+    pub fn into_parts(self) -> (StorageClassRelationCreate, StorageClass, StorageClass) {
         (self.command, self.from_class, self.to_class)
     }
 }
@@ -145,22 +148,26 @@ impl StoragePreparedClassRelation {
 #[derive(Clone, PartialEq)]
 pub struct StorageResolvedClassRelation {
     relation: StorageClassRelation,
-    from_class: StorageClassRecord,
-    to_class: StorageClassRecord,
+    from_class: StorageClass,
+    to_class: StorageClass,
 }
 
 impl StorageResolvedClassRelation {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         relation: StorageClassRelation,
-        from_class: StorageClassRecord,
-        to_class: StorageClassRecord,
-    ) -> Self {
-        Self {
+        from_class: StorageClass,
+        to_class: StorageClass,
+    ) -> Result<Self, StorageValidationError> {
+        if relation.from_class_id() != from_class.id() || relation.to_class_id() != to_class.id() {
+            return Err(StorageValidationError::invalid(
+                "resolved class relation endpoints must match its relation",
+            ));
+        }
+        Ok(Self {
             relation,
             from_class,
             to_class,
-        }
+        })
     }
 
     #[must_use]
@@ -169,17 +176,17 @@ impl StorageResolvedClassRelation {
     }
 
     #[must_use]
-    pub const fn from_class(&self) -> &StorageClassRecord {
+    pub const fn from_class(&self) -> &StorageClass {
         &self.from_class
     }
 
     #[must_use]
-    pub const fn to_class(&self) -> &StorageClassRecord {
+    pub const fn to_class(&self) -> &StorageClass {
         &self.to_class
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageClassRelation, StorageClassRecord, StorageClassRecord) {
+    pub fn into_parts(self) -> (StorageClassRelation, StorageClass, StorageClass) {
         (self.relation, self.from_class, self.to_class)
     }
 }
@@ -279,19 +286,33 @@ pub struct StoragePreparedObjectRelation {
 }
 
 impl StoragePreparedObjectRelation {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         command: StorageObjectRelationCreate,
         from_object: StorageObject,
         to_object: StorageObject,
         class_relation: StorageResolvedClassRelation,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let relation = class_relation.relation();
+        let classes_match = (from_object.class_id() == relation.from_class_id()
+            && to_object.class_id() == relation.to_class_id())
+            || (from_object.class_id() == relation.to_class_id()
+                && to_object.class_id() == relation.from_class_id());
+        if command.from_object_id() >= command.to_object_id()
+            || command.from_object_id() != from_object.id()
+            || command.to_object_id() != to_object.id()
+            || command.class_relation_id() != ClassRelationId::from(relation.metadata().id())
+            || !classes_match
+        {
+            return Err(StorageValidationError::invalid(
+                "prepared object relation aggregate has inconsistent endpoint ids",
+            ));
+        }
+        Ok(Self {
             command,
             from_object,
             to_object,
             class_relation,
-        }
+        })
     }
 
     #[must_use]
@@ -342,19 +363,34 @@ pub struct StorageResolvedObjectRelation {
 }
 
 impl StorageResolvedObjectRelation {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         relation: StorageObjectRelation,
         from_object: StorageObject,
         to_object: StorageObject,
         class_relation: StorageResolvedClassRelation,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let resolved_class_relation = class_relation.relation();
+        let classes_match = (from_object.class_id() == resolved_class_relation.from_class_id()
+            && to_object.class_id() == resolved_class_relation.to_class_id())
+            || (from_object.class_id() == resolved_class_relation.to_class_id()
+                && to_object.class_id() == resolved_class_relation.from_class_id());
+        if relation.from_object_id() >= relation.to_object_id()
+            || relation.from_object_id() != from_object.id()
+            || relation.to_object_id() != to_object.id()
+            || relation.class_relation_id()
+                != ClassRelationId::from(resolved_class_relation.metadata().id())
+            || !classes_match
+        {
+            return Err(StorageValidationError::invalid(
+                "resolved object relation aggregate has inconsistent endpoint ids",
+            ));
+        }
+        Ok(Self {
             relation,
             from_object,
             to_object,
             class_relation,
-        }
+        })
     }
 
     #[must_use]
@@ -415,13 +451,13 @@ pub trait ClassRelationStorage: Send + Sync {
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError>;
 
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 /// Complete object-relation lifecycle required from a selectable backend.
@@ -444,11 +480,11 @@ pub trait ObjectRelationStorage: Send + Sync {
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError>;
 
     async fn delete_object_relation(
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }

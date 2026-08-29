@@ -23,14 +23,17 @@ impl TryFrom<IdentityScopeRow> for StorageIdentityScope {
     type Error = PostgresStorageError;
 
     fn try_from(row: IdentityScopeRow) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            IdentityScopeId::new(row.id)?,
-            row.name,
-            row.provider_kind,
-            row.created_at.and_utc(),
-            row.updated_at.and_utc(),
-            row.revision.into_domain(),
-        ))
+        crate::validate_persisted(
+            "identity scope",
+            Self::try_new(
+                IdentityScopeId::new(row.id)?,
+                row.name,
+                row.provider_kind,
+                row.created_at.and_utc(),
+                row.updated_at.and_utc(),
+                row.revision.into_domain(),
+            ),
+        )
     }
 }
 

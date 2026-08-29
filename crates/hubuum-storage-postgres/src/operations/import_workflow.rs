@@ -4,8 +4,7 @@ use diesel::Insertable;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
-    StorageClassRecord, StorageCollection, StorageImportCollectionKey, StorageImportResult,
-    StorageObject,
+    StorageClass, StorageCollection, StorageImportCollectionKey, StorageImportResult, StorageObject,
 };
 use serde_json::Value;
 
@@ -118,7 +117,7 @@ pub async fn class_by_name(
     runtime: &PostgresRuntime,
     collection_id: i32,
     name: &str,
-) -> Result<Option<StorageClassRecord>, PostgresStorageError> {
+) -> Result<Option<StorageClass>, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     validate_name(name, "class name")?;
     let name = name.to_string();
@@ -133,7 +132,7 @@ pub async fn classes_by_names(
     runtime: &PostgresRuntime,
     collection_id: i32,
     names: &[String],
-) -> Result<Vec<StorageClassRecord>, PostgresStorageError> {
+) -> Result<Vec<StorageClass>, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     validate_names(names, "class name")?;
     if names.is_empty() {
@@ -323,7 +322,7 @@ pub(crate) async fn class_by_name_on_connection(
     connection: &mut PostgresConnection,
     collection_id: i32,
     name: &str,
-) -> Result<Option<StorageClassRecord>, PostgresStorageError> {
+) -> Result<Option<StorageClass>, PostgresStorageError> {
     crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::collection_id.eq(collection_id))
         .filter(crate::schema::hubuumclass::name.eq(name))

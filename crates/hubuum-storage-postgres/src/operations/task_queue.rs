@@ -19,8 +19,8 @@ use hubuum_query::{CursorValue, FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
     StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
-    StorageTaskAccess, StorageTaskCreateRequest, StorageTaskDurations, StorageTaskEvent,
-    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery,
+    StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskDurations,
+    StorageTaskEvent, StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskStatus,
 };
 use serde_json::{Value, json};
@@ -193,19 +193,22 @@ impl ExportOutputRow {
                 self.render_duration_ms,
             ),
         )?;
-        Ok(StorageExportOutput::builder(
-            TaskId::new(self.task_id)?,
-            self.content_type,
-            self.meta_json,
-            self.warnings_json,
-            self.output_expires_at.and_utc(),
-            self.created_at.and_utc(),
+        crate::validate_persisted(
+            "export output",
+            StorageExportOutput::builder(
+                TaskId::new(self.task_id)?,
+                self.content_type,
+                self.meta_json,
+                self.warnings_json,
+                self.output_expires_at.and_utc(),
+                self.created_at.and_utc(),
+            )
+            .template_name(self.template_name)
+            .output(self.json_output, self.text_output)
+            .warning_state(self.warning_count, self.truncated)
+            .durations(durations)
+            .try_build(),
         )
-        .template_name(self.template_name)
-        .output(self.json_output, self.text_output)
-        .warning_state(self.warning_count, self.truncated)
-        .durations(durations)
-        .build())
     }
 }
 
@@ -235,15 +238,18 @@ impl ExportOutputSummaryRow {
                 self.render_duration_ms,
             ),
         )?;
-        Ok(StorageExportOutputSummary::new(
-            TaskId::new(self.task_id)?,
-            self.template_name,
-            self.content_type,
-            self.warning_count,
-            self.truncated,
-            self.output_expires_at.and_utc(),
-            durations,
-        ))
+        crate::validate_persisted(
+            "export output summary",
+            StorageExportOutputSummary::try_new(
+                TaskId::new(self.task_id)?,
+                self.template_name,
+                self.content_type,
+                self.warning_count,
+                self.truncated,
+                self.output_expires_at.and_utc(),
+                durations,
+            ),
+        )
     }
 }
 
@@ -260,14 +266,17 @@ struct BackupOutputRow {
 
 impl BackupOutputRow {
     fn into_storage(self) -> Result<StorageBackupOutput, PostgresStorageError> {
-        Ok(StorageBackupOutput::new(
-            TaskId::new(self.task_id)?,
-            self.document,
-            self.byte_size,
-            self.sha256,
-            self.output_expires_at.and_utc(),
-            self.created_at.and_utc(),
-        ))
+        crate::validate_persisted(
+            "backup output",
+            StorageBackupOutput::try_new(
+                TaskId::new(self.task_id)?,
+                self.document,
+                self.byte_size,
+                self.sha256,
+                self.output_expires_at.and_utc(),
+                self.created_at.and_utc(),
+            ),
+        )
     }
 }
 
@@ -282,12 +291,15 @@ struct BackupOutputSummaryRow {
 
 impl BackupOutputSummaryRow {
     fn into_storage(self) -> Result<StorageBackupOutputSummary, PostgresStorageError> {
-        Ok(StorageBackupOutputSummary::new(
-            TaskId::new(self.task_id)?,
-            self.byte_size,
-            self.sha256,
-            self.output_expires_at.and_utc(),
-        ))
+        crate::validate_persisted(
+            "backup output summary",
+            StorageBackupOutputSummary::try_new(
+                TaskId::new(self.task_id)?,
+                self.byte_size,
+                self.sha256,
+                self.output_expires_at.and_utc(),
+            ),
+        )
     }
 }
 
@@ -406,7 +418,7 @@ pub async fn list_tasks(
 
 pub async fn list_task_events(
     runtime: &PostgresRuntime,
-    query: StorageTaskPageQuery,
+    query: StorageTaskChildListQuery,
 ) -> Result<StoragePage<StorageTaskEvent>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
@@ -428,7 +440,7 @@ pub async fn list_task_events(
 
 pub async fn list_import_task_results(
     runtime: &PostgresRuntime,
-    query: StorageTaskPageQuery,
+    query: StorageTaskChildListQuery,
 ) -> Result<StoragePage<StorageImportTaskResult>, PostgresStorageError> {
     let (task_id, options) = query.into_parts();
     let task_id = task_id.id();
@@ -1082,6 +1094,7 @@ fn validate_positive_task_id(task_id: i32) -> Result<(), PostgresStorageError> {
 mod tests {
     use super::*;
     use hubuum_query::SortParam;
+    use hubuum_storage_core::StorageErrorKind;
 
     #[test]
     fn task_cursor_mapping_covers_the_public_sort_contract() {
@@ -1119,5 +1132,58 @@ mod tests {
 
         assert_ne!(export, backup);
         assert_ne!(export, other_submitter);
+    }
+
+    #[test]
+    fn invalid_persisted_export_output_is_a_backend_failure() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let row = ExportOutputRow {
+            task_id: 1,
+            template_name: None,
+            content_type: "application/json".to_string(),
+            json_output: Some(serde_json::json!({})),
+            text_output: None,
+            meta_json: serde_json::json!({}),
+            warnings_json: serde_json::json!([]),
+            warning_count: -1,
+            truncated: false,
+            output_expires_at: timestamp,
+            total_duration_ms: 0,
+            query_duration_ms: 0,
+            hydration_duration_ms: 0,
+            render_duration_ms: 0,
+            created_at: timestamp,
+        };
+
+        let error = row
+            .into_storage()
+            .err()
+            .expect("invalid persisted export output must fail conversion");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn invalid_persisted_backup_output_is_a_backend_failure() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let row = BackupOutputRow {
+            task_id: 1,
+            document: b"{}".to_vec(),
+            byte_size: 3,
+            sha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a".to_string(),
+            output_expires_at: timestamp,
+            created_at: timestamp,
+        };
+
+        let error = row
+            .into_storage()
+            .err()
+            .expect("invalid persisted backup output must fail conversion");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
     }
 }

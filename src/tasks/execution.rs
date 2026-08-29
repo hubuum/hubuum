@@ -301,7 +301,7 @@ fn import_storage_plan(
                 .map(|execution| crate::storage::StorageImportPlanItem::new(index, execution))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    crate::storage::StorageImportPlan::new(items).map_err(ApiError::from)
+    crate::storage::StorageImportPlan::try_new(items).map_err(ApiError::from)
 }
 
 pub(super) async fn execute_import_strict(

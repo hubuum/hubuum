@@ -1,12 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, ObjectId, PrincipalId};
-use hubuum_query::QueryOptions;
+use hubuum_query::{FilterField, QueryOptions, SortParam};
 
 use crate::page::validate_page_total;
-use crate::{StorageComputationRevision, StorageError, StorageObject, StorageVisibility};
+use crate::{
+    StorageComputationRevision, StorageError, StorageObject, StorageValidationError,
+    StorageVisibility,
+};
 
 /// Visibility already established for a computed-object query.
 ///
@@ -14,7 +17,7 @@ use crate::{StorageComputationRevision, StorageError, StorageObject, StorageVisi
 /// External policy engines authorize object candidates in the application
 /// layer and pass the resulting bounded identifier set back to storage.
 #[derive(Clone, PartialEq)]
-pub enum ComputedObjectVisibility {
+pub enum StorageComputedObjectVisibility {
     Storage(StorageVisibility),
     AuthorizedObjectIds {
         principal_id: PrincipalId,
@@ -22,7 +25,7 @@ pub enum ComputedObjectVisibility {
     },
 }
 
-impl ComputedObjectVisibility {
+impl StorageComputedObjectVisibility {
     #[must_use]
     pub const fn storage(visibility: StorageVisibility) -> Self {
         Self::Storage(visibility)
@@ -43,7 +46,7 @@ impl ComputedObjectVisibility {
     }
 }
 
-impl fmt::Debug for ComputedObjectVisibility {
+impl fmt::Debug for StorageComputedObjectVisibility {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Storage(visibility) => {
@@ -59,27 +62,55 @@ impl fmt::Debug for ComputedObjectVisibility {
 
 /// Computed values the backend must attach to a computed-object result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ComputedObjectProjection {
+pub enum StorageComputedObjectProjection {
     None,
     All,
-    CursorBoundary { page_limit: usize },
+    CursorBoundary,
 }
 
 /// Client-visible and execution forms of one computed-object query.
 #[derive(Clone, PartialEq)]
-pub struct ComputedObjectQueryOptions {
+pub struct StorageComputedObjectQueryOptions {
     requested: QueryOptions,
     execution: QueryOptions,
+    effective_page_limit: usize,
 }
 
-impl ComputedObjectQueryOptions {
+impl StorageComputedObjectQueryOptions {
     /// Preserve both the client-visible query and the backend execution query.
     ///
-    /// The application may increase the execution limit to discover whether a
-    /// next page exists. The adapter resolves computed field types in both
-    /// copies, but the result must retain the requested limit for response
-    /// pagination.
-    pub fn try_new(requested: QueryOptions, execution: QueryOptions) -> Result<Self, StorageError> {
+    /// The application normalizes the execution sort and expands its limit by
+    /// exactly one row to discover whether a next page exists. The adapter
+    /// resolves computed field types in both copies, but the result retains
+    /// the requested query and effective page limit for response pagination.
+    pub fn try_new(
+        requested: QueryOptions,
+        execution: QueryOptions,
+        effective_page_limit: usize,
+    ) -> Result<Self, StorageError> {
+        if effective_page_limit == 0 {
+            return Err(StorageError::invalid_input(
+                "Computed-object page limit must be greater than zero",
+            ));
+        }
+        if requested
+            .limit()
+            .is_some_and(|requested_limit| effective_page_limit > requested_limit)
+        {
+            return Err(StorageError::invalid_input(
+                "Computed-object effective page limit must not exceed the requested limit",
+            ));
+        }
+        let execution_limit = effective_page_limit.checked_add(1).ok_or_else(|| {
+            StorageError::input_too_large(
+                "Computed-object page limit cannot be expanded for cursor pagination",
+            )
+        })?;
+        if execution.limit() != Some(execution_limit) {
+            return Err(StorageError::invalid_input(
+                "Computed-object execution limit must exceed the page limit by exactly one",
+            ));
+        }
         if requested.filters() != execution.filters() {
             return Err(StorageError::invalid_input(
                 "Computed-object requested and execution queries must use the same filters",
@@ -95,9 +126,26 @@ impl ComputedObjectQueryOptions {
                 "Computed-object requested and execution queries must use the same count intent",
             ));
         }
+        let mut expected_sort = if requested.sort().is_empty() {
+            vec![SortParam::new(FilterField::Id, false)]
+        } else {
+            requested.sort().iter().cloned().collect()
+        };
+        if !expected_sort
+            .iter()
+            .any(|sort| sort.field() == &FilterField::Id)
+        {
+            expected_sort.push(SortParam::new(FilterField::Id, false));
+        }
+        if execution.sort().as_slice() != expected_sort {
+            return Err(StorageError::invalid_input(
+                "Computed-object execution sort must be the normalized requested sort with an ID tie-breaker",
+            ));
+        }
         Ok(Self {
             requested,
             execution,
+            effective_page_limit,
         })
     }
 
@@ -107,30 +155,35 @@ impl ComputedObjectQueryOptions {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (QueryOptions, QueryOptions) {
-        (self.requested, self.execution)
+    pub const fn effective_page_limit(&self) -> usize {
+        self.effective_page_limit
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (QueryOptions, QueryOptions, usize) {
+        (self.requested, self.execution, self.effective_page_limit)
     }
 }
 
 /// One computed filter/sort query with authorization already selected by the
 /// application layer.
 #[derive(Clone, PartialEq)]
-pub struct ComputedObjectListQuery {
+pub struct StorageComputedObjectListQuery {
     class_id: ClassId,
     personal_owner_id: Option<PrincipalId>,
-    options: ComputedObjectQueryOptions,
-    visibility: ComputedObjectVisibility,
-    projection: ComputedObjectProjection,
+    options: StorageComputedObjectQueryOptions,
+    visibility: StorageComputedObjectVisibility,
+    projection: StorageComputedObjectProjection,
 }
 
-impl ComputedObjectListQuery {
+impl StorageComputedObjectListQuery {
     #[must_use]
     pub const fn new(
         class_id: ClassId,
         personal_owner_id: Option<PrincipalId>,
-        options: ComputedObjectQueryOptions,
-        visibility: ComputedObjectVisibility,
-        projection: ComputedObjectProjection,
+        options: StorageComputedObjectQueryOptions,
+        visibility: StorageComputedObjectVisibility,
+        projection: StorageComputedObjectProjection,
     ) -> Self {
         Self {
             class_id,
@@ -152,9 +205,9 @@ impl ComputedObjectListQuery {
     ) -> (
         ClassId,
         Option<PrincipalId>,
-        ComputedObjectQueryOptions,
-        ComputedObjectVisibility,
-        ComputedObjectProjection,
+        StorageComputedObjectQueryOptions,
+        StorageComputedObjectVisibility,
+        StorageComputedObjectProjection,
     ) {
         (
             self.class_id,
@@ -166,10 +219,10 @@ impl ComputedObjectListQuery {
     }
 }
 
-impl fmt::Debug for ComputedObjectListQuery {
+impl fmt::Debug for StorageComputedObjectListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ComputedObjectListQuery")
+            .debug_struct("StorageComputedObjectListQuery")
             .field("filter_count", &self.options.requested.filters().len())
             .field("sort_count", &self.options.requested.sort().len())
             .field("limit", &self.options.requested.limit())
@@ -183,12 +236,12 @@ impl fmt::Debug for ComputedObjectListQuery {
 
 /// Backend-neutral request to enrich an existing object page.
 #[derive(Clone, PartialEq)]
-pub struct ComputedObjectEnrichmentQuery {
+pub struct StorageComputedObjectEnrichmentQuery {
     objects: Vec<StorageObject>,
     personal_owner_id: Option<PrincipalId>,
 }
 
-impl ComputedObjectEnrichmentQuery {
+impl StorageComputedObjectEnrichmentQuery {
     #[must_use]
     pub const fn new(objects: Vec<StorageObject>, personal_owner_id: Option<PrincipalId>) -> Self {
         Self {
@@ -203,10 +256,10 @@ impl ComputedObjectEnrichmentQuery {
     }
 }
 
-impl fmt::Debug for ComputedObjectEnrichmentQuery {
+impl fmt::Debug for StorageComputedObjectEnrichmentQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ComputedObjectEnrichmentQuery")
+            .debug_struct("StorageComputedObjectEnrichmentQuery")
             .field("object_count", &self.objects.len())
             .field("has_personal_owner", &self.personal_owner_id.is_some())
             .finish()
@@ -323,23 +376,37 @@ impl StorageComputedObject {
 }
 
 /// One backend-selected computed-object page and any requested computed
-/// projections. Projections are keyed by the object embedded in each DTO.
+/// projections. Every projected object must exactly match a row in the page,
+/// and each object can have at most one projection.
 #[derive(Clone, PartialEq)]
-pub struct ComputedObjectPage {
+pub struct StorageComputedObjectPage {
     rows: Vec<StorageObject>,
     total: Option<i64>,
     computed: Vec<StorageComputedObject>,
     resolved_options: QueryOptions,
 }
 
-impl ComputedObjectPage {
+impl StorageComputedObjectPage {
     pub fn try_new(
         rows: Vec<StorageObject>,
         total: Option<i64>,
         computed: Vec<StorageComputedObject>,
         resolved_options: QueryOptions,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         validate_page_total(rows.len(), total)?;
+        let mut projected_ids = HashSet::with_capacity(computed.len());
+        for projection in &computed {
+            if !projected_ids.insert(projection.object.id()) {
+                return Err(StorageValidationError::invalid(
+                    "Computed-object page projections must have unique object IDs",
+                ));
+            }
+            if !rows.iter().any(|row| row == &projection.object) {
+                return Err(StorageValidationError::invalid(
+                    "Computed-object page projections must exactly match a returned row",
+                ));
+            }
+        }
         Ok(Self {
             rows,
             total,
@@ -367,19 +434,51 @@ impl ComputedObjectPage {
 pub trait ComputedObjectStorage: Send + Sync {
     async fn list_computed_objects(
         &self,
-        query: ComputedObjectListQuery,
-    ) -> Result<ComputedObjectPage, StorageError>;
+        query: StorageComputedObjectListQuery,
+    ) -> Result<StorageComputedObjectPage, StorageError>;
 
     async fn enrich_objects_with_computed(
         &self,
-        query: ComputedObjectEnrichmentQuery,
+        query: StorageComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use hubuum_domain::{CollectionId, ResourceId, ResourceRevision};
     use hubuum_query::{FilterField, ParsedQueryParam, SearchOperator};
+
+    fn object(id: i32, name: &str) -> StorageObject {
+        let now = Utc::now();
+        StorageObject::new(
+            crate::StorageRecordMetadata::try_new(
+                ResourceId::new(id).unwrap(),
+                now,
+                now,
+                ResourceRevision::INITIAL,
+            )
+            .unwrap(),
+            name,
+            CollectionId::new(1).unwrap(),
+            ClassId::new(1).unwrap(),
+            serde_json::json!({}),
+            "description",
+        )
+    }
+
+    fn projection(object: StorageObject) -> StorageComputedObject {
+        StorageComputedObject::new(
+            object,
+            StorageSharedComputedScope::new(
+                StorageComputationRevision::try_new(0).unwrap(),
+                false,
+                StorageComputedScope::default(),
+            ),
+            None,
+        )
+    }
 
     fn computed_query(filter: &str, cursor: Option<&str>, include_total: bool) -> QueryOptions {
         QueryOptions::new(
@@ -396,12 +495,31 @@ mod tests {
         .unwrap()
     }
 
+    fn computed_execution_query(
+        filter: &str,
+        cursor: Option<&str>,
+        include_total: bool,
+    ) -> QueryOptions {
+        QueryOptions::new(
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Name,
+                SearchOperator::Equals { is_negated: false },
+                filter,
+            )],
+            vec![SortParam::new(FilterField::Id, false)],
+            Some(21),
+            cursor.map(str::to_string),
+            include_total,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn computed_query_rejects_different_execution_filters() {
         let requested = computed_query("requested", None, true);
-        let execution = computed_query("execution", None, true);
+        let execution = computed_execution_query("execution", None, true);
 
-        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
             .err()
             .expect("requested and execution filters must disagree");
 
@@ -411,9 +529,9 @@ mod tests {
     #[test]
     fn computed_query_rejects_a_different_execution_cursor() {
         let requested = computed_query("object", Some("requested"), true);
-        let execution = computed_query("object", Some("execution"), true);
+        let execution = computed_execution_query("object", Some("execution"), true);
 
-        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
             .err()
             .expect("requested and execution cursors must disagree");
 
@@ -423,9 +541,9 @@ mod tests {
     #[test]
     fn computed_query_rejects_different_count_intent() {
         let requested = computed_query("object", None, true);
-        let execution = computed_query("object", None, false);
+        let execution = computed_execution_query("object", None, false);
 
-        let error = ComputedObjectQueryOptions::try_new(requested, execution)
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
             .err()
             .expect("requested and execution count intent must disagree");
 
@@ -433,11 +551,109 @@ mod tests {
     }
 
     #[test]
+    fn computed_query_rejects_an_execution_limit_that_does_not_fetch_one_extra_row() {
+        let requested = computed_query("object", None, true);
+        let mut execution = computed_execution_query("object", None, true);
+        execution.set_limit(Some(1)).unwrap();
+
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
+            .err()
+            .expect("execution query must fetch exactly one extra row");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_query_accepts_a_policy_capped_effective_page_limit() {
+        let requested = QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, false).unwrap();
+        let execution = QueryOptions::new(
+            Vec::new(),
+            vec![SortParam::new(FilterField::Id, false)],
+            Some(21),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let options = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
+            .expect("application policy may cap the client-requested page limit");
+
+        assert_eq!(options.effective_page_limit(), 20);
+    }
+
+    #[test]
+    fn computed_query_rejects_an_effective_limit_above_the_requested_limit() {
+        let requested = computed_query("object", None, true);
+        let mut execution = computed_execution_query("object", None, true);
+        execution.set_limit(Some(101)).unwrap();
+
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 100)
+            .err()
+            .expect("an effective limit may cap but not expand the requested limit");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_query_rejects_an_execution_sort_unrelated_to_the_requested_sort() {
+        let requested = computed_query("object", None, true);
+        let execution = QueryOptions::new(
+            requested.filters().iter().cloned().collect(),
+            vec![SortParam::new(FilterField::Name, false)],
+            Some(21),
+            None,
+            true,
+        )
+        .unwrap();
+
+        let error = StorageComputedObjectQueryOptions::try_new(requested, execution, 20)
+            .err()
+            .expect("execution query must retain the normalized requested ordering");
+
+        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_page_rejects_a_projection_not_in_the_returned_rows() {
+        let error = StorageComputedObjectPage::try_new(
+            vec![object(1, "returned")],
+            None,
+            vec![projection(object(1, "different"))],
+            QueryOptions::empty(),
+        )
+        .err()
+        .expect("a projection must match a returned row");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn computed_page_rejects_duplicate_projection_ids() {
+        let row = object(1, "returned");
+        let error = StorageComputedObjectPage::try_new(
+            vec![row.clone()],
+            None,
+            vec![projection(row.clone()), projection(row)],
+            QueryOptions::empty(),
+        )
+        .err()
+        .expect("projection object IDs must be unique");
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
     fn query_debug_redacts_filter_values_ids_and_cursors() {
-        let query = ComputedObjectListQuery::new(
+        let query = StorageComputedObjectListQuery::new(
             ClassId::new(7).unwrap(),
             PrincipalId::new(9).ok(),
-            ComputedObjectQueryOptions::try_new(
+            StorageComputedObjectQueryOptions::try_new(
                 QueryOptions::new(
                     vec![ParsedQueryParam::from_parts(
                         FilterField::Name,
@@ -456,19 +672,20 @@ mod tests {
                         SearchOperator::Equals { is_negated: false },
                         "secret object",
                     )],
-                    Vec::new(),
+                    vec![SortParam::new(FilterField::Id, false)],
                     Some(21),
                     Some("secret cursor".to_string()),
                     true,
                 )
                 .unwrap(),
+                20,
             )
             .unwrap(),
-            ComputedObjectVisibility::authorized_object_ids(
+            StorageComputedObjectVisibility::authorized_object_ids(
                 PrincipalId::new(42).unwrap(),
                 [ObjectId::new(11).unwrap(), ObjectId::new(12).unwrap()],
             ),
-            ComputedObjectProjection::All,
+            StorageComputedObjectProjection::All,
         );
 
         let debug = format!("{query:?}");

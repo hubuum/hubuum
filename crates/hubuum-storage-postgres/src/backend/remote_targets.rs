@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use hubuum_domain::RemoteTargetId;
 
 use hubuum_storage_core::{
-    MutationOutcome, RemoteTargetStorage, StorageError, StoragePage, StorageRemoteTarget,
+    RemoteTargetStorage, StorageError, StorageMutationOutcome, StoragePage, StorageRemoteTarget,
     StorageRemoteTargetCreate, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
     StorageRemoteTargetListQuery, StorageRemoteTargetUpdate,
 };
@@ -32,7 +32,7 @@ impl RemoteTargetStorage for PostgresStorage {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         crate::operations::remote_target::create_remote_target(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -41,7 +41,7 @@ impl RemoteTargetStorage for PostgresStorage {
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         crate::operations::remote_target::update_remote_target(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -50,7 +50,7 @@ impl RemoteTargetStorage for PostgresStorage {
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::remote_target::delete_remote_target(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -59,7 +59,7 @@ impl RemoteTargetStorage for PostgresStorage {
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::remote_target::record_remote_target_invocation(self.runtime(), request)
             .await
             .map_err(StorageError::from)

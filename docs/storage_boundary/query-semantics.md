@@ -54,13 +54,15 @@ For every pageable operation:
 `QueryOptions` is a validated carrier, not a promise that every `FilterField`
 is valid for every operation. Each capability owns its accepted subset.
 
-Two operation-shaped carriers preserve application-prepared pagination forms
-without allowing their predicates to drift. `StorageGroupListQuery::try_new`
-requires the record query and optional exact-count query to have identical
-filters and count intent, and requires the count form to omit sorting, limits,
-and cursors. `ComputedObjectQueryOptions::try_new` permits the execution form
-to normalize sorting and expand the page limit, but requires filters, cursor,
-and count intent to match the requested form.
+Two operation-shaped carriers preserve application-prepared pagination forms.
+`StorageGroupListQuery` carries one record query; the adapter derives an
+optional exact count from the same filters without applying its sorting, limit,
+or cursor. `StorageComputedObjectQueryOptions::try_new` requires the execution
+form to use the normalized requested sort with an ID tie-breaker, expand the
+effective page limit by exactly one row, and retain the requested filters,
+cursor, and count intent. The effective limit is resolved by application policy
+and may be lower than an explicit client limit when that limit is capped, but
+it must never be higher than an explicit requested limit.
 
 ## Identity and Collection-Authorization Matrix
 

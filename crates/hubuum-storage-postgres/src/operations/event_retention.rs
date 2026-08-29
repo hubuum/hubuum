@@ -6,7 +6,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::EventRetentionSettings;
 use hubuum_events_core::EventSequence;
 use hubuum_storage_core::{
-    EventRetentionBatch, EventRetentionBatchId, EventRetentionSummary, RetainedEvent,
+    StorageEventRetentionBatch, StorageEventRetentionBatchId, StorageEventRetentionSummary,
+    StorageRetainedEvent,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -103,7 +104,7 @@ pub async fn try_acquire_event_retention_lock(
 pub async fn claim_event_retention_batch(
     runtime: &PostgresRuntime,
     settings: EventRetentionSettings,
-) -> Result<Option<EventRetentionBatch>, PostgresStorageError> {
+) -> Result<Option<StorageEventRetentionBatch>, PostgresStorageError> {
     runtime
         .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             if !maintenance_state_on_connection(connection)
@@ -177,8 +178,8 @@ pub async fn claim_event_retention_batch(
 /// Idempotently purge a previously archived retention claim.
 pub async fn complete_event_retention_batch(
     runtime: &PostgresRuntime,
-    batch_id: EventRetentionBatchId,
-) -> Result<EventRetentionSummary, PostgresStorageError> {
+    batch_id: StorageEventRetentionBatchId,
+) -> Result<StorageEventRetentionSummary, PostgresStorageError> {
     runtime
         .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             if !maintenance_state_on_connection(connection)
@@ -254,7 +255,7 @@ async fn load_pending_claim(
 
 async fn load_claim_for_update(
     connection: &mut PostgresConnection,
-    batch_id: EventRetentionBatchId,
+    batch_id: StorageEventRetentionBatchId,
 ) -> Result<RetentionBatchRow, PostgresStorageError> {
     diesel::sql_query(
         "SELECT claim_id, event_ids, event_documents, delivery_cutoff,
@@ -270,7 +271,9 @@ async fn load_claim_for_update(
     .map_err(PostgresStorageError::from)
 }
 
-fn retention_batch(row: RetentionBatchRow) -> Result<EventRetentionBatch, PostgresStorageError> {
+fn retention_batch(
+    row: RetentionBatchRow,
+) -> Result<StorageEventRetentionBatch, PostgresStorageError> {
     let documents = row.event_documents.as_array().ok_or_else(|| {
         PostgresStorageError::database("Event retention claim documents are not a JSON array")
     })?;
@@ -295,27 +298,27 @@ fn retention_batch(row: RetentionBatchRow) -> Result<EventRetentionBatch, Postgr
                     "Failed to serialize claimed PostgreSQL event: {error}"
                 ))
             })?;
-            RetainedEvent::try_new(sequence, json).map_err(|error| {
+            StorageRetainedEvent::try_new(sequence, json).map_err(|error| {
                 PostgresStorageError::invalid_persisted_value("retained event", error)
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(EventRetentionBatch::new(
-        EventRetentionBatchId::new(row.claim_id),
+    Ok(StorageEventRetentionBatch::new(
+        StorageEventRetentionBatchId::new(row.claim_id),
         events,
     ))
 }
 
 fn completed_summary(
     claim: &RetentionBatchRow,
-) -> Result<EventRetentionSummary, PostgresStorageError> {
+) -> Result<StorageEventRetentionSummary, PostgresStorageError> {
     let purged_events = claim.purged_events.ok_or_else(|| {
         PostgresStorageError::database("Completed retention claim is missing its event count")
     })?;
     let purged_terminal_deliveries = claim.purged_terminal_deliveries.ok_or_else(|| {
         PostgresStorageError::database("Completed retention claim is missing its delivery count")
     })?;
-    Ok(EventRetentionSummary::new(
+    Ok(StorageEventRetentionSummary::new(
         usize::try_from(purged_events).map_err(|_| {
             PostgresStorageError::database("Retention event count does not fit usize")
         })?,
@@ -355,7 +358,7 @@ async fn purge_event_retention_batch(
     delivery_cutoff: NaiveDateTime,
     delivery_batch_size: i64,
     event_ids: &[i64],
-) -> Result<EventRetentionSummary, PostgresStorageError> {
+) -> Result<StorageEventRetentionSummary, PostgresStorageError> {
     let purged_terminal_deliveries =
         purge_terminal_event_deliveries(connection, delivery_cutoff, delivery_batch_size).await?;
     let purged_events = purge_events_by_id(connection, event_ids).await?;
@@ -365,7 +368,7 @@ async fn purge_event_retention_batch(
             event_ids.len(),
         )));
     }
-    Ok(EventRetentionSummary::new(
+    Ok(StorageEventRetentionSummary::new(
         purged_events,
         purged_terminal_deliveries,
     ))

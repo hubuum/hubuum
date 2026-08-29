@@ -48,8 +48,9 @@ backend.
 ## Implementation Order
 
 The grouped imports under `hubuum_storage_core::capabilities` provide the
-canonical discovery map. Crate-root reexports remain workspace-compatibility
-paths until the initial publication surface is selected.
+canonical discovery map. Crate-root reexports retain the same type names as
+convenience paths; adapters must not expect shorter aliases in capability
+modules.
 
 Read [storage query semantics](query-semantics.md) before implementing any
 pageable method. It defines the common page contract, the current
@@ -89,6 +90,32 @@ contract.
 Boundary values describe application intent and observable results, not the
 adapter's schema.
 
+### Naming policy
+
+Public contract value/DTO structs, enums, and type aliases owned by
+`hubuum-storage-core` use the `Storage` prefix. Their remaining terms follow
+subject, operation, then role or shape: for example,
+`StorageComputedObjectListQuery`,
+`StorageObjectAggregateQuery`, and `StorageTaskChildListQuery`. A builder uses
+the exact value name followed by `Builder`. Fallible construction uses
+`try_new` or `try_build`; `new` and `build` are infallible.
+
+The unqualified resource names `StorageCollection`, `StorageClass`, and
+`StorageObject` are the canonical flat projections. An alternative projection
+states its expansion explicitly, as `StorageClassWithCollection` does. Other
+result-shape suffixes retain their ordinary meanings: `ListItem` is a reduced
+list projection, `Details` is an expanded point projection, `Summary` is a
+reduced retained result, `Row` is one batch or aggregate row, `Page` is a paged
+result, `Snapshot` is one consistent observation, and `Outcome` is a mutation
+result.
+
+Persistence ports keep the `<Capability>Storage` form, such as
+`CollectionStorage` and `TaskQueueStorage`; they do not become
+`StorageCollectionStorage`. Non-DTO collaborators use their semantic role,
+such as `EventArchiveSink`, `ObjectAggregateAuthorizer`, and
+`WorkerNotificationProvider`. The `Transactional*` operation handles likewise
+describe their bound role and are not DTO naming exceptions.
+
 Adapter boundary types must not expose:
 
 - a native connection, pool, transaction, row, or query builder;
@@ -106,6 +133,32 @@ contract. Convert them to native keys only inside the adapter. Treat
 `QueryOptions`, `QueryFilters`, `QuerySort`, and `QueryCursor` as validated
 query intent; do not reinterpret their private representation or add SQL
 concepts to the shared query crate.
+
+### Projection validation
+
+Fallible value constructors and projection builders use `try_new` and
+`try_build`. They return `StorageValidationError`, which deliberately carries
+no request or backend classification. The application maps caller-supplied
+values with `StorageValidationError::into_request_error`; an adapter maps a
+rejected native or persisted projection to `StorageErrorKind::Backend`. Do not
+add a blanket `From<StorageValidationError>` conversion, because it would make
+one of those two boundaries classify the same value incorrectly.
+
+An infallible `new` or `build` is intentional only when the value has no
+additional invalid combination beyond its already validated components, or
+when it is a provenance-only projection. The adapter-returned value inventory
+in `external_adapter_values.rs` uses these classifications:
+
+| Classification | Families and examples | Constructor rule |
+| --- | --- | --- |
+| Invariant-bearing projections | Record metadata; pages and counts; authorization, identity, resource, relation, and history aggregates; task and output state; restore and backup artifacts; event delivery state; remote-target policy; aggregate rows; operational and metric snapshots | Reject invalid chronology, count ranges, document shapes, digests, state combinations, canonical ordering, and cross-component identifiers through `try_new` or `try_build`. |
+| Validated-component wrappers | Computed objects, event-health composites, service-account detail/list rows, task access, and mutation outcomes | Infallible construction is permitted when every component is already valid and the wrapper introduces no new cross-field invariant. |
+| Provenance-only projections | Names, descriptions, audit payloads, task-event and import-result details, source labels, and versioned definition documents | Preserve the backend-neutral value without inventing adapter-specific content rules. Validate only its typed identifiers or enclosing invariant-bearing aggregate. |
+
+Request and query DTOs are not projection values. Their terminal validation may
+return a request-classified `StorageError` when the value can only originate
+from application intent. Shared values used on both sides of the boundary must
+use `StorageValidationError` instead.
 
 Do not mirror tables with one repository trait per table. Capability methods
 are shaped around application operations and consistency boundaries. A method
@@ -141,8 +194,8 @@ application may hold an opaque `StorageTransaction` across several safe
 resource calls; it must never hold or recover the native transaction.
 
 Ordinary mutations require an `EventContext`; optional audit provenance is not
-part of the contract. Resource mutations return `MutationOutcome`, with a
-durable `AuditReceipt` for commits and no receipt for genuine no-ops.
+part of the contract. Resource mutations return `StorageMutationOutcome`, with a
+durable `StorageAuditReceipt` for commits and no receipt for genuine no-ops.
 Transaction-scoped mutations inherit one required context. The adapter must
 commit or roll back state, audit events, and transactional notifications
 together. It must serialize access when its native transaction cannot safely
@@ -201,9 +254,9 @@ variant is mandatory. Model genuinely optional behavior outside
 `StorageBackend`, as `WorkerNotificationProvider` does.
 
 Backend-neutral storage crates must not import `ApiError`. Application code
-must not convert `ApiError` back into `StorageError`. An adapter may convert a
-`StorageError` produced by a contract DTO validator into its private error type
-while it is still assembling or decoding that DTO; that is not an application
+must not convert `ApiError` back into `StorageError`. An adapter maps
+`StorageValidationError` from a native projection into its private backend
+error while it is assembling or decoding that DTO; that is not an application
 dependency reversal.
 
 ## Import Plans and References
@@ -412,7 +465,7 @@ A backend is selectable only when all of the following are true:
 - [ ] Safe lifecycle compositions use one native unit of work.
 - [ ] Hidden state-machine invariants remain native atomic operations.
 - [ ] Ordinary audited mutations require `EventContext`.
-- [ ] Committed and unchanged mutations return correct `MutationOutcome`
+- [ ] Committed and unchanged mutations return correct `StorageMutationOutcome`
       variants and receipts.
 - [ ] Maintenance operations cannot serve as an ordinary eventless write path.
 - [ ] Transaction rollback removes both state and audit side effects.

@@ -276,7 +276,14 @@ application-facing history of work, not the worker lease state machine.
 Projected total, processed, succeeded, failed, and attempt counters are
 nonnegative. Projected creation, update, start, finish, redaction, and deletion
 timestamps must form a non-reversed chronology. An adapter reports violations
-in persisted rows as `Backend` corruption.
+in persisted rows as `Backend` corruption. Queued projections have no start,
+finish, or lease; validating and running projections have a start and lease but
+no finish; terminal projections have a finish and no lease. Cancellation may
+happen before a task is claimed, so a cancelled projection need not have a
+start. Retained export outputs contain
+exactly one JSON or text representation and a nonnegative warning count.
+Retained backup outputs carry a canonical lowercase SHA-256 digest, and full
+outputs require their stored size and digest to match the document.
 
 ### `task_execution`
 
@@ -348,9 +355,9 @@ primitive. PostgreSQL currently implements it with transaction-local
 
 Required trait: `ExportTemplateStorage`.
 
-Owns point and scoped list reads, collection-source discovery, class binding
-lookup, and atomic audited lifecycle writes. The application owns template
-syntax, query, source-composition, permission, and API PATCH validation.
+Owns point and scoped list reads, collection-source discovery, and atomic
+audited lifecycle writes. The application owns template syntax, query,
+source-composition, class-binding, permission, and API PATCH validation.
 
 ## Event and Operational Groups
 
@@ -381,6 +388,12 @@ retention, worker claims and acknowledgements, and the execution context
 applied across requests and workers. `WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of `StorageBackend`.
+
+Queue and gauge snapshots correlate optional oldest/last timestamps with their
+counts. A positive queued, active, due, pending, or terminal count requires the
+matching timestamp; a zero count forbids one. Task gauge ages cover every task
+kind exactly once, and computed-object projections exactly match distinct rows
+in their enclosing page.
 
 Common logical observation is reported through application-owned
 `StorageObserver`. An adapter may also define native telemetry for pool,

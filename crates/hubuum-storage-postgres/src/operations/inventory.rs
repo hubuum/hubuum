@@ -2,7 +2,7 @@ use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Integer, Nullable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::ClassId;
-use hubuum_storage_core::{StorageInventoryCounts, StorageObjectsByClassCount};
+use hubuum_storage_core::{StorageInventoryCounts, StorageObjectCountByClass};
 
 use crate::{PostgresRuntime, PostgresStorageError};
 
@@ -50,7 +50,7 @@ pub async fn load_inventory_counts(
                 .iter()
                 .filter_map(|row| row.class_id.zip(row.count))
                 .map(|(class_id, count)| {
-                    StorageObjectsByClassCount::try_new(ClassId::new(class_id)?, count).map_err(
+                    StorageObjectCountByClass::try_new(ClassId::new(class_id)?, count).map_err(
                         |error| {
                             PostgresStorageError::invalid_persisted_value(
                                 "inventory class count",

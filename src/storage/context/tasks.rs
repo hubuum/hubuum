@@ -40,7 +40,7 @@ impl TaskQueueStorage for StorageHandle {
 
     async fn list_task_events(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -53,7 +53,7 @@ impl TaskQueueStorage for StorageHandle {
 
     async fn list_import_task_results(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

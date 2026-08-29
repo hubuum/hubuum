@@ -11,8 +11,8 @@ use hubuum::services::CollectionService;
 use hubuum_domain::{CollectionId, ResourceId, ResourceRevision};
 use hubuum_events_core::EventSequence;
 use hubuum_storage_core::{
-    AuditReceipt, CollectionStorage, MutationOutcome, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageRecordMetadata,
+    CollectionStorage, StorageAuditReceipt, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageMutationOutcome, StorageRecordMetadata,
 };
 use uuid::Uuid;
 
@@ -45,8 +45,8 @@ impl CollectionStorage for FixedCollectionStorage {
         &self,
         _command: StorageCollectionCreate,
         _context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
-        Ok(MutationOutcome::committed(
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
+        Ok(StorageMutationOutcome::committed(
             self.collection.clone(),
             audit_receipt(),
         ))
@@ -57,16 +57,16 @@ impl CollectionStorage for FixedCollectionStorage {
         _id: CollectionId,
         _changes: StorageCollectionUpdate,
         _context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
-        Ok(MutationOutcome::unchanged(self.collection.clone()))
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
+        Ok(StorageMutationOutcome::unchanged(self.collection.clone()))
     }
 
     async fn delete_collection(
         &self,
         _id: CollectionId,
         _context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
-        Ok(MutationOutcome::committed((), audit_receipt()))
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        Ok(StorageMutationOutcome::committed((), audit_receipt()))
     }
 
     async fn list_collection_children(
@@ -88,8 +88,8 @@ impl CollectionStorage for FixedCollectionStorage {
         _id: CollectionId,
         _new_parent_id: CollectionId,
         _context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
-        Ok(MutationOutcome::committed(
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
+        Ok(StorageMutationOutcome::committed(
             self.collection.clone(),
             audit_receipt(),
         ))
@@ -104,7 +104,7 @@ fn timestamp() -> NaiveDateTime {
 }
 
 fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
-    StorageCollection::new(
+    StorageCollection::try_new(
         StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("benchmark resource id should be valid"),
             timestamp().and_utc(),
@@ -117,10 +117,11 @@ fn collection(id: i32, parent_collection_id: Option<i32>) -> StorageCollection {
         parent_collection_id
             .map(|id| CollectionId::new(id).expect("benchmark collection id should be valid")),
     )
+    .expect("benchmark collection hierarchy should be valid")
 }
 
-fn audit_receipt() -> AuditReceipt {
-    AuditReceipt::new(
+fn audit_receipt() -> StorageAuditReceipt {
+    StorageAuditReceipt::new(
         EventSequence::new(1).expect("benchmark event sequence should be valid"),
         hubuum_events_core::EventId::from(Uuid::nil()),
         hubuum_events_core::EntityType::Collection,
@@ -179,7 +180,7 @@ fn bench_collection_service_audited_mutation_boundary(service: CollectionService
 
 #[library_benchmark]
 fn bench_committed_mutation_outcome() -> i32 {
-    black_box(MutationOutcome::committed(
+    black_box(StorageMutationOutcome::committed(
         black_box(TARGET_COLLECTION_ID),
         black_box(audit_receipt()),
     ))

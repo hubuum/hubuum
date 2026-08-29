@@ -19,11 +19,11 @@ use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
     AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
     StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskCreateRequest, StorageTaskEvent,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskPageQuery, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTask, StorageTaskActiveUpdate, StorageTaskChildListQuery, StorageTaskClaim,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
+    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
+    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
     StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
@@ -113,7 +113,8 @@ fn storage_task_state_update(
     Ok(StorageTaskActiveUpdate::try_new(
         task.lease.clone(),
         task_status_to_storage(change.status),
-        StorageTaskResultCounts::try_new(processed, succeeded, failed)?,
+        StorageTaskResultCounts::try_new(processed, succeeded, failed)
+            .map_err(|error| ApiError::from(error.into_request_error()))?,
     )?
     .summary(change.summary)
     .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
@@ -127,7 +128,8 @@ fn storage_task_terminal_update(
     Ok(StorageTaskTerminalUpdate::try_new(
         task.lease.clone(),
         task_status_to_storage(change.status),
-        StorageTaskResultCounts::try_new(processed, succeeded, failed)?,
+        StorageTaskResultCounts::try_new(processed, succeeded, failed)
+            .map_err(|error| ApiError::from(error.into_request_error()))?,
     )?
     .summary(change.summary)
     .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
@@ -346,7 +348,7 @@ pub(crate) async fn submit_task(
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
-    .build(submission.maximum_active_tasks)?;
+    .try_build(submission.maximum_active_tasks)?;
     storage_handle(backend)
         .create_task(request)
         .await
@@ -518,7 +520,7 @@ pub(crate) async fn list_task_events(
     options: QueryOptions,
 ) -> Result<(Vec<crate::models::TaskEventResponse>, i64), ApiError> {
     let (events, total) = storage_handle(backend)
-        .list_task_events(StorageTaskPageQuery::new(task_id, options))
+        .list_task_events(StorageTaskChildListQuery::new(task_id, options))
         .await?
         .into_parts();
     let records = events
@@ -549,7 +551,7 @@ pub(crate) async fn list_import_results(
     options: QueryOptions,
 ) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
     let (results, total) = storage_handle(backend)
-        .list_import_task_results(StorageTaskPageQuery::new(task_id, options))
+        .list_import_task_results(StorageTaskChildListQuery::new(task_id, options))
         .await?
         .into_parts();
     Ok((

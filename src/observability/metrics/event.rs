@@ -4,7 +4,9 @@ use opentelemetry::KeyValue;
 
 use crate::events::{event_delivery_worker_health, event_fanout_worker_health};
 use crate::models::EventWorkerHealth;
-use crate::storage::{EventDeliveryStatusSnapshot, EventMetricsSnapshot, MetricsStorage};
+use crate::storage::{
+    MetricsStorage, StorageEventDeliveryStatusSnapshot, StorageEventMetricsSnapshot,
+};
 
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
@@ -53,7 +55,7 @@ pub(super) async fn refresh_event_gauges(
     }
 }
 
-fn cached_event_snapshot(metrics: &Metrics) -> Option<EventMetricsSnapshot> {
+fn cached_event_snapshot(metrics: &Metrics) -> Option<StorageEventMetricsSnapshot> {
     let now = Instant::now();
     metrics
         .scrape_cache
@@ -62,7 +64,7 @@ fn cached_event_snapshot(metrics: &Metrics) -> Option<EventMetricsSnapshot> {
         .and_then(|cache| cache.events.fresh_value(now))
 }
 
-fn stale_event_snapshot(metrics: &Metrics) -> Option<EventMetricsSnapshot> {
+fn stale_event_snapshot(metrics: &Metrics) -> Option<StorageEventMetricsSnapshot> {
     metrics
         .scrape_cache
         .lock()
@@ -70,13 +72,13 @@ fn stale_event_snapshot(metrics: &Metrics) -> Option<EventMetricsSnapshot> {
         .and_then(|cache| cache.events.cached_value())
 }
 
-fn store_event_snapshot(metrics: &Metrics, snapshot: EventMetricsSnapshot) {
+fn store_event_snapshot(metrics: &Metrics, snapshot: StorageEventMetricsSnapshot) {
     if let Ok(mut cache) = metrics.scrape_cache.lock() {
         cache.events.store(snapshot, Instant::now());
     }
 }
 
-fn record_event_snapshot(metrics: &Metrics, snapshot: &EventMetricsSnapshot) {
+fn record_event_snapshot(metrics: &Metrics, snapshot: &StorageEventMetricsSnapshot) {
     record_queue_item(
         metrics,
         "fanout",
@@ -106,7 +108,7 @@ fn record_event_snapshot(metrics: &Metrics, snapshot: &EventMetricsSnapshot) {
     record_worker(metrics, "delivery", &event_delivery_worker_health());
 }
 
-fn record_delivery_counts(metrics: &Metrics, counts: EventDeliveryStatusSnapshot) {
+fn record_delivery_counts(metrics: &Metrics, counts: StorageEventDeliveryStatusSnapshot) {
     for (state, value) in [
         ("total", counts.total()),
         ("pending", counts.pending()),

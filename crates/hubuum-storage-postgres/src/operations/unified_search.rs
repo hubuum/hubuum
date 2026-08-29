@@ -6,8 +6,8 @@ use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId};
 use hubuum_storage_core::{
-    AuthorizationPermission, StorageClass, StorageCollection, StorageObject, StorageResourceScope,
-    UnifiedSearchQuery,
+    StorageAuthorizationPermission, StorageClassWithCollection, StorageCollection, StorageObject,
+    StorageResourceScope, StorageUnifiedSearchQuery,
 };
 
 use crate::revision::record_metadata;
@@ -131,14 +131,17 @@ impl TryFrom<CollectionRow> for StorageCollection {
     type Error = PostgresStorageError;
 
     fn try_from(row: CollectionRow) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
-            row.name,
-            row.description,
-            row.parent_collection_id
-                .map(CollectionId::new)
-                .transpose()?,
-        ))
+        crate::validate_persisted(
+            "unified-search collection",
+            Self::try_new(
+                record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
+                row.name,
+                row.description,
+                row.parent_collection_id
+                    .map(CollectionId::new)
+                    .transpose()?,
+            ),
+        )
     }
 }
 
@@ -160,7 +163,7 @@ impl ClassRow {
     fn into_storage(
         self,
         collections: &HashMap<i32, StorageCollection>,
-    ) -> Result<StorageClass, PostgresStorageError> {
+    ) -> Result<StorageClassWithCollection, PostgresStorageError> {
         let collection = collections
             .get(&self.collection_id)
             .cloned()
@@ -170,7 +173,7 @@ impl ClassRow {
                     self.id, self.collection_id
                 ))
             })?;
-        Ok(StorageClass::builder(
+        Ok(StorageClassWithCollection::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             collection,
@@ -219,7 +222,7 @@ struct CursorBinds {
 }
 
 impl CursorBinds {
-    fn from_query(query: &UnifiedSearchQuery) -> Self {
+    fn from_query(query: &StorageUnifiedSearchQuery) -> Self {
         match query.search_cursor() {
             Some(cursor) => Self {
                 absent: false,
@@ -276,11 +279,11 @@ fn bounded_limit(limit: usize) -> i64 {
 
 pub async fn search_collections(
     runtime: &PostgresRuntime,
-    query: UnifiedSearchQuery,
+    query: StorageUnifiedSearchQuery,
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {
     if !query
         .visibility()
-        .allows_permissions(&[AuthorizationPermission::ReadCollection])
+        .allows_permissions(&[StorageAuthorizationPermission::ReadCollection])
     {
         return Ok(Vec::new());
     }
@@ -312,11 +315,11 @@ pub async fn search_collections(
 
 pub async fn search_classes(
     runtime: &PostgresRuntime,
-    query: UnifiedSearchQuery,
-) -> Result<Vec<StorageClass>, PostgresStorageError> {
+    query: StorageUnifiedSearchQuery,
+) -> Result<Vec<StorageClassWithCollection>, PostgresStorageError> {
     if !query.visibility().allows_permissions(&[
-        AuthorizationPermission::ReadCollection,
-        AuthorizationPermission::ReadClass,
+        StorageAuthorizationPermission::ReadCollection,
+        StorageAuthorizationPermission::ReadClass,
     ]) {
         return Ok(Vec::new());
     }
@@ -371,11 +374,11 @@ pub async fn search_classes(
 
 pub async fn search_objects(
     runtime: &PostgresRuntime,
-    query: UnifiedSearchQuery,
+    query: StorageUnifiedSearchQuery,
 ) -> Result<Vec<StorageObject>, PostgresStorageError> {
     if !query.visibility().allows_permissions(&[
-        AuthorizationPermission::ReadCollection,
-        AuthorizationPermission::ReadObject,
+        StorageAuthorizationPermission::ReadCollection,
+        StorageAuthorizationPermission::ReadObject,
     ]) {
         return Ok(Vec::new());
     }

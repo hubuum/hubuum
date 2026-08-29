@@ -11,12 +11,13 @@ use crate::services::storage_boundary::{
     object_relation_id_to_storage, resource_id_to_storage, visibility,
 };
 use crate::storage::{
-    BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
-    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
-    RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageContext,
-    StorageGraphClass, StorageGraphObject, StorageObjectGraphRow, StorageObjectRelation,
+    RelationQueryStorage, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
+    StorageClassRelation, StorageContext, StorageGraphClass, StorageGraphObject,
+    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery,
     StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    StorageRelatedSort, storage_handle,
+    StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
+    StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
+    storage_handle,
 };
 
 fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassRelation, ApiError> {
@@ -324,7 +325,7 @@ pub(crate) async fn list_class_relations(
     access: RelationAccess<'_>,
     options: QueryOptions,
 ) -> Result<(Vec<HubuumClassRelation>, Option<i64>), ApiError> {
-    let query = RelationListQuery::new(options, access.visibility()?);
+    let query = StorageRelationListQuery::new(options, access.visibility()?);
     let (rows, total) = storage_handle(backend)
         .list_class_relations(query)
         .await?
@@ -342,7 +343,7 @@ pub(crate) async fn list_object_relations(
     access: RelationAccess<'_>,
     options: QueryOptions,
 ) -> Result<(Vec<HubuumObjectRelation>, Option<i64>), ApiError> {
-    let query = RelationListQuery::new(options, access.visibility()?);
+    let query = StorageRelationListQuery::new(options, access.visibility()?);
     let (rows, total) = storage_handle(backend)
         .list_object_relations(query)
         .await?
@@ -361,7 +362,7 @@ pub(crate) async fn list_class_relations_touching(
     class_id: i32,
     options: QueryOptions,
 ) -> Result<(Vec<HubuumClassRelation>, Option<i64>), ApiError> {
-    let query = RelationTouchingQuery::new(
+    let query = StorageRelationTouchingQuery::new(
         resource_id_to_storage(class_id),
         options,
         access.visibility()?,
@@ -384,7 +385,7 @@ pub(crate) async fn list_object_relations_touching(
     object_id: i32,
     options: QueryOptions,
 ) -> Result<(Vec<HubuumObjectRelation>, Option<i64>), ApiError> {
-    let query = RelationTouchingQuery::new(
+    let query = StorageRelationTouchingQuery::new(
         resource_id_to_storage(object_id),
         options,
         access.visibility()?,
@@ -406,7 +407,7 @@ pub(crate) async fn list_class_relations_touching_ids(
     access: RelationAccess<'_>,
     class_ids: &[i32],
 ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-    let query = RelationIdsQuery::new(
+    let query = StorageRelationIdsQuery::new(
         class_ids.iter().copied().map(resource_id_to_storage),
         access.visibility()?,
     );
@@ -423,7 +424,7 @@ pub(crate) async fn list_class_relations_between_ids(
     access: RelationAccess<'_>,
     class_ids: &[i32],
 ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-    let query = RelationIdsQuery::new(
+    let query = StorageRelationIdsQuery::new(
         class_ids.iter().copied().map(resource_id_to_storage),
         access.visibility()?,
     );
@@ -440,7 +441,7 @@ pub(crate) async fn list_object_relations_between_ids(
     access: RelationAccess<'_>,
     object_ids: &[i32],
 ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-    let query = RelationIdsQuery::new(
+    let query = StorageRelationIdsQuery::new(
         object_ids.iter().copied().map(resource_id_to_storage),
         access.visibility()?,
     );
@@ -459,7 +460,7 @@ pub(crate) async fn list_object_relations_touching_ids(
     excluded_relation_ids: &[i32],
     max_results: usize,
 ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-    let query = ObjectRelationsTouchingIdsQuery::new(
+    let query = StorageObjectRelationsTouchingIdsQuery::new(
         object_ids.iter().copied().map(object_id_to_storage),
         max_results,
         access.visibility()?,
@@ -484,7 +485,7 @@ pub(crate) async fn list_related_classes(
     class_id: i32,
     options: QueryOptions,
 ) -> Result<(Vec<ClassGraphRow>, Option<i64>), ApiError> {
-    let query = RelationGraphQuery::new(
+    let query = StorageRelationGraphQuery::new(
         resource_id_to_storage(class_id),
         options,
         access.visibility()?,
@@ -507,7 +508,7 @@ pub(crate) async fn list_related_objects(
     object_id: i32,
     options: QueryOptions,
 ) -> Result<(Vec<RelatedObjectGraphRow>, Option<i64>), ApiError> {
-    let query = RelationGraphQuery::new(
+    let query = StorageRelationGraphQuery::new(
         resource_id_to_storage(object_id),
         options,
         access.visibility()?,
@@ -541,7 +542,7 @@ pub(crate) async fn list_related_objects_for_roots(
         ExportIncludeRelatedSort::Name => StorageRelatedSort::Name,
         ExportIncludeRelatedSort::CreatedAt => StorageRelatedSort::CreatedAt,
     };
-    let query = RelatedObjectsForRootsQuery::new(
+    let query = StorageRelatedObjectsForRootsQuery::new(
         root_object_ids.iter().copied().map(object_id_to_storage),
         class_id_to_storage(include.class_id),
         access.visibility()?,
@@ -568,7 +569,7 @@ pub(crate) async fn list_bidirectionally_related_objects_for_roots(
     per_root_cap: i32,
     preserve_alternative_paths: bool,
 ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
-    let query = BidirectionalRelatedObjectsQuery::new(
+    let query = StorageBidirectionalRelatedObjectsQuery::new(
         root_object_ids.iter().copied().map(object_id_to_storage),
         max_depth,
         per_root_cap,

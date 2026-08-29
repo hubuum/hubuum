@@ -30,7 +30,7 @@ impl GroupStorage for PostgresStorage {
         &self,
         command: StorageGroupCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         crate::operations::group::create_group(self.runtime(), command, context)
             .await
             .map_err(StorageError::from)
@@ -41,7 +41,7 @@ impl GroupStorage for PostgresStorage {
         group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         crate::operations::group::update_group(self.runtime(), group_id.id(), update, context)
             .await
             .map_err(StorageError::from)
@@ -51,7 +51,7 @@ impl GroupStorage for PostgresStorage {
         &self,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         crate::operations::group::delete_group(self.runtime(), group_id.id(), context)
             .await
             .map_err(StorageError::from)
@@ -83,7 +83,7 @@ impl PrincipalStorage for PostgresStorage {
         principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalSettings>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StoragePrincipalSettings>, StorageError> {
         crate::operations::principal::update_principal_settings(
             self.runtime(),
             principal_id.id(),
@@ -99,8 +99,8 @@ impl PrincipalStorage for PostgresStorage {
 impl CollectionAuthorizationQueryStorage for PostgresStorage {
     async fn load_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError> {
         crate::operations::authorization::load_principal_collection_permissions(
             self.runtime(),
             query,
@@ -112,7 +112,7 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
     async fn list_all_principal_collection_permissions(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
         crate::operations::authorization::list_all_principal_collection_permissions(
             self.runtime(),
             principal_id.id(),
@@ -123,8 +123,8 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn list_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
         crate::operations::authorization::list_principal_collection_permissions(
             self.runtime(),
             query,
@@ -135,8 +135,8 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn list_effective_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         crate::operations::authorization::list_effective_principal_collection_permissions(
             self.runtime(),
             query,
@@ -147,8 +147,8 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn list_visible_collections(
         &self,
-        query: AuthorizationCollectionVisibilityQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionVisibilityQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         crate::operations::authorization::list_visible_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -156,7 +156,7 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn has_group_collection_permission(
         &self,
-        query: AuthorizationGroupCollectionQuery,
+        query: StorageAuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
         crate::operations::authorization::has_group_collection_permission(self.runtime(), query)
             .await
@@ -167,7 +167,7 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
         &self,
         collection_id: CollectionId,
         group_id: GroupId,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         crate::operations::authorization::list_effective_group_collection_permissions(
             self.runtime(),
             collection_id.id(),
@@ -179,8 +179,8 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn load_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
         crate::operations::authorization::load_groups_with_collection_permission(
             self.runtime(),
             query,
@@ -191,8 +191,8 @@ impl CollectionAuthorizationQueryStorage for PostgresStorage {
 
     async fn list_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
         crate::operations::authorization::list_groups_with_collection_permission(
             self.runtime(),
             query,

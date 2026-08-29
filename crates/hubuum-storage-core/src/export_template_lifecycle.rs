@@ -6,7 +6,7 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StoragePage, StorageRecordMetadata};
+use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageRecordMetadata};
 
 /// Backend-neutral definition of an export template.
 ///
@@ -211,6 +211,11 @@ impl StorageExportTemplate {
             name: name.into(),
             definition,
         }
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> StorageRecordMetadata {
+        self.metadata
     }
 
     #[must_use]
@@ -462,17 +467,17 @@ pub trait ExportTemplateStorage: Send + Sync {
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError>;
 
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError>;
 
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]

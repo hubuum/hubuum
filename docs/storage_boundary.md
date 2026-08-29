@@ -145,7 +145,7 @@ The following rules are architectural invariants:
 - Transaction-scoped mutations always inherit the transaction's
   `EventContext`. State and durable audit events commit or roll back together.
 - Ordinary audited mutations require `EventContext` and return
-  `MutationOutcome`: committed changes carry a durable `AuditReceipt`, while
+  `StorageMutationOutcome`: committed changes carry a durable `StorageAuditReceipt`, while
   genuine no-ops carry no receipt and append no event.
 - Imports and restores are restricted to the explicit `ImportStorage` and
   `RestoreStorage` capabilities. Those typed surfaces preserve or reconstruct

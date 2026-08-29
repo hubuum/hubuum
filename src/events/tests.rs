@@ -1202,7 +1202,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             StorageRemoteTargetDefinition::new(
                 "before",
                 StorageRemoteTargetTransport::try_new(
-                    crate::storage::StorageRemoteHttpMethod::Get,
+                    crate::storage::StorageRemoteTargetHttpMethod::Get,
                     "https://example.invalid/{{ subject.id }}",
                     serde_json::json!({}),
                     None,

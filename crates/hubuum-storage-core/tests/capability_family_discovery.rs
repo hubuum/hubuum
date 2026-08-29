@@ -10,7 +10,7 @@ mod resources {
         let _ = std::mem::size_of::<Option<StorageObject>>();
         let _ = std::mem::size_of::<Option<StorageClassRelation>>();
         let _ = std::mem::size_of::<Option<StorageObjectRelation>>();
-        let _ = std::mem::size_of::<Option<MutationOutcome<StorageClassRecord>>>();
+        let _ = std::mem::size_of::<Option<StorageMutationOutcome<StorageClass>>>();
     }
 }
 
@@ -19,10 +19,10 @@ mod identity {
 
     #[test]
     fn exports_identity_protocol() {
-        let _ = std::mem::size_of::<Option<AuthenticationTokenScope>>();
-        let _ = std::mem::size_of::<Option<AuthorizationPermission>>();
+        let _ = std::mem::size_of::<Option<StorageAuthenticationTokenScope>>();
+        let _ = std::mem::size_of::<Option<StorageAuthorizationPermission>>();
         let _ = std::mem::size_of::<Option<StoragePrincipal>>();
-        let _ = std::mem::size_of::<Option<MutationOutcome<StorageIdentityGroup>>>();
+        let _ = std::mem::size_of::<Option<StorageMutationOutcome<StorageIdentityGroup>>>();
     }
 }
 
@@ -31,8 +31,8 @@ mod queries {
 
     #[test]
     fn exports_query_protocol() {
-        let _ = std::mem::size_of::<Option<AuthorizationPermission>>();
-        let _ = std::mem::size_of::<Option<StorageClassRecord>>();
+        let _ = std::mem::size_of::<Option<StorageAuthorizationPermission>>();
+        let _ = std::mem::size_of::<Option<StorageClass>>();
         let _ = std::mem::size_of::<Option<StorageComputationRevision>>();
         let _ = std::mem::size_of::<Option<StorageExportTemplate>>();
         let _ = std::mem::size_of::<Option<StorageRemoteTarget>>();
@@ -46,8 +46,8 @@ mod workflows {
     #[test]
     fn exports_workflow_protocol() {
         let _ = std::mem::size_of::<Option<StorageError>>();
-        let _ = std::mem::size_of::<Option<AuthorizationPermission>>();
-        let _ = std::mem::size_of::<Option<StorageClassRecord>>();
+        let _ = std::mem::size_of::<Option<StorageAuthorizationPermission>>();
+        let _ = std::mem::size_of::<Option<StorageClass>>();
         let _ = std::mem::size_of::<Option<StorageCollection>>();
         let _ = std::mem::size_of::<Option<StorageObject>>();
         let _ = std::mem::size_of::<Option<StorageTask>>();
@@ -59,14 +59,14 @@ mod events {
 
     #[test]
     fn exports_event_protocol() {
-        let _ = std::mem::size_of::<Option<AuditReceipt>>();
-        let _ = std::mem::size_of::<Option<EventDeliveryHealthSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventDeliveryStatusSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventFanoutSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventQueueSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventSinkHealthSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventSinkSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventSubscriptionHealthSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageAuditReceipt>>();
+        let _ = std::mem::size_of::<Option<StorageEventDeliveryHealthSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventDeliveryStatusSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventFanoutSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventQueueSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventSinkHealthSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventSinkSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventSubscriptionHealthSnapshot>>();
     }
 }
 
@@ -79,8 +79,8 @@ mod operational {
         let _ = std::mem::size_of::<Option<StorageQueryBudget>>();
         let _ = std::mem::size_of::<Option<StorageTaskKind>>();
         let _ = std::mem::size_of::<Option<StorageTaskStatus>>();
-        let _ = std::mem::size_of::<Option<EventFanoutSnapshot>>();
-        let _ = std::mem::size_of::<Option<EventQueueSnapshot>>();
-        let _ = std::mem::size_of::<Option<ReadinessSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventFanoutSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageEventQueueSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageReadinessSnapshot>>();
     }
 }

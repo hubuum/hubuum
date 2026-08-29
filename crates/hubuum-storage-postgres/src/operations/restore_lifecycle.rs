@@ -218,14 +218,17 @@ fn summary_from_parts(
         parts.updated_at.and_utc(),
     )
     .map_err(|error| PostgresStorageError::invalid_persisted_value("restore timestamps", error))?;
-    Ok(StorageRestoreJobSummary::new(
-        RestoreJobId::new(parts.id)?,
-        status,
-        initiator,
-        artifact,
-        parts.error,
-        timestamps,
-    ))
+    crate::validate_persisted(
+        "restore job summary",
+        StorageRestoreJobSummary::try_new(
+            RestoreJobId::new(parts.id)?,
+            status,
+            initiator,
+            artifact,
+            parts.error,
+            timestamps,
+        ),
+    )
 }
 
 fn job_to_storage(row: RestoreJobRow) -> Result<StorageRestoreJob, PostgresStorageError> {
@@ -244,11 +247,10 @@ fn job_to_storage(row: RestoreJobRow) -> Result<StorageRestoreJob, PostgresStora
         created_at: row.created_at,
         updated_at: row.updated_at,
     })?;
-    Ok(StorageRestoreJob::new(
-        summary,
-        row.document,
-        row.capability_hash,
-    ))
+    crate::validate_persisted(
+        "restore job",
+        StorageRestoreJob::try_new(summary, row.document, row.capability_hash),
+    )
 }
 
 fn status_to_storage(
@@ -269,18 +271,22 @@ fn status_to_storage(
         created_at: row.created_at,
         updated_at: row.updated_at,
     })?;
-    Ok(StorageRestoreStatus::new(
-        summary,
-        row.capability_hash,
-        row.validation_summary,
-    ))
+    crate::validate_persisted(
+        "restore status",
+        StorageRestoreStatus::try_new(summary, row.capability_hash, row.validation_summary),
+    )
 }
 
-fn instance_to_storage(instance: ServerInstanceRow) -> StorageRestoreInstance {
-    StorageRestoreInstance::new(
-        instance.instance_id,
-        instance.maintenance_generation,
-        instance.drained,
+fn instance_to_storage(
+    instance: ServerInstanceRow,
+) -> Result<StorageRestoreInstance, PostgresStorageError> {
+    crate::validate_persisted(
+        "restore coordinator instance",
+        StorageRestoreInstance::try_new(
+            instance.instance_id,
+            instance.maintenance_generation,
+            instance.drained,
+        ),
     )
 }
 
@@ -537,10 +543,10 @@ pub async fn apply_restore(
 
                 let finished_at = Utc::now().naive_utc();
                 finish_restore(connection, finished_at).await?;
-                Ok(StorageRestoreCompletion::try_new(
-                    started_at.and_utc(),
-                    finished_at.and_utc(),
-                )?)
+                crate::validate_persisted(
+                    "restore completion",
+                    StorageRestoreCompletion::try_new(started_at.and_utc(), finished_at.and_utc()),
+                )
             },
         )
         .await
@@ -908,10 +914,14 @@ pub async fn get_restore_drain_state(
             Ok::<_, diesel::result::Error>((generation, instances))
         })
         .await?;
-    Ok(StorageRestoreDrainState::new(
-        generation,
-        instances.into_iter().map(instance_to_storage).collect(),
-    ))
+    let instances = instances
+        .into_iter()
+        .map(instance_to_storage)
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::validate_persisted(
+        "restore drain state",
+        StorageRestoreDrainState::try_new(generation, instances),
+    )
 }
 
 /// Remove one process from restore coordinator membership.

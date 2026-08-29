@@ -252,7 +252,7 @@ fn storage_boundary_documentation_covers_the_complete_contract() {
         );
     }
     for contract_artifact in [
-        "MutationOutcome",
+        "StorageMutationOutcome",
         "ImportStorage",
         "RestoreStorage",
         "StorageObserver",
@@ -1226,11 +1226,12 @@ fn audited_resource_mutations_return_durable_receipt_outcomes() {
     let root = repository_root();
     let mutation = read_source(&root.join("crates/hubuum-storage-core/src/mutation.rs"))
         .expect("mutation outcome contract should be readable");
+    let mutation = mutation.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
-        "pub struct AuditReceipt",
-        "pub struct AuditReceipts",
-        "pub enum MutationOutcome<T>",
-        "Committed { value: T, audits: AuditReceipts }",
+        "pub struct StorageAuditReceipt",
+        "pub struct StorageAuditReceipts",
+        "pub enum StorageMutationOutcome<T>",
+        "Committed { value: T, audits: StorageAuditReceipts, }",
         "Unchanged(T)",
     ] {
         assert!(
@@ -1248,7 +1249,7 @@ fn audited_resource_mutations_return_durable_receipt_outcomes() {
         let source = read_source(&root.join("crates/hubuum-storage-core/src").join(file))
             .unwrap_or_else(|error| panic!("could not read {file}: {error}"));
         assert!(
-            source.contains("MutationOutcome<"),
+            source.contains("StorageMutationOutcome<"),
             "{file} must expose explicit audited mutation outcomes"
         );
     }

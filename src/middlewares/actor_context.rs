@@ -2,7 +2,7 @@ use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::Token;
 use crate::permissions::AppContext;
-use crate::storage::{AuthenticatedToken, with_mutation_provenance};
+use crate::storage::{StorageAuthenticatedToken, with_mutation_provenance};
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Next;
@@ -14,7 +14,7 @@ use actix_web::{Error, HttpMessage};
 pub(crate) enum ResolvedAuth {
     Authenticated {
         token: Token,
-        token_meta: AuthenticatedToken,
+        token_meta: StorageAuthenticatedToken,
     },
     Missing,
     Invalid,

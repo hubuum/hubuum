@@ -182,7 +182,7 @@ async fn preflight_dry_run(
                 .map(|execution| StorageImportPlanItem::new(index, execution))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let plan = crate::storage::StorageImportPlan::new(plan).map_err(ApiError::from)?;
+    let plan = crate::storage::StorageImportPlan::try_new(plan).map_err(ApiError::from)?;
     let (preflight_items, aborted) = storage_handle(pool)
         .preflight_import(
             plan,

@@ -1,7 +1,7 @@
 use hubuum_domain::ResourceRevision;
 use hubuum_events_core::{Action, EntityType, EventId, EventSequence};
 
-use crate::StorageError;
+use crate::StorageValidationError;
 
 /// Durable proof returned by a backend for one committed audited mutation.
 ///
@@ -9,7 +9,7 @@ use crate::StorageError;
 /// and actor details. Callers authorized to inspect those values use
 /// [`crate::AuditEventStorage`] with the receipt's stable identifiers.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuditReceipt {
+pub struct StorageAuditReceipt {
     sequence: EventSequence,
     event_id: EventId,
     entity_type: EntityType,
@@ -23,14 +23,14 @@ pub struct AuditReceipt {
 /// The first receipt is stored separately so an instance can never represent
 /// an empty committed audit set.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuditReceipts {
-    first: AuditReceipt,
-    additional: Vec<AuditReceipt>,
+pub struct StorageAuditReceipts {
+    first: StorageAuditReceipt,
+    additional: Vec<StorageAuditReceipt>,
 }
 
-impl AuditReceipts {
+impl StorageAuditReceipts {
     #[must_use]
-    pub const fn single(first: AuditReceipt) -> Self {
+    pub const fn single(first: StorageAuditReceipt) -> Self {
         Self {
             first,
             additional: Vec::new(),
@@ -38,22 +38,24 @@ impl AuditReceipts {
     }
 
     #[must_use]
-    pub const fn new(first: AuditReceipt, additional: Vec<AuditReceipt>) -> Self {
+    pub const fn new(first: StorageAuditReceipt, additional: Vec<StorageAuditReceipt>) -> Self {
         Self { first, additional }
     }
 
     /// Build a non-empty receipt set without permitting an invalid committed
     /// mutation to cross the storage boundary.
-    pub fn try_from_vec(receipts: Vec<AuditReceipt>) -> Result<Self, StorageError> {
+    pub fn try_from_vec(
+        receipts: Vec<StorageAuditReceipt>,
+    ) -> Result<Self, StorageValidationError> {
         let mut receipts = receipts.into_iter();
         let first = receipts.next().ok_or_else(|| {
-            StorageError::internal("committed audited mutation returned no audit receipts")
+            StorageValidationError::invalid("Committed mutations require an audit receipt")
         })?;
         Ok(Self::new(first, receipts.collect()))
     }
 
     #[must_use]
-    pub const fn first(&self) -> &AuditReceipt {
+    pub const fn first(&self) -> &StorageAuditReceipt {
         &self.first
     }
 
@@ -67,12 +69,12 @@ impl AuditReceipts {
         false
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &AuditReceipt> {
+    pub fn iter(&self) -> impl Iterator<Item = &StorageAuditReceipt> {
         std::iter::once(&self.first).chain(self.additional.iter())
     }
 
     #[must_use]
-    pub fn into_vec(self) -> Vec<AuditReceipt> {
+    pub fn into_vec(self) -> Vec<StorageAuditReceipt> {
         let mut receipts = Vec::with_capacity(self.len());
         receipts.push(self.first);
         receipts.extend(self.additional);
@@ -80,7 +82,7 @@ impl AuditReceipts {
     }
 }
 
-impl AuditReceipt {
+impl StorageAuditReceipt {
     #[must_use]
     pub fn new(
         sequence: EventSequence,
@@ -138,24 +140,27 @@ impl AuditReceipt {
 /// a genuine no-op and therefore carries no audit receipt.
 #[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MutationOutcome<T> {
+pub enum StorageMutationOutcome<T> {
     Unchanged(T),
-    Committed { value: T, audits: AuditReceipts },
+    Committed {
+        value: T,
+        audits: StorageAuditReceipts,
+    },
 }
 
-impl<T> MutationOutcome<T> {
+impl<T> StorageMutationOutcome<T> {
     pub const fn unchanged(value: T) -> Self {
         Self::Unchanged(value)
     }
 
-    pub const fn committed(value: T, audit: AuditReceipt) -> Self {
+    pub const fn committed(value: T, audit: StorageAuditReceipt) -> Self {
         Self::Committed {
             value,
-            audits: AuditReceipts::single(audit),
+            audits: StorageAuditReceipts::single(audit),
         }
     }
 
-    pub const fn committed_with_audits(value: T, audits: AuditReceipts) -> Self {
+    pub const fn committed_with_audits(value: T, audits: StorageAuditReceipts) -> Self {
         Self::Committed { value, audits }
     }
 
@@ -165,7 +170,7 @@ impl<T> MutationOutcome<T> {
     }
 
     #[must_use]
-    pub const fn audits(&self) -> Option<&AuditReceipts> {
+    pub const fn audits(&self) -> Option<&StorageAuditReceipts> {
         match self {
             Self::Unchanged(_) => None,
             Self::Committed { audits, .. } => Some(audits),
@@ -185,10 +190,10 @@ impl<T> MutationOutcome<T> {
         }
     }
 
-    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> MutationOutcome<U> {
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> StorageMutationOutcome<U> {
         match self {
-            Self::Unchanged(value) => MutationOutcome::Unchanged(map(value)),
-            Self::Committed { value, audits } => MutationOutcome::Committed {
+            Self::Unchanged(value) => StorageMutationOutcome::Unchanged(map(value)),
+            Self::Committed { value, audits } => StorageMutationOutcome::Committed {
                 value: map(value),
                 audits,
             },
@@ -203,17 +208,17 @@ impl<T> MutationOutcome<T> {
     pub fn try_map<U, E>(
         self,
         map: impl FnOnce(T) -> Result<U, E>,
-    ) -> Result<MutationOutcome<U>, E> {
+    ) -> Result<StorageMutationOutcome<U>, E> {
         match self {
-            Self::Unchanged(value) => map(value).map(MutationOutcome::Unchanged),
+            Self::Unchanged(value) => map(value).map(StorageMutationOutcome::Unchanged),
             Self::Committed { value, audits } => {
-                map(value).map(|value| MutationOutcome::Committed { value, audits })
+                map(value).map(|value| StorageMutationOutcome::Committed { value, audits })
             }
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (T, Option<AuditReceipts>) {
+    pub fn into_parts(self) -> (T, Option<StorageAuditReceipts>) {
         match self {
             Self::Unchanged(value) => (value, None),
             Self::Committed { value, audits } => (value, Some(audits)),
@@ -225,8 +230,8 @@ impl<T> MutationOutcome<T> {
 mod tests {
     use super::*;
 
-    fn receipt() -> AuditReceipt {
-        AuditReceipt::new(
+    fn receipt() -> StorageAuditReceipt {
+        StorageAuditReceipt::new(
             EventSequence::new(7).unwrap(),
             EventId::from(uuid::Uuid::nil()),
             EntityType::Collection,
@@ -238,24 +243,27 @@ mod tests {
 
     #[test]
     fn committed_outcome_preserves_value_and_receipt() {
-        let outcome = MutationOutcome::committed(41, receipt());
+        let outcome = StorageMutationOutcome::committed(41, receipt());
 
         assert_eq!(outcome.value(), &41);
-        assert_eq!(outcome.audits().map(AuditReceipts::first), Some(&receipt()));
-        assert_eq!(outcome.audits().map(AuditReceipts::len), Some(1));
+        assert_eq!(
+            outcome.audits().map(StorageAuditReceipts::first),
+            Some(&receipt())
+        );
+        assert_eq!(outcome.audits().map(StorageAuditReceipts::len), Some(1));
         assert!(outcome.is_committed());
     }
 
     #[test]
     fn unchanged_outcome_has_no_receipt() {
-        let outcome = MutationOutcome::unchanged(41);
+        let outcome = StorageMutationOutcome::unchanged(41);
 
         assert_eq!(outcome.into_parts(), (41, None));
     }
 
     #[test]
     fn audit_receipts_are_non_empty() {
-        let receipts = AuditReceipts::new(receipt(), vec![receipt()]);
+        let receipts = StorageAuditReceipts::new(receipt(), vec![receipt()]);
 
         assert!(!receipts.is_empty());
         assert_eq!(receipts.len(), 2);
@@ -264,8 +272,11 @@ mod tests {
 
     #[test]
     fn empty_audit_receipt_vectors_are_rejected() {
-        let error = AuditReceipts::try_from_vec(Vec::new()).unwrap_err();
+        let error = StorageAuditReceipts::try_from_vec(Vec::new()).unwrap_err();
 
-        assert_eq!(error.kind(), crate::StorageErrorKind::Internal);
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 }

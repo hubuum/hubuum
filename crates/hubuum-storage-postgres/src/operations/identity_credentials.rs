@@ -1,7 +1,7 @@
 use diesel::prelude::{ExpressionMethods, JoinOnDsl, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::LOCAL_IDENTITY_SCOPE;
-use hubuum_storage_core::{MutationOutcome, StorageLocalPasswordReset};
+use hubuum_storage_core::{StorageLocalPasswordReset, StorageMutationOutcome};
 
 use crate::{PostgresRuntime, PostgresStorageError};
 
@@ -10,7 +10,7 @@ use crate::{PostgresRuntime, PostgresStorageError};
 pub async fn reset_local_password(
     runtime: &PostgresRuntime,
     request: StorageLocalPasswordReset,
-) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
     let (principal_name, password_hash, event_context) = request.into_parts();
     runtime
         .with_transaction(async move |connection| {

@@ -3,13 +3,13 @@ use async_trait::async_trait;
 use hubuum_domain::{ClassId, ComputedFieldDefinitionId};
 
 use hubuum_storage_core::{
-    ComputedFieldStorage, MutationOutcome, StorageClassComputationState,
-    StorageComputedFieldDefinition, StorageComputedFieldMutation,
-    StorageComputedFieldRebuildRequest, StorageError, StoragePage,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
-    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskLease,
+    ComputedFieldStorage, StorageClassComputationState, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldRebuildRequest, StorageError,
+    StorageMutationOutcome, StoragePage, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTask,
+    StorageTaskLease,
 };
 
 use super::PostgresStorage;
@@ -55,7 +55,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         postgres_computed_fields::create_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -64,7 +64,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         postgres_computed_fields::update_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -73,7 +73,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClassComputationState>, StorageError> {
         postgres_computed_fields::delete_shared_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -82,7 +82,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         postgres_computed_fields::create_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -91,7 +91,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         postgres_computed_fields::update_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -100,7 +100,7 @@ impl ComputedFieldStorage for PostgresStorage {
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         postgres_computed_fields::delete_personal_computed_field(self.runtime(), request)
             .await
             .map_err(StorageError::from)

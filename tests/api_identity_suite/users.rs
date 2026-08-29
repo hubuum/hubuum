@@ -43,17 +43,21 @@ mod tests {
         .unwrap()
     }
 
-    async fn set_token_expiry(
+    async fn expire_token_at(
         pool: &hubuum_storage_postgres::PostgresPool,
         raw: &str,
         expires_at: chrono::NaiveDateTime,
     ) {
         let token_hash = Token::storage_hash_from_raw(raw);
+        let issued_at = expires_at - chrono::Duration::seconds(1);
         with_connection(pool, async |conn| {
             diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::token.eq(token_hash)),
             )
-            .set(crate::schema::tokens::expires_at.eq(Some(expires_at)))
+            .set((
+                crate::schema::tokens::issued.eq(issued_at),
+                crate::schema::tokens::expires_at.eq(Some(expires_at)),
+            ))
             .execute(conn)
             .await
         })
@@ -700,7 +704,7 @@ mod tests {
         let minted: serde_json::Value = test::read_body_json(mint).await;
         let raw = minted["token"].as_str().unwrap();
         let token_id = token_id_for_raw(&context.pool, raw).await;
-        set_token_expiry(
+        expire_token_at(
             &context.pool,
             raw,
             chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
@@ -848,7 +852,7 @@ mod tests {
         let minted: serde_json::Value = test::read_body_json(mint).await;
         let source_raw = minted["token"].as_str().unwrap();
         let source_id = token_id_for_raw(&context.pool, source_raw).await;
-        set_token_expiry(
+        expire_token_at(
             &context.pool,
             source_raw,
             chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),

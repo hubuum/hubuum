@@ -4,7 +4,7 @@ use diesel::JoinOnDsl;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_query::{FilterField, QueryOptions};
-use hubuum_storage_core::{AuthorizationPermission, StorageVisibility};
+use hubuum_storage_core::{StorageAuthorizationPermission, StorageVisibility};
 
 use crate::operations::authorization::apply_permission_filter;
 use crate::{PostgresConnection, PostgresStorageError};
@@ -18,7 +18,7 @@ use crate::{PostgresConnection, PostgresStorageError};
 pub(crate) async fn authorized_collection_ids(
     connection: &mut PostgresConnection,
     visibility: &StorageVisibility,
-    permissions: &[AuthorizationPermission],
+    permissions: &[StorageAuthorizationPermission],
 ) -> Result<Vec<i32>, PostgresStorageError> {
     use crate::schema::{
         collection_closure, collections, group_memberships, permissions as grants,
@@ -56,13 +56,13 @@ pub(crate) async fn authorized_collection_ids(
 /// baseline, rejecting unknown permission names at the adapter boundary.
 pub(crate) fn required_permissions(
     options: &QueryOptions,
-    baseline: impl IntoIterator<Item = AuthorizationPermission>,
-) -> Result<Vec<AuthorizationPermission>, PostgresStorageError> {
+    baseline: impl IntoIterator<Item = StorageAuthorizationPermission>,
+) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     let mut permissions = baseline.into_iter().collect::<Vec<_>>();
     for parameter in options.filters() {
         if parameter.field == FilterField::Permissions {
             permissions.push(
-                AuthorizationPermission::from_name(&parameter.value)
+                StorageAuthorizationPermission::from_name(&parameter.value)
                     .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?,
             );
         }

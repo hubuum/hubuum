@@ -7,7 +7,9 @@ use crate::errors::ApiError;
 use crate::models::CollectionPermissionSet;
 use crate::permissions::grant_from_storage;
 use crate::services::storage_boundary::{collection_id_to_storage, group_id_to_storage};
-use crate::storage::{AuthorizationDataStorage, AuthorizationPermissionSetQuery, StorageHandle};
+use crate::storage::{
+    AuthorizationDataStorage, StorageAuthorizationPermissionSetQuery, StorageHandle,
+};
 
 pub(crate) async fn collection_permission_set(
     storage: &StorageHandle,
@@ -15,7 +17,7 @@ pub(crate) async fn collection_permission_set(
     group_id: Option<i32>,
 ) -> Result<CollectionPermissionSet, ApiError> {
     let (collection_id, revision, grants) = storage
-        .get_local_collection_permission_set(AuthorizationPermissionSetQuery::new(
+        .get_local_collection_permission_set(StorageAuthorizationPermissionSetQuery::new(
             collection_id_to_storage(collection_id),
             group_id.map(group_id_to_storage),
         ))

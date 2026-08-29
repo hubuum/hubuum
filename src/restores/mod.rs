@@ -232,7 +232,8 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
             .history
             .as_ref()
             .map(|history| history.sections.clone()),
-    )?;
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
     validate_required_seed_rows(document)?;
     validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
@@ -739,22 +740,28 @@ pub async fn stage_restore(
     let validation_json = serde_json::to_value(&validation)?;
     let byte_size = i64::try_from(document_bytes.len()).unwrap_or(i64::MAX);
     let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
+    let initiator = StorageRestoreInitiator::try_new(
+        requested_by.map(|id| {
+            hubuum_domain::PrincipalId::new(id)
+                .expect("validated restore initiator id must be positive")
+        }),
+        requested_by_identity_scope,
+        requested_by_name,
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
+    let artifact = StorageRestoreArtifactSummary::try_new(byte_size, document_sha.clone())
+        .map_err(|error| ApiError::from(error.into_request_error()))?;
+    let request = StorageRestoreStageCreate::try_new(
+        initiator,
+        document_bytes,
+        artifact,
+        capability_hash,
+        validation_json,
+        expires_at.and_utc(),
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
     let job = storage_handle(pool)
-        .stage_restore(StorageRestoreStageCreate::new(
-            StorageRestoreInitiator::try_new(
-                requested_by.map(|id| {
-                    hubuum_domain::PrincipalId::new(id)
-                        .expect("validated restore initiator id must be positive")
-                }),
-                requested_by_identity_scope,
-                requested_by_name,
-            )?,
-            document_bytes,
-            StorageRestoreArtifactSummary::try_new(byte_size, document_sha.clone())?,
-            capability_hash,
-            validation_json,
-            expires_at.and_utc(),
-        ))
+        .stage_restore(request)
         .await
         .map(restore_job_from_storage)?;
     let job = job.summary;
@@ -856,7 +863,8 @@ async fn apply_restore(
     let snapshot = StorageBackupSnapshot::try_new(
         document.state.sections,
         document.history.map(|history| history.sections),
-    )?;
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
     let document = StorageRestoreDocument::new(metadata, snapshot);
     storage_handle(pool)
         .apply_restore(StorageRestoreApply::new(job_id, document))

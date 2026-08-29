@@ -15,7 +15,7 @@ use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
     TokenScope, TokenScopeDetails,
 };
-use crate::storage::{AuthenticatedToken, StorageContext};
+use crate::storage::{StorageAuthenticatedToken, StorageContext};
 use crate::traits::{CursorPaginated, CursorValue};
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
@@ -258,7 +258,7 @@ impl PrincipalTokenMetadata {
 impl CurrentTokenMetadata {
     /// Project a validated persisted token and its loaded scope for `/iam/me`.
     pub fn from_authenticated_token(
-        value: &AuthenticatedToken,
+        value: &StorageAuthenticatedToken,
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         Ok(Self {
@@ -376,7 +376,7 @@ impl Token {
 
     /// Validate this bearer token through the selected complete storage
     /// backend and return its hash-free authentication projection.
-    pub async fn authenticate<C>(&self, backend: &C) -> Result<AuthenticatedToken, ApiError>
+    pub async fn authenticate<C>(&self, backend: &C) -> Result<StorageAuthenticatedToken, ApiError>
     where
         C: StorageContext,
     {

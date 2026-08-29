@@ -22,8 +22,8 @@ use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
-    EventDeliverySink, EventDeliverySubscription, EventDeliveryWorkItem,
-    EventDeliveryWorkerStorage, StorageHandle, StorageNotification,
+    EventDeliveryWorkerStorage, StorageEventDeliverySink, StorageEventDeliverySubscription,
+    StorageEventDeliveryWorkItem, StorageHandle, StorageNotification,
     spawn_storage_notification_listener, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
@@ -116,7 +116,7 @@ pub(crate) async fn process_event_delivery_work_item(
     storage: &StorageHandle,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
-    work_item: EventDeliveryWorkItem,
+    work_item: StorageEventDeliveryWorkItem,
 ) -> Result<(), ApiError> {
     let (claim, envelope, subscription, sink) = work_item.into_parts();
     let result = tokio::time::timeout(
@@ -158,8 +158,8 @@ pub(crate) async fn process_event_delivery_work_item(
 async fn deliver_one(
     resolver: &dyn SinkResolver,
     envelope: &EventEnvelope,
-    subscription: &EventDeliverySubscription,
-    sink: &EventDeliverySink,
+    subscription: &StorageEventDeliverySubscription,
+    sink: &StorageEventDeliverySink,
 ) -> Result<(), SinkError> {
     let Some(transport) = resolver.resolve(sink.kind()) else {
         return Err(SinkError::new(format!(
@@ -387,8 +387,8 @@ mod tests {
         fn deliver<'a>(
             &'a self,
             _envelope: &'a EventEnvelope,
-            _subscription: &'a EventDeliverySubscription,
-            _sink: &'a EventDeliverySink,
+            _subscription: &'a StorageEventDeliverySubscription,
+            _sink: &'a StorageEventDeliverySink,
         ) -> futures::future::BoxFuture<'a, Result<(), SinkError>> {
             async { Err(SinkError::new("boom")) }.boxed()
         }
@@ -445,13 +445,13 @@ mod tests {
     #[actix_rt::test]
     async fn resolver_exports_unsupported_sink_kind() {
         let envelope = envelope();
-        let subscription = EventDeliverySubscription::try_new(
+        let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )
         .unwrap();
-        let sink = EventDeliverySink::try_new(
+        let sink = StorageEventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",
@@ -469,13 +469,13 @@ mod tests {
     #[actix_rt::test]
     async fn resolver_passes_through_transport_error() {
         let envelope = envelope();
-        let subscription = EventDeliverySubscription::try_new(
+        let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )
         .unwrap();
-        let sink = EventDeliverySink::try_new(
+        let sink = StorageEventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",
