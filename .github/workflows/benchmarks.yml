@@ -101,10 +101,10 @@ jobs:
     name: Benchmarks
     needs: changes
     if: needs.changes.outputs.run_benchmarks == 'true'
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@57fc9bca852782f3ee421684762f23fd77afba5c # v1.1.0
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@cdeb6a01e7164eef7ebbd117f6b9edd6524db3d3 # v1.1.1
     secrets: inherit
     with:
-      action_ref: 57fc9bca852782f3ee421684762f23fd77afba5c
+      action_ref: cdeb6a01e7164eef7ebbd117f6b9edd6524db3d3
       backend: all
       auto_discover: true
       auto_detect_moved_benchmarks: true
