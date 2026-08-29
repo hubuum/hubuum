@@ -35,6 +35,11 @@ The JSON endpoint returns grouped results and grouped next cursors:
 The stream endpoint returns server-sent events:
 
 - `started`
-- one `batch` per completed kind
+- one `batch` per completed kind, in completion order
 - `done`
 - `error` if the search fails partway through
+
+The server sends `started` before beginning search work and flushes each batch
+as soon as that kind completes. A client disconnect drops the outstanding
+batch futures; database statements remain bounded by the configured database
+timeout. A terminal `error` event replaces `done` when any batch fails.

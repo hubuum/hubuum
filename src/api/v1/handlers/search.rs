@@ -1,6 +1,10 @@
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode};
 use bytes::Bytes;
-use futures_util::stream;
+use futures_util::{
+    FutureExt, Stream, StreamExt,
+    future::BoxFuture,
+    stream::{self, FuturesUnordered},
+};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -9,18 +13,123 @@ use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
-    UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse,
-    UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
-    parse_unified_search_query,
+    StorageUnifiedSearchQuery, TokenScope, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    execute_unified_search, execute_unified_search_batch, parse_unified_search_query,
 };
 use crate::pagination::PAGE_LIMIT_HEADER;
 use crate::permissions::AppContext;
+use crate::storage::StorageAuthenticationPrincipal;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
     let data = serde_json::to_string(payload).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to serialize SSE payload: {error}"))
     })?;
     Ok(Bytes::from(format!("event: {event}\ndata: {data}\n\n")))
+}
+
+type UnifiedSearchBatchFuture = BoxFuture<'static, Result<UnifiedSearchBatchResponse, ApiError>>;
+
+enum UnifiedSearchEventStreamPhase {
+    Starting,
+    Searching,
+    Finished,
+}
+
+struct UnifiedSearchEventStreamState {
+    query: String,
+    searches: FuturesUnordered<UnifiedSearchBatchFuture>,
+    phase: UnifiedSearchEventStreamPhase,
+}
+
+fn search_event_stream(
+    query: String,
+    searches: FuturesUnordered<UnifiedSearchBatchFuture>,
+) -> impl Stream<Item = Result<Bytes, actix_web::Error>> {
+    let state = UnifiedSearchEventStreamState {
+        query,
+        searches,
+        phase: UnifiedSearchEventStreamPhase::Starting,
+    };
+
+    stream::unfold(state, |mut state| async move {
+        match state.phase {
+            UnifiedSearchEventStreamPhase::Starting => {
+                state.phase = UnifiedSearchEventStreamPhase::Searching;
+                let event = sse_event(
+                    "started",
+                    &UnifiedSearchStartedEvent {
+                        query: state.query.clone(),
+                    },
+                )
+                .map_err(actix_web::Error::from);
+                Some((event, state))
+            }
+            UnifiedSearchEventStreamPhase::Searching => match state.searches.next().await {
+                Some(Ok(batch)) => {
+                    let event = sse_event("batch", &batch).map_err(actix_web::Error::from);
+                    Some((event, state))
+                }
+                Some(Err(error)) => {
+                    state.searches.clear();
+                    state.phase = UnifiedSearchEventStreamPhase::Finished;
+                    let event = sse_event(
+                        "error",
+                        &UnifiedSearchErrorEvent {
+                            message: error.public_message().to_string(),
+                        },
+                    )
+                    .map_err(actix_web::Error::from);
+                    Some((event, state))
+                }
+                None => {
+                    state.phase = UnifiedSearchEventStreamPhase::Finished;
+                    let event = sse_event(
+                        "done",
+                        &UnifiedSearchDoneEvent {
+                            query: state.query.clone(),
+                        },
+                    )
+                    .map_err(actix_web::Error::from);
+                    Some((event, state))
+                }
+            },
+            UnifiedSearchEventStreamPhase::Finished => None,
+        }
+    })
+}
+
+fn execute_unified_search_stream(
+    context: AppContext,
+    principal: StorageAuthenticationPrincipal,
+    scope: Option<TokenScope>,
+    params: StorageUnifiedSearchQuery,
+) -> impl Stream<Item = Result<Bytes, actix_web::Error>> {
+    let searches = FuturesUnordered::new();
+
+    for kind in [
+        UnifiedSearchKind::Collection,
+        UnifiedSearchKind::Class,
+        UnifiedSearchKind::Object,
+    ] {
+        if !params.includes(kind) {
+            continue;
+        }
+
+        let context = context.clone();
+        let principal = principal.clone();
+        let scope = scope.clone();
+        let params = params.clone();
+        searches.push(
+            async move {
+                execute_unified_search_batch(&principal, &context, &params, kind, scope.as_ref())
+                    .await
+            }
+            .boxed(),
+        );
+    }
+
+    search_event_stream(params.query, searches)
 }
 
 #[utoipa::path(
@@ -79,7 +188,7 @@ pub async fn get_search(
         ("search_object_data" = Option<bool>, Query, description = "Include object JSON string values in object matching")
     ),
     responses(
-        (status = 200, description = "Server-sent event stream for unified search"),
+        (status = 200, description = "Server-sent event stream for unified search", content_type = "text/event-stream"),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
@@ -91,72 +200,158 @@ pub async fn stream_search(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
-    let mut events = vec![sse_event(
-        "started",
-        &UnifiedSearchStartedEvent {
-            query: params.query.clone(),
-        },
-    )?];
+    let limit_per_kind = params.limit_per_kind;
+    let stream =
+        execute_unified_search_stream(context, requestor.principal, requestor.scope, params);
 
-    for kind in [
-        UnifiedSearchKind::Collection,
-        UnifiedSearchKind::Class,
-        UnifiedSearchKind::Object,
-    ] {
-        if !params.includes(kind) {
-            continue;
+    Ok(HttpResponse::Ok()
+        .insert_header(("Content-Type", "text/event-stream; charset=utf-8"))
+        .insert_header(("Cache-Control", "no-cache"))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .insert_header((PAGE_LIMIT_HEADER, limit_per_kind.to_string()))
+        .streaming(stream))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::channel::oneshot;
+    use futures_util::{FutureExt, StreamExt, future, pin_mut};
+
+    use super::*;
+
+    fn empty_batch(kind: &str) -> UnifiedSearchBatchResponse {
+        UnifiedSearchBatchResponse {
+            kind: kind.to_string(),
+            collections: vec![],
+            classes: vec![],
+            objects: vec![],
+            next: None,
         }
+    }
 
-        match execute_unified_search_batch(
-            &requestor.principal,
-            &context,
-            &params,
-            kind,
-            requestor.scopes(),
-        )
-        .await
-        {
-            Ok(batch) => events.push(sse_event("batch", &batch)?),
-            Err(error) => {
-                events.push(sse_event(
-                    "error",
-                    &UnifiedSearchErrorEvent {
-                        message: error.public_message().to_string(),
-                    },
-                )?);
+    struct DropNotifier(Option<oneshot::Sender<()>>);
 
-                let stream = stream::iter(
-                    events
-                        .into_iter()
-                        .map(Ok::<Bytes, actix_web::Error>)
-                        .collect::<Vec<_>>(),
-                );
-                return Ok(HttpResponse::Ok()
-                    .insert_header(("Content-Type", "text/event-stream"))
-                    .insert_header(("Cache-Control", "no-cache"))
-                    .insert_header((PAGE_LIMIT_HEADER, params.limit_per_kind.to_string()))
-                    .streaming(stream));
+    impl Drop for DropNotifier {
+        fn drop(&mut self) {
+            if let Some(notify) = self.0.take() {
+                let _ = notify.send(());
             }
         }
     }
 
-    events.push(sse_event(
-        "done",
-        &UnifiedSearchDoneEvent {
-            query: params.query.clone(),
-        },
-    )?);
+    #[actix_web::test]
+    async fn search_stream_emits_started_before_search_completes() {
+        let (release, blocked) = oneshot::channel::<()>();
+        let searches = FuturesUnordered::new();
+        searches.push(
+            async move {
+                blocked.await.unwrap();
+                Ok(empty_batch("objects"))
+            }
+            .boxed(),
+        );
+        let events = search_event_stream("needle".to_string(), searches);
+        pin_mut!(events);
 
-    let stream = stream::iter(
-        events
-            .into_iter()
-            .map(Ok::<Bytes, actix_web::Error>)
-            .collect::<Vec<_>>(),
-    );
+        let started = events.next().await.unwrap().unwrap();
+        assert!(
+            String::from_utf8(started.to_vec())
+                .unwrap()
+                .contains("event: started")
+        );
 
-    Ok(HttpResponse::Ok()
-        .insert_header(("Content-Type", "text/event-stream"))
-        .insert_header(("Cache-Control", "no-cache"))
-        .insert_header((PAGE_LIMIT_HEADER, params.limit_per_kind.to_string()))
-        .streaming(stream))
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), events.next())
+                .await
+                .is_err()
+        );
+
+        release.send(()).unwrap();
+    }
+
+    #[actix_web::test]
+    async fn search_stream_emits_batches_in_completion_order() {
+        let (release_classes, blocked_classes) = oneshot::channel::<()>();
+        let (release_objects, blocked_objects) = oneshot::channel::<()>();
+        let searches = FuturesUnordered::new();
+        searches.push(
+            async move {
+                blocked_classes.await.unwrap();
+                Ok(empty_batch("classes"))
+            }
+            .boxed(),
+        );
+        searches.push(
+            async move {
+                blocked_objects.await.unwrap();
+                Ok(empty_batch("objects"))
+            }
+            .boxed(),
+        );
+        let events = search_event_stream("needle".to_string(), searches);
+        pin_mut!(events);
+
+        events.next().await.unwrap().unwrap();
+        release_objects.send(()).unwrap();
+        let first_batch = events.next().await.unwrap().unwrap();
+
+        assert!(
+            String::from_utf8(first_batch.to_vec())
+                .unwrap()
+                .contains("\"kind\":\"objects\"")
+        );
+
+        release_classes.send(()).unwrap();
+    }
+
+    #[actix_web::test]
+    async fn search_stream_error_is_terminal() {
+        let searches = FuturesUnordered::new();
+        searches.push(
+            async {
+                Err(ApiError::BadRequest(
+                    "search batch deliberately failed".to_string(),
+                ))
+            }
+            .boxed(),
+        );
+        let events = search_event_stream("needle".to_string(), searches);
+        pin_mut!(events);
+
+        events.next().await.unwrap().unwrap();
+        let error = events.next().await.unwrap().unwrap();
+        let error = String::from_utf8(error.to_vec()).unwrap();
+        assert!(error.contains("event: error"));
+        assert!(error.contains("search batch deliberately failed"));
+        assert!(events.next().await.is_none());
+    }
+
+    #[actix_web::test]
+    async fn dropping_search_stream_drops_pending_batches() {
+        let (notify_drop, drop_observed) = oneshot::channel();
+        let searches = FuturesUnordered::new();
+        searches.push(
+            async move {
+                let _drop_notifier = DropNotifier(Some(notify_drop));
+                future::pending::<Result<UnifiedSearchBatchResponse, ApiError>>().await
+            }
+            .boxed(),
+        );
+        let mut events = Box::pin(search_event_stream("needle".to_string(), searches));
+
+        events.next().await.unwrap().unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), events.next())
+                .await
+                .is_err()
+        );
+        drop(events);
+
+        tokio::time::timeout(Duration::from_secs(1), drop_observed)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }
