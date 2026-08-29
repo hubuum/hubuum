@@ -1129,6 +1129,41 @@ pub struct StructuredSearchResponse {
     pub total: Option<i64>,
 }
 
+/// First event emitted by the structured-search SSE endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StructuredSearchStartedEvent {
+    /// DSL version used to execute the request.
+    pub version: u8,
+    /// Resource kind selected by the request.
+    pub kind: StructuredSearchResourceKind,
+}
+
+/// Terminal success event emitted by the structured-search SSE endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StructuredSearchDoneEvent {
+    /// DSL version used to execute the request.
+    pub version: u8,
+    /// Resource kind shared by all preceding result events.
+    pub kind: StructuredSearchResourceKind,
+    /// Opaque next-page cursor, or null at the final page.
+    pub next: Option<String>,
+    /// Exact authorized count when requested; otherwise null.
+    pub total: Option<i64>,
+    /// Effective page size after applying server pagination limits.
+    pub page_limit: usize,
+}
+
+/// Terminal failure event emitted after an SSE response has started.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StructuredSearchErrorEvent {
+    /// DSL version supplied by the request.
+    pub version: u8,
+    /// Resource kind selected by the request.
+    pub kind: StructuredSearchResourceKind,
+    /// Public API error message.
+    pub message: String,
+}
+
 /// Tagged union of public resource representations returned by the DSL.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", content = "resource", rename_all = "snake_case")]
