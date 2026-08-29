@@ -274,12 +274,20 @@ cargo install --locked --version 0.19.4 gungraun-runner
 The PostgreSQL storage benchmark is opt-in and requires Docker. It provisions,
 migrates, and removes a disposable PostgreSQL container itself. Container
 startup, fixture creation, cleanup, and warmup happen outside the timed
-regions. The create scenario intentionally leaves its append-only audit events
-behind:
+regions. It includes selective and non-selective structured related-object
+searches over 128 independent chains at the maximum supported depth of 10. The
+create scenario intentionally leaves its append-only audit events behind:
 
 ```bash
 cargo bench --features postgres-bench \
   --bench storage_postgres_criterion -- --noplot
+```
+
+To run only the structured-search cases:
+
+```bash
+cargo bench --features postgres-bench \
+  --bench storage_postgres_criterion -- structured_related_depth_10 --noplot
 ```
 
 The runtime behavior validator is opt-in and requires a migrated, disposable

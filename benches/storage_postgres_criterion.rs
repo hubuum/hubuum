@@ -5,22 +5,29 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use diesel::{Connection, PgConnection};
+use diesel::sql_types::{Integer, Text};
+use diesel::{Connection, PgConnection, QueryableByName};
 use hubuum::events::EventContext;
+use hubuum::models::search::MAX_RELATED_FILTER_DEPTH;
 use hubuum::models::{
-    Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
+    Collection, CollectionID, Group, GroupID, HubuumClassID, NewCollectionWithAssignee, NewGroup,
+    StructuredSearchOperator,
 };
 use hubuum::services::Services;
 use hubuum::storage::{BenchmarkStorageContext, TransactionStorage};
 use hubuum::traits::{CanDelete, CanSave};
 use hubuum_storage_core::StorageCollectionCreate;
-use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
+use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
+use hubuum_storage_postgres::{
+    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection,
+};
 use tokio::runtime::{Builder, Runtime};
 
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
 
 const POSTGRES_DATABASE: &str = "hubuum_bench";
 const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
+const STRUCTURED_SEARCH_CHAINS: i32 = 128;
 
 fn benchmark_pool(database_url: &str) -> PostgresPool {
     let settings = PostgresPoolSettings::builder(database_url)
@@ -193,6 +200,152 @@ struct StorageFixture {
     services: Services,
     owner_group: Group,
     collections: Vec<Collection>,
+    structured_search: StructuredSearchFixture,
+}
+
+struct StructuredSearchFixture {
+    source_class_id: HubuumClassID,
+    target_class_id: HubuumClassID,
+    selective_target_name: String,
+    target_name_fragment: String,
+}
+
+#[derive(QueryableByName)]
+struct ClassIdRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
+impl StructuredSearchFixture {
+    fn new(runtime: &Runtime, pool: &PostgresPool, collection_id: i32) -> Self {
+        let prefix = unique_name("structured-depth-ten");
+        let source_class_name = format!("{prefix}-class-00");
+        let target_class_name = format!("{prefix}-class-{MAX_RELATED_FILTER_DEPTH:02}");
+        let target_name_fragment = format!("{prefix}-target");
+        let selective_target_name = format!("{target_name_fragment}-000");
+
+        let (source_class_id, target_class_id) = runtime
+            .block_on(with_connection(pool, async |connection| {
+                diesel::sql_query(
+                    "INSERT INTO hubuumclass \
+                        (name, collection_id, description, validate_schema) \
+                     SELECT $1 || '-class-' || lpad(level::text, 2, '0'), \
+                            $2, \
+                            'structured search depth benchmark class', \
+                            false \
+                     FROM generate_series(0, $3) AS level \
+                     ORDER BY level",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(collection_id)
+                .bind::<Integer, _>(i32::from(MAX_RELATED_FILTER_DEPTH))
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query(
+                    "INSERT INTO hubuumclass_relation \
+                        (from_hubuum_class_id, to_hubuum_class_id) \
+                     SELECT lower_class.id, upper_class.id \
+                     FROM generate_series(0, $2 - 1) AS level \
+                     JOIN hubuumclass lower_class \
+                       ON lower_class.name = $1 || '-class-' || lpad(level::text, 2, '0') \
+                     JOIN hubuumclass upper_class \
+                       ON upper_class.name = $1 || '-class-' || lpad((level + 1)::text, 2, '0') \
+                     ORDER BY level",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(i32::from(MAX_RELATED_FILTER_DEPTH))
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query(
+                    "INSERT INTO hubuumobject \
+                        (name, collection_id, hubuum_class_id, data, description) \
+                     SELECT CASE \
+                                WHEN level = $3 THEN \
+                                    $1 || '-target-' || lpad(chain::text, 3, '0') \
+                                ELSE \
+                                    $1 || '-node-' || lpad(level::text, 2, '0') || '-' || \
+                                    lpad(chain::text, 3, '0') \
+                            END, \
+                            $2, \
+                            class.id, \
+                            jsonb_build_object('chain', chain, 'level', level), \
+                            'structured search depth benchmark object' \
+                     FROM generate_series(0, $3) AS level \
+                     CROSS JOIN generate_series(0, $4 - 1) AS chain \
+                     JOIN hubuumclass class \
+                       ON class.name = $1 || '-class-' || lpad(level::text, 2, '0') \
+                     ORDER BY level, chain",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(collection_id)
+                .bind::<Integer, _>(i32::from(MAX_RELATED_FILTER_DEPTH))
+                .bind::<Integer, _>(STRUCTURED_SEARCH_CHAINS)
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query(
+                    "INSERT INTO hubuumobject_relation \
+                        (from_hubuum_object_id, to_hubuum_object_id, class_relation_id) \
+                     SELECT LEAST(lower_object.id, upper_object.id), \
+                            GREATEST(lower_object.id, upper_object.id), \
+                            class_relation.id \
+                     FROM generate_series(0, $2 - 1) AS level \
+                     CROSS JOIN generate_series(0, $3 - 1) AS chain \
+                     JOIN hubuumclass lower_class \
+                       ON lower_class.name = $1 || '-class-' || lpad(level::text, 2, '0') \
+                     JOIN hubuumclass upper_class \
+                       ON upper_class.name = $1 || '-class-' || lpad((level + 1)::text, 2, '0') \
+                     JOIN hubuumclass_relation class_relation \
+                       ON class_relation.from_hubuum_class_id = lower_class.id \
+                      AND class_relation.to_hubuum_class_id = upper_class.id \
+                     JOIN hubuumobject lower_object \
+                       ON lower_object.hubuum_class_id = lower_class.id \
+                      AND (lower_object.data ->> 'chain')::integer = chain \
+                     JOIN hubuumobject upper_object \
+                       ON upper_object.hubuum_class_id = upper_class.id \
+                      AND (upper_object.data ->> 'chain')::integer = chain \
+                     ORDER BY level, chain",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(i32::from(MAX_RELATED_FILTER_DEPTH))
+                .bind::<Integer, _>(STRUCTURED_SEARCH_CHAINS)
+                .execute(connection)
+                .await?;
+
+                for table in [
+                    "hubuumclass",
+                    "hubuumclass_relation",
+                    "hubuumobject",
+                    "hubuumobject_relation",
+                ] {
+                    diesel::sql_query(format!("ANALYZE {table}"))
+                        .execute(connection)
+                        .await?;
+                }
+
+                let source = diesel::sql_query("SELECT id FROM hubuumclass WHERE name = $1")
+                    .bind::<Text, _>(&source_class_name)
+                    .get_result::<ClassIdRow>(connection)
+                    .await?;
+                let target = diesel::sql_query("SELECT id FROM hubuumclass WHERE name = $1")
+                    .bind::<Text, _>(&target_class_name)
+                    .get_result::<ClassIdRow>(connection)
+                    .await?;
+                Ok::<_, hubuum_storage_postgres::PostgresStorageError>((source.id, target.id))
+            }))
+            .expect("structured search benchmark graph should save");
+
+        Self {
+            source_class_id: HubuumClassID::new(source_class_id)
+                .expect("source class id should be positive"),
+            target_class_id: HubuumClassID::new(target_class_id)
+                .expect("target class id should be positive"),
+            selective_target_name,
+            target_name_fragment,
+        }
+    }
 }
 
 impl StorageFixture {
@@ -252,11 +405,19 @@ impl StorageFixture {
             collections.push(collection);
         }
 
+        let fixture_pool = {
+            let _runtime_guard = runtime.enter();
+            benchmark_pool(database_url)
+        };
+        let structured_search =
+            StructuredSearchFixture::new(runtime, &fixture_pool, collections[0].id);
+
         Self {
             storage,
             services,
             owner_group,
             collections,
+            structured_search,
         }
     }
 
@@ -301,6 +462,28 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
     runtime
         .block_on(collections.ancestors(leaf_id))
         .expect("ancestor warmup should succeed");
+    let selective_rows = runtime
+        .block_on(hubuum::benchmark_support::structured_related_object_search(
+            &fixture.storage,
+            fixture.structured_search.source_class_id,
+            fixture.structured_search.target_class_id,
+            StructuredSearchOperator::Equals,
+            &fixture.structured_search.selective_target_name,
+            MAX_RELATED_FILTER_DEPTH,
+        ))
+        .expect("selective structured-search warmup should succeed");
+    assert_eq!(selective_rows.len(), 1);
+    let non_selective_rows = runtime
+        .block_on(hubuum::benchmark_support::structured_related_object_search(
+            &fixture.storage,
+            fixture.structured_search.source_class_id,
+            fixture.structured_search.target_class_id,
+            StructuredSearchOperator::Icontains,
+            &fixture.structured_search.target_name_fragment,
+            MAX_RELATED_FILTER_DEPTH,
+        ))
+        .expect("non-selective structured-search warmup should succeed");
+    assert_eq!(non_selective_rows.len(), STRUCTURED_SEARCH_CHAINS as usize);
 
     let mut group = c.benchmark_group("storage_postgres");
     group.bench_function("collection_point_read", |b| {
@@ -317,6 +500,36 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 .block_on(collections.ancestors(black_box(leaf_id)))
                 .expect("ancestor read should succeed");
             black_box(ancestors);
+        });
+    });
+    group.bench_function("structured_related_depth_10_selective", |b| {
+        b.iter(|| {
+            let rows = runtime
+                .block_on(hubuum::benchmark_support::structured_related_object_search(
+                    &fixture.storage,
+                    black_box(fixture.structured_search.source_class_id),
+                    black_box(fixture.structured_search.target_class_id),
+                    StructuredSearchOperator::Equals,
+                    black_box(&fixture.structured_search.selective_target_name),
+                    MAX_RELATED_FILTER_DEPTH,
+                ))
+                .expect("selective structured search should succeed");
+            black_box(rows);
+        });
+    });
+    group.bench_function("structured_related_depth_10_non_selective", |b| {
+        b.iter(|| {
+            let rows = runtime
+                .block_on(hubuum::benchmark_support::structured_related_object_search(
+                    &fixture.storage,
+                    black_box(fixture.structured_search.source_class_id),
+                    black_box(fixture.structured_search.target_class_id),
+                    StructuredSearchOperator::Icontains,
+                    black_box(&fixture.structured_search.target_name_fragment),
+                    MAX_RELATED_FILTER_DEPTH,
+                ))
+                .expect("non-selective structured search should succeed");
+            black_box(rows);
         });
     });
     group.bench_function("collection_create_with_event", |b| {
