@@ -3,8 +3,7 @@ use std::sync::Arc;
 use actix_web::{http, test};
 use serde_json::{Value, json};
 
-use crate::db::with_transaction;
-use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent, emit_event};
+use crate::events::EventResponse;
 use crate::models::{
     Collection, GroupResponse, HubuumClass, HubuumClassExpanded, HubuumObject, NewHubuumClass,
     NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
@@ -421,17 +420,8 @@ async fn structured_user_search_rejects_non_admins() {
 #[actix_web::test]
 async fn structured_search_targets_audit_events() {
     let context = TestContext::new().await;
-    let summary = context.scoped_name("structured_audit_summary");
-    let event = NewEvent::new(
-        EntityType::Collection,
-        Action::Created,
-        ActorKind::System,
-        summary.clone(),
-    )
-    .unwrap();
-    let persisted = with_transaction(&context.pool, async |conn| emit_event(conn, &event).await)
-        .await
-        .unwrap();
+    let collection = context.collection_fixture("structured_audit").await;
+    let summary = format!("Collection '{}' created", collection.collection.name);
     let request = json!({
         "version": 1,
         "target": {"kind": "audit_event"},
@@ -455,7 +445,8 @@ async fn structured_search_targets_audit_events() {
     let response = assert_response_status(response, http::StatusCode::OK).await;
     let body: StructuredSearchResponse = test::read_body_json(response).await;
 
-    assert_eq!(audit_event_results(body)[0].id, persisted.id);
+    assert_eq!(audit_event_results(body)[0].summary, summary);
+    collection.cleanup().await.unwrap();
 }
 
 #[actix_web::test]

@@ -12,23 +12,12 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::events::visible_event_scope;
 use crate::can;
-use crate::db::traits::authz::{AuthzSubject, scope_allows};
-use crate::db::traits::events::list_structured_events_with_total_count;
-use crate::db::traits::principal::load_principal_with_user;
-use crate::db::traits::service_account::{
-    count_structured_manageable_service_accounts, search_structured_manageable_service_accounts,
-};
-use crate::db::traits::user::search::{
-    ExternalRelatedFilterAuthorization, externally_authorized_structured_objects,
-};
-use crate::db::traits::user::{UserPermissions, UserSearchBackend};
 use crate::errors::ApiError;
 use crate::extractors::{Authenticated, StructuredSearchPayload};
 use crate::models::traits::ResolveClassTarget;
 use crate::models::{
-    Group, GroupResponse, MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES, Permissions, Principal,
-    ServiceAccountResponse, ServiceAccountWithName, StorageUnifiedSearchQuery,
-    StructuredSearchRequest,
+    GroupResponse, MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES, Permissions, ServiceAccountResponse,
+    ServiceAccountWithName, StorageUnifiedSearchQuery, StructuredSearchRequest,
     StructuredSearchResourceKind, StructuredSearchResponse, StructuredSearchResult, TokenScope,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, User, UserResponse, UserWithName,
@@ -41,8 +30,11 @@ use crate::pagination::{
 };
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::storage::StorageAuthenticationPrincipal;
-use crate::traits::{BackendContext, CursorPaginated, Search, SelfAccessors};
+use crate::services::related_filter_authorization::externally_authorized_structured_objects;
+use crate::storage::{StorageAuditEventFilters, StorageAuthenticationPrincipal};
+use crate::traits::{
+    AuthzSubject, CursorPaginated, PrincipalIdAccessor, UserPermissions, scope_allows,
+};
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
     let data = serde_json::to_string(payload).map_err(|error| {
@@ -247,10 +239,19 @@ fn ensure_external_candidate_limit(count: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn external_candidate_query(
+    query_options: &crate::models::search::QueryOptions,
+) -> Result<crate::models::search::QueryOptions, ApiError> {
+    let mut candidate_query = count_query_options(query_options);
+    candidate_query.set_limit(Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1))?;
+    candidate_query.set_include_total(false);
+    Ok(candidate_query)
+}
+
 #[derive(Clone, Copy)]
 struct StructuredAuthorizationContext<'a> {
-    pool: &'a AppContext,
-    principal: &'a Principal,
+    context: &'a AppContext,
+    principal: &'a StorageAuthenticationPrincipal,
     scopes: Option<&'a TokenScope>,
     include_total: bool,
 }
@@ -267,10 +268,10 @@ where
     F: Fn(&T) -> ResourceRef,
 {
     ensure_external_candidate_limit(candidates.len())?;
-    let policy_principal = PrincipalRef::load(context.pool, context.principal).await?;
+    let policy_principal = PrincipalRef::load(context.context, context.principal).await?;
     let prepared = prepare_db_pagination::<T>(query_options)?;
     let page = authorize_cursor_page(
-        context.pool.permission_backend(),
+        context.context.permission_backend(),
         &policy_principal,
         candidates,
         context.scopes,
@@ -283,8 +284,8 @@ where
 }
 
 async fn structured_iam_user(
-    pool: &AppContext,
-    principal: &Principal,
+    context: &AppContext,
+    principal: &StorageAuthenticationPrincipal,
     scopes: Option<&TokenScope>,
     target: StructuredSearchResourceKind,
 ) -> Result<User, ApiError> {
@@ -294,24 +295,21 @@ async fn structured_iam_user(
             target.as_str()
         )));
     }
-    let (_, user) = load_principal_with_user(pool.db_pool(), principal.id()).await?;
-    user.ok_or_else(|| {
-        ApiError::InternalServerError("Human principal does not have a user record".to_string())
-    })
+    crate::services::identity::get_user(context, principal.principal_id()).await
 }
 
 pub(crate) async fn execute_structured_search(
-    pool: &AppContext,
-    principal: &Principal,
+    context: &AppContext,
+    principal: &StorageAuthenticationPrincipal,
     token_id: i32,
     token_revision: i64,
     scopes: Option<&TokenScope>,
     request: StructuredSearchRequest,
 ) -> Result<StructuredSearchExecution, ApiError> {
     let class_id = if let Some(selector) = request.class_selector()? {
-        let target = selector.resolve_class_target(pool).await?;
+        let target = selector.resolve_class_target(context).await?;
         can!(
-            pool,
+            context,
             principal,
             scopes,
             [Permissions::ReadClass],
@@ -321,13 +319,14 @@ pub(crate) async fn execute_structured_search(
     } else {
         None
     };
-    let fingerprint = request.fingerprint(class_id, principal.id(), token_id, token_revision)?;
+    let fingerprint =
+        request.fingerprint(class_id, principal.principal_id(), token_id, token_revision)?;
     let cursor_budget = request.reusable_cursor_budget()?;
     let page_cursor = decode_structured_search_cursor(request.cursor.as_deref(), &fingerprint)?;
     let query_options = request.query_options(class_id, page_cursor)?;
     let kind = request.target.kind();
     let authorization = StructuredAuthorizationContext {
-        pool,
+        context,
         principal,
         scopes,
         include_total: request.include_total,
@@ -342,40 +341,31 @@ pub(crate) async fn execute_structured_search(
 
     match kind {
         StructuredSearchResourceKind::Collection => {
-            let (rows, total) = if pool.permission_backend().supports_sql_visibility_pushdown() {
-                let total = if request.include_total {
-                    Some(
-                        principal
-                            .count_structured_collections(
-                                pool,
-                                count_query_options(&query_options),
-                                request.filter.as_ref(),
-                                scopes,
-                            )
-                            .await?,
-                    )
-                } else {
-                    None
-                };
+            let (rows, total) = if context
+                .permission_backend()
+                .supports_storage_visibility_filtering()
+            {
+                let is_admin = principal.is_admin(context).await?;
                 let prepared = prepare_db_pagination::<crate::models::Collection>(&query_options)?;
-                let rows = principal
-                    .search_structured_collections(pool, prepared, request.filter.as_ref(), scopes)
-                    .await?;
-                (rows, total)
+                crate::services::catalog::list_collections(
+                    context,
+                    principal.principal_id(),
+                    is_admin,
+                    scopes,
+                    prepared,
+                )
+                .await?
             } else if !scope_allows(scopes, &[Permissions::ReadCollection]) {
                 (Vec::new(), request.include_total.then_some(0))
             } else {
-                let mut candidate_query = count_query_options(&query_options);
-                candidate_query.limit = Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1);
-                let candidates = principal
-                    .search_collections_from_backend_with_admin_status_and_expression(
-                        pool.db_pool(),
-                        candidate_query,
-                        true,
-                        None,
-                        request.filter.as_ref(),
-                    )
-                    .await?;
+                let (candidates, _) = crate::services::catalog::list_collections(
+                    context,
+                    principal.principal_id(),
+                    true,
+                    None,
+                    external_candidate_query(&query_options)?,
+                )
+                .await?;
                 authorize_structured_candidates(
                     authorization,
                     candidates,
@@ -393,44 +383,35 @@ pub(crate) async fn execute_structured_search(
             )
         }
         StructuredSearchResourceKind::Class => {
-            let (rows, total) = if pool.permission_backend().supports_sql_visibility_pushdown() {
-                let total = if request.include_total {
-                    Some(
-                        principal
-                            .count_structured_classes(
-                                pool,
-                                count_query_options(&query_options),
-                                request.filter.as_ref(),
-                                scopes,
-                            )
-                            .await?,
-                    )
-                } else {
-                    None
-                };
+            let (rows, total) = if context
+                .permission_backend()
+                .supports_storage_visibility_filtering()
+            {
+                let is_admin = principal.is_admin(context).await?;
                 let prepared =
                     prepare_db_pagination::<crate::models::HubuumClassExpanded>(&query_options)?;
-                let rows = principal
-                    .search_structured_classes(pool, prepared, request.filter.as_ref(), scopes)
-                    .await?;
-                (rows, total)
+                crate::services::catalog::list_classes(
+                    context,
+                    principal.principal_id(),
+                    is_admin,
+                    scopes,
+                    prepared,
+                )
+                .await?
             } else if !scope_allows(
                 scopes,
                 &[Permissions::ReadClass, Permissions::ReadCollection],
             ) {
                 (Vec::new(), request.include_total.then_some(0))
             } else {
-                let mut candidate_query = count_query_options(&query_options);
-                candidate_query.limit = Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1);
-                let candidates = principal
-                    .search_classes_from_backend_with_admin_status_and_expression(
-                        pool.db_pool(),
-                        candidate_query,
-                        true,
-                        None,
-                        request.filter.as_ref(),
-                    )
-                    .await?;
+                let (candidates, _) = crate::services::catalog::list_classes(
+                    context,
+                    principal.principal_id(),
+                    true,
+                    None,
+                    external_candidate_query(&query_options)?,
+                )
+                .await?;
                 authorize_structured_candidates(
                     authorization,
                     candidates,
@@ -451,40 +432,30 @@ pub(crate) async fn execute_structured_search(
             finalize_structured_search(rows, total, page_context, StructuredSearchResult::Class)
         }
         StructuredSearchResourceKind::Object => {
-            let (rows, total) = if pool.permission_backend().supports_sql_visibility_pushdown() {
-                let total = if request.include_total {
-                    Some(
-                        principal
-                            .count_structured_objects(
-                                pool,
-                                count_query_options(&query_options),
-                                request.filter.as_ref(),
-                                scopes,
-                            )
-                            .await?,
-                    )
-                } else {
-                    None
-                };
+            let (rows, total) = if context
+                .permission_backend()
+                .supports_storage_visibility_filtering()
+            {
+                let is_admin = principal.is_admin(context).await?;
                 let prepared =
                     prepare_db_pagination::<crate::models::HubuumObject>(&query_options)?;
-                let rows = principal
-                    .search_structured_objects(pool, prepared, request.filter.as_ref(), scopes)
-                    .await?;
-                (rows, total)
+                crate::services::catalog::list_objects(
+                    context,
+                    principal.principal_id(),
+                    is_admin,
+                    scopes,
+                    prepared,
+                )
+                .await?
             } else {
-                let policy_principal = PrincipalRef::load(pool, principal).await?;
-                let authorization = ExternalRelatedFilterAuthorization::new(
-                    pool.db_pool(),
-                    pool.permission_backend(),
+                let policy_principal = PrincipalRef::load(context, principal).await?;
+                let matched = externally_authorized_structured_objects(
+                    context,
+                    context.permission_backend(),
                     &policy_principal,
                     scopes,
-                );
-                let matched = externally_authorized_structured_objects(
-                    principal,
                     count_query_options(&query_options),
                     request.filter.as_ref(),
-                    authorization,
                 )
                 .await?;
                 let total = request
@@ -505,14 +476,14 @@ pub(crate) async fn execute_structured_search(
         }
         StructuredSearchResourceKind::AuditEvent => {
             let (accessible_collection_ids, include_collection_less) =
-                visible_event_scope(pool, principal, scopes).await?;
+                visible_event_scope(context, principal, scopes).await?;
             let prepared = prepare_db_pagination::<crate::events::EventResponse>(&query_options)?;
-            let (rows, total) = list_structured_events_with_total_count(
-                pool.db_pool(),
-                &accessible_collection_ids,
+            let (rows, total) = crate::services::event_administration::list_audit_events(
+                context,
+                accessible_collection_ids,
                 include_collection_less,
-                &prepared,
-                request.filter.as_ref(),
+                StorageAuditEventFilters::new(),
+                prepared,
             )
             .await?;
             finalize_structured_search(
@@ -523,9 +494,9 @@ pub(crate) async fn execute_structured_search(
             )
         }
         StructuredSearchResourceKind::User => {
-            let user = structured_iam_user(pool, principal, scopes, kind).await?;
-            let policy_principal = PrincipalRef::load(pool, principal).await?;
-            if !pool
+            structured_iam_user(context, principal, scopes, kind).await?;
+            let policy_principal = PrincipalRef::load(context, principal).await?;
+            if !context
                 .permission_backend()
                 .is_admin(&policy_principal)
                 .await?
@@ -534,76 +505,42 @@ pub(crate) async fn execute_structured_search(
                     "user search requires administrator access".to_string(),
                 ));
             }
-            let total = if request.include_total {
-                Some(
-                    user.count_structured_users(
-                        pool.db_pool(),
-                        count_query_options(&query_options),
-                        request.filter.as_ref(),
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
             let prepared = prepare_db_pagination::<UserWithName>(&query_options)?;
-            let rows = user
-                .search_structured_users(pool.db_pool(), prepared, request.filter.as_ref())
-                .await?;
-            finalize_structured_search(rows, total, page_context, |user| {
-                StructuredSearchResult::User(UserResponse::from(user))
-            })
+            let (rows, total) = crate::services::identity::list_users(context, prepared).await?;
+            finalize_structured_search(
+                rows,
+                request.include_total.then_some(total),
+                page_context,
+                |user| StructuredSearchResult::User(UserResponse::from(user)),
+            )
         }
         StructuredSearchResourceKind::Group => {
-            let user = structured_iam_user(pool, principal, scopes, kind).await?;
-            let total = if request.include_total {
-                Some(
-                    user.count_structured_groups(
-                        pool.db_pool(),
-                        count_query_options(&query_options),
-                        request.filter.as_ref(),
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            let prepared = prepare_db_pagination::<Group>(&query_options)?;
-            let rows = user
-                .search_structured_groups(pool.db_pool(), prepared, request.filter.as_ref())
-                .await?;
-            let rows = GroupResponse::from_groups(pool, rows).await?;
-            finalize_structured_search(rows, total, page_context, StructuredSearchResult::Group)
+            structured_iam_user(context, principal, scopes, kind).await?;
+            let (rows, total) = crate::services::groups::list(context, &query_options).await?;
+            let rows = GroupResponse::from_groups(context, rows).await?;
+            finalize_structured_search(
+                rows,
+                request.include_total.then_some(total),
+                page_context,
+                StructuredSearchResult::Group,
+            )
         }
         StructuredSearchResourceKind::ServiceAccount => {
-            let user = structured_iam_user(pool, principal, scopes, kind).await?;
-            let is_admin = user.is_admin(pool.db_pool()).await?;
-            let total = if request.include_total {
-                Some(
-                    count_structured_manageable_service_accounts(
-                        pool.db_pool(),
-                        &user,
-                        is_admin,
-                        count_query_options(&query_options),
-                        request.filter.as_ref(),
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
+            let user = structured_iam_user(context, principal, scopes, kind).await?;
+            let is_admin = user.is_admin(context).await?;
             let prepared = prepare_db_pagination::<ServiceAccountWithName>(&query_options)?;
-            let rows = search_structured_manageable_service_accounts(
-                pool.db_pool(),
-                &user,
-                is_admin,
-                prepared,
-                request.filter.as_ref(),
+            let (rows, total) = crate::services::identity::list_manageable_service_accounts(
+                context, user.id, is_admin, prepared,
             )
             .await?;
-            finalize_structured_search(rows, total, page_context, |account| {
-                StructuredSearchResult::ServiceAccount(ServiceAccountResponse::from(account))
-            })
+            finalize_structured_search(
+                rows,
+                request.include_total.then_some(total),
+                page_context,
+                |account| {
+                    StructuredSearchResult::ServiceAccount(ServiceAccountResponse::from(account))
+                },
+            )
         }
     }
 }
@@ -627,15 +564,15 @@ pub(crate) async fn execute_structured_search(
 )]
 #[post("")]
 pub async fn post_search(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     payload: StructuredSearchPayload,
 ) -> Result<impl Responder, ApiError> {
     let execution = execute_structured_search(
-        &pool,
+        &context,
         &requestor.principal,
-        requestor.token_meta.id,
-        requestor.token_meta.revision.get(),
+        requestor.token_meta.id().id(),
+        requestor.token_meta.revision().get(),
         requestor.scopes(),
         payload.into_inner(),
     )

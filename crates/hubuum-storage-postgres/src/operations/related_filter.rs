@@ -29,6 +29,17 @@ pub(crate) async fn related_object_filter_predicate(
     filters: &[ParsedQueryParam],
     visibility: &StorageVisibility,
 ) -> Result<Option<BoundSqlPredicate>, PostgresStorageError> {
+    related_object_filter_component(connection, filters, visibility)
+        .await?
+        .map(bound_sql_predicate)
+        .transpose()
+}
+
+pub(crate) async fn related_object_filter_component(
+    connection: &mut PostgresConnection,
+    filters: &[ParsedQueryParam],
+    visibility: &StorageVisibility,
+) -> Result<Option<SqlComponent>, PostgresStorageError> {
     let groups = related_filter_groups(filters)?;
     if groups.is_empty() {
         return Ok(None);
@@ -52,11 +63,10 @@ pub(crate) async fn related_object_filter_predicate(
     if !visibility.allows_permissions(&graph_permissions)
         || !visibility.allows_permissions(&class_permissions)
     {
-        return bound_sql_predicate(SqlComponent {
+        return Ok(Some(SqlComponent {
             sql: "FALSE".to_string(),
             bind_variables: Vec::new(),
-        })
-        .map(Some);
+        }));
     }
 
     let graph_collection_ids =
@@ -64,20 +74,18 @@ pub(crate) async fn related_object_filter_predicate(
     let class_collection_ids =
         authorized_collection_ids(connection, visibility, &class_permissions).await?;
     if graph_collection_ids.is_empty() || class_collection_ids.is_empty() {
-        return bound_sql_predicate(SqlComponent {
+        return Ok(Some(SqlComponent {
             sql: "FALSE".to_string(),
             bind_variables: Vec::new(),
-        })
-        .map(Some);
+        }));
     }
 
-    bound_sql_predicate(build_related_object_filter_sql(
+    Ok(Some(build_related_object_filter_sql(
         &groups,
         &graph_collection_ids,
         &class_collection_ids,
         visibility,
-    )?)
-    .map(Some)
+    )?))
 }
 
 fn related_filter_groups(
@@ -416,7 +424,7 @@ fn related_target_object_clause(
     }
 }
 
-fn related_integer_clause(
+pub(crate) fn related_integer_clause(
     parameter: &ParsedQueryParam,
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
@@ -461,7 +469,7 @@ fn related_integer_clause(
     Ok(wrap_negated(sql, negated))
 }
 
-fn related_revision_clause(
+pub(crate) fn related_revision_clause(
     parameter: &ParsedQueryParam,
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
@@ -517,7 +525,7 @@ fn related_revision_clause(
     Ok(wrap_negated(sql, negated))
 }
 
-fn related_date_clause(
+pub(crate) fn related_date_clause(
     parameter: &ParsedQueryParam,
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
@@ -561,7 +569,7 @@ fn related_date_clause(
     Ok(wrap_negated(sql, negated))
 }
 
-fn related_string_clause(
+pub(crate) fn related_string_clause(
     parameter: &ParsedQueryParam,
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
@@ -627,7 +635,7 @@ fn bound_comparison(
     format!("{column} {operator} ?")
 }
 
-fn wrap_negated(sql: String, negated: bool) -> String {
+pub(crate) fn wrap_negated(sql: String, negated: bool) -> String {
     if negated { format!("NOT ({sql})") } else { sql }
 }
 

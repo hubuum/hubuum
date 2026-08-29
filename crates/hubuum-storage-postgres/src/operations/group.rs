@@ -300,10 +300,25 @@ pub async fn list_groups(
     let options = query.into_options();
     runtime
         .with_read_only_snapshot(async move |connection| {
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    crate::operations::structured_search::structured_filter_predicate(
+                        connection,
+                        expression,
+                        crate::operations::structured_search::StructuredResourceKind::Group,
+                        None,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let build_query = |query_options: &QueryOptions| -> Result<_, PostgresStorageError> {
                 let mut records = crate::schema::groups::table
                     .inner_join(crate::schema::identity_scopes::table)
                     .into_boxed();
+                if let Some(predicate) = structured_predicate.clone() {
+                    records = records.filter(predicate);
+                }
                 apply_group_filters!(records, query_options, true);
                 Ok(records)
             };

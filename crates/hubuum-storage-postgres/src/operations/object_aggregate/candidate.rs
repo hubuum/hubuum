@@ -137,6 +137,7 @@ pub(super) async fn load_aggregate_candidate_batch(
         object_query(&collection_ids, resource_scope),
         query_options,
         None,
+        None,
     )?;
     for parameter in query_options
         .filters()

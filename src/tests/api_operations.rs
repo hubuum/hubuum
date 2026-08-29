@@ -195,7 +195,7 @@ where
 }
 
 pub async fn post_request_with_permission_backend<T>(
-    pool: &DbPool,
+    pool: &PostgresPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -213,7 +213,10 @@ where
             .app_data(Data::new(backup_settings()))
             .app_data(Data::new(restore_settings()))
             .app_data(Data::new(pool.clone()))
-            .app_data(Data::new(AppContext::new(pool.clone(), permissions)))
+            .app_data(Data::new(app_context_with_permission_backend(
+                pool.clone(),
+                permissions,
+            )))
             .configure(prod_api::config),
     )
     .await;

@@ -10,6 +10,8 @@ use hubuum_storage_core::{
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::operations::dynamic_sql::BoundSqlPredicate;
+use crate::operations::structured_search::{StructuredResourceKind, structured_filter_predicate};
 use crate::{PostgresRuntime, PostgresStorageError};
 
 use super::event_rows::{StoredEventProjection, enrich_stored_events};
@@ -28,6 +30,18 @@ pub async fn list_audit_events(
     runtime
         .with_read_only_snapshot(
             async |connection| -> Result<StoragePage<StorageAuditEvent>, PostgresStorageError> {
+                let structured_predicate = match query.options().structured_filter() {
+                    Some(expression) => Some(
+                        structured_filter_predicate(
+                            connection,
+                            expression,
+                            StructuredResourceKind::AuditEvent,
+                            None,
+                        )
+                        .await?,
+                    ),
+                    None => None,
+                };
                 let total = if include_total {
                     Some(
                         build_audit_event_query(
@@ -35,6 +49,7 @@ pub async fn list_audit_events(
                             query.include_collection_less(),
                             query.filters(),
                             query.options(),
+                            structured_predicate.clone(),
                         )?
                         .count()
                         .get_result::<i64>(connection)
@@ -49,6 +64,7 @@ pub async fn list_audit_events(
                     query.include_collection_less(),
                     query.filters(),
                     query.options(),
+                    structured_predicate,
                 )?;
                 let fields = query
                     .options()
@@ -96,6 +112,7 @@ fn build_audit_event_query(
     include_collection_less: bool,
     filters: &StorageAuditEventFilters,
     options: &QueryOptions,
+    structured_predicate: Option<BoundSqlPredicate>,
 ) -> Result<crate::schema::events::BoxedQuery<'static, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::event_related_collections::dsl as related;
     use crate::schema::events::dsl::{
@@ -104,6 +121,9 @@ fn build_audit_event_query(
     };
 
     let mut query = events.into_boxed();
+    if let Some(predicate) = structured_predicate {
+        query = query.filter(predicate);
+    }
     if !include_collection_less && accessible_collection_ids.is_empty() {
         return Ok(query.filter(event_row_id.eq(-1_i64)));
     }

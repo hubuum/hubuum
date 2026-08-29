@@ -215,6 +215,18 @@ pub async fn list_users(
     let options = query.into_options();
     runtime
         .with_read_only_snapshot(async move |connection| {
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    crate::operations::structured_search::structured_filter_predicate(
+                        connection,
+                        expression,
+                        crate::operations::structured_search::StructuredResourceKind::User,
+                        None,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let build_query = || -> Result<_, PostgresStorageError> {
                 let mut records = crate::schema::users::table
                     .inner_join(
@@ -227,6 +239,9 @@ pub async fn list_users(
                                 .eq(crate::schema::identity_scopes::id)),
                     )
                     .into_boxed();
+                if let Some(predicate) = structured_predicate.clone() {
+                    records = records.filter(predicate);
+                }
                 apply_user_filters!(records, options);
                 Ok(records)
             };

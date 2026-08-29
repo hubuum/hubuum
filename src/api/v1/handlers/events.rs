@@ -87,11 +87,14 @@ async fn list_visible_events(
     ApiResponse::paginated(events, total_count, &params)
 }
 
-pub(crate) async fn visible_event_scope(
+pub(crate) async fn visible_event_scope<S>(
     context: &AppContext,
-    principal: &crate::models::Principal,
+    principal: &S,
     scopes: Option<&crate::models::TokenScope>,
-) -> Result<(Vec<i32>, bool), ApiError> {
+) -> Result<(Vec<i32>, bool), ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
     let (visible_collections, include_collection_less) = if context
         .permission_backend()
         .supports_storage_visibility_filtering()

@@ -9,7 +9,7 @@ use crate::errors::ApiError;
 use crate::events::EventResponse;
 use crate::models::search::{
     DataType, FilterField, JsonFieldPathRef, ParsedQueryParam, QueryOptions, SearchOperator,
-    SortParam,
+    SortParam, StructuredQueryExpression, StructuredQueryField,
 };
 use crate::models::{
     ClassSelector, Collection, GroupResponse, HubuumClassExpanded, HubuumClassID, HubuumObject,
@@ -267,6 +267,41 @@ pub enum StructuredSearchField {
 }
 
 impl StructuredSearchField {
+    const fn query_field(self) -> StructuredQueryField {
+        match self {
+            Self::Id => StructuredQueryField::Id,
+            Self::Name => StructuredQueryField::Name,
+            Self::Description => StructuredQueryField::Description,
+            Self::CollectionId => StructuredQueryField::CollectionId,
+            Self::CreatedAt => StructuredQueryField::CreatedAt,
+            Self::UpdatedAt => StructuredQueryField::UpdatedAt,
+            Self::Revision => StructuredQueryField::Revision,
+            Self::JsonData => StructuredQueryField::JsonData,
+            Self::ValidateSchema => StructuredQueryField::ValidateSchema,
+            Self::JsonSchema => StructuredQueryField::JsonSchema,
+            Self::IdentityScope => StructuredQueryField::IdentityScope,
+            Self::ProperName => StructuredQueryField::ProperName,
+            Self::Email => StructuredQueryField::Email,
+            Self::OccurredAt => StructuredQueryField::OccurredAt,
+            Self::EntityType => StructuredQueryField::EntityType,
+            Self::EntityId => StructuredQueryField::EntityId,
+            Self::EntityName => StructuredQueryField::EntityName,
+            Self::Action => StructuredQueryField::Action,
+            Self::ActorKind => StructuredQueryField::ActorKind,
+            Self::ActorUserId => StructuredQueryField::ActorUserId,
+            Self::InitiatorUserId => StructuredQueryField::InitiatorUserId,
+            Self::Summary => StructuredQueryField::Summary,
+            Self::Metadata => StructuredQueryField::Metadata,
+            Self::ManagedBy => StructuredQueryField::ManagedBy,
+            Self::ExternalKey => StructuredQueryField::ExternalKey,
+            Self::LastSyncAttemptedAt => StructuredQueryField::LastSyncAttemptedAt,
+            Self::LastSyncSuccessAt => StructuredQueryField::LastSyncSuccessAt,
+            Self::OwnerGroupId => StructuredQueryField::OwnerGroupId,
+            Self::CreatedBy => StructuredQueryField::CreatedBy,
+            Self::DisabledAt => StructuredQueryField::DisabledAt,
+        }
+    }
+
     pub(crate) fn filter_field(
         self,
         kind: StructuredSearchResourceKind,
@@ -729,13 +764,32 @@ pub enum StructuredSearchExpression {
 }
 
 impl StructuredSearchExpression {
-    pub(crate) fn contains_related(&self) -> bool {
-        match self {
-            Self::And { args } | Self::Or { args } => args.iter().any(Self::contains_related),
-            Self::Not { arg } => arg.contains_related(),
-            Self::Field { .. } => false,
-            Self::Related { .. } => true,
-        }
+    pub(crate) fn query_expression(
+        &self,
+        kind: StructuredSearchResourceKind,
+    ) -> Result<StructuredQueryExpression, ApiError> {
+        Ok(match self {
+            Self::And { args } => StructuredQueryExpression::And(
+                args.iter()
+                    .map(|argument| argument.query_expression(kind))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Self::Or { args } => StructuredQueryExpression::Or(
+                args.iter()
+                    .map(|argument| argument.query_expression(kind))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Self::Not { arg } => {
+                StructuredQueryExpression::Not(Box::new(arg.query_expression(kind)?))
+            }
+            Self::Field { predicate } => StructuredQueryExpression::Field {
+                field: predicate.field.query_field(),
+                parameter: predicate.query_param(kind)?,
+            },
+            Self::Related { predicate } => {
+                StructuredQueryExpression::Related(predicate.query_params("dsl")?)
+            }
+        })
     }
 
     fn validate_for(&self, kind: StructuredSearchResourceKind) -> Result<(), ApiError> {
@@ -920,22 +974,25 @@ impl StructuredSearchRequest {
             })
             .into_iter()
             .collect();
-        Ok(QueryOptions {
-            filters,
-            sort: self
-                .sort
-                .iter()
-                .map(|sort| {
-                    Ok::<SortParam, ApiError>(SortParam {
-                        field: sort.field.filter_field(kind)?,
-                        descending: sort.direction == StructuredSearchSortDirection::Desc,
-                    })
+        let sort = self
+            .sort
+            .iter()
+            .map(|sort| {
+                Ok::<SortParam, ApiError>(SortParam {
+                    field: sort.field.filter_field(kind)?,
+                    descending: sort.direction == StructuredSearchSortDirection::Desc,
                 })
-                .collect::<Result<Vec<_>, _>>()?,
-            limit: self.limit,
-            cursor: page_cursor,
-            include_total: self.include_total,
-        })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut options =
+            QueryOptions::new(filters, sort, self.limit, page_cursor, self.include_total)?;
+        options.set_structured_filter(
+            self.filter
+                .as_ref()
+                .map(|filter| filter.query_expression(kind))
+                .transpose()?,
+        );
+        Ok(options)
     }
 
     pub(crate) fn fingerprint(
