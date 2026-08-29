@@ -279,10 +279,10 @@ fn benchmark_action_autodiscovers_every_cargo_benchmark() {
             .any(|line| line.contains("benchmarks_json:"))
     );
     assert!(
-        benchmark_job
+        !benchmark_job
             .iter()
             .any(|line| line.contains("\"features\":\"postgres-bench\"")),
-        "benchmark action should enable the feature-gated PostgreSQL benchmark"
+        "root-only benchmark features must not be applied to workspace members"
     );
 
     let manifest = read_repository_text("Cargo.toml");
@@ -293,6 +293,24 @@ fn benchmark_action_autodiscovers_every_cargo_benchmark() {
         .and_then(toml::Value::as_array)
         .expect("root Cargo manifest should declare benchmarks");
     assert!(!benchmarks.is_empty());
+
+    let postgres_benchmark = benchmarks
+        .iter()
+        .find(|benchmark| {
+            benchmark.get("name").and_then(toml::Value::as_str)
+                == Some("storage_postgres_criterion")
+        })
+        .expect("root Cargo manifest should declare the PostgreSQL benchmark");
+    let required_features = postgres_benchmark
+        .get("required-features")
+        .and_then(toml::Value::as_array)
+        .expect("PostgreSQL benchmark should declare required features");
+    assert!(
+        required_features
+            .iter()
+            .any(|feature| feature.as_str() == Some("postgres-bench")),
+        "PostgreSQL benchmark should own its feature requirement"
+    );
 
     for benchmark in benchmarks {
         let name = benchmark
