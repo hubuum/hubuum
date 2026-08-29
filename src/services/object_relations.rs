@@ -13,7 +13,7 @@ use crate::services::storage_boundary::{
     resolved_object_relation_to_storage,
 };
 use crate::storage::{
-    MutationOutcome, ObjectRelationStorage, StorageError, StorageObjectRelation,
+    ObjectRelationStorage, StorageError, StorageMutationOutcome, StorageObjectRelation,
     StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
     StorageObjectRelationSelector,
 };
@@ -24,7 +24,7 @@ pub(crate) async fn prepare_and_create_object_relation(
     storage: &dyn ObjectRelationStorage,
     command: StorageObjectRelationCreate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageObjectRelation>, StorageError> {
+) -> Result<StorageMutationOutcome<StorageObjectRelation>, StorageError> {
     let prepared = storage
         .prepare_object_relation(StorageObjectRelationCreateSelector::Explicit(command))
         .await?;
@@ -39,7 +39,7 @@ pub(crate) async fn resolve_and_delete_object_relation(
     storage: &dyn ObjectRelationStorage,
     relation_id: i32,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, StorageError> {
+) -> Result<StorageMutationOutcome<()>, StorageError> {
     let target = storage
         .resolve_object_relation(StorageObjectRelationSelector::Id(
             object_relation_id_to_storage(relation_id),

@@ -185,9 +185,7 @@ pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     }
 }
 
-pub(super) fn storage_class_to_resolution(
-    class: crate::storage::StorageClassRecord,
-) -> ClassResolution {
+pub(super) fn storage_class_to_resolution(class: crate::storage::StorageClass) -> ClassResolution {
     let (id, name, collection_id, json_schema, validate_schema, _, _, _, _) = class.into_parts();
     ClassResolution {
         id: id.id(),

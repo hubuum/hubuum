@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use hubuum_query::QueryOptions;
 
 use crate::{
-    StorageClass, StorageCollection, StorageError, StorageObject, StoragePage, StorageVisibility,
+    StorageClassWithCollection, StorageCollection, StorageError, StorageObject, StoragePage,
+    StorageVisibility,
 };
 
 /// A validated list/filter/count request for one catalog resource kind.
@@ -13,12 +14,12 @@ use crate::{
 /// application layer. The selected backend owns filter execution, visibility
 /// pushdown, page selection, and the optional matching-row count.
 #[derive(Clone, PartialEq)]
-pub struct CatalogListQuery {
+pub struct StorageCatalogListQuery {
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
-impl CatalogListQuery {
+impl StorageCatalogListQuery {
     #[must_use]
     pub const fn new(options: QueryOptions, visibility: StorageVisibility) -> Self {
         Self {
@@ -43,10 +44,10 @@ impl CatalogListQuery {
     }
 }
 
-impl fmt::Debug for CatalogListQuery {
+impl fmt::Debug for StorageCatalogListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("CatalogListQuery")
+            .debug_struct("StorageCatalogListQuery")
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
@@ -63,24 +64,24 @@ impl fmt::Debug for CatalogListQuery {
 pub trait CatalogStorage: Send + Sync {
     async fn list_collections(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageCollection>, StorageError>;
 
     async fn list_classes(
         &self,
-        query: CatalogListQuery,
-    ) -> Result<StoragePage<StorageClass>, StorageError>;
+        query: StorageCatalogListQuery,
+    ) -> Result<StoragePage<StorageClassWithCollection>, StorageError>;
 
     async fn list_objects(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageObject>, StorageError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AuthorizationPermission, StorageVisibility};
+    use crate::{StorageAuthorizationPermission, StorageVisibility};
 
     #[test]
     fn debug_output_reports_only_bounded_query_shape() {
@@ -99,11 +100,11 @@ mod tests {
         let visibility = StorageVisibility::new(
             hubuum_domain::PrincipalId::new(42).unwrap(),
             false,
-            Some([AuthorizationPermission::ReadCollection]),
+            Some([StorageAuthorizationPermission::ReadCollection]),
             None,
         );
 
-        let debug = format!("{:?}", CatalogListQuery::new(options, visibility));
+        let debug = format!("{:?}", StorageCatalogListQuery::new(options, visibility));
 
         assert!(debug.contains("filter_count: 1"));
         assert!(debug.contains("has_cursor: true"));

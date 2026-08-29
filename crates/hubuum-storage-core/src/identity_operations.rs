@@ -8,9 +8,10 @@ use hubuum_domain::{
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
+use crate::validation::validate_sync_timestamps;
 use crate::{
-    AuthenticationTokenScope, MutationOutcome, StorageError, StorageGroupMember, StoragePage,
-    StoragePrincipal, StorageRecordMetadata,
+    StorageAuthenticationTokenScope, StorageError, StorageGroupMember, StorageMutationOutcome,
+    StoragePage, StoragePrincipal, StorageRecordMetadata, StorageTaskKind, StorageValidationError,
 };
 
 /// One identity scope owned by the selected storage backend.
@@ -25,23 +26,27 @@ pub struct StorageIdentityScope {
 }
 
 impl StorageIdentityScope {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         id: IdentityScopeId,
         name: impl Into<String>,
         provider_kind: impl Into<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: ResourceRevision,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "identity scope updated_at must not precede created_at",
+            ));
+        }
+        Ok(Self {
             id,
             name: name.into(),
             provider_kind: provider_kind.into(),
             created_at,
             updated_at,
             revision,
-        }
+        })
     }
 
     #[must_use]
@@ -235,9 +240,9 @@ impl StorageIdentityGroupBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageIdentityGroup {
-        StorageIdentityGroup {
+    pub fn try_build(self) -> Result<StorageIdentityGroup, StorageValidationError> {
+        validate_sync_timestamps(self.last_sync_attempted_at, self.last_sync_success_at)?;
+        Ok(StorageIdentityGroup {
             id: self.metadata.id().into(),
             name: self.name,
             description: self.description,
@@ -249,7 +254,7 @@ impl StorageIdentityGroupBuilder {
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
             revision: self.metadata.revision(),
-        }
+        })
     }
 }
 
@@ -302,54 +307,23 @@ impl fmt::Debug for StoragePrincipalGroupListQuery {
 }
 
 /// Stable request for one page of groups and an optional exact total.
-///
-/// Record and count options are supplied separately because cursor pagination
-/// applies only to the returned page. `None` skips the aggregate entirely.
 #[derive(Clone, PartialEq)]
 pub struct StorageGroupListQuery {
-    records: QueryOptions,
-    count: Option<QueryOptions>,
+    options: QueryOptions,
 }
 
 impl StorageGroupListQuery {
-    /// Construct one prepared page query and its optional exact-count query.
-    ///
-    /// Pagination preparation may change the record sort, cursor window, and
-    /// limit, while an exact-count query omits all three. Both forms must keep
-    /// the same filters and count intent so a backend cannot return a total for
-    /// a different predicate.
-    pub fn try_new(
-        records: QueryOptions,
-        count: Option<QueryOptions>,
-    ) -> Result<Self, StorageError> {
-        if records.include_total() != count.is_some() {
-            return Err(StorageError::invalid_input(
-                "Group page query and exact-count intent must agree",
-            ));
-        }
-        if let Some(count) = &count {
-            if records.filters() != count.filters() {
-                return Err(StorageError::invalid_input(
-                    "Group page rows and exact total must use the same filters",
-                ));
-            }
-            if !count.sort().is_empty() || count.limit().is_some() || count.cursor().is_some() {
-                return Err(StorageError::invalid_input(
-                    "Group exact-count query must not contain sort, limit, or cursor options",
-                ));
-            }
-            if !count.include_total() {
-                return Err(StorageError::invalid_input(
-                    "Group exact-count query must retain exact-count intent",
-                ));
-            }
-        }
-        Ok(Self { records, count })
+    /// Construct one prepared page query. The backend derives an exact count
+    /// from the same filters when `include_total` is set, without applying the
+    /// page sort, limit, or cursor.
+    #[must_use]
+    pub const fn new(options: QueryOptions) -> Self {
+        Self { options }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (QueryOptions, Option<QueryOptions>) {
-        (self.records, self.count)
+    pub fn into_options(self) -> QueryOptions {
+        self.options
     }
 }
 
@@ -357,31 +331,35 @@ impl fmt::Debug for StorageGroupListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageGroupListQuery")
-            .field("filter_count", &self.records.filters().len())
-            .field("sort_count", &self.records.sort().len())
-            .field("limit", &self.records.limit())
-            .field("has_cursor", &self.records.cursor().is_some())
-            .field("include_total", &self.count.is_some())
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("limit", &self.options.limit())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("include_total", &self.options.include_total())
             .finish()
     }
 }
 
 impl StoragePrincipalGroup {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         principal_id: PrincipalId,
         group_id: GroupId,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: ResourceRevision,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "principal-group membership updated_at must not precede created_at",
+            ));
+        }
+        Ok(Self {
             principal_id,
             group_id,
             created_at,
             updated_at,
             revision,
-        }
+        })
     }
 
     #[must_use]
@@ -433,12 +411,14 @@ pub struct StorageTokenObservation {
 }
 
 impl StorageTokenObservation {
-    pub fn new(
+    pub fn try_new(
         observed_at: DateTime<Utc>,
         legacy_valid_after: DateTime<Utc>,
-    ) -> Result<Self, StorageTokenObservationError> {
+    ) -> Result<Self, StorageValidationError> {
         if legacy_valid_after > observed_at {
-            return Err(StorageTokenObservationError);
+            return Err(StorageValidationError::invalid(
+                "legacy token validity cutoff cannot be after the observation time",
+            ));
         }
         Ok(Self {
             observed_at,
@@ -461,17 +441,6 @@ impl fmt::Debug for StorageTokenObservation {
             .finish()
     }
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StorageTokenObservationError;
-
-impl fmt::Display for StorageTokenObservationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("legacy token validity cutoff cannot be after the observation time")
-    }
-}
-
-impl std::error::Error for StorageTokenObservationError {}
 
 /// Backend-neutral token-list request.
 #[derive(Clone, PartialEq)]
@@ -560,7 +529,7 @@ pub struct StorageTokenMetadata {
     revoked_at: Option<DateTime<Utc>>,
     active: bool,
     expired: bool,
-    scope: Option<AuthenticationTokenScope>,
+    scope: Option<StorageAuthenticationTokenScope>,
     revision: ResourceRevision,
 }
 
@@ -652,12 +621,12 @@ impl StorageTokenMetadata {
     }
 
     #[must_use]
-    pub const fn scope(&self) -> Option<&AuthenticationTokenScope> {
+    pub const fn scope(&self) -> Option<&StorageAuthenticationTokenScope> {
         self.scope.as_ref()
     }
 
     #[must_use]
-    pub fn into_scope(self) -> Option<AuthenticationTokenScope> {
+    pub fn into_scope(self) -> Option<StorageAuthenticationTokenScope> {
         self.scope
     }
 
@@ -679,7 +648,7 @@ pub struct StorageTokenMetadataBuilder {
     revoked_at: Option<DateTime<Utc>>,
     active: bool,
     expired: bool,
-    scope: Option<AuthenticationTokenScope>,
+    scope: Option<StorageAuthenticationTokenScope>,
     revision: ResourceRevision,
 }
 
@@ -727,14 +696,26 @@ impl StorageTokenMetadataBuilder {
     }
 
     #[must_use]
-    pub fn scope(mut self, value: Option<AuthenticationTokenScope>) -> Self {
+    pub fn scope(mut self, value: Option<StorageAuthenticationTokenScope>) -> Self {
         self.scope = value;
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> StorageTokenMetadata {
-        StorageTokenMetadata {
+    pub fn try_build(self) -> Result<StorageTokenMetadata, StorageValidationError> {
+        if self.expires_at.is_some_and(|value| value < self.issued)
+            || self.last_used_at.is_some_and(|value| value < self.issued)
+            || self.revoked_at.is_some_and(|value| value < self.issued)
+        {
+            return Err(StorageValidationError::invalid(
+                "token lifecycle timestamps must not precede issuance",
+            ));
+        }
+        if self.active && (self.expired || self.revoked_at.is_some()) {
+            return Err(StorageValidationError::invalid(
+                "an expired or revoked token must not be active",
+            ));
+        }
+        Ok(StorageTokenMetadata {
             id: self.id,
             principal_id: self.principal_id,
             name: self.name,
@@ -747,7 +728,7 @@ impl StorageTokenMetadataBuilder {
             expired: self.expired,
             scope: self.scope,
             revision: self.revision,
-        }
+        })
     }
 }
 
@@ -765,8 +746,7 @@ pub struct StorageServiceAccount {
 }
 
 impl StorageServiceAccount {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         id: ServiceAccountId,
         description: impl Into<String>,
         owner_group_id: GroupId,
@@ -774,8 +754,18 @@ impl StorageServiceAccount {
         disabled_at: Option<DateTime<Utc>>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "service-account updated_at must not precede created_at",
+            ));
+        }
+        if disabled_at.is_some_and(|value| value < created_at || value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "service-account disabled_at must be within its creation and update timestamps",
+            ));
+        }
+        Ok(Self {
             id,
             description: description.into(),
             owner_group_id,
@@ -783,7 +773,7 @@ impl StorageServiceAccount {
             disabled_at,
             created_at,
             updated_at,
-        }
+        })
     }
 
     #[must_use]
@@ -854,12 +844,17 @@ pub struct StorageServiceAccountDetails {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageServiceAccountDisableOutcome {
     service_account: StorageServiceAccount,
-    cancelled_task_kinds: Vec<String>,
+    cancelled_task_kinds: Vec<StorageTaskKind>,
 }
 
 impl StorageServiceAccountDisableOutcome {
     #[must_use]
-    pub fn new(service_account: StorageServiceAccount, cancelled_task_kinds: Vec<String>) -> Self {
+    pub fn new(
+        service_account: StorageServiceAccount,
+        mut cancelled_task_kinds: Vec<StorageTaskKind>,
+    ) -> Self {
+        cancelled_task_kinds.sort_unstable_by_key(|kind| kind.as_str());
+        cancelled_task_kinds.dedup();
         Self {
             service_account,
             cancelled_task_kinds,
@@ -867,7 +862,7 @@ impl StorageServiceAccountDisableOutcome {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageServiceAccount, Vec<String>) {
+    pub fn into_parts(self) -> (StorageServiceAccount, Vec<StorageTaskKind>) {
         (self.service_account, self.cancelled_task_kinds)
     }
 }
@@ -1191,21 +1186,21 @@ pub struct StorageExternalPrincipalState {
 }
 
 impl StorageExternalPrincipalState {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         identity_scope: impl Into<String>,
         username: impl Into<String>,
         external_subject: impl Into<String>,
         last_sync_attempted_at: Option<DateTime<Utc>>,
         last_sync_success_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_sync_timestamps(last_sync_attempted_at, last_sync_success_at)?;
+        Ok(Self {
             identity_scope: identity_scope.into(),
             username: username.into(),
             external_subject: external_subject.into(),
             last_sync_attempted_at,
             last_sync_success_at,
-        }
+        })
     }
 
     #[must_use]
@@ -1548,23 +1543,32 @@ impl fmt::Debug for StorageLocalPasswordReset {
 }
 
 impl StorageSyncedHuman {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         id: UserId,
         proper_name: Option<String>,
         email: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         anonymized_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "synchronized human updated_at must not precede created_at",
+            ));
+        }
+        if anonymized_at.is_some_and(|value| value < created_at || value > updated_at) {
+            return Err(StorageValidationError::invalid(
+                "synchronized human anonymized_at must be within its creation and update timestamps",
+            ));
+        }
+        Ok(Self {
             id,
             proper_name,
             email,
             created_at,
             updated_at,
             anonymized_at,
-        }
+        })
     }
 
     #[must_use]
@@ -1620,7 +1624,7 @@ pub trait LocalIdentityCredentialStorage: Send + Sync {
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<MutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
 }
 
 /// Identity-provider scope discovery and reconciliation.
@@ -1695,14 +1699,14 @@ pub trait GroupMembershipStorage: Send + Sync {
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StoragePrincipalGroup>, StorageError>;
 
     async fn remove_group_member(
         &self,
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 /// Service-account lifecycle and authorization state.
@@ -1742,28 +1746,28 @@ pub trait ServiceAccountStorage: Send + Sync {
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError>;
 
     /// Atomically apply a service-account patch and its required lifecycle
     /// event, preserving no-op revision behavior.
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError>;
 
     /// Atomically disable a service account, revoke its active credentials,
     /// cancel its pending work, and emit the required lifecycle event.
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageServiceAccountDisableOutcome>, StorageError>;
 
     /// Atomically delete an eligible service account and emit the required
     /// lifecycle event, enforcing backend-owned deletion constraints.
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 /// External-provider identity refresh and reconciliation.
@@ -1789,62 +1793,12 @@ pub trait ExternalIdentityStorage: Send + Sync {
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
-    ) -> Result<MutationOutcome<StorageSyncedHuman>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hubuum_query::{FilterField, ParsedQueryParam, SearchOperator};
-
-    fn group_query_with_name(name: &str, include_total: bool) -> QueryOptions {
-        QueryOptions::new(
-            vec![ParsedQueryParam::from_parts(
-                FilterField::Name,
-                SearchOperator::Equals { is_negated: false },
-                name,
-            )],
-            Vec::new(),
-            None,
-            None,
-            include_total,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn group_page_rejects_a_count_for_different_filters() {
-        let records = group_query_with_name("operators", true);
-        let count = group_query_with_name("auditors", true);
-
-        let error = StorageGroupListQuery::try_new(records, Some(count))
-            .expect_err("page rows and totals must share one predicate");
-
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn group_page_rejects_divergent_count_intent() {
-        let records = group_query_with_name("operators", false);
-        let count = group_query_with_name("operators", true);
-
-        let error = StorageGroupListQuery::try_new(records, Some(count))
-            .expect_err("page and total intent must agree");
-
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn group_page_rejects_pagination_on_the_count_query() {
-        let records = group_query_with_name("operators", true);
-        let mut count = group_query_with_name("operators", true);
-        count.set_limit(Some(10)).unwrap();
-
-        let error = StorageGroupListQuery::try_new(records, Some(count))
-            .expect_err("exact-count queries must not carry pagination");
-
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-    }
 
     #[test]
     fn identity_group_builder_keeps_record_metadata_and_optional_sync_state() {
@@ -1864,8 +1818,10 @@ mod tests {
             "local",
         )
         .external_key(Some("directory-secret".to_string()))
+        .last_sync_attempted_at(Some(updated_at))
         .last_sync_success_at(Some(updated_at))
-        .build();
+        .try_build()
+        .unwrap();
 
         assert_eq!(group.id(), GroupId::new(7).unwrap());
         assert_eq!(group.name(), "operators");
@@ -1876,6 +1832,26 @@ mod tests {
         let debug = format!("{group:?}");
         assert!(!debug.contains("operators"));
         assert!(!debug.contains("directory-secret"));
+    }
+
+    #[test]
+    fn token_metadata_rejects_expiry_before_issuance() {
+        let issued = Utc::now();
+        let error = StorageTokenMetadata::builder(
+            TokenId::new(1).unwrap(),
+            PrincipalId::new(1).unwrap(),
+            issued,
+            ResourceRevision::INITIAL,
+        )
+        .expires_at(Some(issued - chrono::Duration::seconds(1)))
+        .try_build()
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
     }
 
     #[test]
@@ -1951,20 +1927,22 @@ mod tests {
     fn token_observation_rejects_a_future_legacy_cutoff() {
         let observed_at = DateTime::<Utc>::default();
 
-        let result = StorageTokenObservation::new(
+        let result = StorageTokenObservation::try_new(
             observed_at,
             observed_at + chrono::Duration::microseconds(1),
         );
 
-        assert_eq!(result, Err(StorageTokenObservationError));
+        assert!(result.is_err());
     }
 
     #[test]
     fn token_observation_debug_redacts_timestamps() {
         let observed_at = DateTime::<Utc>::default();
-        let observation =
-            StorageTokenObservation::new(observed_at, observed_at - chrono::Duration::hours(24))
-                .unwrap();
+        let observation = StorageTokenObservation::try_new(
+            observed_at,
+            observed_at - chrono::Duration::hours(24),
+        )
+        .unwrap();
 
         let debug = format!("{observation:?}");
 

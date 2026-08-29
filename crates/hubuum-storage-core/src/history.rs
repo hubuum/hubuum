@@ -7,31 +7,31 @@ use hubuum_domain::{
 use hubuum_query::QueryOptions;
 
 use crate::{
-    StorageClassRecord, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
-    StoragePage, StorageRemoteTarget,
+    StorageClass, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
+    StoragePage, StorageRemoteTarget, StorageValidationError,
 };
 
 /// Collection visibility applied by the adapter before counting or paging.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HistoryCollectionScope {
+pub enum StorageHistoryCollectionScope {
     All,
     Visible(Vec<CollectionId>),
 }
 
 /// Backend-neutral request for one resource's temporal history page.
 #[derive(Clone)]
-pub struct HistoryListQuery {
+pub struct StorageHistoryListQuery {
     entity_id: ResourceId,
     query_options: QueryOptions,
-    collection_scope: HistoryCollectionScope,
+    collection_scope: StorageHistoryCollectionScope,
 }
 
-impl HistoryListQuery {
+impl StorageHistoryListQuery {
     #[must_use]
     pub const fn new(
         entity_id: ResourceId,
         query_options: QueryOptions,
-        collection_scope: HistoryCollectionScope,
+        collection_scope: StorageHistoryCollectionScope,
     ) -> Self {
         Self {
             entity_id,
@@ -51,32 +51,32 @@ impl HistoryListQuery {
     }
 
     #[must_use]
-    pub const fn collection_scope(&self) -> &HistoryCollectionScope {
+    pub const fn collection_scope(&self) -> &StorageHistoryCollectionScope {
         &self.collection_scope
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (ResourceId, QueryOptions, HistoryCollectionScope) {
+    pub fn into_parts(self) -> (ResourceId, QueryOptions, StorageHistoryCollectionScope) {
         (self.entity_id, self.query_options, self.collection_scope)
     }
 }
 
 /// Backend-neutral request for one object's temporal history page.
 #[derive(Clone)]
-pub struct ObjectHistoryListQuery {
+pub struct StorageObjectHistoryListQuery {
     object_id: ObjectId,
     class_id: ClassId,
     query_options: QueryOptions,
-    collection_scope: HistoryCollectionScope,
+    collection_scope: StorageHistoryCollectionScope,
 }
 
-impl ObjectHistoryListQuery {
+impl StorageObjectHistoryListQuery {
     #[must_use]
     pub const fn new(
         object_id: ObjectId,
         class_id: ClassId,
         query_options: QueryOptions,
-        collection_scope: HistoryCollectionScope,
+        collection_scope: StorageHistoryCollectionScope,
     ) -> Self {
         Self {
             object_id,
@@ -87,7 +87,14 @@ impl ObjectHistoryListQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (ObjectId, ClassId, QueryOptions, HistoryCollectionScope) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ObjectId,
+        ClassId,
+        QueryOptions,
+        StorageHistoryCollectionScope,
+    ) {
         (
             self.object_id,
             self.class_id,
@@ -99,12 +106,12 @@ impl ObjectHistoryListQuery {
 
 /// Point-in-time lookup shared by non-object history resources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HistoryAsOfQuery {
+pub struct StorageHistoryAsOfQuery {
     entity_id: ResourceId,
     at: DateTime<Utc>,
 }
 
-impl HistoryAsOfQuery {
+impl StorageHistoryAsOfQuery {
     #[must_use]
     pub const fn new(entity_id: ResourceId, at: DateTime<Utc>) -> Self {
         Self { entity_id, at }
@@ -118,13 +125,13 @@ impl HistoryAsOfQuery {
 
 /// Point-in-time lookup for an object constrained by its class route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ObjectHistoryAsOfQuery {
+pub struct StorageObjectHistoryAsOfQuery {
     object_id: ObjectId,
     class_id: ClassId,
     at: DateTime<Utc>,
 }
 
-impl ObjectHistoryAsOfQuery {
+impl StorageObjectHistoryAsOfQuery {
     #[must_use]
     pub const fn new(object_id: ObjectId, class_id: ClassId, at: DateTime<Utc>) -> Self {
         Self {
@@ -161,7 +168,7 @@ impl StorageHistoryOperation {
 
 /// Common temporal and provenance values for one history entry.
 #[derive(Clone, PartialEq, Eq)]
-pub struct HistoryMetadata {
+pub struct StorageHistoryMetadata {
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
@@ -174,7 +181,7 @@ pub struct HistoryMetadata {
 }
 
 /// Named temporal and provenance values used by application mappers.
-pub struct HistoryMetadataParts {
+pub struct StorageHistoryMetadataParts {
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
@@ -186,7 +193,7 @@ pub struct HistoryMetadataParts {
     revision: ResourceRevision,
 }
 
-impl HistoryMetadataParts {
+impl StorageHistoryMetadataParts {
     #[must_use]
     pub const fn operation(&self) -> StorageHistoryOperation {
         self.operation
@@ -233,17 +240,17 @@ impl HistoryMetadataParts {
     }
 }
 
-impl HistoryMetadata {
+impl StorageHistoryMetadata {
     pub fn try_new(
         operation: StorageHistoryOperation,
         valid_from: DateTime<Utc>,
         valid_to: Option<DateTime<Utc>>,
         history_entry_id: HistoryRecordId,
         revision: ResourceRevision,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if valid_to.is_some_and(|timestamp| timestamp < valid_from) {
-            return Err(StorageError::internal(
-                "Persisted history valid_to must not be earlier than valid_from",
+            return Err(StorageValidationError::invalid(
+                "history valid_to must not be earlier than valid_from",
             ));
         }
         Ok(Self {
@@ -282,8 +289,8 @@ impl HistoryMetadata {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> HistoryMetadataParts {
-        HistoryMetadataParts {
+    pub fn into_parts(self) -> StorageHistoryMetadataParts {
+        StorageHistoryMetadataParts {
             operation: self.operation,
             valid_from: self.valid_from,
             valid_to: self.valid_to,
@@ -295,16 +302,21 @@ impl HistoryMetadata {
             revision: self.revision,
         }
     }
+
+    #[must_use]
+    pub const fn revision(&self) -> ResourceRevision {
+        self.revision
+    }
 }
 
 /// One resolved principal name used to enrich history provenance.
 #[derive(Clone, PartialEq, Eq)]
-pub struct HistoryPrincipalName {
+pub struct StorageHistoryPrincipalName {
     principal_id: PrincipalId,
     name: String,
 }
 
-impl HistoryPrincipalName {
+impl StorageHistoryPrincipalName {
     #[must_use]
     pub fn new(principal_id: PrincipalId, name: impl Into<String>) -> Self {
         Self {
@@ -321,76 +333,104 @@ impl HistoryPrincipalName {
 
 /// One collection revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq, Eq)]
-pub struct CollectionHistoryRecord {
+pub struct StorageCollectionHistoryRecord {
     record: StorageCollection,
-    metadata: HistoryMetadata,
+    metadata: StorageHistoryMetadata,
 }
 
-impl CollectionHistoryRecord {
-    #[must_use]
-    pub const fn new(record: StorageCollection, metadata: HistoryMetadata) -> Self {
-        Self { record, metadata }
+impl StorageCollectionHistoryRecord {
+    pub fn try_new(
+        record: StorageCollection,
+        metadata: StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if record.revision() != metadata.revision() {
+            return Err(StorageValidationError::invalid(
+                "collection history record and metadata revisions must match",
+            ));
+        }
+        Ok(Self { record, metadata })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageCollection, HistoryMetadata) {
+    pub fn into_parts(self) -> (StorageCollection, StorageHistoryMetadata) {
         (self.record, self.metadata)
     }
 }
 
 /// One class revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq)]
-pub struct ClassHistoryRecord {
-    record: StorageClassRecord,
-    metadata: HistoryMetadata,
+pub struct StorageClassHistoryRecord {
+    record: StorageClass,
+    metadata: StorageHistoryMetadata,
 }
 
-impl ClassHistoryRecord {
-    #[must_use]
-    pub const fn new(record: StorageClassRecord, metadata: HistoryMetadata) -> Self {
-        Self { record, metadata }
+impl StorageClassHistoryRecord {
+    pub fn try_new(
+        record: StorageClass,
+        metadata: StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if record.revision() != metadata.revision() {
+            return Err(StorageValidationError::invalid(
+                "class history record and metadata revisions must match",
+            ));
+        }
+        Ok(Self { record, metadata })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageClassRecord, HistoryMetadata) {
+    pub fn into_parts(self) -> (StorageClass, StorageHistoryMetadata) {
         (self.record, self.metadata)
     }
 }
 
 /// One object revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq)]
-pub struct ObjectHistoryRecord {
+pub struct StorageObjectHistoryRecord {
     record: StorageObject,
-    metadata: HistoryMetadata,
+    metadata: StorageHistoryMetadata,
 }
 
-impl ObjectHistoryRecord {
-    #[must_use]
-    pub const fn new(record: StorageObject, metadata: HistoryMetadata) -> Self {
-        Self { record, metadata }
+impl StorageObjectHistoryRecord {
+    pub fn try_new(
+        record: StorageObject,
+        metadata: StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if record.revision() != metadata.revision() {
+            return Err(StorageValidationError::invalid(
+                "object history record and metadata revisions must match",
+            ));
+        }
+        Ok(Self { record, metadata })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageObject, HistoryMetadata) {
+    pub fn into_parts(self) -> (StorageObject, StorageHistoryMetadata) {
         (self.record, self.metadata)
     }
 }
 
 /// One export-template revision returned by [`HistoryStorage`].
 #[derive(Clone, PartialEq)]
-pub struct ExportTemplateHistoryRecord {
+pub struct StorageExportTemplateHistoryRecord {
     record: StorageExportTemplate,
-    metadata: HistoryMetadata,
+    metadata: StorageHistoryMetadata,
 }
 
-impl ExportTemplateHistoryRecord {
-    #[must_use]
-    pub const fn new(record: StorageExportTemplate, metadata: HistoryMetadata) -> Self {
-        Self { record, metadata }
+impl StorageExportTemplateHistoryRecord {
+    pub fn try_new(
+        record: StorageExportTemplate,
+        metadata: StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if record.metadata().revision() != metadata.revision() {
+            return Err(StorageValidationError::invalid(
+                "export-template history record and metadata revisions must match",
+            ));
+        }
+        Ok(Self { record, metadata })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageExportTemplate, HistoryMetadata) {
+    pub fn into_parts(self) -> (StorageExportTemplate, StorageHistoryMetadata) {
         (self.record, self.metadata)
     }
 }
@@ -400,19 +440,26 @@ impl ExportTemplateHistoryRecord {
 /// Deliberately does not implement `Debug`: transport templates and
 /// authentication configuration may contain secrets.
 #[derive(Clone, PartialEq)]
-pub struct RemoteTargetHistoryRecord {
+pub struct StorageRemoteTargetHistoryRecord {
     record: StorageRemoteTarget,
-    metadata: HistoryMetadata,
+    metadata: StorageHistoryMetadata,
 }
 
-impl RemoteTargetHistoryRecord {
-    #[must_use]
-    pub const fn new(record: StorageRemoteTarget, metadata: HistoryMetadata) -> Self {
-        Self { record, metadata }
+impl StorageRemoteTargetHistoryRecord {
+    pub fn try_new(
+        record: StorageRemoteTarget,
+        metadata: StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if record.metadata().revision() != metadata.revision() {
+            return Err(StorageValidationError::invalid(
+                "remote-target history record and metadata revisions must match",
+            ));
+        }
+        Ok(Self { record, metadata })
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageRemoteTarget, HistoryMetadata) {
+    pub fn into_parts(self) -> (StorageRemoteTarget, StorageHistoryMetadata) {
         (self.record, self.metadata)
     }
 }
@@ -423,57 +470,57 @@ pub trait HistoryStorage: Send + Sync {
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,
-    ) -> Result<Vec<HistoryPrincipalName>, StorageError>;
+    ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError>;
 
     async fn list_collection_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<CollectionHistoryRecord>, StorageError>;
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError>;
 
     async fn get_collection_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<CollectionHistoryRecord>, StorageError>;
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError>;
 
     async fn list_class_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ClassHistoryRecord>, StorageError>;
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError>;
 
     async fn get_class_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ClassHistoryRecord>, StorageError>;
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageClassHistoryRecord>, StorageError>;
 
     async fn list_object_history(
         &self,
-        query: ObjectHistoryListQuery,
-    ) -> Result<StoragePage<ObjectHistoryRecord>, StorageError>;
+        query: StorageObjectHistoryListQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError>;
 
     async fn get_object_history_as_of(
         &self,
-        query: ObjectHistoryAsOfQuery,
-    ) -> Result<Option<ObjectHistoryRecord>, StorageError>;
+        query: StorageObjectHistoryAsOfQuery,
+    ) -> Result<Option<StorageObjectHistoryRecord>, StorageError>;
 
     async fn list_export_template_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ExportTemplateHistoryRecord>, StorageError>;
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError>;
 
     async fn get_export_template_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError>;
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError>;
 
     async fn list_remote_target_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<RemoteTargetHistoryRecord>, StorageError>;
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError>;
 
     async fn get_remote_target_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError>;
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError>;
 }
 
 #[cfg(test)]
@@ -484,10 +531,10 @@ mod tests {
 
     #[test]
     fn history_queries_own_their_visibility_boundary() {
-        let query = HistoryListQuery::new(
+        let query = StorageHistoryListQuery::new(
             ResourceId::new(17).unwrap(),
             QueryOptions::new(Vec::new(), Vec::new(), Some(25), None, true).unwrap(),
-            HistoryCollectionScope::Visible(vec![
+            StorageHistoryCollectionScope::Visible(vec![
                 CollectionId::new(3).unwrap(),
                 CollectionId::new(5).unwrap(),
             ]),
@@ -498,7 +545,7 @@ mod tests {
         assert_eq!(options.limit(), Some(25));
         assert_eq!(
             scope,
-            HistoryCollectionScope::Visible(vec![
+            StorageHistoryCollectionScope::Visible(vec![
                 CollectionId::new(3).unwrap(),
                 CollectionId::new(5).unwrap(),
             ])
@@ -510,7 +557,7 @@ mod tests {
         let valid_from = Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
         let revision = ResourceRevision::new(7).unwrap();
         let history_entry_id = HistoryRecordId::new(41).unwrap();
-        let metadata = HistoryMetadata::try_new(
+        let metadata = StorageHistoryMetadata::try_new(
             StorageHistoryOperation::Update,
             valid_from,
             None,
@@ -539,7 +586,7 @@ mod tests {
         let valid_from = Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
 
         assert!(
-            HistoryMetadata::try_new(
+            StorageHistoryMetadata::try_new(
                 StorageHistoryOperation::Update,
                 valid_from,
                 Some(valid_from - chrono::Duration::seconds(1)),

@@ -1,85 +1,94 @@
 use hubuum_storage_core::{
-    AuthorizationCollection, AuthorizationEffectiveGroupGrant, AuthorizationGrant,
-    AuthorizationGroup, AuthorizationGroupGrant, AuthorizationPermission,
+    StorageAuthorizationCollection, StorageAuthorizationEffectiveGroupGrant,
+    StorageAuthorizationGrant, StorageAuthorizationGroup, StorageAuthorizationGroupGrant,
+    StorageAuthorizationPermission,
 };
 
 use crate::errors::ApiError;
 use crate::models::{Collection, Group, GroupPermission, Permission, Permissions};
 
-pub(crate) const fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
+pub(crate) const fn permission_to_storage(
+    permission: Permissions,
+) -> StorageAuthorizationPermission {
     match permission {
-        Permissions::ReadCollection => AuthorizationPermission::ReadCollection,
-        Permissions::UpdateCollection => AuthorizationPermission::UpdateCollection,
-        Permissions::DeleteCollection => AuthorizationPermission::DeleteCollection,
-        Permissions::DelegateCollection => AuthorizationPermission::DelegateCollection,
-        Permissions::CreateClass => AuthorizationPermission::CreateClass,
-        Permissions::ReadClass => AuthorizationPermission::ReadClass,
-        Permissions::UpdateClass => AuthorizationPermission::UpdateClass,
-        Permissions::DeleteClass => AuthorizationPermission::DeleteClass,
-        Permissions::CreateObject => AuthorizationPermission::CreateObject,
-        Permissions::ReadObject => AuthorizationPermission::ReadObject,
-        Permissions::UpdateObject => AuthorizationPermission::UpdateObject,
-        Permissions::DeleteObject => AuthorizationPermission::DeleteObject,
-        Permissions::CreateClassRelation => AuthorizationPermission::CreateClassRelation,
-        Permissions::ReadClassRelation => AuthorizationPermission::ReadClassRelation,
-        Permissions::UpdateClassRelation => AuthorizationPermission::UpdateClassRelation,
-        Permissions::DeleteClassRelation => AuthorizationPermission::DeleteClassRelation,
-        Permissions::CreateObjectRelation => AuthorizationPermission::CreateObjectRelation,
-        Permissions::ReadObjectRelation => AuthorizationPermission::ReadObjectRelation,
-        Permissions::UpdateObjectRelation => AuthorizationPermission::UpdateObjectRelation,
-        Permissions::DeleteObjectRelation => AuthorizationPermission::DeleteObjectRelation,
-        Permissions::ReadTemplate => AuthorizationPermission::ReadTemplate,
-        Permissions::CreateTemplate => AuthorizationPermission::CreateTemplate,
-        Permissions::UpdateTemplate => AuthorizationPermission::UpdateTemplate,
-        Permissions::DeleteTemplate => AuthorizationPermission::DeleteTemplate,
-        Permissions::ReadRemoteTarget => AuthorizationPermission::ReadRemoteTarget,
-        Permissions::CreateRemoteTarget => AuthorizationPermission::CreateRemoteTarget,
-        Permissions::UpdateRemoteTarget => AuthorizationPermission::UpdateRemoteTarget,
-        Permissions::DeleteRemoteTarget => AuthorizationPermission::DeleteRemoteTarget,
-        Permissions::ExecuteRemoteTarget => AuthorizationPermission::ExecuteRemoteTarget,
-        Permissions::ReadAudit => AuthorizationPermission::ReadAudit,
-        Permissions::ManageEventSubscription => AuthorizationPermission::ManageEventSubscription,
+        Permissions::ReadCollection => StorageAuthorizationPermission::ReadCollection,
+        Permissions::UpdateCollection => StorageAuthorizationPermission::UpdateCollection,
+        Permissions::DeleteCollection => StorageAuthorizationPermission::DeleteCollection,
+        Permissions::DelegateCollection => StorageAuthorizationPermission::DelegateCollection,
+        Permissions::CreateClass => StorageAuthorizationPermission::CreateClass,
+        Permissions::ReadClass => StorageAuthorizationPermission::ReadClass,
+        Permissions::UpdateClass => StorageAuthorizationPermission::UpdateClass,
+        Permissions::DeleteClass => StorageAuthorizationPermission::DeleteClass,
+        Permissions::CreateObject => StorageAuthorizationPermission::CreateObject,
+        Permissions::ReadObject => StorageAuthorizationPermission::ReadObject,
+        Permissions::UpdateObject => StorageAuthorizationPermission::UpdateObject,
+        Permissions::DeleteObject => StorageAuthorizationPermission::DeleteObject,
+        Permissions::CreateClassRelation => StorageAuthorizationPermission::CreateClassRelation,
+        Permissions::ReadClassRelation => StorageAuthorizationPermission::ReadClassRelation,
+        Permissions::UpdateClassRelation => StorageAuthorizationPermission::UpdateClassRelation,
+        Permissions::DeleteClassRelation => StorageAuthorizationPermission::DeleteClassRelation,
+        Permissions::CreateObjectRelation => StorageAuthorizationPermission::CreateObjectRelation,
+        Permissions::ReadObjectRelation => StorageAuthorizationPermission::ReadObjectRelation,
+        Permissions::UpdateObjectRelation => StorageAuthorizationPermission::UpdateObjectRelation,
+        Permissions::DeleteObjectRelation => StorageAuthorizationPermission::DeleteObjectRelation,
+        Permissions::ReadTemplate => StorageAuthorizationPermission::ReadTemplate,
+        Permissions::CreateTemplate => StorageAuthorizationPermission::CreateTemplate,
+        Permissions::UpdateTemplate => StorageAuthorizationPermission::UpdateTemplate,
+        Permissions::DeleteTemplate => StorageAuthorizationPermission::DeleteTemplate,
+        Permissions::ReadRemoteTarget => StorageAuthorizationPermission::ReadRemoteTarget,
+        Permissions::CreateRemoteTarget => StorageAuthorizationPermission::CreateRemoteTarget,
+        Permissions::UpdateRemoteTarget => StorageAuthorizationPermission::UpdateRemoteTarget,
+        Permissions::DeleteRemoteTarget => StorageAuthorizationPermission::DeleteRemoteTarget,
+        Permissions::ExecuteRemoteTarget => StorageAuthorizationPermission::ExecuteRemoteTarget,
+        Permissions::ReadAudit => StorageAuthorizationPermission::ReadAudit,
+        Permissions::ManageEventSubscription => {
+            StorageAuthorizationPermission::ManageEventSubscription
+        }
     }
 }
 
-pub(crate) const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
+pub(crate) const fn permission_from_storage(
+    permission: StorageAuthorizationPermission,
+) -> Permissions {
     match permission {
-        AuthorizationPermission::ReadCollection => Permissions::ReadCollection,
-        AuthorizationPermission::UpdateCollection => Permissions::UpdateCollection,
-        AuthorizationPermission::DeleteCollection => Permissions::DeleteCollection,
-        AuthorizationPermission::DelegateCollection => Permissions::DelegateCollection,
-        AuthorizationPermission::CreateClass => Permissions::CreateClass,
-        AuthorizationPermission::ReadClass => Permissions::ReadClass,
-        AuthorizationPermission::UpdateClass => Permissions::UpdateClass,
-        AuthorizationPermission::DeleteClass => Permissions::DeleteClass,
-        AuthorizationPermission::CreateObject => Permissions::CreateObject,
-        AuthorizationPermission::ReadObject => Permissions::ReadObject,
-        AuthorizationPermission::UpdateObject => Permissions::UpdateObject,
-        AuthorizationPermission::DeleteObject => Permissions::DeleteObject,
-        AuthorizationPermission::CreateClassRelation => Permissions::CreateClassRelation,
-        AuthorizationPermission::ReadClassRelation => Permissions::ReadClassRelation,
-        AuthorizationPermission::UpdateClassRelation => Permissions::UpdateClassRelation,
-        AuthorizationPermission::DeleteClassRelation => Permissions::DeleteClassRelation,
-        AuthorizationPermission::CreateObjectRelation => Permissions::CreateObjectRelation,
-        AuthorizationPermission::ReadObjectRelation => Permissions::ReadObjectRelation,
-        AuthorizationPermission::UpdateObjectRelation => Permissions::UpdateObjectRelation,
-        AuthorizationPermission::DeleteObjectRelation => Permissions::DeleteObjectRelation,
-        AuthorizationPermission::ReadTemplate => Permissions::ReadTemplate,
-        AuthorizationPermission::CreateTemplate => Permissions::CreateTemplate,
-        AuthorizationPermission::UpdateTemplate => Permissions::UpdateTemplate,
-        AuthorizationPermission::DeleteTemplate => Permissions::DeleteTemplate,
-        AuthorizationPermission::ReadRemoteTarget => Permissions::ReadRemoteTarget,
-        AuthorizationPermission::CreateRemoteTarget => Permissions::CreateRemoteTarget,
-        AuthorizationPermission::UpdateRemoteTarget => Permissions::UpdateRemoteTarget,
-        AuthorizationPermission::DeleteRemoteTarget => Permissions::DeleteRemoteTarget,
-        AuthorizationPermission::ExecuteRemoteTarget => Permissions::ExecuteRemoteTarget,
-        AuthorizationPermission::ReadAudit => Permissions::ReadAudit,
-        AuthorizationPermission::ManageEventSubscription => Permissions::ManageEventSubscription,
+        StorageAuthorizationPermission::ReadCollection => Permissions::ReadCollection,
+        StorageAuthorizationPermission::UpdateCollection => Permissions::UpdateCollection,
+        StorageAuthorizationPermission::DeleteCollection => Permissions::DeleteCollection,
+        StorageAuthorizationPermission::DelegateCollection => Permissions::DelegateCollection,
+        StorageAuthorizationPermission::CreateClass => Permissions::CreateClass,
+        StorageAuthorizationPermission::ReadClass => Permissions::ReadClass,
+        StorageAuthorizationPermission::UpdateClass => Permissions::UpdateClass,
+        StorageAuthorizationPermission::DeleteClass => Permissions::DeleteClass,
+        StorageAuthorizationPermission::CreateObject => Permissions::CreateObject,
+        StorageAuthorizationPermission::ReadObject => Permissions::ReadObject,
+        StorageAuthorizationPermission::UpdateObject => Permissions::UpdateObject,
+        StorageAuthorizationPermission::DeleteObject => Permissions::DeleteObject,
+        StorageAuthorizationPermission::CreateClassRelation => Permissions::CreateClassRelation,
+        StorageAuthorizationPermission::ReadClassRelation => Permissions::ReadClassRelation,
+        StorageAuthorizationPermission::UpdateClassRelation => Permissions::UpdateClassRelation,
+        StorageAuthorizationPermission::DeleteClassRelation => Permissions::DeleteClassRelation,
+        StorageAuthorizationPermission::CreateObjectRelation => Permissions::CreateObjectRelation,
+        StorageAuthorizationPermission::ReadObjectRelation => Permissions::ReadObjectRelation,
+        StorageAuthorizationPermission::UpdateObjectRelation => Permissions::UpdateObjectRelation,
+        StorageAuthorizationPermission::DeleteObjectRelation => Permissions::DeleteObjectRelation,
+        StorageAuthorizationPermission::ReadTemplate => Permissions::ReadTemplate,
+        StorageAuthorizationPermission::CreateTemplate => Permissions::CreateTemplate,
+        StorageAuthorizationPermission::UpdateTemplate => Permissions::UpdateTemplate,
+        StorageAuthorizationPermission::DeleteTemplate => Permissions::DeleteTemplate,
+        StorageAuthorizationPermission::ReadRemoteTarget => Permissions::ReadRemoteTarget,
+        StorageAuthorizationPermission::CreateRemoteTarget => Permissions::CreateRemoteTarget,
+        StorageAuthorizationPermission::UpdateRemoteTarget => Permissions::UpdateRemoteTarget,
+        StorageAuthorizationPermission::DeleteRemoteTarget => Permissions::DeleteRemoteTarget,
+        StorageAuthorizationPermission::ExecuteRemoteTarget => Permissions::ExecuteRemoteTarget,
+        StorageAuthorizationPermission::ReadAudit => Permissions::ReadAudit,
+        StorageAuthorizationPermission::ManageEventSubscription => {
+            Permissions::ManageEventSubscription
+        }
     }
 }
 
 pub(crate) fn collection_from_storage(
-    collection: AuthorizationCollection,
+    collection: StorageAuthorizationCollection,
 ) -> Result<Collection, ApiError> {
     Ok(Collection {
         id: collection.id().id(),
@@ -92,7 +101,7 @@ pub(crate) fn collection_from_storage(
     })
 }
 
-pub(crate) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
+pub(crate) fn group_from_storage(group: StorageAuthorizationGroup) -> Result<Group, ApiError> {
     Ok(Group {
         id: group.id().id(),
         groupname: group.group_name().to_string(),
@@ -112,50 +121,50 @@ pub(crate) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, Api
     })
 }
 
-pub(crate) fn grant_from_storage(grant: AuthorizationGrant) -> Permission {
+pub(crate) fn grant_from_storage(grant: StorageAuthorizationGrant) -> Permission {
     let has = |permission| grant.permissions().contains(&permission);
     Permission {
         id: grant.id().id(),
         collection_id: grant.collection_id().id(),
         group_id: grant.group_id().id(),
-        has_read_collection: has(AuthorizationPermission::ReadCollection),
-        has_update_collection: has(AuthorizationPermission::UpdateCollection),
-        has_delete_collection: has(AuthorizationPermission::DeleteCollection),
-        has_delegate_collection: has(AuthorizationPermission::DelegateCollection),
-        has_create_class: has(AuthorizationPermission::CreateClass),
-        has_read_class: has(AuthorizationPermission::ReadClass),
-        has_update_class: has(AuthorizationPermission::UpdateClass),
-        has_delete_class: has(AuthorizationPermission::DeleteClass),
-        has_create_object: has(AuthorizationPermission::CreateObject),
-        has_read_object: has(AuthorizationPermission::ReadObject),
-        has_update_object: has(AuthorizationPermission::UpdateObject),
-        has_delete_object: has(AuthorizationPermission::DeleteObject),
-        has_create_class_relation: has(AuthorizationPermission::CreateClassRelation),
-        has_read_class_relation: has(AuthorizationPermission::ReadClassRelation),
-        has_update_class_relation: has(AuthorizationPermission::UpdateClassRelation),
-        has_delete_class_relation: has(AuthorizationPermission::DeleteClassRelation),
-        has_create_object_relation: has(AuthorizationPermission::CreateObjectRelation),
-        has_read_object_relation: has(AuthorizationPermission::ReadObjectRelation),
-        has_update_object_relation: has(AuthorizationPermission::UpdateObjectRelation),
-        has_delete_object_relation: has(AuthorizationPermission::DeleteObjectRelation),
-        has_read_template: has(AuthorizationPermission::ReadTemplate),
-        has_create_template: has(AuthorizationPermission::CreateTemplate),
-        has_update_template: has(AuthorizationPermission::UpdateTemplate),
-        has_delete_template: has(AuthorizationPermission::DeleteTemplate),
-        has_read_remote_target: has(AuthorizationPermission::ReadRemoteTarget),
-        has_create_remote_target: has(AuthorizationPermission::CreateRemoteTarget),
-        has_update_remote_target: has(AuthorizationPermission::UpdateRemoteTarget),
-        has_delete_remote_target: has(AuthorizationPermission::DeleteRemoteTarget),
-        has_execute_remote_target: has(AuthorizationPermission::ExecuteRemoteTarget),
+        has_read_collection: has(StorageAuthorizationPermission::ReadCollection),
+        has_update_collection: has(StorageAuthorizationPermission::UpdateCollection),
+        has_delete_collection: has(StorageAuthorizationPermission::DeleteCollection),
+        has_delegate_collection: has(StorageAuthorizationPermission::DelegateCollection),
+        has_create_class: has(StorageAuthorizationPermission::CreateClass),
+        has_read_class: has(StorageAuthorizationPermission::ReadClass),
+        has_update_class: has(StorageAuthorizationPermission::UpdateClass),
+        has_delete_class: has(StorageAuthorizationPermission::DeleteClass),
+        has_create_object: has(StorageAuthorizationPermission::CreateObject),
+        has_read_object: has(StorageAuthorizationPermission::ReadObject),
+        has_update_object: has(StorageAuthorizationPermission::UpdateObject),
+        has_delete_object: has(StorageAuthorizationPermission::DeleteObject),
+        has_create_class_relation: has(StorageAuthorizationPermission::CreateClassRelation),
+        has_read_class_relation: has(StorageAuthorizationPermission::ReadClassRelation),
+        has_update_class_relation: has(StorageAuthorizationPermission::UpdateClassRelation),
+        has_delete_class_relation: has(StorageAuthorizationPermission::DeleteClassRelation),
+        has_create_object_relation: has(StorageAuthorizationPermission::CreateObjectRelation),
+        has_read_object_relation: has(StorageAuthorizationPermission::ReadObjectRelation),
+        has_update_object_relation: has(StorageAuthorizationPermission::UpdateObjectRelation),
+        has_delete_object_relation: has(StorageAuthorizationPermission::DeleteObjectRelation),
+        has_read_template: has(StorageAuthorizationPermission::ReadTemplate),
+        has_create_template: has(StorageAuthorizationPermission::CreateTemplate),
+        has_update_template: has(StorageAuthorizationPermission::UpdateTemplate),
+        has_delete_template: has(StorageAuthorizationPermission::DeleteTemplate),
+        has_read_remote_target: has(StorageAuthorizationPermission::ReadRemoteTarget),
+        has_create_remote_target: has(StorageAuthorizationPermission::CreateRemoteTarget),
+        has_update_remote_target: has(StorageAuthorizationPermission::UpdateRemoteTarget),
+        has_delete_remote_target: has(StorageAuthorizationPermission::DeleteRemoteTarget),
+        has_execute_remote_target: has(StorageAuthorizationPermission::ExecuteRemoteTarget),
         created_at: grant.created_at().naive_utc(),
         updated_at: grant.updated_at().naive_utc(),
-        has_read_audit: has(AuthorizationPermission::ReadAudit),
-        has_manage_event_subscription: has(AuthorizationPermission::ManageEventSubscription),
+        has_read_audit: has(StorageAuthorizationPermission::ReadAudit),
+        has_manage_event_subscription: has(StorageAuthorizationPermission::ManageEventSubscription),
     }
 }
 
 pub(crate) fn group_grant_from_storage(
-    row: AuthorizationGroupGrant,
+    row: StorageAuthorizationGroupGrant,
 ) -> Result<GroupPermission, ApiError> {
     let (group, grant) = row.into_parts();
     Ok(GroupPermission {
@@ -165,7 +174,7 @@ pub(crate) fn group_grant_from_storage(
 }
 
 pub(crate) fn effective_group_grant_from_storage(
-    row: AuthorizationEffectiveGroupGrant,
+    row: StorageAuthorizationEffectiveGroupGrant,
 ) -> Result<crate::models::EffectiveGroupPermission, ApiError> {
     let (target, source, depth, inherited, group, grant) = row.into_parts();
     Ok(crate::models::EffectiveGroupPermission {

@@ -13,27 +13,30 @@ use hubuum_events_core::{
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StoragePage};
+use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageValidationError};
 
-fn validate_non_empty(field: &str, value: &str) -> Result<(), StorageError> {
+fn validate_non_empty(field: &str, value: &str) -> Result<(), StorageValidationError> {
     if value.trim().is_empty() {
-        return Err(StorageError::invalid_input(format!(
+        return Err(StorageValidationError::invalid(format!(
             "{field} must not be empty"
         )));
     }
     Ok(())
 }
 
-fn validate_optional_non_empty(field: &str, value: Option<&str>) -> Result<(), StorageError> {
+fn validate_optional_non_empty(
+    field: &str,
+    value: Option<&str>,
+) -> Result<(), StorageValidationError> {
     if let Some(value) = value {
         validate_non_empty(field, value)?;
     }
     Ok(())
 }
 
-fn validate_json_object(field: &str, value: &Value) -> Result<(), StorageError> {
+fn validate_json_object(field: &str, value: &Value) -> Result<(), StorageValidationError> {
     if !value.is_object() {
-        return Err(StorageError::invalid_input(format!(
+        return Err(StorageValidationError::invalid(format!(
             "{field} must be a JSON object"
         )));
     }
@@ -43,27 +46,27 @@ fn validate_json_object(field: &str, value: &Value) -> Result<(), StorageError> 
 fn validate_timestamps(
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
-) -> Result<(), StorageError> {
+) -> Result<(), StorageValidationError> {
     if updated_at < created_at {
-        return Err(StorageError::invalid_input(
+        return Err(StorageValidationError::invalid(
             "updated_at must not be earlier than created_at",
         ));
     }
     Ok(())
 }
 
-fn validate_catalog_values<T>(field: &str, values: &[T]) -> Result<(), StorageError>
+fn validate_catalog_values<T>(field: &str, values: &[T]) -> Result<(), StorageValidationError>
 where
     T: Copy + Eq + std::hash::Hash,
 {
     if values.is_empty() {
-        return Err(StorageError::invalid_input(format!(
+        return Err(StorageValidationError::invalid(format!(
             "{field} must include at least one value"
         )));
     }
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     if values.iter().any(|value| !seen.insert(*value)) {
-        return Err(StorageError::invalid_input(format!(
+        return Err(StorageValidationError::invalid(format!(
             "{field} must not contain duplicates"
         )));
     }
@@ -76,14 +79,14 @@ fn validate_subscription_parts(
     actions: &[Action],
     filter: &EventSubscriptionFilter,
     routing: &Value,
-) -> Result<(), StorageError> {
+) -> Result<(), StorageValidationError> {
     validate_non_empty("name", name)?;
     validate_catalog_values("entity_types", entity_types)?;
     validate_catalog_values("actions", actions)?;
     for entity_type in entity_types {
         for action in actions {
             if !is_valid_pair(*entity_type, *action) {
-                return Err(StorageError::invalid_input(format!(
+                return Err(StorageValidationError::invalid(format!(
                     "action '{}' is not valid for entity_type '{}'",
                     action.as_str(),
                     entity_type.as_str()
@@ -93,7 +96,7 @@ fn validate_subscription_parts(
     }
     filter
         .validate()
-        .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+        .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
     validate_json_object("routing", routing)
 }
 
@@ -441,7 +444,7 @@ impl StorageEventSinkBuilder {
         self
     }
 
-    pub fn try_build(self) -> Result<StorageEventSink, StorageError> {
+    pub fn try_build(self) -> Result<StorageEventSink, StorageValidationError> {
         validate_non_empty("name", &self.name)?;
         validate_non_empty("kind", &self.kind)?;
         validate_json_object("configuration", &self.configuration)?;
@@ -581,10 +584,14 @@ impl StorageEventSinkCreateBuilder {
     }
 
     pub fn try_build(self) -> Result<StorageEventSinkCreate, StorageError> {
-        validate_non_empty("name", &self.name)?;
-        validate_non_empty("kind", &self.kind)?;
-        validate_json_object("configuration", &self.configuration)?;
-        validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())?;
+        validate_non_empty("name", &self.name)
+            .map_err(StorageValidationError::into_request_error)?;
+        validate_non_empty("kind", &self.kind)
+            .map_err(StorageValidationError::into_request_error)?;
+        validate_json_object("configuration", &self.configuration)
+            .map_err(StorageValidationError::into_request_error)?;
+        validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())
+            .map_err(StorageValidationError::into_request_error)?;
         Ok(StorageEventSinkCreate {
             name: self.name,
             kind: self.kind,
@@ -714,13 +721,17 @@ impl StorageEventSinkUpdateBuilder {
     }
 
     pub fn try_build(self) -> Result<StorageEventSinkUpdate, StorageError> {
-        validate_optional_non_empty("name", self.name.as_deref())?;
-        validate_optional_non_empty("kind", self.kind.as_deref())?;
+        validate_optional_non_empty("name", self.name.as_deref())
+            .map_err(StorageValidationError::into_request_error)?;
+        validate_optional_non_empty("kind", self.kind.as_deref())
+            .map_err(StorageValidationError::into_request_error)?;
         if let Some(configuration) = &self.configuration {
-            validate_json_object("configuration", configuration)?;
+            validate_json_object("configuration", configuration)
+                .map_err(StorageValidationError::into_request_error)?;
         }
         if let Some(secret_ref) = &self.secret_ref {
-            validate_optional_non_empty("secret_ref", secret_ref.as_deref())?;
+            validate_optional_non_empty("secret_ref", secret_ref.as_deref())
+                .map_err(StorageValidationError::into_request_error)?;
         }
         Ok(StorageEventSinkUpdate {
             id: self.id,
@@ -947,7 +958,7 @@ impl StorageEventSubscriptionBuilder {
         self
     }
 
-    pub fn try_build(self) -> Result<StorageEventSubscription, StorageError> {
+    pub fn try_build(self) -> Result<StorageEventSubscription, StorageValidationError> {
         validate_subscription_parts(
             &self.name,
             &self.entity_types,
@@ -1178,7 +1189,8 @@ impl StorageEventSubscriptionCreateBuilder {
             &self.actions,
             &self.filter,
             &self.routing,
-        )?;
+        )
+        .map_err(StorageValidationError::into_request_error)?;
         Ok(StorageEventSubscriptionCreate {
             collection_id: self.collection_id,
             sink_id: self.sink_id,
@@ -1353,12 +1365,15 @@ impl StorageEventSubscriptionUpdateBuilder {
     }
 
     pub fn try_build(self) -> Result<StorageEventSubscriptionUpdate, StorageError> {
-        validate_optional_non_empty("name", self.name.as_deref())?;
+        validate_optional_non_empty("name", self.name.as_deref())
+            .map_err(StorageValidationError::into_request_error)?;
         if let Some(entity_types) = &self.entity_types {
-            validate_catalog_values("entity_types", entity_types)?;
+            validate_catalog_values("entity_types", entity_types)
+                .map_err(StorageValidationError::into_request_error)?;
         }
         if let Some(actions) = &self.actions {
-            validate_catalog_values("actions", actions)?;
+            validate_catalog_values("actions", actions)
+                .map_err(StorageValidationError::into_request_error)?;
         }
         if let (Some(entity_types), Some(actions)) = (&self.entity_types, &self.actions) {
             for entity_type in entity_types {
@@ -1379,7 +1394,8 @@ impl StorageEventSubscriptionUpdateBuilder {
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         if let Some(routing) = &self.routing {
-            validate_json_object("routing", routing)?;
+            validate_json_object("routing", routing)
+                .map_err(StorageValidationError::into_request_error)?;
         }
         Ok(StorageEventSubscriptionUpdate {
             collection_id: self.collection_id,
@@ -1489,20 +1505,20 @@ pub trait EventConfigurationStorage: Send + Sync {
     async fn create_event_sink(
         &self,
         request: StorageEventSinkCreate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError>;
 
     /// Atomically patch an event sink and its lifecycle event, preserving
     /// no-op revision behavior and validating the merged projection.
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError>;
 
     /// Atomically delete an eligible event sink and emit its lifecycle event.
     async fn delete_event_sink(
         &self,
         request: StorageEventSinkDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     /// List subscriptions inside one collection with backend filtering, stable
     /// cursor paging, and optional exact count.
@@ -1522,7 +1538,7 @@ pub trait EventConfigurationStorage: Send + Sync {
     async fn create_event_subscription(
         &self,
         request: StorageEventSubscriptionCreate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError>;
 
     /// Atomically patch a collection-scoped subscription and its lifecycle
     /// event, preserving no-op revision behavior and validating the merged
@@ -1530,14 +1546,14 @@ pub trait EventConfigurationStorage: Send + Sync {
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError>;
 
     /// Atomically delete a collection-scoped subscription and emit its
     /// lifecycle event.
     async fn delete_event_subscription(
         &self,
         request: StorageEventSubscriptionDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 /// Claim-free event delivery projection for administrator APIs.
@@ -1664,15 +1680,29 @@ impl StorageEventDeliveryBuilder {
         self
     }
 
-    pub fn try_build(self) -> Result<StorageEventDelivery, StorageError> {
+    pub fn try_build(self) -> Result<StorageEventDelivery, StorageValidationError> {
         if self.attempts < 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery attempts must not be negative",
             ));
         }
         if self.updated_at < self.created_at {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Event delivery updated_at must not precede created_at",
+            ));
+        }
+        let correlated_state_is_valid = match self.status {
+            EventDeliveryStatus::InFlight => self.locked_until.is_some(),
+            EventDeliveryStatus::Failed | EventDeliveryStatus::Dead => {
+                self.locked_until.is_none() && self.last_error.is_some()
+            }
+            EventDeliveryStatus::Pending | EventDeliveryStatus::Succeeded => {
+                self.locked_until.is_none() && self.last_error.is_none()
+            }
+        };
+        if !correlated_state_is_valid {
+            return Err(StorageValidationError::invalid(
+                "Event delivery status, lock, and error state are inconsistent",
             ));
         }
         Ok(StorageEventDelivery {
@@ -1794,11 +1824,33 @@ mod tests {
                 .err()
                 .unwrap()
                 .kind(),
-            crate::StorageErrorKind::InvalidInput
+            crate::StorageValidationErrorKind::InvalidValue
         );
         assert_eq!(
             delivery(earlier).try_build().err().unwrap().kind(),
-            crate::StorageErrorKind::InvalidInput
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn event_delivery_builder_rejects_inconsistent_status_state() {
+        let now = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let error = StorageEventDelivery::builder(
+            EventDeliveryId::new(1).unwrap(),
+            EventSequence::new(2).unwrap(),
+            EventSubscriptionId::new(3).unwrap(),
+            EventDeliveryStatus::Failed,
+            now,
+            now,
+            now,
+        )
+        .try_build()
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
         );
     }
 

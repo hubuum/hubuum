@@ -4,12 +4,44 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ObjectId, ObjectRelationId, ResourceId,
-    ResourceRevision,
+    ResourceRevision, normalize_template_alias,
 };
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{StorageError, StoragePage, StorageRecordMetadata, StorageVisibility};
+use crate::{
+    StorageError, StoragePage, StorageRecordMetadata, StorageValidationError, StorageVisibility,
+};
+
+fn validate_graph_path<T>(
+    depth: i32,
+    path: &[T],
+    ancestor: T,
+    descendant: T,
+) -> Result<(), StorageValidationError>
+where
+    T: Copy + Eq + std::hash::Hash,
+{
+    let depth = usize::try_from(depth).map_err(|_| {
+        StorageValidationError::invalid("relation graph depth must be greater than zero")
+    })?;
+    if depth == 0
+        || path.len() != depth.saturating_add(1)
+        || path.first().copied() != Some(ancestor)
+        || path.last().copied() != Some(descendant)
+        || path
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != path.len()
+    {
+        return Err(StorageValidationError::invalid(
+            "relation graph depth, endpoints, and path are inconsistent",
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageClassRelation {
@@ -23,13 +55,17 @@ pub struct StorageClassRelation {
 }
 
 impl StorageClassRelation {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         metadata: StorageRecordMetadata,
         from_class_id: ClassId,
         to_class_id: ClassId,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if from_class_id >= to_class_id {
+            return Err(StorageValidationError::invalid(
+                "class relation endpoints must be distinct and canonically ordered",
+            ));
+        }
+        Ok(Self {
             metadata,
             from_class_id,
             to_class_id,
@@ -37,25 +73,44 @@ impl StorageClassRelation {
             reverse_template_alias: None,
             from_max_relations: None,
             to_max_relations: None,
-        }
+        })
     }
 
-    #[must_use]
-    pub fn with_template_aliases(
+    pub fn try_with_template_aliases(
         mut self,
         forward: Option<String>,
         reverse: Option<String>,
-    ) -> Self {
+    ) -> Result<Self, StorageValidationError> {
+        for alias in [forward.as_deref(), reverse.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let normalized = normalize_template_alias(alias)
+                .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
+            if normalized != alias {
+                return Err(StorageValidationError::invalid(
+                    "class relation template aliases must use their canonical form",
+                ));
+            }
+        }
         self.forward_template_alias = forward;
         self.reverse_template_alias = reverse;
-        self
+        Ok(self)
     }
 
-    #[must_use]
-    pub const fn with_relation_limits(mut self, from: Option<i32>, to: Option<i32>) -> Self {
+    pub fn try_with_relation_limits(
+        mut self,
+        from: Option<i32>,
+        to: Option<i32>,
+    ) -> Result<Self, StorageValidationError> {
+        if from.is_some_and(|value| value <= 0) || to.is_some_and(|value| value <= 0) {
+            return Err(StorageValidationError::invalid(
+                "class relation limits must be greater than zero",
+            ));
+        }
         self.from_max_relations = from;
         self.to_max_relations = to;
-        self
+        Ok(self)
     }
 
     #[must_use]
@@ -134,19 +189,23 @@ pub struct StorageObjectRelation {
 }
 
 impl StorageObjectRelation {
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         metadata: StorageRecordMetadata,
         from_object_id: ObjectId,
         to_object_id: ObjectId,
         class_relation_id: ClassRelationId,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        if from_object_id >= to_object_id {
+            return Err(StorageValidationError::invalid(
+                "object relation endpoints must be distinct and canonically ordered",
+            ));
+        }
+        Ok(Self {
             metadata,
             from_object_id,
             to_object_id,
             class_relation_id,
-        }
+        })
     }
 
     #[must_use]
@@ -227,6 +286,11 @@ impl StorageGraphResource {
             self.description,
         )
     }
+
+    #[must_use]
+    pub const fn metadata(&self) -> StorageRecordMetadata {
+        self.metadata
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,6 +312,11 @@ impl StorageGraphClass {
             json_schema,
             validate_schema,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> ClassId {
+        ClassId::from(self.resource.metadata().id())
     }
 
     #[must_use]
@@ -299,6 +368,11 @@ impl StorageGraphObject {
     }
 
     #[must_use]
+    pub fn id(&self) -> ObjectId {
+        ObjectId::from(self.resource.metadata().id())
+    }
+
+    #[must_use]
     #[allow(clippy::type_complexity)]
     pub fn into_parts(
         self,
@@ -338,19 +412,19 @@ pub struct StorageClassGraphRow {
 }
 
 impl StorageClassGraphRow {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         ancestor: StorageGraphClass,
         descendant: StorageGraphClass,
         depth: i32,
         path: Vec<ClassId>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_graph_path(depth, &path, ancestor.id(), descendant.id())?;
+        Ok(Self {
             ancestor,
             descendant,
             depth,
             path,
-        }
+        })
     }
 
     #[must_use]
@@ -368,19 +442,19 @@ pub struct StorageObjectGraphRow {
 }
 
 impl StorageObjectGraphRow {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         ancestor: StorageGraphObject,
         descendant: StorageGraphObject,
         depth: i32,
         path: Vec<ObjectId>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_graph_path(depth, &path, ancestor.id(), descendant.id())?;
+        Ok(Self {
             ancestor,
             descendant,
             depth,
             path,
-        }
+        })
     }
 
     #[must_use]
@@ -396,12 +470,19 @@ pub struct StorageRelatedObjectIncludeRow {
 }
 
 impl StorageRelatedObjectIncludeRow {
-    #[must_use]
-    pub const fn new(root_object_id: ObjectId, row: StorageObjectGraphRow) -> Self {
-        Self {
+    pub fn try_new(
+        root_object_id: ObjectId,
+        row: StorageObjectGraphRow,
+    ) -> Result<Self, StorageValidationError> {
+        if row.ancestor.id() != root_object_id {
+            return Err(StorageValidationError::invalid(
+                "related-object include root must match the graph ancestor",
+            ));
+        }
+        Ok(Self {
             root_object_id,
             row,
-        }
+        })
     }
 
     #[must_use]
@@ -419,19 +500,19 @@ pub struct StorageRelatedObjectForRootRow {
 }
 
 impl StorageRelatedObjectForRootRow {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         root_object_id: ObjectId,
         descendant: StorageGraphObject,
         depth: i32,
         path: Vec<ObjectId>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        validate_graph_path(depth, &path, root_object_id, descendant.id())?;
+        Ok(Self {
             root_object_id,
             descendant,
             depth,
             path,
-        }
+        })
     }
 
     #[must_use]
@@ -442,12 +523,12 @@ impl StorageRelatedObjectForRootRow {
 
 /// Relation-query page retained as a domain-specific API name.
 #[derive(Clone, PartialEq)]
-pub struct RelationListQuery {
+pub struct StorageRelationListQuery {
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
-impl RelationListQuery {
+impl StorageRelationListQuery {
     #[must_use]
     pub const fn new(options: QueryOptions, visibility: StorageVisibility) -> Self {
         Self {
@@ -467,11 +548,11 @@ impl RelationListQuery {
     }
 }
 
-impl fmt::Debug for RelationListQuery {
+impl fmt::Debug for StorageRelationListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         query_debug(
             formatter,
-            "RelationListQuery",
+            "StorageRelationListQuery",
             &self.options,
             &self.visibility,
         )
@@ -479,13 +560,13 @@ impl fmt::Debug for RelationListQuery {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct RelationTouchingQuery {
+pub struct StorageRelationTouchingQuery {
     anchor_id: ResourceId,
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
-impl RelationTouchingQuery {
+impl StorageRelationTouchingQuery {
     #[must_use]
     pub const fn new(
         anchor_id: ResourceId,
@@ -510,11 +591,11 @@ impl RelationTouchingQuery {
     }
 }
 
-impl fmt::Debug for RelationTouchingQuery {
+impl fmt::Debug for StorageRelationTouchingQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         query_debug(
             formatter,
-            "RelationTouchingQuery",
+            "StorageRelationTouchingQuery",
             &self.options,
             &self.visibility,
         )
@@ -522,12 +603,12 @@ impl fmt::Debug for RelationTouchingQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct RelationIdsQuery {
+pub struct StorageRelationIdsQuery {
     ids: Vec<ResourceId>,
     visibility: StorageVisibility,
 }
 
-impl RelationIdsQuery {
+impl StorageRelationIdsQuery {
     #[must_use]
     pub fn new(ids: impl IntoIterator<Item = ResourceId>, visibility: StorageVisibility) -> Self {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
@@ -542,10 +623,10 @@ impl RelationIdsQuery {
     }
 }
 
-impl fmt::Debug for RelationIdsQuery {
+impl fmt::Debug for StorageRelationIdsQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("RelationIdsQuery")
+            .debug_struct("StorageRelationIdsQuery")
             .field("id_count", &self.ids.len())
             .field("visibility", &self.visibility)
             .finish()
@@ -553,14 +634,14 @@ impl fmt::Debug for RelationIdsQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct ObjectRelationsTouchingIdsQuery {
+pub struct StorageObjectRelationsTouchingIdsQuery {
     object_ids: Vec<ObjectId>,
     excluded_relation_ids: Vec<ObjectRelationId>,
     max_results: usize,
     visibility: StorageVisibility,
 }
 
-impl ObjectRelationsTouchingIdsQuery {
+impl StorageObjectRelationsTouchingIdsQuery {
     #[must_use]
     pub fn new(
         object_ids: impl IntoIterator<Item = ObjectId>,
@@ -607,10 +688,10 @@ impl ObjectRelationsTouchingIdsQuery {
     }
 }
 
-impl fmt::Debug for ObjectRelationsTouchingIdsQuery {
+impl fmt::Debug for StorageObjectRelationsTouchingIdsQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ObjectRelationsTouchingIdsQuery")
+            .debug_struct("StorageObjectRelationsTouchingIdsQuery")
             .field("object_id_count", &self.object_ids.len())
             .field(
                 "excluded_relation_id_count",
@@ -623,13 +704,13 @@ impl fmt::Debug for ObjectRelationsTouchingIdsQuery {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct RelationGraphQuery {
+pub struct StorageRelationGraphQuery {
     root_id: ResourceId,
     options: QueryOptions,
     visibility: StorageVisibility,
 }
 
-impl RelationGraphQuery {
+impl StorageRelationGraphQuery {
     #[must_use]
     pub const fn new(
         root_id: ResourceId,
@@ -654,11 +735,11 @@ impl RelationGraphQuery {
     }
 }
 
-impl fmt::Debug for RelationGraphQuery {
+impl fmt::Debug for StorageRelationGraphQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         query_debug(
             formatter,
-            "RelationGraphQuery",
+            "StorageRelationGraphQuery",
             &self.options,
             &self.visibility,
         )
@@ -680,7 +761,7 @@ pub enum StorageRelatedSort {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct RelatedObjectsForRootsQuery {
+pub struct StorageRelatedObjectsForRootsQuery {
     root_object_ids: Vec<ObjectId>,
     class_id: ClassId,
     class_relation_id: Option<ClassRelationId>,
@@ -692,7 +773,7 @@ pub struct RelatedObjectsForRootsQuery {
     visibility: StorageVisibility,
 }
 
-impl RelatedObjectsForRootsQuery {
+impl StorageRelatedObjectsForRootsQuery {
     #[must_use]
     pub fn new(
         root_object_ids: impl IntoIterator<Item = ObjectId>,
@@ -777,10 +858,10 @@ impl RelatedObjectsForRootsQuery {
     }
 }
 
-impl fmt::Debug for RelatedObjectsForRootsQuery {
+impl fmt::Debug for StorageRelatedObjectsForRootsQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("RelatedObjectsForRootsQuery")
+            .debug_struct("StorageRelatedObjectsForRootsQuery")
             .field("root_count", &self.root_object_ids.len())
             .field("direction", &self.direction)
             .field("sort", &self.sort)
@@ -796,7 +877,7 @@ impl fmt::Debug for RelatedObjectsForRootsQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct BidirectionalRelatedObjectsQuery {
+pub struct StorageBidirectionalRelatedObjectsQuery {
     root_object_ids: Vec<ObjectId>,
     max_depth: i32,
     per_root_cap: i32,
@@ -804,7 +885,7 @@ pub struct BidirectionalRelatedObjectsQuery {
     visibility: StorageVisibility,
 }
 
-impl BidirectionalRelatedObjectsQuery {
+impl StorageBidirectionalRelatedObjectsQuery {
     #[must_use]
     pub fn new(
         root_object_ids: impl IntoIterator<Item = ObjectId>,
@@ -834,10 +915,10 @@ impl BidirectionalRelatedObjectsQuery {
     }
 }
 
-impl fmt::Debug for BidirectionalRelatedObjectsQuery {
+impl fmt::Debug for StorageBidirectionalRelatedObjectsQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("BidirectionalRelatedObjectsQuery")
+            .debug_struct("StorageBidirectionalRelatedObjectsQuery")
             .field("root_count", &self.root_object_ids.len())
             .field("max_depth", &self.max_depth)
             .field("per_root_cap", &self.per_root_cap)
@@ -872,68 +953,112 @@ fn query_debug(
 pub trait RelationQueryStorage: Send + Sync {
     async fn list_class_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError>;
 
     async fn list_object_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError>;
 
     async fn list_class_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError>;
 
     async fn list_object_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError>;
 
     async fn list_class_relations_touching_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError>;
 
     async fn list_class_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError>;
 
     async fn list_object_relations_touching_ids(
         &self,
-        query: ObjectRelationsTouchingIdsQuery,
+        query: StorageObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError>;
 
     async fn list_object_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError>;
 
     async fn list_related_classes(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError>;
 
     async fn list_related_objects(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError>;
 
     async fn list_related_objects_for_roots(
         &self,
-        query: RelatedObjectsForRootsQuery,
+        query: StorageRelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError>;
 
     async fn list_bidirectionally_related_objects_for_roots(
         &self,
-        query: BidirectionalRelatedObjectsQuery,
+        query: StorageBidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn metadata() -> StorageRecordMetadata {
+        let now = Utc::now();
+        StorageRecordMetadata::try_new(
+            ResourceId::new(1).unwrap(),
+            now,
+            now,
+            ResourceRevision::INITIAL,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn persisted_relations_require_distinct_canonical_endpoints() {
+        let class_id = ClassId::new(2).unwrap();
+        let object_id = ObjectId::new(3).unwrap();
+
+        assert!(StorageClassRelation::try_new(metadata(), class_id, class_id).is_err());
+        assert!(
+            StorageObjectRelation::try_new(
+                metadata(),
+                object_id,
+                object_id,
+                ClassRelationId::new(1).unwrap(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn persisted_relation_aliases_must_be_canonical() {
+        let relation = StorageClassRelation::try_new(
+            metadata(),
+            ClassId::new(1).unwrap(),
+            ClassId::new(2).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            relation
+                .try_with_template_aliases(Some("HostName".to_string()), None)
+                .is_err()
+        );
+    }
 
     #[test]
     fn query_debug_redacts_ids_filters_and_cursors() {
@@ -952,12 +1077,12 @@ mod tests {
         let visibility = StorageVisibility::new(
             hubuum_domain::PrincipalId::new(42).unwrap(),
             true,
-            None::<[crate::AuthorizationPermission; 0]>,
+            None::<[crate::StorageAuthorizationPermission; 0]>,
             None,
         );
         let debug = format!(
             "{:?}",
-            RelationTouchingQuery::new(ResourceId::new(73).unwrap(), options, visibility)
+            StorageRelationTouchingQuery::new(ResourceId::new(73).unwrap(), options, visibility)
         );
 
         assert!(debug.contains("filter_count: 1"));
@@ -973,12 +1098,15 @@ mod tests {
         let visibility = StorageVisibility::new(
             hubuum_domain::PrincipalId::new(42).unwrap(),
             true,
-            None::<[crate::AuthorizationPermission; 0]>,
+            None::<[crate::StorageAuthorizationPermission; 0]>,
             None,
         );
-        let query =
-            ObjectRelationsTouchingIdsQuery::new([ObjectId::new(73).unwrap()], 20, visibility)
-                .excluding_relation_ids([ObjectRelationId::new(99).unwrap()]);
+        let query = StorageObjectRelationsTouchingIdsQuery::new(
+            [ObjectId::new(73).unwrap()],
+            20,
+            visibility,
+        )
+        .excluding_relation_ids([ObjectRelationId::new(99).unwrap()]);
 
         let debug = format!("{query:?}");
 

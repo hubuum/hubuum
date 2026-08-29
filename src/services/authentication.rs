@@ -3,8 +3,8 @@ use chrono::SubsecRound;
 use crate::errors::ApiError;
 use crate::models::{Token, configured_token_lifetime};
 use crate::storage::{
-    AuthenticatedToken, AuthenticationAttempt, AuthenticationCredential, AuthenticationStorage,
-    StorageContext, storage_handle,
+    AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationAttempt,
+    StorageAuthenticationCredential, StorageContext, storage_handle,
 };
 
 /// Validate one presented bearer token through the selected complete storage
@@ -16,11 +16,11 @@ use crate::storage::{
 pub async fn authenticate_bearer_token(
     context: &impl StorageContext,
     token: &Token,
-) -> Result<AuthenticatedToken, ApiError> {
-    let credential = AuthenticationCredential::new(token.storage_hash());
+) -> Result<StorageAuthenticatedToken, ApiError> {
+    let credential = StorageAuthenticationCredential::new(token.storage_hash());
     let observed_at = chrono::Utc::now().naive_utc().trunc_subsecs(6);
     let legacy_valid_after = configured_token_lifetime()?.cutoff_from(observed_at)?;
-    let attempt = AuthenticationAttempt::new(
+    let attempt = StorageAuthenticationAttempt::try_new(
         credential,
         observed_at.and_utc(),
         legacy_valid_after.and_utc(),

@@ -5,8 +5,9 @@ use diesel::sql_types::{Bool, Nullable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{IdentityScopeId, PrincipalId, PrincipalKind, UserId};
 use hubuum_storage_core::{
-    AuthenticatedToken, AuthenticationAttempt, AuthenticationHuman, AuthenticationIdentity,
-    AuthenticationPrincipal, AuthenticationTokenScope, AuthenticationTokenScopeQuery,
+    StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageAuthenticationHuman,
+    StorageAuthenticationIdentity, StorageAuthenticationPrincipal, StorageAuthenticationTokenScope,
+    StorageAuthenticationTokenScopeQuery,
 };
 
 use crate::schema;
@@ -37,8 +38,8 @@ pub fn active_token_predicate(
 
 pub async fn authenticate_bearer_token(
     runtime: &PostgresRuntime,
-    attempt: AuthenticationAttempt,
-) -> Result<AuthenticatedToken, PostgresStorageError> {
+    attempt: StorageAuthenticationAttempt,
+) -> Result<StorageAuthenticatedToken, PostgresStorageError> {
     use crate::schema::service_accounts;
     use crate::schema::tokens::dsl::{
         description, expires_at, id as token_id, issued, last_used_at, name, permission_scoped,
@@ -125,19 +126,22 @@ pub async fn authenticate_bearer_token(
         }
     }
 
-    Ok(AuthenticatedToken::builder(
-        hubuum_domain::TokenId::new(id)?,
-        hubuum_domain::PrincipalId::new(principal_id_value)?,
-        token_issued.and_utc(),
-        token_revision.into_domain(),
+    crate::validate_persisted(
+        "authenticated token",
+        StorageAuthenticatedToken::builder(
+            hubuum_domain::TokenId::new(id)?,
+            hubuum_domain::PrincipalId::new(principal_id_value)?,
+            token_issued.and_utc(),
+            token_revision.into_domain(),
+        )
+        .name(token_name)
+        .description(token_description)
+        .expires_at(token_expires_at.map(|timestamp| timestamp.and_utc()))
+        .last_used_at(observed_last_used.map(|timestamp| timestamp.and_utc()))
+        .permission_scoped(is_permission_scoped)
+        .resource_scoped(is_resource_scoped)
+        .try_build(),
     )
-    .name(token_name)
-    .description(token_description)
-    .expires_at(token_expires_at.map(|timestamp| timestamp.and_utc()))
-    .last_used_at(observed_last_used.map(|timestamp| timestamp.and_utc()))
-    .permission_scoped(is_permission_scoped)
-    .resource_scoped(is_resource_scoped)
-    .build())
 }
 
 type AuthenticationIdentityRow = (
@@ -156,7 +160,7 @@ type AuthenticationIdentityRow = (
 pub async fn get_authentication_identity(
     runtime: &PostgresRuntime,
     principal_id: i32,
-) -> Result<AuthenticationIdentity, PostgresStorageError> {
+) -> Result<StorageAuthenticationIdentity, PostgresStorageError> {
     use crate::schema::{principals, users};
 
     let row = runtime
@@ -186,7 +190,7 @@ pub async fn get_authentication_identity(
 
 fn authentication_identity_from_row(
     row: AuthenticationIdentityRow,
-) -> Result<AuthenticationIdentity, PostgresStorageError> {
+) -> Result<StorageAuthenticationIdentity, PostgresStorageError> {
     let (
         principal_id,
         persisted_kind,
@@ -202,7 +206,7 @@ fn authentication_identity_from_row(
     let kind = persisted_kind
         .parse::<PrincipalKind>()
         .map_err(|error| PostgresStorageError::database(error.to_string()))?;
-    let principal = AuthenticationPrincipal::new(
+    let principal = StorageAuthenticationPrincipal::new(
         PrincipalId::new(principal_id)?,
         kind,
         name,
@@ -225,24 +229,30 @@ fn authentication_identity_from_row(
                     "Human principal '{principal_id}' has no update timestamp"
                 ))
             })?;
-            Ok(AuthenticationHuman::new(
-                UserId::new(human_id)?,
-                proper_name,
-                email,
-                created_at.and_utc(),
-                updated_at.and_utc(),
-                anonymized_at.map(|timestamp| timestamp.and_utc()),
-            ))
+            crate::validate_persisted(
+                "authentication human",
+                StorageAuthenticationHuman::try_new(
+                    UserId::new(human_id)?,
+                    proper_name,
+                    email,
+                    created_at.and_utc(),
+                    updated_at.and_utc(),
+                    anonymized_at.map(|timestamp| timestamp.and_utc()),
+                ),
+            )
         })
         .transpose()?;
 
-    Ok(AuthenticationIdentity::new(principal, human))
+    crate::validate_persisted(
+        "authentication identity",
+        StorageAuthenticationIdentity::try_new(principal, human),
+    )
 }
 
 pub async fn get_authentication_token_scope(
     runtime: &PostgresRuntime,
-    query: AuthenticationTokenScopeQuery,
-) -> Result<Option<AuthenticationTokenScope>, PostgresStorageError> {
+    query: StorageAuthenticationTokenScopeQuery,
+) -> Result<Option<StorageAuthenticationTokenScope>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             super::token::load_token_scope(connection, query).await

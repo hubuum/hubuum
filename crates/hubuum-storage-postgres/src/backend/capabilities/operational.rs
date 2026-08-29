@@ -2,19 +2,23 @@ use super::super::*;
 
 #[async_trait]
 impl MetricsStorage for PostgresStorage {
-    async fn get_inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+    async fn get_inventory_metrics_snapshot(
+        &self,
+    ) -> Result<StorageInventoryGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_inventory_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn get_task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+    async fn get_task_metrics_snapshot(&self) -> Result<StorageTaskGaugeSnapshot, StorageError> {
         crate::operations::metrics::load_task_gauge_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
     }
 
-    async fn get_event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+    async fn get_event_metrics_snapshot(
+        &self,
+    ) -> Result<StorageEventMetricsSnapshot, StorageError> {
         crate::operations::event_observability::load_event_metrics_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -23,7 +27,7 @@ impl MetricsStorage for PostgresStorage {
 
 #[async_trait]
 impl OperationalStateStorage for PostgresStorage {
-    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+    async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         crate::operations::probe::load_readiness_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -35,7 +39,9 @@ impl OperationalStateStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+    async fn get_task_queue_snapshot(
+        &self,
+    ) -> Result<StorageOperationalTaskQueueSnapshot, StorageError> {
         crate::operations::meta::load_task_queue_snapshot(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -43,7 +49,7 @@ impl OperationalStateStorage for PostgresStorage {
 
     async fn load_export_template_health(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateHealth>, StorageError> {
         crate::operations::meta::load_export_template_health(self.runtime())
             .await
             .map_err(StorageError::from)
@@ -51,7 +57,7 @@ impl OperationalStateStorage for PostgresStorage {
 
     async fn load_export_templates_for_audit(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateAuditEntry>, StorageError> {
         crate::operations::meta::load_export_templates_for_audit(self.runtime())
             .await
             .map_err(StorageError::from)

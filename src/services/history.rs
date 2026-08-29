@@ -9,10 +9,11 @@ use crate::models::{
     RemoteTargetHistory, ResourceRevision,
 };
 use crate::storage::{
-    ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryStorage,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageContext, StorageHistoryOperation, storage_handle,
+    HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord, StorageContext,
+    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
+    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord, storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -30,7 +31,7 @@ fn exact_history_total(total: Option<i64>) -> Result<i64, ApiError> {
     })
 }
 
-impl TryFrom<HistoryCollectionFilter<'_>> for HistoryCollectionScope {
+impl TryFrom<HistoryCollectionFilter<'_>> for StorageHistoryCollectionScope {
     type Error = ApiError;
 
     fn try_from(value: HistoryCollectionFilter<'_>) -> Result<Self, Self::Error> {
@@ -59,8 +60,8 @@ struct AppHistoryMetadata {
     revision: ResourceRevision,
 }
 
-impl From<HistoryMetadata> for AppHistoryMetadata {
-    fn from(value: HistoryMetadata) -> Self {
+impl From<StorageHistoryMetadata> for AppHistoryMetadata {
+    fn from(value: StorageHistoryMetadata) -> Self {
         let parts = value.into_parts();
         // Preserve the established HTTP history representation while the
         // storage contract uses semantic operation values.
@@ -84,7 +85,9 @@ impl From<HistoryMetadata> for AppHistoryMetadata {
     }
 }
 
-fn collection_from_storage(row: CollectionHistoryRecord) -> Result<CollectionHistory, ApiError> {
+fn collection_from_storage(
+    row: StorageCollectionHistoryRecord,
+) -> Result<CollectionHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (id, name, description, created_at, updated_at, parent_collection_id, _) =
         record.into_parts();
@@ -108,7 +111,7 @@ fn collection_from_storage(row: CollectionHistoryRecord) -> Result<CollectionHis
     })
 }
 
-fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, ApiError> {
+fn class_from_storage(row: StorageClassHistoryRecord) -> Result<HubuumClassHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (
         id,
@@ -143,7 +146,7 @@ fn class_from_storage(row: ClassHistoryRecord) -> Result<HubuumClassHistory, Api
     })
 }
 
-fn object_from_storage(row: ObjectHistoryRecord) -> Result<HubuumObjectHistory, ApiError> {
+fn object_from_storage(row: StorageObjectHistoryRecord) -> Result<HubuumObjectHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (id, name, collection_id, hubuum_class_id, data, description, created_at, updated_at, _) =
         record.into_parts();
@@ -170,7 +173,7 @@ fn object_from_storage(row: ObjectHistoryRecord) -> Result<HubuumObjectHistory, 
 }
 
 fn export_template_from_storage(
-    row: ExportTemplateHistoryRecord,
+    row: StorageExportTemplateHistoryRecord,
 ) -> Result<ExportTemplateHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (record_metadata, collection_id, name, definition) = record.into_parts();
@@ -207,7 +210,7 @@ fn export_template_from_storage(
 }
 
 fn remote_target_from_storage(
-    row: RemoteTargetHistoryRecord,
+    row: StorageRemoteTargetHistoryRecord,
 ) -> Result<RemoteTargetHistory, ApiError> {
     let (record, metadata) = row.into_parts();
     let (record_metadata, collection_id, name, definition) = record.into_parts();
@@ -284,7 +287,7 @@ macro_rules! history_service {
             collection_filter: HistoryCollectionFilter<'_>,
         ) -> Result<(Vec<$ty>, i64), ApiError> {
             let (rows, total_count) = storage_handle(backend)
-                .$storage_list(HistoryListQuery::new(
+                .$storage_list(StorageHistoryListQuery::new(
                     ResourceId::new(entity_id)?,
                     query_options.clone(),
                     collection_filter.try_into()?,
@@ -303,7 +306,10 @@ macro_rules! history_service {
             backend: &impl StorageContext,
         ) -> Result<Option<$ty>, ApiError> {
             storage_handle(backend)
-                .$storage_as_of(HistoryAsOfQuery::new(ResourceId::new(entity_id)?, at))
+                .$storage_as_of(StorageHistoryAsOfQuery::new(
+                    ResourceId::new(entity_id)?,
+                    at,
+                ))
                 .await?
                 .map($from)
                 .transpose()
@@ -352,7 +358,7 @@ pub async fn object_history_paginated_with_total_count(
     collection_filter: HistoryCollectionFilter<'_>,
 ) -> Result<(Vec<HubuumObjectHistory>, i64), ApiError> {
     let (rows, total_count) = storage_handle(backend)
-        .list_object_history(ObjectHistoryListQuery::new(
+        .list_object_history(StorageObjectHistoryListQuery::new(
             ObjectId::new(object_id)?,
             ClassId::new(class_id)?,
             query_options.clone(),
@@ -375,7 +381,7 @@ pub async fn object_as_of(
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumObjectHistory>, ApiError> {
     storage_handle(backend)
-        .get_object_history_as_of(ObjectHistoryAsOfQuery::new(
+        .get_object_history_as_of(StorageObjectHistoryAsOfQuery::new(
             ObjectId::new(object_id)?,
             ClassId::new(class_id)?,
             at,

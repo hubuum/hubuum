@@ -8,7 +8,7 @@ use hubuum_domain::{IdentityScopeId, UserId};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    MutationOutcome, StoragePage, StorageUser, StorageUserAnonymize, StorageUserCreate,
+    StorageMutationOutcome, StoragePage, StorageUser, StorageUserAnonymize, StorageUserCreate,
     StorageUserDelete, StorageUserDetails, StorageUserListItem, StorageUserListQuery,
     StorageUserPasswordUpdate, StorageUserUpdate,
 };
@@ -91,15 +91,18 @@ pub(crate) struct UserRow {
 
 impl UserRow {
     fn into_storage(self) -> Result<StorageUser, PostgresStorageError> {
-        Ok(StorageUser::new(
-            hubuum_domain::UserId::new(self.id)?,
-            self.password,
-            self.proper_name,
-            self.email,
-            self.created_at.and_utc(),
-            self.updated_at.and_utc(),
-            self.anonymized_at.map(|timestamp| timestamp.and_utc()),
-        ))
+        crate::validate_persisted(
+            "user",
+            StorageUser::try_new(
+                hubuum_domain::UserId::new(self.id)?,
+                self.password,
+                self.proper_name,
+                self.email,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+                self.anonymized_at.map(|timestamp| timestamp.and_utc()),
+            ),
+        )
     }
 
     fn snapshot(&self, name: &str, revision: PostgresRevision) -> Value {
@@ -186,7 +189,8 @@ pub async fn get_user_details(
                     ))
                     .first::<(UserRow, i32, bool, String, PostgresRevision)>(connection)
                     .await?;
-            Ok::<_, PostgresStorageError>(
+            crate::validate_persisted(
+                "user details",
                 StorageUserDetails::builder(
                     UserId::new(user.id)?,
                     user.created_at.and_utc(),
@@ -198,7 +202,7 @@ pub async fn get_user_details(
                 .proper_name(user.proper_name)
                 .email(user.email)
                 .provider_managed(provider_managed)
-                .build(),
+                .try_build(),
             )
         })
         .await
@@ -274,17 +278,20 @@ pub async fn list_users(
                 .into_iter()
                 .map(
                     |(user, scope, provider, name, managed, attempted, succeeded, revision)| {
-                        Ok(StorageUserListItem::builder(
-                            user.into_storage()?,
-                            scope,
-                            provider,
-                            name,
-                            revision.into_domain(),
+                        crate::validate_persisted(
+                            "user list item",
+                            StorageUserListItem::builder(
+                                user.into_storage()?,
+                                scope,
+                                provider,
+                                name,
+                                revision.into_domain(),
+                            )
+                            .provider_managed(managed)
+                            .last_sync_attempted_at(attempted.map(|timestamp| timestamp.and_utc()))
+                            .last_sync_success_at(succeeded.map(|timestamp| timestamp.and_utc()))
+                            .try_build(),
                         )
-                        .provider_managed(managed)
-                        .last_sync_attempted_at(attempted.map(|timestamp| timestamp.and_utc()))
-                        .last_sync_success_at(succeeded.map(|timestamp| timestamp.and_utc()))
-                        .build())
                     },
                 )
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
@@ -296,7 +303,7 @@ pub async fn list_users(
 pub async fn create_user(
     runtime: &PostgresRuntime,
     request: StorageUserCreate,
-) -> Result<MutationOutcome<StorageUser>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageUser>, PostgresStorageError> {
     let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
     let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     if identity_scope != LOCAL_IDENTITY_SCOPE {
@@ -334,10 +341,11 @@ pub async fn create_user(
                 format!("User '{name}' created"),
             )?
             .with_after(user.snapshot(&name, revision));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(user.into_storage()?, audit))
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+                user.into_storage()?,
+                audit,
+            ))
         })
         .await
 }
@@ -345,7 +353,7 @@ pub async fn create_user(
 pub async fn update_user(
     runtime: &PostgresRuntime,
     request: StorageUserUpdate,
-) -> Result<MutationOutcome<StorageUser>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageUser>, PostgresStorageError> {
     let (user_id, password, proper_name, email, context) = request.into_parts();
     let user_id = user_id.id();
     validate_positive_id(user_id, "user id")?;
@@ -365,7 +373,7 @@ pub async fn update_user(
                     .as_ref()
                     .is_none_or(|value| Some(value) == before.email.as_ref())
             {
-                return Ok(MutationOutcome::unchanged(before.into_storage()?));
+                return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
             }
             let password_changed = password.is_some();
             let changes = UpdateUserRow {
@@ -393,10 +401,11 @@ pub async fn update_user(
             .with_before(before.snapshot(&name, before_revision))
             .with_after(after.snapshot(&name, after_revision))
             .with_metadata(json!({ "password_changed": password_changed }));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(after.into_storage()?, audit))
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+                after.into_storage()?,
+                audit,
+            ))
         })
         .await
 }
@@ -404,7 +413,7 @@ pub async fn update_user(
 pub async fn set_user_password(
     runtime: &PostgresRuntime,
     request: StorageUserPasswordUpdate,
-) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
     let (user_id, password_hash, context) = request.into_parts();
     let user_id = user_id.id();
     validate_positive_id(user_id, "user id")?;
@@ -422,7 +431,7 @@ pub(crate) async fn set_user_password_on_connection(
     password_hash: String,
     context: &EventContext,
     credential_reset: bool,
-) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
     let before_revision = lock_principal_revision(connection, user_id).await?;
     ensure_user_allows_local_write(connection, user_id).await?;
     let (before, name) = load_user_with_name(connection, user_id).await?;
@@ -447,16 +456,14 @@ pub(crate) async fn set_user_password_on_connection(
         "revoked_token_count": revoked,
         "credential_reset": credential_reset,
     }));
-    let audit = append_event(connection, &event)
-        .await?
-        .into_audit_receipt()?;
-    Ok(MutationOutcome::committed(revoked, audit))
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok(StorageMutationOutcome::committed(revoked, audit))
 }
 
 pub async fn delete_user(
     runtime: &PostgresRuntime,
     request: StorageUserDelete,
-) -> Result<MutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
     let (user_id, context) = request.into_parts();
     let user_id = user_id.id();
     validate_positive_id(user_id, "user id")?;
@@ -478,10 +485,8 @@ pub async fn delete_user(
                 format!("User '{name}' deleted"),
             )?
             .with_before(user.snapshot(&name, before_revision));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed(deleted, audit))
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(deleted, audit))
         })
         .await
 }
@@ -489,7 +494,7 @@ pub async fn delete_user(
 pub async fn anonymize_user(
     runtime: &PostgresRuntime,
     request: StorageUserAnonymize,
-) -> Result<MutationOutcome<()>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let (user_id, context) = request.into_parts();
     let user_id = user_id.id();
     validate_positive_id(user_id, "user id")?;
@@ -499,7 +504,7 @@ pub async fn anonymize_user(
             ensure_user_allows_local_write(connection, user_id).await?;
             let (before, name) = load_user_with_name(connection, user_id).await?;
             if before.anonymized_at.is_some() {
-                return Ok(MutationOutcome::unchanged(()));
+                return Ok(StorageMutationOutcome::unchanged(()));
             }
             diesel::delete(
                 crate::schema::computed_field_definitions::table
@@ -546,10 +551,8 @@ pub async fn anonymize_user(
             .with_before(before.snapshot(&name, before_revision))
             .with_after(after.snapshot(&anonymized_name, after_revision))
             .with_metadata(json!({ "anonymized": true }));
-            let audit = append_event(connection, &event)
-                .await?
-                .into_audit_receipt()?;
-            Ok::<_, PostgresStorageError>(MutationOutcome::committed((), audit))
+            let audit = append_event(connection, &event).await?.into_audit_receipt();
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed((), audit))
         })
         .await
 }

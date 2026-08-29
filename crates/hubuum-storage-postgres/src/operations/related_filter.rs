@@ -7,7 +7,7 @@ use hubuum_query::{
     MAX_RELATED_FILTER_GROUPS, Operator, ParsedQueryParam, RelatedClassField, RelatedFilterTarget,
     RelatedObjectField, SearchOperator,
 };
-use hubuum_storage_core::{AuthorizationPermission, StorageVisibility};
+use hubuum_storage_core::{StorageAuthorizationPermission, StorageVisibility};
 
 use crate::operations::dynamic_sql::{
     BoundSqlPredicate, SqlComponent, SqlValue, bound_sql_predicate,
@@ -42,12 +42,12 @@ pub(crate) async fn related_object_filter_predicate(
     );
 
     let graph_permissions = [
-        AuthorizationPermission::ReadObject,
-        AuthorizationPermission::ReadObjectRelation,
+        StorageAuthorizationPermission::ReadObject,
+        StorageAuthorizationPermission::ReadObjectRelation,
     ];
     let class_permissions = [
-        AuthorizationPermission::ReadClass,
-        AuthorizationPermission::ReadCollection,
+        StorageAuthorizationPermission::ReadClass,
+        StorageAuthorizationPermission::ReadCollection,
     ];
     if !visibility.allows_permissions(&graph_permissions)
         || !visibility.allows_permissions(&class_permissions)
@@ -713,7 +713,7 @@ mod tests {
         let visibility = StorageVisibility::new(
             PrincipalId::new(11).unwrap(),
             false,
-            None::<Vec<AuthorizationPermission>>,
+            None::<Vec<StorageAuthorizationPermission>>,
             Some(StorageResourceScope::new(
                 [],
                 [],
@@ -744,7 +744,7 @@ mod tests {
         let visibility = StorageVisibility::new(
             PrincipalId::new(11).unwrap(),
             true,
-            None::<Vec<AuthorizationPermission>>,
+            None::<Vec<StorageAuthorizationPermission>>,
             None,
         );
 

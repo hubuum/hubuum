@@ -32,7 +32,7 @@ use crate::services::storage_boundary::{
 
 use super::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
-    StorageClassCreate, StorageClassRecord, StorageClassRelationCreate, StorageClassSelector,
+    StorageClass, StorageClassCreate, StorageClassRelationCreate, StorageClassSelector,
     StorageClassUpdate, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
     StorageError, StorageObject, StorageObjectCreate, StorageObjectDataPatch,
     StorageObjectRelationCreateSelector, StorageObjectRelationSelector, StorageObjectSelector,
@@ -43,7 +43,7 @@ use super::{
     TransactionalCollections, TransactionalObjectRelations, TransactionalObjects,
 };
 use error::map_memory_error;
-use hubuum_storage_core::{AuditReceipt, MutationOutcome};
+use hubuum_storage_core::{StorageAuditReceipt, StorageMutationOutcome};
 use uuid::Uuid;
 
 const ROOT_COLLECTION_ID: i32 = 1;
@@ -54,8 +54,8 @@ fn memory_audit_receipt(
     action: Action,
     before_revision: Option<ResourceRevision>,
     after_revision: Option<ResourceRevision>,
-) -> AuditReceipt {
-    AuditReceipt::new(
+) -> StorageAuditReceipt {
+    StorageAuditReceipt::new(
         crate::events::EventSequence::new(
             NEXT_MEMORY_EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         )
@@ -639,7 +639,7 @@ impl CollectionStorage for MemoryStorageModel {
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let mut state = self.state.write().await;
         let parent_id = command
             .parent_collection_id()
@@ -671,7 +671,7 @@ impl CollectionStorage for MemoryStorageModel {
         };
         state.collections.insert(id, collection.clone());
         state.record_event(id, Action::Created, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             collection_to_storage(collection),
             memory_audit_receipt(
                 EntityType::Collection,
@@ -687,7 +687,7 @@ impl CollectionStorage for MemoryStorageModel {
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let changes = UpdateCollection {
             name: changes.name().map(str::to_string),
@@ -696,7 +696,9 @@ impl CollectionStorage for MemoryStorageModel {
         let mut state = self.state.write().await;
         let current = state.collection(id)?.clone();
         if !changes.has_changes(&current) {
-            return Ok(MutationOutcome::unchanged(collection_to_storage(current)));
+            return Ok(StorageMutationOutcome::unchanged(collection_to_storage(
+                current,
+            )));
         }
         if let (Some(name), Some(parent_id)) =
             (changes.name.as_deref(), current.parent_collection_id)
@@ -725,7 +727,7 @@ impl CollectionStorage for MemoryStorageModel {
             .map_err(map_memory_error)?;
         let updated = collection.clone();
         state.record_event(id.id(), Action::Updated, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             collection_to_storage(updated.clone()),
             memory_audit_receipt(
                 EntityType::Collection,
@@ -740,7 +742,7 @@ impl CollectionStorage for MemoryStorageModel {
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let collection = state.collection(id)?.clone();
@@ -784,7 +786,7 @@ impl CollectionStorage for MemoryStorageModel {
                 && remaining_class_relation_ids.contains(&relation.class_relation_id)
         });
         state.record_event(id.id(), Action::Deleted, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
                 EntityType::Collection,
@@ -835,7 +837,7 @@ impl CollectionStorage for MemoryStorageModel {
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let id = CollectionID::new(id.id()).map_err(map_memory_error)?;
         let new_parent_id = CollectionID::new(new_parent_id.id()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
@@ -846,7 +848,7 @@ impl CollectionStorage for MemoryStorageModel {
             ));
         }
         if collection.parent_collection_id == Some(new_parent_id.id()) {
-            return Ok(MutationOutcome::unchanged(collection_to_storage(
+            return Ok(StorageMutationOutcome::unchanged(collection_to_storage(
                 collection,
             )));
         }
@@ -890,7 +892,7 @@ impl CollectionStorage for MemoryStorageModel {
             .map_err(map_memory_error)?;
         let moved = collection.clone();
         state.record_event(id.id(), Action::Updated, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             collection_to_storage(moved.clone()),
             memory_audit_receipt(
                 EntityType::Collection,
@@ -916,7 +918,7 @@ impl ClassStorage for MemoryStorageModel {
         };
         let state = self.state.read().await;
         let class = state.class_for_selector(&selector)?.clone();
-        Ok(StorageResolvedClass::new(
+        StorageResolvedClass::try_new(
             match selector.kind() {
                 ClassSelectorKind::ById(id) => StorageClassSelector::Id(
                     ClassId::new(id.id()).expect("internal class id must be positive"),
@@ -924,14 +926,17 @@ impl ClassStorage for MemoryStorageModel {
                 ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
             },
             class_record_to_storage(class),
-        ))
+        )
+        .map_err(|error| {
+            StorageError::backend_failure(format!("Invalid in-memory class projection: {error}"))
+        })
     }
 
     async fn create_class(
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         if let Some(schema) = command.json_schema() {
             crate::utilities::json_schema::validate_json_schema(schema)
                 .map_err(map_memory_error)?;
@@ -977,7 +982,7 @@ impl ClassStorage for MemoryStorageModel {
         };
         state.classes.insert(id, class.clone());
         state.record_class_event(id, Action::Created, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             class_record_to_storage(class),
             memory_audit_receipt(
                 EntityType::Class,
@@ -993,7 +998,7 @@ impl ClassStorage for MemoryStorageModel {
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         let target = resolved_class_from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumClass {
             name: changes.name().map(str::to_string),
@@ -1008,7 +1013,9 @@ impl ClassStorage for MemoryStorageModel {
             .validate_schema_update(&current)
             .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
-            return Ok(MutationOutcome::unchanged(class_record_to_storage(current)));
+            return Ok(StorageMutationOutcome::unchanged(class_record_to_storage(
+                current,
+            )));
         }
         if let Some(name) = changes.name.as_deref()
             && state.class_name_in_use(name, Some(current.id))
@@ -1049,7 +1056,7 @@ impl ClassStorage for MemoryStorageModel {
         class.revision = class.revision.checked_advance().map_err(map_memory_error)?;
         let updated = class.clone();
         state.record_class_event(updated.id, Action::Updated, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             class_record_to_storage(updated.clone()),
             memory_audit_receipt(
                 EntityType::Class,
@@ -1064,7 +1071,7 @@ impl ClassStorage for MemoryStorageModel {
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target = resolved_class_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let class = state.class_target(&target)?.clone();
@@ -1084,7 +1091,7 @@ impl ClassStorage for MemoryStorageModel {
                 && remaining_class_relation_ids.contains(&relation.class_relation_id)
         });
         state.record_class_event(class.id, Action::Deleted, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
                 EntityType::Class,
@@ -1168,7 +1175,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         let prepared =
             prepared_class_relation_from_storage(prepared.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
@@ -1207,7 +1214,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         )
         .map(|target| resolved_class_relation_to_storage(&target))
         .map_err(map_memory_error)?;
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
                 EntityType::ClassRelation,
@@ -1222,7 +1229,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target =
             resolved_class_relation_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
@@ -1232,7 +1239,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             .object_relations
             .retain(|_, relation| relation.class_relation_id != relation_id);
         state.record_class_relation_event(relation_id, Action::Deleted, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
                 EntityType::ClassRelation,
@@ -1363,7 +1370,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         let prepared =
             prepared_object_relation_from_storage(prepared.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
@@ -1421,7 +1428,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         )
         .map(|target| resolved_object_relation_to_storage(&target))
         .map_err(map_memory_error)?;
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
                 EntityType::ObjectRelation,
@@ -1436,7 +1443,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target =
             resolved_object_relation_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
@@ -1444,7 +1451,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         let relation_id = target.relation().id;
         state.object_relations.remove(&relation_id);
         state.record_object_relation_event(relation_id, Action::Deleted, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
                 EntityType::ObjectRelation,
@@ -1470,14 +1477,17 @@ impl ObjectStorage for MemoryStorageModel {
             .classes
             .get(&object.hubuum_class_id)
             .ok_or_else(|| StorageError::not_found("Object class was not found"))?;
-        Ok(StorageResolvedObject::new(
+        StorageResolvedObject::try_new(
             StorageObjectSelector::Ids {
                 class_id: ClassId::new(class.id).expect("internal class id must be positive"),
                 object_id: ObjectId::new(object.id).expect("internal object id must be positive"),
             },
             class_record_to_storage(class.clone()),
             object_to_storage(object.clone()),
-        ))
+        )
+        .map_err(|error| {
+            StorageError::backend_failure(format!("Invalid in-memory object projection: {error}"))
+        })
     }
 
     async fn resolve_object(
@@ -1516,11 +1526,14 @@ impl ObjectStorage for MemoryStorageModel {
                 object_name: object_name.clone(),
             },
         };
-        Ok(StorageResolvedObject::new(
+        StorageResolvedObject::try_new(
             selector,
             class_record_to_storage(class.clone()),
             object_to_storage(object.clone()),
-        ))
+        )
+        .map_err(|error| {
+            StorageError::backend_failure(format!("Invalid in-memory object projection: {error}"))
+        })
     }
 
     async fn create_object(
@@ -1528,7 +1541,7 @@ impl ObjectStorage for MemoryStorageModel {
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let class = resolved_class_from_storage(class.clone()).map_err(map_memory_error)?;
         let command = NewHubuumObject {
             name: command.name().to_string(),
@@ -1565,7 +1578,7 @@ impl ObjectStorage for MemoryStorageModel {
         };
         state.objects.insert(id, object.clone());
         state.record_object_event(id, Action::Created, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             object_to_storage(object),
             memory_audit_receipt(
                 EntityType::Object,
@@ -1581,7 +1594,7 @@ impl ObjectStorage for MemoryStorageModel {
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumObject {
             name: changes.name().map(str::to_string),
@@ -1598,7 +1611,9 @@ impl ObjectStorage for MemoryStorageModel {
             .validate_for_class(&current, &class)
             .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
-            return Ok(MutationOutcome::unchanged(object_to_storage(current)));
+            return Ok(StorageMutationOutcome::unchanged(object_to_storage(
+                current,
+            )));
         }
         if let Some(name) = changes.name.as_deref()
             && state.object_name_in_use(class.id, name, Some(current.id))
@@ -1618,7 +1633,7 @@ impl ObjectStorage for MemoryStorageModel {
             .map_err(map_memory_error)?;
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             object_to_storage(updated.clone()),
             memory_audit_receipt(
                 EntityType::Object,
@@ -1634,7 +1649,7 @@ impl ObjectStorage for MemoryStorageModel {
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let (class, current) = state.object_target(&target)?;
@@ -1648,7 +1663,9 @@ impl ObjectStorage for MemoryStorageModel {
                 .map_err(map_memory_error)?;
         }
         if patched_data == current.data {
-            return Ok(MutationOutcome::unchanged(object_to_storage(current)));
+            return Ok(StorageMutationOutcome::unchanged(object_to_storage(
+                current,
+            )));
         }
 
         let mut updated = current.clone();
@@ -1660,7 +1677,7 @@ impl ObjectStorage for MemoryStorageModel {
             .map_err(map_memory_error)?;
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             object_to_storage(updated.clone()),
             memory_audit_receipt(
                 EntityType::Object,
@@ -1675,7 +1692,7 @@ impl ObjectStorage for MemoryStorageModel {
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let (_, object) = state.object_target(&target)?;
@@ -1686,7 +1703,7 @@ impl ObjectStorage for MemoryStorageModel {
             relation.from_hubuum_object_id != object_id && relation.to_hubuum_object_id != object_id
         });
         state.record_object_event(object_id, Action::Deleted, context);
-        Ok(MutationOutcome::committed(
+        Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
                 EntityType::Object,

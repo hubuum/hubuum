@@ -13,9 +13,9 @@ use diesel::{PgExpressionMethods, SelectableHelper};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_computed_fields::{Definition, FieldKey, Operation, ResultType, SEMANTICS_VERSION};
 use hubuum_storage_core::{
-    StorageClassRecord, StorageClassRelationCreate, StorageCollection, StorageError,
-    StorageErrorKind, StorageImportApply, StorageImportApplyItem, StorageImportAtomicity,
-    StorageImportClass, StorageImportClassKey, StorageImportClassRelation, StorageImportCollection,
+    StorageClass, StorageClassRelationCreate, StorageCollection, StorageError, StorageErrorKind,
+    StorageImportApply, StorageImportApplyItem, StorageImportAtomicity, StorageImportClass,
+    StorageImportClassKey, StorageImportClassRelation, StorageImportCollection,
     StorageImportCollectionKey, StorageImportCollectionPermission, StorageImportCollisionPolicy,
     StorageImportComputedField, StorageImportComputedFieldVisibility, StorageImportEventSink,
     StorageImportEventSinkKey, StorageImportEventSubscription, StorageImportExportTemplate,
@@ -65,7 +65,7 @@ struct ImportRuntime {
     groups_by_ref: HashMap<String, i32>,
     principals_by_ref: HashMap<String, i32>,
     collections_by_ref: HashMap<String, StorageCollection>,
-    classes_by_ref: HashMap<String, StorageClassRecord>,
+    classes_by_ref: HashMap<String, StorageClass>,
     objects_by_ref: HashMap<String, StorageObject>,
     event_sinks_by_ref: HashMap<String, i32>,
     export_templates: Vec<StorageImportExportTemplate>,
@@ -391,7 +391,7 @@ async fn resolve_class(
     state: &ImportRuntime,
     reference: Option<&str>,
     key: Option<&StorageImportClassKey>,
-) -> Result<StorageClassRecord, PostgresStorageError> {
+) -> Result<StorageClass, PostgresStorageError> {
     match (reference, key) {
         (Some(reference), None) => state.classes_by_ref.get(reference).cloned().ok_or_else(|| {
             PostgresStorageError::invalid_input(format!("Unknown class ref '{reference}'"))
@@ -620,7 +620,7 @@ async fn create_class(
     connection: &mut PostgresConnection,
     input: StorageImportClass,
     collection_id: i32,
-) -> Result<StorageClassRecord, PostgresStorageError> {
+) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
     let row = match parts.timestamps {
@@ -659,7 +659,7 @@ async fn update_class(
     connection: &mut PostgresConnection,
     class_id: i32,
     input: StorageImportClass,
-) -> Result<StorageClassRecord, PostgresStorageError> {
+) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
     let current = crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
@@ -727,7 +727,7 @@ async fn update_class(
 async fn create_object(
     connection: &mut PostgresConnection,
     input: StorageImportObject,
-    class: &StorageClassRecord,
+    class: &StorageClass,
 ) -> Result<StorageObject, PostgresStorageError> {
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
@@ -1902,7 +1902,7 @@ async fn resolve_class_relation_endpoints(
     connection: &mut PostgresConnection,
     state: &ImportRuntime,
     input: &StorageImportClassRelation,
-) -> Result<(StorageClassRecord, StorageClassRecord), PostgresStorageError> {
+) -> Result<(StorageClass, StorageClass), PostgresStorageError> {
     let parts = input.clone().into_parts();
     let from = resolve_class(
         connection,
@@ -2779,7 +2779,7 @@ fn assert_upsert_condition(
 }
 
 fn ensure_class_collection(
-    class: &StorageClassRecord,
+    class: &StorageClass,
     collection: &StorageCollection,
     resource: &str,
 ) -> Result<(), PostgresStorageError> {

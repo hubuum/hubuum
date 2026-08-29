@@ -140,8 +140,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are now consistently reported as `StorageErrorKind::Backend` instead of
   `Internal`.
 - **Breaking (workspace storage API):** ordinary storage mutations now require
-  `EventContext`; resource lifecycle mutations return `MutationOutcome` with a
-  non-empty set of durable `AuditReceipt` values for commits and no receipt for
+  `EventContext`; resource lifecycle mutations return `StorageMutationOutcome` with a
+  non-empty set of durable `StorageAuditReceipt` values for commits and no receipt for
   genuine no-ops. Import
   and restore implement `ImportStorage` and `RestoreStorage` directly, and
   logical/native observers are supplied explicitly by application composition.
@@ -199,13 +199,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `ExportTemplateStorage` no longer duplicates class ownership lookup; callers
   must use `ClassStorage::resolve_class`.
 - **Breaking (workspace storage API):** object aggregation accepts one
-  `ObjectAggregateAuthorization` strategy that carries a delegated authorizer
+  `StorageObjectAggregateAuthorization` strategy that carries a delegated authorizer
   when required. The query no longer stores a separate authorization mode, so
   callers cannot construct storage/delegated mode and callback mismatches.
   Delegated target and object authorization, computed-definition resolution,
   aggregation, and paging now share one repeatable-read snapshot. The native
   read transaction remains open while the application-owned policy backend
   evaluates bounded candidate batches.
+- **Breaking (workspace storage API):** contract value names now consistently
+  begin with `Storage`, while persistence ports retain the
+  `<Capability>Storage` form. Adapter authors must rename authentication,
+  authorization, computed-object, history, relation-query, unified-search,
+  event-worker, metric, operational, mutation, and other previously unprefixed
+  values. `ObjectAggregateStorageQuery` becomes
+  `StorageObjectAggregateQuery`; the canonical flat class projection becomes
+  `StorageClass`, while the projection embedding its collection becomes
+  `StorageClassWithCollection`. `StorageTaskPageQuery` becomes
+  `StorageTaskChildListQuery`, `StorageRemoteHttpMethod` becomes
+  `StorageRemoteTargetHttpMethod`, `StorageObjectsByClassCount` becomes
+  `StorageObjectCountByClass`, and `StorageRestoreTimestampParts` becomes
+  `StorageRestoreTimestampsParts`. The fallible authentication-attempt and
+  token-observation constructors now use `try_new` and return
+  `StorageValidationError`; `StorageTokenIssuancePolicy::new` becomes
+  `StorageTokenIssuancePolicy::try_new`; the task-create and object-aggregate
+  query builders now terminate with `try_build`.
 - **Breaking (workspace storage API):** storage pages now use one
   `StoragePage<T>` with an optional non-negative exact total instead of a
   negative sentinel or a second counted-page type. Persisted record metadata
@@ -225,19 +242,38 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   content, and malformed persisted conflict metadata becomes an internal
   storage error instead of panicking. The complete storage contract no longer
   exposes a generic unsupported-operation result; all mandatory behavior must
-  be implemented. `StorageTaskCreateRequestBuilder::build` now returns a
+  be implemented. `StorageTaskCreateRequestBuilder::try_build` now returns a
   result and rejects negative totals and zero active-task capacity; callers
   must handle that validation error. Ordinary `StorageTask` projections expose
   lease presence and expiry without exposing or prescribing a UUID claim-token
   representation. `StorageTaskClaim::try_new` rejects mismatched task and lease
   identifiers, and `StorageTaskResultCounts::try_new` centrally rejects negative
-  task progress counts. Group page/count queries and computed-object
-  requested/execution queries now use validating constructors that reject
-  predicate or count-intent divergence. Export task artifacts require exactly
-  one typed content variant and a non-negative warning count, backup task
-  artifacts derive their byte size and SHA-256 digest from their document, and
-  task-output durations reject negative phases; adapter authors must handle the
-  validating constructors.
+  task progress counts. Task status, lifecycle timestamp, and lease
+  combinations are validated at projection construction. Restore lifecycle
+  markers cannot follow the row's update timestamp, and synchronization success
+  cannot follow the latest attempt. `StorageTaskGaugeLastTerminal` now requires
+  a terminal timestamp instead of accepting `Option`; metric and operational
+  snapshots correlate their counts and timestamps. Computed-object page
+  projections must exactly match unique returned rows. Recorded-event audit
+  receipt conversion is now infallible, so callers must remove result handling
+  around `StorageRecordedEvent::into_audit_receipt`. Group pages now carry one
+  query from which adapters
+  derive an optional exact count, while computed-object requested/execution
+  queries validate their shared predicate and count intent, normalized stable
+  ordering, effective page limit, and one-row look-ahead. Export task artifacts
+  and retained output projections require exactly one typed content variant
+  and a non-negative warning count. Backup task artifacts derive their byte
+  size and SHA-256 digest from their document, and retained backup projections
+  validate those values. Token-scope permission lists now carry
+  `StorageAuthorizationPermission` values instead of strings, and service-account
+  disable outcomes carry `StorageTaskKind` values instead of task-kind strings;
+  adapter authors must remove string parsing at those boundaries. Task-output
+  durations reject negative phases. Shared
+  projection validators now return an unclassified `StorageValidationError`:
+  applications must map caller values with `into_request_error`, while adapters
+  must map rejected persisted projections to `StorageErrorKind::Backend`.
+  Fallible constructors consistently use `try_new` or `try_build`; adapter
+  authors must update constructor names and handle these validation results.
 - **Breaking (backup/restore):** full backups are version 5 and restore rejects
   version 4. Version 5 uses stable logical resource and history section names,
   semantic class/object/principal fields, permission-name arrays,

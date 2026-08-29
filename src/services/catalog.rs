@@ -4,15 +4,15 @@ use crate::models::{Collection, HubuumClassExpanded, HubuumObject, TokenScope};
 use crate::services::storage_boundary::{
     class_from_storage, collection_from_storage, object_from_storage, visibility,
 };
-use crate::storage::{CatalogListQuery, CatalogStorage, StorageContext, storage_handle};
+use crate::storage::{CatalogStorage, StorageCatalogListQuery, StorageContext, storage_handle};
 
 fn query(
     principal_id: i32,
     is_admin: bool,
     scope: Option<&TokenScope>,
     options: QueryOptions,
-) -> Result<CatalogListQuery, ApiError> {
-    Ok(CatalogListQuery::new(
+) -> Result<StorageCatalogListQuery, ApiError> {
+    Ok(StorageCatalogListQuery::new(
         options,
         visibility(principal_id, is_admin, scope)?,
     ))

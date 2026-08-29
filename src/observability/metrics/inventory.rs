@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use opentelemetry::KeyValue;
 
-use crate::storage::{InventoryGaugeSnapshot, MetricsStorage};
+use crate::storage::{MetricsStorage, StorageInventoryGaugeSnapshot};
 
 use super::Metrics;
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
@@ -42,7 +42,7 @@ pub(super) async fn refresh_inventory_gauges(
     }
 }
 
-fn cached_inventory_snapshot(metrics: &Metrics) -> Option<InventoryGaugeSnapshot> {
+fn cached_inventory_snapshot(metrics: &Metrics) -> Option<StorageInventoryGaugeSnapshot> {
     let now = Instant::now();
     metrics
         .scrape_cache
@@ -51,7 +51,7 @@ fn cached_inventory_snapshot(metrics: &Metrics) -> Option<InventoryGaugeSnapshot
         .and_then(|cache| cache.inventory.fresh_value(now))
 }
 
-fn stale_inventory_snapshot(metrics: &Metrics) -> Option<InventoryGaugeSnapshot> {
+fn stale_inventory_snapshot(metrics: &Metrics) -> Option<StorageInventoryGaugeSnapshot> {
     metrics
         .scrape_cache
         .lock()
@@ -59,13 +59,13 @@ fn stale_inventory_snapshot(metrics: &Metrics) -> Option<InventoryGaugeSnapshot>
         .and_then(|cache| cache.inventory.cached_value())
 }
 
-fn store_inventory_snapshot(metrics: &Metrics, snapshot: InventoryGaugeSnapshot) {
+fn store_inventory_snapshot(metrics: &Metrics, snapshot: StorageInventoryGaugeSnapshot) {
     if let Ok(mut cache) = metrics.scrape_cache.lock() {
         cache.inventory.store(snapshot, Instant::now());
     }
 }
 
-fn record_inventory_snapshot(metrics: &Metrics, snapshot: &InventoryGaugeSnapshot) {
+fn record_inventory_snapshot(metrics: &Metrics, snapshot: &StorageInventoryGaugeSnapshot) {
     let counts = snapshot.counts();
     record_inventory(metrics, "collections", counts.collections());
     record_inventory(metrics, "classes", counts.classes());

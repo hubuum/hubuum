@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use hubuum_domain::{CollectionId, ExportTemplateId};
 
 use hubuum_storage_core::{
-    ExportTemplateStorage, MutationOutcome, StorageError, StorageExportTemplate,
-    StorageExportTemplateCreate, StorageExportTemplateDelete, StorageExportTemplateListQuery,
-    StorageExportTemplateReplace, StoragePage,
+    ExportTemplateStorage, StorageError, StorageExportTemplate, StorageExportTemplateCreate,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageMutationOutcome, StoragePage,
 };
 
 use super::PostgresStorage;
@@ -46,7 +46,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::create_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -55,7 +55,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         crate::operations::export_template::replace_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -64,7 +64,7 @@ impl ExportTemplateStorage for PostgresStorage {
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         crate::operations::export_template::delete_export_template(self.runtime(), request)
             .await
             .map_err(StorageError::from)

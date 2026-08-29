@@ -15,10 +15,10 @@ use crate::permissions::storage::{
 };
 use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
 use crate::storage::{
-    AuthorizationCollectionAccessQuery, AuthorizationCollectionGrantListQuery,
-    AuthorizationCollectionsQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupMembershipQuery,
-    StorageHandle,
+    AuthorizationDataStorage, StorageAuthorizationCollectionAccessQuery,
+    StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionsQuery,
+    StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
+    StorageAuthorizationGrantMutation, StorageAuthorizationGroupMembershipQuery, StorageHandle,
 };
 
 use super::backend::PermissionBackend;
@@ -51,7 +51,7 @@ impl LocalPermissionBackend {
         collection_id: i32,
         permissions: Vec<Permissions>,
     ) -> Result<bool, ApiError> {
-        let query = AuthorizationCollectionAccessQuery::new(
+        let query = StorageAuthorizationCollectionAccessQuery::new(
             principal_id_to_storage(principal.user_id),
             collection_id_to_storage(collection_id),
             permissions.into_iter().map(permission_to_storage),
@@ -143,7 +143,7 @@ impl PermissionBackend for LocalPermissionBackend {
         permissions: &[Permissions],
     ) -> Result<Vec<Collection>, ApiError> {
         let start = Instant::now();
-        let query = AuthorizationCollectionsQuery::new(
+        let query = StorageAuthorizationCollectionsQuery::new(
             principal_id_to_storage(principal.user_id),
             permissions.iter().copied().map(permission_to_storage),
         );
@@ -171,7 +171,7 @@ impl PermissionBackend for LocalPermissionBackend {
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
-        let query = AuthorizationCollectionGrantListQuery::new(
+        let query = StorageAuthorizationCollectionGrantListQuery::new(
             collection_id,
             permissions_filter
                 .iter()
@@ -207,7 +207,7 @@ impl PermissionBackend for LocalPermissionBackend {
         group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
         let start = Instant::now();
-        let key = AuthorizationGrantKey::new(collection_id, group_id);
+        let key = StorageAuthorizationGrantKey::new(collection_id, group_id);
         let result = self
             .storage
             .get_local_collection_grant(key)
@@ -235,8 +235,8 @@ impl PermissionBackend for LocalPermissionBackend {
         list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
-        let mutation = AuthorizationGrantMutation::new(
-            AuthorizationGrantKey::new(collection_id, group_id),
+        let mutation = StorageAuthorizationGrantMutation::new(
+            StorageAuthorizationGrantKey::new(collection_id, group_id),
             list.iter().copied().map(permission_to_storage),
             replace_existing,
             EventContext::system(),
@@ -255,8 +255,8 @@ impl PermissionBackend for LocalPermissionBackend {
         group_id: GroupID,
         list: PermissionsList,
     ) -> Result<Permission, ApiError> {
-        let mutation = AuthorizationGrantMutation::new(
-            AuthorizationGrantKey::new(collection_id, group_id),
+        let mutation = StorageAuthorizationGrantMutation::new(
+            StorageAuthorizationGrantKey::new(collection_id, group_id),
             list.iter().copied().map(permission_to_storage),
             false,
             EventContext::system(),
@@ -274,8 +274,8 @@ impl PermissionBackend for LocalPermissionBackend {
         collection_id: CollectionID,
         group_id: GroupID,
     ) -> Result<(), ApiError> {
-        let request = AuthorizationGrantDelete::new(
-            AuthorizationGrantKey::new(collection_id, group_id),
+        let request = StorageAuthorizationGrantDelete::new(
+            StorageAuthorizationGrantKey::new(collection_id, group_id),
             EventContext::system(),
         );
         self.storage
@@ -299,7 +299,7 @@ impl PermissionBackend for LocalPermissionBackend {
             .admin_identity_scope
             .clone()
             .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
-        let query = AuthorizationGroupMembershipQuery::new(
+        let query = StorageAuthorizationGroupMembershipQuery::new(
             principal_id_to_storage(principal.user_id),
             &self.admin_groupname,
             identity_scope,

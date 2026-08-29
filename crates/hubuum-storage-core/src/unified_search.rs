@@ -5,7 +5,9 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId, ResourceRevision};
 use serde_json::Value;
 
-use crate::{AuthorizationPermission, StorageError, StorageRecordMetadata};
+use crate::{
+    StorageAuthorizationPermission, StorageError, StorageRecordMetadata, StorageValidationError,
+};
 
 /// Normalized collection, class, and object boundary for a scoped search.
 #[derive(Clone, PartialEq, Eq)]
@@ -72,7 +74,7 @@ fn normalized_ids<T: Ord>(ids: impl IntoIterator<Item = T>) -> Vec<T> {
 pub struct StorageVisibility {
     principal_id: PrincipalId,
     is_admin: bool,
-    permissions: Option<Vec<AuthorizationPermission>>,
+    permissions: Option<Vec<StorageAuthorizationPermission>>,
     resources: Option<StorageResourceScope>,
 }
 
@@ -81,7 +83,7 @@ impl StorageVisibility {
     pub fn new(
         principal_id: PrincipalId,
         is_admin: bool,
-        permissions: Option<impl IntoIterator<Item = AuthorizationPermission>>,
+        permissions: Option<impl IntoIterator<Item = StorageAuthorizationPermission>>,
         resources: Option<StorageResourceScope>,
     ) -> Self {
         let permissions = permissions.map(|permissions| {
@@ -109,7 +111,7 @@ impl StorageVisibility {
     }
 
     #[must_use]
-    pub fn permissions(&self) -> Option<&[AuthorizationPermission]> {
+    pub fn permissions(&self) -> Option<&[StorageAuthorizationPermission]> {
         self.permissions.as_deref()
     }
 
@@ -119,7 +121,7 @@ impl StorageVisibility {
     }
 
     #[must_use]
-    pub fn allows_permissions(&self, required: &[AuthorizationPermission]) -> bool {
+    pub fn allows_permissions(&self, required: &[StorageAuthorizationPermission]) -> bool {
         self.permissions.as_ref().is_none_or(|allowed| {
             required
                 .iter()
@@ -142,13 +144,13 @@ impl fmt::Debug for StorageVisibility {
 
 /// Backend-neutral decoded cursor for one ranked search kind.
 #[derive(Clone, PartialEq, Eq)]
-pub struct UnifiedSearchCursor {
+pub struct StorageUnifiedSearchCursor {
     rank: i32,
     normalized_name: String,
     id: ResourceId,
 }
 
-impl UnifiedSearchCursor {
+impl StorageUnifiedSearchCursor {
     #[must_use]
     pub fn new(rank: i32, normalized_name: impl Into<String>, id: ResourceId) -> Self {
         Self {
@@ -174,10 +176,10 @@ impl UnifiedSearchCursor {
     }
 }
 
-impl fmt::Debug for UnifiedSearchCursor {
+impl fmt::Debug for StorageUnifiedSearchCursor {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchCursor")
+            .debug_struct("StorageUnifiedSearchCursor")
             .field("rank", &self.rank)
             .field("normalized_name", &"[redacted]")
             .field("id", &"[redacted]")
@@ -187,15 +189,15 @@ impl fmt::Debug for UnifiedSearchCursor {
 
 /// One operation-shaped ranked search request.
 #[derive(Clone, PartialEq, Eq)]
-pub struct UnifiedSearchQuery {
+pub struct StorageUnifiedSearchQuery {
     search_term: String,
     limit: usize,
     search_extended_document: bool,
-    cursor: Option<UnifiedSearchCursor>,
+    cursor: Option<StorageUnifiedSearchCursor>,
     visibility: StorageVisibility,
 }
 
-impl UnifiedSearchQuery {
+impl StorageUnifiedSearchQuery {
     #[must_use]
     pub fn new(
         search_term: impl Into<String>,
@@ -218,7 +220,7 @@ impl UnifiedSearchQuery {
     }
 
     #[must_use]
-    pub fn cursor(mut self, cursor: Option<UnifiedSearchCursor>) -> Self {
+    pub fn cursor(mut self, cursor: Option<StorageUnifiedSearchCursor>) -> Self {
         self.cursor = cursor;
         self
     }
@@ -239,7 +241,7 @@ impl UnifiedSearchQuery {
     }
 
     #[must_use]
-    pub const fn search_cursor(&self) -> Option<&UnifiedSearchCursor> {
+    pub const fn search_cursor(&self) -> Option<&StorageUnifiedSearchCursor> {
         self.cursor.as_ref()
     }
 
@@ -249,10 +251,10 @@ impl UnifiedSearchQuery {
     }
 }
 
-impl fmt::Debug for UnifiedSearchQuery {
+impl fmt::Debug for StorageUnifiedSearchQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("UnifiedSearchQuery")
+            .debug_struct("StorageUnifiedSearchQuery")
             .field("search_term", &"[redacted]")
             .field("limit", &self.limit)
             .field("search_extended_document", &self.search_extended_document)
@@ -290,22 +292,27 @@ impl fmt::Debug for StorageCollection {
 }
 
 impl StorageCollection {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
         description: impl Into<String>,
         parent_collection_id: Option<CollectionId>,
-    ) -> Self {
-        Self {
-            id: CollectionId::from(metadata.id()),
+    ) -> Result<Self, StorageValidationError> {
+        let id = CollectionId::from(metadata.id());
+        if parent_collection_id == Some(id) {
+            return Err(StorageValidationError::invalid(
+                "collection must not be its own parent",
+            ));
+        }
+        Ok(Self {
+            id,
             name: name.into(),
             description: description.into(),
             created_at: metadata.created_at(),
             updated_at: metadata.updated_at(),
             parent_collection_id,
             revision: metadata.revision(),
-        }
+        })
     }
 
     #[must_use]
@@ -369,7 +376,7 @@ impl StorageCollection {
 
 /// Expanded class projection used by catalog and unified-search reads.
 #[derive(Clone, PartialEq)]
-pub struct StorageClass {
+pub struct StorageClassWithCollection {
     id: ClassId,
     name: String,
     collection: StorageCollection,
@@ -381,10 +388,10 @@ pub struct StorageClass {
     revision: ResourceRevision,
 }
 
-impl fmt::Debug for StorageClass {
+impl fmt::Debug for StorageClassWithCollection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("StorageClass")
+            .debug_struct("StorageClassWithCollection")
             .field("id", &self.id)
             .field("name", &"[redacted]")
             .field("collection", &self.collection)
@@ -398,15 +405,15 @@ impl fmt::Debug for StorageClass {
     }
 }
 
-impl StorageClass {
+impl StorageClassWithCollection {
     #[must_use]
     pub fn builder(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
         collection: StorageCollection,
         description: impl Into<String>,
-    ) -> StorageClassBuilder {
-        StorageClassBuilder {
+    ) -> StorageClassWithCollectionBuilder {
+        StorageClassWithCollectionBuilder {
             metadata,
             name: name.into(),
             collection,
@@ -460,7 +467,7 @@ impl StorageClass {
     }
 }
 
-pub struct StorageClassBuilder {
+pub struct StorageClassWithCollectionBuilder {
     metadata: StorageRecordMetadata,
     name: String,
     collection: StorageCollection,
@@ -469,7 +476,7 @@ pub struct StorageClassBuilder {
     validate_schema: bool,
 }
 
-impl StorageClassBuilder {
+impl StorageClassWithCollectionBuilder {
     #[must_use]
     pub fn json_schema(mut self, value: Option<Value>) -> Self {
         self.json_schema = value;
@@ -483,8 +490,8 @@ impl StorageClassBuilder {
     }
 
     #[must_use]
-    pub fn build(self) -> StorageClass {
-        StorageClass {
+    pub fn build(self) -> StorageClassWithCollection {
+        StorageClassWithCollection {
             id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection: self.collection,
@@ -631,17 +638,17 @@ impl StorageObject {
 pub trait UnifiedSearchStorage: Send + Sync {
     async fn search_collections(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageCollection>, StorageError>;
 
     async fn search_classes(
         &self,
-        query: UnifiedSearchQuery,
-    ) -> Result<Vec<StorageClass>, StorageError>;
+        query: StorageUnifiedSearchQuery,
+    ) -> Result<Vec<StorageClassWithCollection>, StorageError>;
 
     async fn search_objects(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageObject>, StorageError>;
 }
 
@@ -654,14 +661,14 @@ mod tests {
         let visibility = StorageVisibility::new(
             PrincipalId::new(42).unwrap(),
             true,
-            Some([AuthorizationPermission::ReadCollection]),
+            Some([StorageAuthorizationPermission::ReadCollection]),
             None,
         );
 
-        assert!(visibility.allows_permissions(&[AuthorizationPermission::ReadCollection]));
+        assert!(visibility.allows_permissions(&[StorageAuthorizationPermission::ReadCollection]));
         assert!(!visibility.allows_permissions(&[
-            AuthorizationPermission::ReadCollection,
-            AuthorizationPermission::ReadObject,
+            StorageAuthorizationPermission::ReadCollection,
+            StorageAuthorizationPermission::ReadObject,
         ]));
     }
 
@@ -692,11 +699,11 @@ mod tests {
         let visibility = StorageVisibility::new(
             PrincipalId::new(42).unwrap(),
             false,
-            None::<[AuthorizationPermission; 0]>,
+            None::<[StorageAuthorizationPermission; 0]>,
             None,
         );
-        let query = UnifiedSearchQuery::new("secret asset", 10, visibility).cursor(Some(
-            UnifiedSearchCursor::new(2, "secret asset", ResourceId::new(99).unwrap()),
+        let query = StorageUnifiedSearchQuery::new("secret asset", 10, visibility).cursor(Some(
+            StorageUnifiedSearchCursor::new(2, "secret asset", ResourceId::new(99).unwrap()),
         ));
 
         let debug = format!("{query:?}");

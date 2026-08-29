@@ -35,7 +35,7 @@ use hubuum_storage_core::{
     StorageImportPrincipalKey, StorageImportPrincipalKeyParts, StorageImportPrincipalParts,
     StorageImportPrincipalSubtype, StorageImportRemoteTarget, StorageImportRemoteTargetParts,
     StorageImportRevision, StorageImportTimestamps, StorageImportWriteCondition,
-    StorageRemoteHttpMethod, StorageRemoteTargetSubjectType,
+    StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
 };
 
 fn json_to_storage<T: Serialize>(value: T, field: &str) -> Result<Value, ApiError> {
@@ -56,7 +56,8 @@ fn timestamp_to_storage(
     timestamps: RestoreTimestamps,
 ) -> Result<StorageImportTimestamps, ApiError> {
     let (created_at, updated_at) = timestamps.as_pair();
-    StorageImportTimestamps::new(created_at.and_utc(), updated_at.and_utc()).map_err(ApiError::from)
+    StorageImportTimestamps::try_new(created_at.and_utc(), updated_at.and_utc())
+        .map_err(ApiError::from)
 }
 
 fn condition_to_storage(
@@ -67,7 +68,7 @@ fn condition_to_storage(
             ImportWriteCondition::CreateOnly => Ok(StorageImportWriteCondition::CreateOnly),
             ImportWriteCondition::Overwrite => Ok(StorageImportWriteCondition::Overwrite),
             ImportWriteCondition::IfRevision { expected_revision } => {
-                StorageImportRevision::new(expected_revision.get())
+                StorageImportRevision::try_new(expected_revision.get())
                     .map(StorageImportWriteCondition::IfRevision)
                     .map_err(ApiError::from)
             }
@@ -547,10 +548,10 @@ fn remote_target_to_storage(
             name: input.name,
             description: input.description,
             method: match input.method {
-                crate::models::RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
-                crate::models::RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
-                crate::models::RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
-                crate::models::RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+                crate::models::RemoteHttpMethod::Get => StorageRemoteTargetHttpMethod::Get,
+                crate::models::RemoteHttpMethod::Post => StorageRemoteTargetHttpMethod::Post,
+                crate::models::RemoteHttpMethod::Patch => StorageRemoteTargetHttpMethod::Patch,
+                crate::models::RemoteHttpMethod::Delete => StorageRemoteTargetHttpMethod::Delete,
             },
             url_template: input.url_template,
             headers_template: input.headers_template,

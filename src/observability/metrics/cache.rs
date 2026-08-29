@@ -1,14 +1,16 @@
 use std::time::{Duration, Instant};
 
-use crate::storage::{EventMetricsSnapshot, InventoryGaugeSnapshot, TaskGaugeSnapshot};
+use crate::storage::{
+    StorageEventMetricsSnapshot, StorageInventoryGaugeSnapshot, StorageTaskGaugeSnapshot,
+};
 
 const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(super) struct ScrapeCache {
-    pub(super) inventory: CachedSnapshot<InventoryGaugeSnapshot>,
-    pub(super) tasks: CachedSnapshot<TaskGaugeSnapshot>,
-    pub(super) events: CachedSnapshot<EventMetricsSnapshot>,
+    pub(super) inventory: CachedSnapshot<StorageInventoryGaugeSnapshot>,
+    pub(super) tasks: CachedSnapshot<StorageTaskGaugeSnapshot>,
+    pub(super) events: CachedSnapshot<StorageEventMetricsSnapshot>,
 }
 
 pub(super) struct CachedSnapshot<T> {

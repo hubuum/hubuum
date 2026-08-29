@@ -2,7 +2,7 @@ use super::*;
 
 #[async_trait]
 impl OperationalStateStorage for StorageHandle {
-    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+    async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
@@ -22,7 +22,9 @@ impl OperationalStateStorage for StorageHandle {
         .await
     }
 
-    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+    async fn get_task_queue_snapshot(
+        &self,
+    ) -> Result<StorageOperationalTaskQueueSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
@@ -36,7 +38,7 @@ impl OperationalStateStorage for StorageHandle {
 
     async fn load_export_template_health(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateHealth>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
@@ -52,7 +54,7 @@ impl OperationalStateStorage for StorageHandle {
 
     async fn load_export_templates_for_audit(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateAuditEntry>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::OperationalState,
@@ -69,7 +71,9 @@ impl OperationalStateStorage for StorageHandle {
 
 #[async_trait]
 impl MetricsStorage for StorageHandle {
-    async fn get_inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+    async fn get_inventory_metrics_snapshot(
+        &self,
+    ) -> Result<StorageInventoryGaugeSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Metrics,
@@ -83,7 +87,7 @@ impl MetricsStorage for StorageHandle {
         .await
     }
 
-    async fn get_task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+    async fn get_task_metrics_snapshot(&self) -> Result<StorageTaskGaugeSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Metrics,
@@ -93,7 +97,9 @@ impl MetricsStorage for StorageHandle {
         .await
     }
 
-    async fn get_event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+    async fn get_event_metrics_snapshot(
+        &self,
+    ) -> Result<StorageEventMetricsSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Metrics,

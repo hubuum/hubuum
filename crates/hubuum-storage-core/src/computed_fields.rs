@@ -8,8 +8,8 @@ use hubuum_query::QueryOptions;
 use serde_json::Value;
 
 use crate::{
-    MutationOutcome, StorageError, StoragePage, StorageRecordMetadata, StorageTask,
-    StorageTaskLease,
+    StorageError, StorageMutationOutcome, StoragePage, StorageRecordMetadata, StorageTask,
+    StorageTaskLease, StorageValidationError,
 };
 
 /// Non-negative generation of the materialized computed-field state.
@@ -20,10 +20,10 @@ use crate::{
 pub struct StorageComputationRevision(i64);
 
 impl StorageComputationRevision {
-    pub fn new(value: i64) -> Result<Self, StorageError> {
+    pub fn try_new(value: i64) -> Result<Self, StorageValidationError> {
         if value < 0 {
-            return Err(StorageError::internal(
-                "backend returned a negative computation revision",
+            return Err(StorageValidationError::invalid(
+                "computation revision must not be negative",
             ));
         }
         Ok(Self(value))
@@ -509,9 +509,9 @@ impl StorageClassComputationStateBuilder {
         self
     }
 
-    pub fn try_build(self) -> Result<StorageClassComputationState, StorageError> {
+    pub fn try_build(self) -> Result<StorageClassComputationState, StorageValidationError> {
         if self.updated_at < self.created_at {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Computation state updated_at must not precede created_at",
             ));
         }
@@ -527,7 +527,7 @@ impl StorageClassComputationStateBuilder {
             }
         };
         if !valid_correlated_state {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Computation rebuild status, active task, and last error are inconsistent",
             ));
         }
@@ -927,32 +927,32 @@ pub trait ComputedFieldStorage: Send + Sync {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError>;
 
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError>;
 
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageClassComputationState>, StorageError>;
 
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError>;
 
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError>;
 
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     async fn request_computed_field_rebuild(
         &self,
@@ -1024,7 +1024,7 @@ mod tests {
         let now = chrono::Utc::now();
         let failed_state = StorageClassComputationState::builder(
             ClassId::new(98_765).unwrap(),
-            StorageComputationRevision::new(7).unwrap(),
+            StorageComputationRevision::try_new(7).unwrap(),
             StorageComputationRebuildStatus::Failed,
             now,
             now,
@@ -1034,7 +1034,7 @@ mod tests {
         .unwrap();
         let rebuilding_state = StorageClassComputationState::builder(
             ClassId::new(98_765).unwrap(),
-            StorageComputationRevision::new(7).unwrap(),
+            StorageComputationRevision::try_new(7).unwrap(),
             StorageComputationRebuildStatus::Rebuilding,
             now,
             now,

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::StorageError;
+use crate::{StorageError, StorageValidationError};
 
 macro_rules! backup_sections {
     (
@@ -98,9 +98,9 @@ backup_sections! {
 pub struct StorageBackupRow(Map<String, Value>);
 
 impl StorageBackupRow {
-    pub fn try_from_value(value: Value) -> Result<Self, StorageError> {
+    pub fn try_from_value(value: Value) -> Result<Self, StorageValidationError> {
         value.as_object().cloned().map(Self).ok_or_else(|| {
-            StorageError::internal("A storage adapter returned a non-object backup section item")
+            StorageValidationError::invalid("A backup section item must be a JSON object")
         })
     }
 
@@ -148,13 +148,13 @@ impl StorageBackupSnapshot {
     pub fn try_new(
         state_sections: StorageBackupStateSections,
         history_sections: Option<StorageBackupHistorySections>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         let missing_state = StorageBackupStateSection::ALL
             .iter()
             .find(|section| !state_sections.contains_key(section));
         if let Some(section) = missing_state {
-            return Err(StorageError::internal(format!(
-                "Storage adapter backup is missing required state section '{section}'"
+            return Err(StorageValidationError::invalid(format!(
+                "Backup snapshot is missing required state section '{section}'"
             )));
         }
 
@@ -163,8 +163,8 @@ impl StorageBackupSnapshot {
                 .iter()
                 .find(|section| !history.contains_key(section));
             if let Some(section) = missing_history {
-                return Err(StorageError::internal(format!(
-                    "Storage adapter backup is missing required history section '{section}'"
+                return Err(StorageValidationError::invalid(format!(
+                    "Backup snapshot is missing required history section '{section}'"
                 )));
             }
         }

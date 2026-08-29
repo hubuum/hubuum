@@ -59,7 +59,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExportTemplate,
@@ -76,7 +76,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExportTemplate,
@@ -93,7 +93,7 @@ impl ExportTemplateStorage for StorageHandle {
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExportTemplate,
@@ -145,7 +145,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RemoteTarget,
@@ -162,7 +162,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RemoteTarget,
@@ -179,7 +179,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RemoteTarget,
@@ -196,7 +196,7 @@ impl RemoteTargetStorage for StorageHandle {
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RemoteTarget,
@@ -302,7 +302,7 @@ impl ImportStorage for StorageHandle {
         &self,
         collection_id: CollectionId,
         name: &str,
-    ) -> Result<Option<StorageClassRecord>, StorageError> {
+    ) -> Result<Option<StorageClass>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Import,
@@ -320,7 +320,7 @@ impl ImportStorage for StorageHandle {
         &self,
         collection_id: CollectionId,
         names: &[String],
-    ) -> Result<Vec<StorageClassRecord>, StorageError> {
+    ) -> Result<Vec<StorageClass>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Import,

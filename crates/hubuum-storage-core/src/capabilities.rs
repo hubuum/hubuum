@@ -3,6 +3,8 @@
 //! Each module keeps capability traits beside their request, result, and
 //! protocol types. Adapter authors should use these modules instead of
 //! searching the crate-wide compatibility reexports at the crate root.
+//! Contract values retain their `Storage`-prefixed names in every module;
+//! modules are a discovery aid rather than an alternative alias surface.
 
 /// Common errors, pages, records, and mutation outcomes.
 pub mod common {
@@ -50,7 +52,7 @@ pub mod queries {
     pub use crate::relation_query::*;
     pub use crate::unified_search::*;
     pub use crate::{
-        AuthorizationPermission, QueryStorage, StorageClassRecord, StorageComputationRevision,
+        QueryStorage, StorageAuthorizationPermission, StorageClass, StorageComputationRevision,
         StorageExportTemplate, StorageRemoteTarget,
     };
 }
@@ -67,7 +69,7 @@ pub mod workflows {
     pub use crate::task_execution::*;
     pub use crate::task_queue::*;
     pub use crate::{
-        AuthorizationPermission, StorageClassRecord, StorageCollection, StorageObject,
+        StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject,
         WorkflowStorage,
     };
 }
@@ -77,9 +79,10 @@ pub mod events {
     pub use crate::event_administration::*;
     pub use crate::events::*;
     pub use crate::{
-        EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-        EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-        EventStorage, EventSubscriptionHealthSnapshot,
+        EventHealthStorage, EventStorage, StorageEventDeliveryHealthSnapshot,
+        StorageEventDeliveryStatusSnapshot, StorageEventFanoutSnapshot, StorageEventQueueSnapshot,
+        StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
+        StorageEventSubscriptionHealthSnapshot,
     };
 }
 
@@ -88,12 +91,14 @@ pub mod operational {
     pub use crate::execution::*;
     pub use crate::metrics::*;
     pub use crate::operational::{
-        EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-        EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-        EventSubscriptionHealthSnapshot, OperationalExportTemplateAuditEntry,
-        OperationalExportTemplateHealth, OperationalStateStorage, OperationalTaskActiveCounts,
-        OperationalTaskKindCounts, OperationalTaskQueueSnapshot, OperationalTaskStatusCounts,
-        OperationalTaskTerminalCounts, ReadinessSnapshot, TokenRetentionStorage,
+        OperationalStateStorage, StorageEventDeliveryHealthSnapshot,
+        StorageEventDeliveryStatusSnapshot, StorageEventFanoutSnapshot, StorageEventQueueSnapshot,
+        StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
+        StorageEventSubscriptionHealthSnapshot, StorageOperationalExportTemplateAuditEntry,
+        StorageOperationalExportTemplateHealth, StorageOperationalTaskActiveCounts,
+        StorageOperationalTaskKindCounts, StorageOperationalTaskQueueSnapshot,
+        StorageOperationalTaskStatusCounts, StorageOperationalTaskTerminalCounts,
+        StorageReadinessSnapshot, TokenRetentionStorage,
     };
     pub use crate::telemetry::*;
     pub use crate::worker_notifications::*;

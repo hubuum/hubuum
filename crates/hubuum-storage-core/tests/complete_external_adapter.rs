@@ -37,7 +37,7 @@ impl CollectionStorage for CompleteExternalAdapter {
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         fixture_result()
     }
 
@@ -46,7 +46,7 @@ impl CollectionStorage for CompleteExternalAdapter {
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         fixture_result()
     }
 
@@ -54,7 +54,7 @@ impl CollectionStorage for CompleteExternalAdapter {
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
@@ -77,7 +77,7 @@ impl CollectionStorage for CompleteExternalAdapter {
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         fixture_result()
     }
 }
@@ -95,7 +95,7 @@ impl ClassStorage for CompleteExternalAdapter {
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         fixture_result()
     }
 
@@ -104,7 +104,7 @@ impl ClassStorage for CompleteExternalAdapter {
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         fixture_result()
     }
 
@@ -112,7 +112,7 @@ impl ClassStorage for CompleteExternalAdapter {
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
@@ -142,7 +142,7 @@ impl ObjectStorage for CompleteExternalAdapter {
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         fixture_result()
     }
 
@@ -151,7 +151,7 @@ impl ObjectStorage for CompleteExternalAdapter {
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         fixture_result()
     }
 
@@ -160,7 +160,7 @@ impl ObjectStorage for CompleteExternalAdapter {
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         fixture_result()
     }
 
@@ -168,7 +168,7 @@ impl ObjectStorage for CompleteExternalAdapter {
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
@@ -212,7 +212,7 @@ impl ClassRelationStorage for CompleteExternalAdapter {
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         fixture_result()
     }
 
@@ -220,7 +220,7 @@ impl ClassRelationStorage for CompleteExternalAdapter {
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -245,7 +245,7 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         fixture_result()
     }
 
@@ -253,7 +253,7 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -262,22 +262,22 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
 impl AuthenticationStorage for CompleteExternalAdapter {
     async fn authenticate_bearer_token(
         &self,
-        attempt: AuthenticationAttempt,
-    ) -> Result<AuthenticatedToken, StorageError> {
+        attempt: StorageAuthenticationAttempt,
+    ) -> Result<StorageAuthenticatedToken, StorageError> {
         fixture_result()
     }
 
     async fn get_authentication_identity(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthenticationIdentity, StorageError> {
+    ) -> Result<StorageAuthenticationIdentity, StorageError> {
         fixture_result()
     }
 
     async fn get_authentication_token_scope(
         &self,
-        query: AuthenticationTokenScopeQuery,
-    ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
+        query: StorageAuthenticationTokenScopeQuery,
+    ) -> Result<Option<StorageAuthenticationTokenScope>, StorageError> {
         fixture_result()
     }
 }
@@ -298,7 +298,7 @@ impl LocalIdentityCredentialStorage for CompleteExternalAdapter {
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 }
@@ -372,7 +372,7 @@ impl GroupMembershipStorage for CompleteExternalAdapter {
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StoragePrincipalGroup>, StorageError> {
         fixture_result()
     }
 
@@ -381,7 +381,7 @@ impl GroupMembershipStorage for CompleteExternalAdapter {
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -419,28 +419,28 @@ impl ServiceAccountStorage for CompleteExternalAdapter {
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         fixture_result()
     }
 
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         fixture_result()
     }
 
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
         fixture_result()
     }
 
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -464,7 +464,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
-    ) -> Result<MutationOutcome<StorageSyncedHuman>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         fixture_result()
     }
 }
@@ -497,35 +497,35 @@ impl UserStorage for CompleteExternalAdapter {
     async fn create_user(
         &self,
         request: StorageUserCreate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
         fixture_result()
     }
 
     async fn update_user(
         &self,
         request: StorageUserUpdate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
         fixture_result()
     }
 
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 
     async fn delete_user(
         &self,
         request: StorageUserDelete,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 
     async fn anonymize_user(
         &self,
         request: StorageUserAnonymize,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -542,14 +542,14 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn create_token(
         &self,
         request: StorageTokenCreate,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         fixture_result()
     }
 
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         fixture_result()
     }
 
@@ -573,21 +573,21 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 }
@@ -597,110 +597,110 @@ impl AuthorizationDataStorage for CompleteExternalAdapter {
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthorizationPrincipal, StorageError> {
+    ) -> Result<StorageAuthorizationPrincipal, StorageError> {
         fixture_result()
     }
 
     async fn is_authorization_principal_group_member(
         &self,
-        query: AuthorizationGroupMembershipQuery,
+        query: StorageAuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
         fixture_result()
     }
 
     async fn list_authorization_classes(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationClassResource>, StorageError> {
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationClassResource>, StorageError> {
         fixture_result()
     }
 
     async fn list_authorization_objects(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationObjectResource>, StorageError> {
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
         fixture_result()
     }
 
     async fn authorize_local_collection(
         &self,
-        query: AuthorizationCollectionAccessQuery,
+        query: StorageAuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
         fixture_result()
     }
 
     async fn authorize_local_collections(
         &self,
-        query: AuthorizationCollectionsAccessQuery,
+        query: StorageAuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError> {
         fixture_result()
     }
 
     async fn list_local_authorized_collections(
         &self,
-        query: AuthorizationCollectionsQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionsQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         fixture_result()
     }
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         fixture_result()
     }
 
     async fn load_authorization_group_candidates(
         &self,
-        query: AuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationGroupCandidateQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
         fixture_result()
     }
 
     async fn get_authorization_policy_snapshot(
         &self,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
         fixture_result()
     }
 
     async fn list_local_collection_grants(
         &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationCollectionGrantListQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
         fixture_result()
     }
 
     async fn get_local_collection_grant(
         &self,
-        key: AuthorizationGrantKey,
-    ) -> Result<Option<AuthorizationGrant>, StorageError> {
+        key: StorageAuthorizationGrantKey,
+    ) -> Result<Option<StorageAuthorizationGrant>, StorageError> {
         fixture_result()
     }
 
     async fn get_local_collection_permission_set(
         &self,
-        query: AuthorizationPermissionSetQuery,
-    ) -> Result<AuthorizationPermissionSet, StorageError> {
+        query: StorageAuthorizationPermissionSetQuery,
+    ) -> Result<StorageAuthorizationPermissionSet, StorageError> {
         fixture_result()
     }
 
     async fn apply_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         fixture_result()
     }
 
     async fn revoke_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         fixture_result()
     }
 
     async fn revoke_all_local_collection_grants(
         &self,
-        request: AuthorizationGrantDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+        request: StorageAuthorizationGrantDelete,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -709,21 +709,21 @@ impl AuthorizationDataStorage for CompleteExternalAdapter {
 impl CatalogStorage for CompleteExternalAdapter {
     async fn list_collections(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageCollection>, StorageError> {
         fixture_result()
     }
 
     async fn list_classes(
         &self,
-        query: CatalogListQuery,
-    ) -> Result<StoragePage<StorageClass>, StorageError> {
+        query: StorageCatalogListQuery,
+    ) -> Result<StoragePage<StorageClassWithCollection>, StorageError> {
         fixture_result()
     }
 
     async fn list_objects(
         &self,
-        query: CatalogListQuery,
+        query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageObject>, StorageError> {
         fixture_result()
     }
@@ -762,42 +762,42 @@ impl ComputedFieldStorage for CompleteExternalAdapter {
     async fn create_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         fixture_result()
     }
 
     async fn update_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldMutation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         fixture_result()
     }
 
     async fn delete_shared_computed_field(
         &self,
         request: StorageSharedComputedFieldDelete,
-    ) -> Result<MutationOutcome<StorageClassComputationState>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClassComputationState>, StorageError> {
         fixture_result()
     }
 
     async fn create_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldCreate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         fixture_result()
     }
 
     async fn update_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldUpdate,
-    ) -> Result<MutationOutcome<StorageComputedFieldDefinition>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         fixture_result()
     }
 
     async fn delete_personal_computed_field(
         &self,
         request: StoragePersonalComputedFieldDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
@@ -820,14 +820,14 @@ impl ComputedFieldStorage for CompleteExternalAdapter {
 impl ComputedObjectStorage for CompleteExternalAdapter {
     async fn list_computed_objects(
         &self,
-        query: ComputedObjectListQuery,
-    ) -> Result<ComputedObjectPage, StorageError> {
+        query: StorageComputedObjectListQuery,
+    ) -> Result<StorageComputedObjectPage, StorageError> {
         fixture_result()
     }
 
     async fn enrich_objects_with_computed(
         &self,
-        query: ComputedObjectEnrichmentQuery,
+        query: StorageComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         fixture_result()
     }
@@ -837,8 +837,8 @@ impl ComputedObjectStorage for CompleteExternalAdapter {
 impl ObjectAggregateStorage for CompleteExternalAdapter {
     async fn aggregate_objects(
         &self,
-        query: ObjectAggregateStorageQuery,
-        authorization: ObjectAggregateAuthorization<'_>,
+        query: StorageObjectAggregateQuery,
+        authorization: StorageObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
         fixture_result()
     }
@@ -848,84 +848,84 @@ impl ObjectAggregateStorage for CompleteExternalAdapter {
 impl RelationQueryStorage for CompleteExternalAdapter {
     async fn list_class_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_object_relations(
         &self,
-        query: RelationListQuery,
+        query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_class_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_object_relations_touching(
         &self,
-        query: RelationTouchingQuery,
+        query: StorageRelationTouchingQuery,
     ) -> Result<StoragePage<StorageObjectRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_class_relations_touching_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_class_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_object_relations_touching_ids(
         &self,
-        query: ObjectRelationsTouchingIdsQuery,
+        query: StorageObjectRelationsTouchingIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_object_relations_between_ids(
         &self,
-        query: RelationIdsQuery,
+        query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
         fixture_result()
     }
 
     async fn list_related_classes(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
         fixture_result()
     }
 
     async fn list_related_objects(
         &self,
-        query: RelationGraphQuery,
+        query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
         fixture_result()
     }
 
     async fn list_related_objects_for_roots(
         &self,
-        query: RelatedObjectsForRootsQuery,
+        query: StorageRelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
         fixture_result()
     }
 
     async fn list_bidirectionally_related_objects_for_roots(
         &self,
-        query: BidirectionalRelatedObjectsQuery,
+        query: StorageBidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
         fixture_result()
     }
@@ -961,21 +961,21 @@ impl EventConfigurationStorage for CompleteExternalAdapter {
     async fn create_event_sink(
         &self,
         request: StorageEventSinkCreate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
         fixture_result()
     }
 
     async fn update_event_sink(
         &self,
         request: StorageEventSinkUpdate,
-    ) -> Result<MutationOutcome<StorageEventSink>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
         fixture_result()
     }
 
     async fn delete_event_sink(
         &self,
         request: StorageEventSinkDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
@@ -997,21 +997,21 @@ impl EventConfigurationStorage for CompleteExternalAdapter {
     async fn create_event_subscription(
         &self,
         request: StorageEventSubscriptionCreate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
         fixture_result()
     }
 
     async fn update_event_subscription(
         &self,
         request: StorageEventSubscriptionUpdate,
-    ) -> Result<MutationOutcome<StorageEventSubscription>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
         fixture_result()
     }
 
     async fn delete_event_subscription(
         &self,
         request: StorageEventSubscriptionDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -1052,20 +1052,20 @@ impl EventDeliveryWorkerStorage for CompleteExternalAdapter {
     async fn claim_event_delivery_batch(
         &self,
         settings: hubuum_domain::EventDeliverySettings,
-    ) -> Result<EventDeliveryBatch, StorageError> {
+    ) -> Result<StorageEventDeliveryBatch, StorageError> {
         fixture_result()
     }
 
     async fn mark_event_delivery_succeeded(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
         fixture_result()
     }
 
     async fn mark_event_delivery_failed(
         &self,
-        claim: &EventDeliveryClaim,
+        claim: &StorageEventDeliveryClaim,
         settings: hubuum_domain::EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError> {
@@ -1085,7 +1085,9 @@ impl EventFanoutStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl EventHealthStorage for CompleteExternalAdapter {
-    async fn get_event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+    async fn get_event_delivery_health(
+        &self,
+    ) -> Result<StorageEventDeliveryHealthSnapshot, StorageError> {
         fixture_result()
     }
 }
@@ -1095,14 +1097,14 @@ impl EventRetentionStorage for CompleteExternalAdapter {
     async fn claim_event_retention_batch(
         &self,
         settings: EventRetentionSettings,
-    ) -> Result<Option<EventRetentionBatch>, StorageError> {
+    ) -> Result<Option<StorageEventRetentionBatch>, StorageError> {
         fixture_result()
     }
 
     async fn complete_event_retention_batch(
         &self,
-        batch_id: EventRetentionBatchId,
-    ) -> Result<EventRetentionSummary, StorageError> {
+        batch_id: StorageEventRetentionBatchId,
+    ) -> Result<StorageEventRetentionSummary, StorageError> {
         fixture_result()
     }
 }
@@ -1112,77 +1114,77 @@ impl HistoryStorage for CompleteExternalAdapter {
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,
-    ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
+    ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         fixture_result()
     }
 
     async fn list_collection_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<CollectionHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn get_collection_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn list_class_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ClassHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn get_class_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ClassHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageClassHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn list_object_history(
         &self,
-        query: ObjectHistoryListQuery,
-    ) -> Result<StoragePage<ObjectHistoryRecord>, StorageError> {
+        query: StorageObjectHistoryListQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn get_object_history_as_of(
         &self,
-        query: ObjectHistoryAsOfQuery,
-    ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
+        query: StorageObjectHistoryAsOfQuery,
+    ) -> Result<Option<StorageObjectHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn list_export_template_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<ExportTemplateHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn get_export_template_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn list_remote_target_history(
         &self,
-        query: HistoryListQuery,
-    ) -> Result<StoragePage<RemoteTargetHistoryRecord>, StorageError> {
+        query: StorageHistoryListQuery,
+    ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError> {
         fixture_result()
     }
 
     async fn get_remote_target_history_as_of(
         &self,
-        query: HistoryAsOfQuery,
-    ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
+        query: StorageHistoryAsOfQuery,
+    ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError> {
         fixture_result()
     }
 }
@@ -1196,22 +1198,26 @@ impl InventoryStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl MetricsStorage for CompleteExternalAdapter {
-    async fn get_inventory_metrics_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+    async fn get_inventory_metrics_snapshot(
+        &self,
+    ) -> Result<StorageInventoryGaugeSnapshot, StorageError> {
         fixture_result()
     }
 
-    async fn get_task_metrics_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+    async fn get_task_metrics_snapshot(&self) -> Result<StorageTaskGaugeSnapshot, StorageError> {
         fixture_result()
     }
 
-    async fn get_event_metrics_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+    async fn get_event_metrics_snapshot(
+        &self,
+    ) -> Result<StorageEventMetricsSnapshot, StorageError> {
         fixture_result()
     }
 }
 
 #[async_trait]
 impl OperationalStateStorage for CompleteExternalAdapter {
-    async fn get_readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+    async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         fixture_result()
     }
 
@@ -1219,19 +1225,21 @@ impl OperationalStateStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn get_task_queue_snapshot(&self) -> Result<OperationalTaskQueueSnapshot, StorageError> {
+    async fn get_task_queue_snapshot(
+        &self,
+    ) -> Result<StorageOperationalTaskQueueSnapshot, StorageError> {
         fixture_result()
     }
 
     async fn load_export_template_health(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateHealth>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateHealth>, StorageError> {
         fixture_result()
     }
 
     async fn load_export_templates_for_audit(
         &self,
-    ) -> Result<Vec<OperationalExportTemplateAuditEntry>, StorageError> {
+    ) -> Result<Vec<StorageOperationalExportTemplateAuditEntry>, StorageError> {
         fixture_result()
     }
 }
@@ -1250,21 +1258,21 @@ impl TokenRetentionStorage for CompleteExternalAdapter {
 impl UnifiedSearchStorage for CompleteExternalAdapter {
     async fn search_collections(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageCollection>, StorageError> {
         fixture_result()
     }
 
     async fn search_classes(
         &self,
-        query: UnifiedSearchQuery,
-    ) -> Result<Vec<StorageClass>, StorageError> {
+        query: StorageUnifiedSearchQuery,
+    ) -> Result<Vec<StorageClassWithCollection>, StorageError> {
         fixture_result()
     }
 
     async fn search_objects(
         &self,
-        query: UnifiedSearchQuery,
+        query: StorageUnifiedSearchQuery,
     ) -> Result<Vec<StorageObject>, StorageError> {
         fixture_result()
     }
@@ -1294,7 +1302,7 @@ impl GroupStorage for CompleteExternalAdapter {
         &self,
         command: StorageGroupCreate,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         fixture_result()
     }
 
@@ -1303,7 +1311,7 @@ impl GroupStorage for CompleteExternalAdapter {
         group_id: GroupId,
         update: StorageGroupUpdate,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StorageIdentityGroup>, StorageError> {
+    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         fixture_result()
     }
 
@@ -1311,7 +1319,7 @@ impl GroupStorage for CompleteExternalAdapter {
         &self,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<usize>, StorageError> {
+    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError> {
         fixture_result()
     }
 }
@@ -1337,7 +1345,7 @@ impl PrincipalStorage for CompleteExternalAdapter {
         principal_id: PrincipalId,
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
-    ) -> Result<crate::MutationOutcome<StoragePrincipalSettings>, StorageError> {
+    ) -> Result<crate::StorageMutationOutcome<StoragePrincipalSettings>, StorageError> {
         fixture_result()
     }
 }
@@ -1346,42 +1354,42 @@ impl PrincipalStorage for CompleteExternalAdapter {
 impl CollectionAuthorizationQueryStorage for CompleteExternalAdapter {
     async fn load_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError> {
         fixture_result()
     }
 
     async fn list_all_principal_collection_permissions(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
         fixture_result()
     }
 
     async fn list_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
         fixture_result()
     }
 
     async fn list_effective_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         fixture_result()
     }
 
     async fn list_visible_collections(
         &self,
-        query: AuthorizationCollectionVisibilityQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionVisibilityQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         fixture_result()
     }
 
     async fn has_group_collection_permission(
         &self,
-        query: AuthorizationGroupCollectionQuery,
+        query: StorageAuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError> {
         fixture_result()
     }
@@ -1390,21 +1398,21 @@ impl CollectionAuthorizationQueryStorage for CompleteExternalAdapter {
         &self,
         collection_id: CollectionId,
         group_id: GroupId,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
         fixture_result()
     }
 
     async fn load_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
         fixture_result()
     }
 
     async fn list_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationCollectionGroupsPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
         fixture_result()
     }
 }
@@ -1428,28 +1436,28 @@ impl RemoteTargetStorage for CompleteExternalAdapter {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         fixture_result()
     }
 
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         fixture_result()
     }
 
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }
@@ -1476,14 +1484,14 @@ impl TaskQueueStorage for CompleteExternalAdapter {
 
     async fn list_task_events(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         fixture_result()
     }
 
     async fn list_import_task_results(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         fixture_result()
     }
@@ -1718,7 +1726,7 @@ impl ImportStorage for CompleteExternalAdapter {
         &self,
         collection_id: CollectionId,
         name: &str,
-    ) -> Result<Option<StorageClassRecord>, StorageError> {
+    ) -> Result<Option<StorageClass>, StorageError> {
         fixture_result()
     }
 
@@ -1726,7 +1734,7 @@ impl ImportStorage for CompleteExternalAdapter {
         &self,
         collection_id: CollectionId,
         names: &[String],
-    ) -> Result<Vec<StorageClassRecord>, StorageError> {
+    ) -> Result<Vec<StorageClass>, StorageError> {
         fixture_result()
     }
 
@@ -1825,21 +1833,21 @@ impl ExportTemplateStorage for CompleteExternalAdapter {
     async fn create_export_template(
         &self,
         request: StorageExportTemplateCreate,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         fixture_result()
     }
 
     async fn replace_export_template(
         &self,
         request: StorageExportTemplateReplace,
-    ) -> Result<MutationOutcome<StorageExportTemplate>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         fixture_result()
     }
 
     async fn delete_export_template(
         &self,
         request: StorageExportTemplateDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         fixture_result()
     }
 }

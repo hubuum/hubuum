@@ -148,7 +148,9 @@ pub struct EventDeliveryHealthResponse {
 }
 
 impl EventDeliveryStatusCounts {
-    pub(crate) fn from_storage(snapshot: crate::storage::EventDeliveryStatusSnapshot) -> Self {
+    pub(crate) fn from_storage(
+        snapshot: crate::storage::StorageEventDeliveryStatusSnapshot,
+    ) -> Self {
         Self {
             total: snapshot.total(),
             pending: snapshot.pending(),
@@ -163,7 +165,7 @@ impl EventDeliveryStatusCounts {
 
 impl EventDeliveryHealthResponse {
     pub(crate) fn from_storage(
-        snapshot: crate::storage::EventDeliveryHealthSnapshot,
+        snapshot: crate::storage::StorageEventDeliveryHealthSnapshot,
         fanout_worker: EventWorkerHealth,
         delivery_worker: EventWorkerHealth,
     ) -> Self {
@@ -230,9 +232,9 @@ impl EventDeliveryHealthResponse {
 mod tests {
     use super::*;
     use hubuum_storage_core::{
-        EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-        EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-        EventSubscriptionHealthSnapshot,
+        StorageEventDeliveryHealthSnapshot, StorageEventDeliveryStatusSnapshot,
+        StorageEventFanoutSnapshot, StorageEventQueueSnapshot, StorageEventSinkHealthSnapshot,
+        StorageEventSinkSnapshot, StorageEventSubscriptionHealthSnapshot,
     };
 
     fn worker_health(workers_configured: usize) -> EventWorkerHealth {
@@ -251,19 +253,19 @@ mod tests {
 
     #[test]
     fn storage_health_snapshot_projects_into_the_existing_api_shape() {
-        let counts = EventDeliveryStatusSnapshot::new(28, 2, 3, 5, 7, 11, 13);
-        let queue = EventQueueSnapshot::new(counts, 17, Some(19));
-        let sink = EventSinkSnapshot::new(
+        let counts = StorageEventDeliveryStatusSnapshot::try_new(28, 2, 3, 5, 7, 11, 7).unwrap();
+        let queue = StorageEventQueueSnapshot::try_new(counts, 3, Some(19)).unwrap();
+        let sink = StorageEventSinkSnapshot::new(
             hubuum_domain::EventSinkId::new(23).unwrap(),
             "primary".to_string(),
             "webhook".to_string(),
             true,
         );
-        let snapshot = EventDeliveryHealthSnapshot::new(
-            EventFanoutSnapshot::new(29, 31, 37, Some(41)),
+        let snapshot = StorageEventDeliveryHealthSnapshot::new(
+            StorageEventFanoutSnapshot::try_new(68, 31, 37, Some(41)).unwrap(),
             queue,
-            vec![EventSinkHealthSnapshot::new(sink.clone(), 43, queue)],
-            vec![EventSubscriptionHealthSnapshot::new(
+            vec![StorageEventSinkHealthSnapshot::try_new(sink.clone(), 43, queue).unwrap()],
+            vec![StorageEventSubscriptionHealthSnapshot::new(
                 hubuum_domain::EventSubscriptionId::new(47).unwrap(),
                 "changes".to_string(),
                 hubuum_domain::CollectionId::new(53).unwrap(),
@@ -280,7 +282,7 @@ mod tests {
             response,
             EventDeliveryHealthResponse {
                 fanout: EventFanoutHealth {
-                    pending_events: 29,
+                    pending_events: 68,
                     in_flight_events: 31,
                     stale_claims: 37,
                     oldest_pending_age_seconds: Some(41),
@@ -294,9 +296,9 @@ mod tests {
                         succeeded: 5,
                         failed: 7,
                         dead: 11,
-                        retryable: 13,
+                        retryable: 7,
                     },
-                    stale_claims: 17,
+                    stale_claims: 3,
                     oldest_due_age_seconds: Some(19),
                     worker: worker_health(3),
                 },
@@ -313,9 +315,9 @@ mod tests {
                         succeeded: 5,
                         failed: 7,
                         dead: 11,
-                        retryable: 13,
+                        retryable: 7,
                     },
-                    stale_claims: 17,
+                    stale_claims: 3,
                     oldest_due_age_seconds: Some(19),
                 }],
                 subscriptions: vec![EventSubscriptionDeliveryHealth {
@@ -334,9 +336,9 @@ mod tests {
                         succeeded: 5,
                         failed: 7,
                         dead: 11,
-                        retryable: 13,
+                        retryable: 7,
                     },
-                    stale_claims: 17,
+                    stale_claims: 3,
                     oldest_due_age_seconds: Some(19),
                 }],
             }

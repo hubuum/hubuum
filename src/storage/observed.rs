@@ -7,10 +7,10 @@ use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use tracing::{Instrument, debug, debug_span, warn};
 
 use super::{
-    ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
-    ObjectStorage, StorageCapability, StorageClassCreate, StorageClassRecord,
-    StorageClassRelationCreate, StorageClassSelector, StorageClassUpdate, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageError, StorageObject,
+    ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
+    StorageCapability, StorageClass, StorageClassCreate, StorageClassRelationCreate,
+    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageError, StorageMutationOutcome, StorageObject,
     StorageObjectCreate, StorageObjectDataPatch, StorageObjectRelationCreateSelector,
     StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate, StorageObservation,
     StorageObserver, StoragePreparedClassRelation, StoragePreparedObjectRelation,
@@ -146,7 +146,7 @@ where
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collection,
             "create_collection",
@@ -160,7 +160,7 @@ where
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collection,
             "update_collection",
@@ -173,7 +173,7 @@ where
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Collection,
             "delete_collection",
@@ -211,7 +211,7 @@ where
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         self.call(
             StorageCapability::Collection,
             "move_collection",
@@ -242,7 +242,7 @@ where
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         self.call(
             StorageCapability::Class,
             "create_class",
@@ -256,7 +256,7 @@ where
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         self.call(
             StorageCapability::Class,
             "update_class",
@@ -269,7 +269,7 @@ where
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Class,
             "delete_class",
@@ -322,7 +322,7 @@ where
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Object,
             "create_object",
@@ -336,7 +336,7 @@ where
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Object,
             "update_object",
@@ -350,7 +350,7 @@ where
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         self.call(
             StorageCapability::Object,
             "patch_object_data",
@@ -363,7 +363,7 @@ where
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::Object,
             "delete_object",
@@ -440,7 +440,7 @@ where
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         self.call(
             StorageCapability::ClassRelation,
             "create_class_relation",
@@ -453,7 +453,7 @@ where
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::ClassRelation,
             "delete_class_relation",
@@ -496,7 +496,7 @@ where
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         self.call(
             StorageCapability::ObjectRelation,
             "create_object_relation",
@@ -509,7 +509,7 @@ where
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.call(
             StorageCapability::ObjectRelation,
             "delete_object_relation",

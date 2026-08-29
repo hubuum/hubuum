@@ -12,8 +12,9 @@ use hubuum_domain::{
 use hubuum_events_core::EventSequence;
 use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
-    EventDeliveryWorkItem, StorageEventDelivery, StorageEventDeliveryListQuery, StoragePage,
+    StorageEventDelivery, StorageEventDeliveryBatch, StorageEventDeliveryClaim,
+    StorageEventDeliveryListQuery, StorageEventDeliverySink, StorageEventDeliverySubscription,
+    StorageEventDeliveryWorkItem, StoragePage,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -58,8 +59,8 @@ fn invalid_delivery_value(
 
 fn delivery_subscription_value(
     row: &DeliverySubscriptionRow,
-) -> Result<EventDeliverySubscription, PostgresStorageError> {
-    EventDeliverySubscription::try_new(
+) -> Result<StorageEventDeliverySubscription, PostgresStorageError> {
+    StorageEventDeliverySubscription::try_new(
         EventSubscriptionId::new(row.id)?,
         row.name.clone(),
         row.routing.clone(),
@@ -67,8 +68,10 @@ fn delivery_subscription_value(
     .map_err(|error| invalid_delivery_value("event delivery subscription", error))
 }
 
-fn delivery_sink_value(row: &DeliverySinkRow) -> Result<EventDeliverySink, PostgresStorageError> {
-    EventDeliverySink::try_new(
+fn delivery_sink_value(
+    row: &DeliverySinkRow,
+) -> Result<StorageEventDeliverySink, PostgresStorageError> {
+    StorageEventDeliverySink::try_new(
         EventSinkId::new(row.id)?,
         row.name.clone(),
         row.kind.clone(),
@@ -135,22 +138,22 @@ struct ScheduledDeliveryWakeup {
 pub async fn claim_event_delivery_batch(
     runtime: &PostgresRuntime,
     settings: EventDeliverySettings,
-) -> Result<EventDeliveryBatch, PostgresStorageError> {
+) -> Result<StorageEventDeliveryBatch, PostgresStorageError> {
     runtime
         .with_transaction(
-            async |connection| -> Result<EventDeliveryBatch, PostgresStorageError> {
+            async |connection| -> Result<StorageEventDeliveryBatch, PostgresStorageError> {
                 if !maintenance_state_on_connection(connection)
                     .await?
                     .is_normal()
                 {
-                    return Ok(EventDeliveryBatch::default());
+                    return Ok(StorageEventDeliveryBatch::default());
                 }
 
                 let now = Utc::now().naive_utc();
                 let delivery_ids = select_due_delivery_ids(connection, now, settings).await?;
                 if delivery_ids.is_empty() {
                     let next_wakeup_in = next_wakeup_on_connection(connection, now).await?;
-                    return Ok(EventDeliveryBatch::new(Vec::new(), next_wakeup_in));
+                    return Ok(StorageEventDeliveryBatch::new(Vec::new(), next_wakeup_in));
                 }
 
                 let deliveries =
@@ -161,7 +164,7 @@ pub async fn claim_event_delivery_batch(
                     Some(connection),
                 )
                 .await?;
-                Ok(EventDeliveryBatch::new(work_items, None))
+                Ok(StorageEventDeliveryBatch::new(work_items, None))
             },
         )
         .await
@@ -193,12 +196,47 @@ pub(crate) async fn set_event_delivery_status_for_test(
 ) -> Result<(), PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
-            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
+            use crate::schema::event_deliveries::dsl::{
+                claim_token, event_deliveries, id, last_error, locked_until, status,
+            };
 
-            let updated = diesel::update(event_deliveries.filter(id.eq(delivery_id.id())))
-                .set(status.eq(delivery_status.as_str()))
-                .execute(connection)
-                .await?;
+            let target = event_deliveries.filter(id.eq(delivery_id.id()));
+            let updated = match delivery_status {
+                EventDeliveryStatus::Pending | EventDeliveryStatus::Succeeded => {
+                    diesel::update(target)
+                        .set((
+                            status.eq(delivery_status.as_str()),
+                            claim_token.eq::<Option<Uuid>>(None),
+                            locked_until.eq::<Option<NaiveDateTime>>(None),
+                            last_error.eq::<Option<String>>(None),
+                        ))
+                        .execute(connection)
+                        .await?
+                }
+                EventDeliveryStatus::Failed | EventDeliveryStatus::Dead => {
+                    diesel::update(target)
+                        .set((
+                            status.eq(delivery_status.as_str()),
+                            claim_token.eq::<Option<Uuid>>(None),
+                            locked_until.eq::<Option<NaiveDateTime>>(None),
+                            last_error.eq(Some("test delivery failure".to_string())),
+                        ))
+                        .execute(connection)
+                        .await?
+                }
+                EventDeliveryStatus::InFlight => {
+                    diesel::update(target)
+                        .set((
+                            status.eq(delivery_status.as_str()),
+                            claim_token.eq(Some(Uuid::new_v4())),
+                            locked_until
+                                .eq(Some(Utc::now().naive_utc() + chrono::Duration::minutes(1))),
+                            last_error.eq::<Option<String>>(None),
+                        ))
+                        .execute(connection)
+                        .await?
+                }
+            };
             if updated == 1 {
                 Ok(())
             } else {
@@ -293,7 +331,7 @@ async fn claim_delivery_ids(
 async fn load_work_items(
     connection: &mut PostgresConnection,
     deliveries: Vec<DeliveryRow>,
-) -> Result<Vec<EventDeliveryWorkItem>, PostgresStorageError> {
+) -> Result<Vec<StorageEventDeliveryWorkItem>, PostgresStorageError> {
     use crate::schema::{event_sinks, event_subscriptions, events};
 
     let event_ids = deliveries
@@ -368,7 +406,7 @@ async fn load_work_items(
                 )
             })?;
 
-            let claim = EventDeliveryClaim::try_new(
+            let claim = StorageEventDeliveryClaim::try_new(
                 EventDeliveryId::new(delivery.id)?,
                 delivery.attempts,
                 claim_token,
@@ -377,7 +415,7 @@ async fn load_work_items(
             let subscription = delivery_subscription_value(subscription)?;
             let sink = delivery_sink_value(sink)?;
 
-            Ok(EventDeliveryWorkItem::new(
+            Ok(StorageEventDeliveryWorkItem::new(
                 claim,
                 event.into_envelope(&principal_names)?,
                 subscription,
@@ -425,7 +463,7 @@ async fn next_wakeup_on_connection(
 /// Mark an in-flight claim as successfully delivered.
 pub async fn mark_event_delivery_succeeded(
     runtime: &PostgresRuntime,
-    claim: &EventDeliveryClaim,
+    claim: &StorageEventDeliveryClaim,
 ) -> Result<(), PostgresStorageError> {
     use crate::schema::event_deliveries::dsl::{
         claim_token, event_deliveries, id, last_error, locked_until, status,
@@ -461,7 +499,7 @@ pub async fn mark_event_delivery_succeeded(
 /// Record a failed delivery and schedule its next retry or terminal state.
 pub async fn mark_event_delivery_failed(
     runtime: &PostgresRuntime,
-    claim: &EventDeliveryClaim,
+    claim: &StorageEventDeliveryClaim,
     settings: EventDeliverySettings,
     error: &str,
 ) -> Result<(), PostgresStorageError> {
@@ -776,7 +814,7 @@ pub async fn claim_event_delivery_by_id(
     runtime: &PostgresRuntime,
     delivery_id: i64,
     settings: EventDeliverySettings,
-) -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+) -> Result<StorageEventDeliveryWorkItem, PostgresStorageError> {
     use crate::schema::event_deliveries::dsl::{
         attempts, claim_token, event_deliveries, event_id, id, locked_until, next_attempt_at,
         status, subscription_id,
@@ -784,7 +822,7 @@ pub async fn claim_event_delivery_by_id(
 
     runtime
         .with_transaction(
-            async |connection| -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+            async |connection| -> Result<StorageEventDeliveryWorkItem, PostgresStorageError> {
                 let now = Utc::now().naive_utc();
                 let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
                     PostgresStorageError::database(

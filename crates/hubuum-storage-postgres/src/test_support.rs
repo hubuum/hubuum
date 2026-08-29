@@ -17,10 +17,10 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{Action, EntityType, EventEntityId, EventSequence, NewEvent};
 use hubuum_storage_core::{
-    EventDeliveryWorkItem, StorageEventDelivery, StorageExportTaskArtifact, StorageIdentityGroup,
-    StorageRecordedEvent, StorageTask, StorageTaskClaim, StorageTaskClaimToken, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskProgress, StorageTaskScopeSnapshot,
-    StorageTaskStatus,
+    StorageEventDelivery, StorageEventDeliveryWorkItem, StorageExportTaskArtifact,
+    StorageIdentityGroup, StorageRecordedEvent, StorageTask, StorageTaskClaim,
+    StorageTaskClaimToken, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
 use tokio::time::{Duration, Instant, sleep};
 
@@ -612,10 +612,13 @@ pub async fn claim_task_by_id_with_lease(
     .returning(crate::operations::task_rows::TaskRow::as_returning())
     .get_result::<crate::operations::task_rows::TaskRow>(&mut connection)
     .await?;
-    Ok(StorageTaskClaim::try_new(
-        row.into_storage()?,
-        StorageTaskLease::new(task_id_value, StorageTaskClaimToken::new(token.to_string())),
-    )?)
+    crate::validate_persisted(
+        "task claim fixture",
+        StorageTaskClaim::try_new(
+            row.into_storage()?,
+            StorageTaskLease::new(task_id_value, StorageTaskClaimToken::new(token.to_string())),
+        ),
+    )
 }
 
 /// Persist one export artifact for a terminal task fixture.
@@ -1017,7 +1020,7 @@ pub async fn claim_event_delivery_by_id(
     pool: &PostgresPool,
     delivery_id: EventDeliveryId,
     settings: EventDeliverySettings,
-) -> Result<EventDeliveryWorkItem, PostgresStorageError> {
+) -> Result<StorageEventDeliveryWorkItem, PostgresStorageError> {
     crate::operations::event_delivery::claim_event_delivery_by_id(
         &crate::PostgresRuntime::unobserved(pool.clone()),
         delivery_id.id(),
@@ -1217,14 +1220,19 @@ pub async fn assign_task_lease(
     claim_token: uuid::Uuid,
     expires_at: NaiveDateTime,
 ) -> Result<(), PostgresStorageError> {
-    use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks};
+    use crate::schema::tasks::dsl::{
+        id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
+    };
 
     let mut connection = pool.get().await?;
+    let claimed_at = chrono::Utc::now().naive_utc();
     let updated = diesel::update(tasks.filter(id.eq(task_id.id())))
         .set((
             status.eq(status_value.as_str()),
+            started_at.eq(Some(claimed_at)),
             lease_token.eq(Some(claim_token)),
             lease_expires_at.eq(Some(expires_at)),
+            updated_at.eq(claimed_at),
         ))
         .execute(&mut connection)
         .await?;

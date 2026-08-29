@@ -75,7 +75,7 @@ async fn create_worker_test_task(
                     .expect("test idempotency key must be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .build(100)
+            .try_build(100)
             .expect("worker test task request should be valid"),
         )
         .await
@@ -522,7 +522,7 @@ async fn apply_import_operations(
                 .map(|operation| StorageImportPlanItem::new(index, operation))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let plan = StorageImportPlan::new(items).map_err(ApiError::from)?;
+    let plan = StorageImportPlan::try_new(items).map_err(ApiError::from)?;
     PostgresStorage::unobserved(context.pool.get_ref().clone())
         .apply_import_strict(plan)
         .await
@@ -1373,7 +1373,7 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
         crate::services::import_boundary::import_operation_to_storage(execution).unwrap();
 
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
-    let plan = StorageImportPlan::new(vec![StorageImportPlanItem::new(0, execution)]).unwrap();
+    let plan = StorageImportPlan::try_new(vec![StorageImportPlanItem::new(0, execution)]).unwrap();
     let result = backend.apply_import_strict(plan).await;
 
     assert!(result.is_err_and(|error| error.to_string().contains("not target collection")));
@@ -1454,7 +1454,7 @@ async fn imported_templates_use_effective_collection_loader(
     })
     .collect::<Result<Vec<_>, _>>()
     .unwrap();
-    let executions = StorageImportPlan::new(executions).unwrap();
+    let executions = StorageImportPlan::try_new(executions).unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     let result = backend.apply_import_strict(executions).await;
 
@@ -2567,7 +2567,7 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let operations = StorageImportPlan::new(operations).unwrap();
+    let operations = StorageImportPlan::try_new(operations).unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let collection = backend
@@ -2636,7 +2636,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let operations = StorageImportPlan::new(operations).unwrap();
+    let operations = StorageImportPlan::try_new(operations).unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(operations).await.unwrap();
     let updated = backend
@@ -2803,7 +2803,7 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
 
     backend
-        .apply_import_strict(StorageImportPlan::new(vec![operation]).unwrap())
+        .apply_import_strict(StorageImportPlan::try_new(vec![operation]).unwrap())
         .await
         .unwrap();
 
@@ -2871,7 +2871,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let operation = crate::services::import_boundary::import_operation_to_storage(execution)
         .map(|operation| StorageImportPlanItem::new(0, operation))
         .unwrap();
-    let plan = StorageImportPlan::new(vec![operation]).unwrap();
+    let plan = StorageImportPlan::try_new(vec![operation]).unwrap();
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(plan).await.unwrap();
     let resolved = backend

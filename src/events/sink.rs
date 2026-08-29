@@ -7,7 +7,7 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::storage::{EventDeliverySink, EventDeliverySubscription};
+use crate::storage::{StorageEventDeliverySink, StorageEventDeliverySubscription};
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
@@ -15,8 +15,8 @@ pub trait Sink: Send + Sync {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>>;
 }
 
@@ -74,8 +74,8 @@ impl SinkResolver for DefaultSinkResolver {
 }
 
 fn sink_delivery<'a>(
-    subscription: &'a EventDeliverySubscription,
-    sink: &'a EventDeliverySink,
+    subscription: &'a StorageEventDeliverySubscription,
+    sink: &'a StorageEventDeliverySink,
 ) -> SinkDelivery<'a> {
     SinkDelivery::new(
         sink.configuration(),
@@ -109,8 +109,8 @@ impl Sink for hubuum_event_sink_webhook::WebhookSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -125,8 +125,8 @@ impl Sink for hubuum_event_sink_amqp::AmqpSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -141,8 +141,8 @@ impl Sink for hubuum_event_sink_email::EmailSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -157,8 +157,8 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventDeliverySubscription,
-        sink: &'a EventDeliverySink,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -193,8 +193,8 @@ mod tests {
         fn deliver<'a>(
             &'a self,
             envelope: &'a EventEnvelope,
-            subscription: &'a EventDeliverySubscription,
-            sink: &'a EventDeliverySink,
+            subscription: &'a StorageEventDeliverySubscription,
+            sink: &'a StorageEventDeliverySink,
         ) -> BoxFuture<'a, Result<(), SinkError>> {
             async move {
                 assert_eq!(envelope.entity_type().as_str(), "collection");
@@ -223,13 +223,13 @@ mod tests {
             .schema_version(1)
             .try_build()
             .unwrap();
-        let subscription = EventDeliverySubscription::try_new(
+        let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )
         .unwrap();
-        let sink = EventDeliverySink::try_new(
+        let sink = StorageEventDeliverySink::try_new(
             hubuum_domain::EventSinkId::new(1).unwrap(),
             "sink",
             "webhook",

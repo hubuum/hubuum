@@ -102,7 +102,8 @@ fn principal_records_expose_typed_identity_through_accessors() {
         "adapter-user",
         IdentityScopeId::new(3).unwrap(),
     )
-    .build();
+    .try_build()
+    .unwrap();
 
     assert_eq!(principal.id().id(), 7);
     assert_eq!(principal.identity_scope_id().id(), 3);

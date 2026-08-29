@@ -3,7 +3,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind, PrincipalKind};
 use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    MutationOutcome, StoragePrincipal, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StorageMutationOutcome, StoragePrincipal, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation,
 };
 use serde_json::{Map, Value, json};
 
@@ -35,24 +36,27 @@ impl PrincipalRow {
             .kind
             .parse::<PrincipalKind>()
             .map_err(|error| PostgresStorageError::database(error.to_string()))?;
-        Ok(StoragePrincipal::builder(
-            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
-            kind,
-            self.name,
-            IdentityScopeId::new(self.identity_scope_id)?,
+        crate::validate_persisted(
+            "principal",
+            StoragePrincipal::builder(
+                record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+                kind,
+                self.name,
+                IdentityScopeId::new(self.identity_scope_id)?,
+            )
+            .provider_managed(self.provider_managed)
+            .settings(self.settings)
+            .external_subject(self.external_subject)
+            .last_sync_attempted_at(
+                self.last_sync_attempted_at
+                    .map(|timestamp| timestamp.and_utc()),
+            )
+            .last_sync_success_at(
+                self.last_sync_success_at
+                    .map(|timestamp| timestamp.and_utc()),
+            )
+            .try_build(),
         )
-        .provider_managed(self.provider_managed)
-        .settings(self.settings)
-        .external_subject(self.external_subject)
-        .last_sync_attempted_at(
-            self.last_sync_attempted_at
-                .map(|timestamp| timestamp.and_utc()),
-        )
-        .last_sync_success_at(
-            self.last_sync_success_at
-                .map(|timestamp| timestamp.and_utc()),
-        )
-        .build())
     }
 }
 
@@ -93,11 +97,14 @@ pub async fn get_principal_settings(
         })
         .await?;
     validate_stored_settings(principal_id, &document)?;
-    Ok(StoragePrincipalSettings::new(
-        hubuum_domain::PrincipalId::new(principal_id)?,
-        revision.into_domain(),
-        document,
-    ))
+    crate::validate_persisted(
+        "principal settings",
+        StoragePrincipalSettings::try_new(
+            hubuum_domain::PrincipalId::new(principal_id)?,
+            revision.into_domain(),
+            document,
+        ),
+    )
 }
 
 /// Atomically mutate principal settings and append their audit event.
@@ -106,11 +113,14 @@ pub async fn update_principal_settings(
     principal_id: i32,
     mutation: StoragePrincipalSettingsMutation,
     event_context: &EventContext,
-) -> Result<MutationOutcome<StoragePrincipalSettings>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StoragePrincipalSettings>, PostgresStorageError> {
     validate_principal_id(principal_id)?;
     runtime
         .with_transaction(
-            async |connection| -> Result<MutationOutcome<StoragePrincipalSettings>, PostgresStorageError> {
+            async |connection| -> Result<
+                StorageMutationOutcome<StoragePrincipalSettings>,
+                PostgresStorageError,
+            > {
                 let (kind, name, before, before_revision) = crate::schema::principals::table
                     .filter(crate::schema::principals::id.eq(principal_id))
                     .select((
@@ -135,11 +145,15 @@ pub async fn update_principal_settings(
                 let after = apply_settings_mutation(before.clone(), mutation)?;
 
                 if before == after {
-                    return Ok(MutationOutcome::unchanged(StoragePrincipalSettings::new(
-                        hubuum_domain::PrincipalId::new(principal_id)?,
-                        before_revision.into_domain(),
-                        after,
-                    )));
+                    let settings = crate::validate_persisted(
+                        "principal settings",
+                        StoragePrincipalSettings::try_new(
+                            hubuum_domain::PrincipalId::new(principal_id)?,
+                            before_revision.into_domain(),
+                            after,
+                        ),
+                    )?;
+                    return Ok(StorageMutationOutcome::unchanged(settings));
                 }
 
                 let after_revision = diesel::update(
@@ -164,13 +178,17 @@ pub async fn update_principal_settings(
                 .with_entity_name(name)
                 .with_before(json!({ "revision": before_revision, "settings": before }))
                 .with_after(json!({ "revision": after_revision, "settings": after }));
-                let audit = append_event(connection, &event).await?.into_audit_receipt()?;
+                let audit = append_event(connection, &event).await?.into_audit_receipt();
 
-                Ok(MutationOutcome::committed(StoragePrincipalSettings::new(
-                    hubuum_domain::PrincipalId::new(principal_id)?,
-                    after_revision.into_domain(),
-                    after,
-                ), audit))
+                let settings = crate::validate_persisted(
+                    "principal settings",
+                    StoragePrincipalSettings::try_new(
+                        hubuum_domain::PrincipalId::new(principal_id)?,
+                        after_revision.into_domain(),
+                        after,
+                    ),
+                )?;
+                Ok(StorageMutationOutcome::committed(settings, audit))
             },
         )
         .await

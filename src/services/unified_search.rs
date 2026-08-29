@@ -8,12 +8,13 @@ use crate::services::storage_boundary::{
     visibility,
 };
 use crate::storage::{
-    StorageContext, UnifiedSearchCursor, UnifiedSearchQuery, UnifiedSearchStorage, storage_handle,
+    StorageContext, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery, UnifiedSearchStorage,
+    storage_handle,
 };
 
-fn cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Option<UnifiedSearchCursor> {
+fn cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Option<StorageUnifiedSearchCursor> {
     cursor.map(|cursor| {
-        UnifiedSearchCursor::new(
+        StorageUnifiedSearchCursor::new(
             cursor.rank,
             cursor.name.clone(),
             resource_id_to_storage(cursor.id),
@@ -28,8 +29,8 @@ fn query(
     spec: &UnifiedSearchSpec,
     cursor: Option<&UnifiedSearchCursorToken>,
     search_extended_document: bool,
-) -> Result<UnifiedSearchQuery, ApiError> {
-    Ok(UnifiedSearchQuery::new(
+) -> Result<StorageUnifiedSearchQuery, ApiError> {
+    Ok(StorageUnifiedSearchQuery::new(
         spec.query.clone(),
         spec.limit_per_kind,
         visibility(principal_id, is_admin, scope)?,

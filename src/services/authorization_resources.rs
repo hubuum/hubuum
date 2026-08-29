@@ -5,16 +5,16 @@ use crate::models::{HubuumClassRelation, HubuumObjectRelation};
 use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
 use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
-    AuthorizationDataStorage, AuthorizationObjectResource, AuthorizationResourceIds,
+    AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
     StorageContext, storage_handle,
 };
 
 async fn load_classes(
     backend: &impl StorageContext,
     class_ids: impl IntoIterator<Item = i32>,
-) -> Result<HashMap<i32, crate::storage::AuthorizationClassResource>, ApiError> {
+) -> Result<HashMap<i32, crate::storage::StorageAuthorizationClassResource>, ApiError> {
     Ok(storage_handle(backend)
-        .list_authorization_classes(AuthorizationResourceIds::new(
+        .list_authorization_classes(StorageAuthorizationResourceIds::new(
             class_ids.into_iter().map(resource_id_to_storage),
         ))
         .await?
@@ -26,9 +26,9 @@ async fn load_classes(
 async fn load_objects(
     backend: &impl StorageContext,
     object_ids: impl IntoIterator<Item = i32>,
-) -> Result<HashMap<i32, AuthorizationObjectResource>, ApiError> {
+) -> Result<HashMap<i32, StorageAuthorizationObjectResource>, ApiError> {
     Ok(storage_handle(backend)
-        .list_authorization_objects(AuthorizationResourceIds::new(
+        .list_authorization_objects(StorageAuthorizationResourceIds::new(
             object_ids.into_iter().map(resource_id_to_storage),
         ))
         .await?

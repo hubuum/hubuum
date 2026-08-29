@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
-    ClassRelationStorage, ClassStorage, CollectionStorage, MutationOutcome, ObjectRelationStorage,
-    ObjectStorage, StorageClassCreate, StorageClassRecord, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageCollection, StorageCollectionCreate,
-    StorageCollectionUpdate, StorageError, StorageObject, StorageObjectCreate,
+    ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
+    StorageClass, StorageClassCreate, StorageClassRelationCreate, StorageClassSelector,
+    StorageClassUpdate, StorageCollection, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageError, StorageMutationOutcome, StorageObject, StorageObjectCreate,
     StorageObjectDataPatch, StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
     StorageObjectSelector, StorageObjectUpdate, StoragePreparedClassRelation,
     StoragePreparedObjectRelation, StorageResolvedClass, StorageResolvedClassRelation,
@@ -77,7 +77,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::create_collection_on(&mut connection, command, context)
             .await
@@ -89,7 +89,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::update_collection_on(
             &mut connection,
@@ -105,7 +105,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::delete_collection_on(&mut connection, id.id(), context)
             .await
@@ -137,7 +137,7 @@ impl CollectionStorage for PostgresTransaction<'_> {
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::collection::move_collection_on(
             &mut connection,
@@ -166,7 +166,7 @@ impl ClassStorage for PostgresTransaction<'_> {
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::class::create_class_on(&mut connection, command, context)
             .await
@@ -178,7 +178,7 @@ impl ClassStorage for PostgresTransaction<'_> {
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::class::update_class_on(&mut connection, target, changes, context)
             .await
@@ -189,7 +189,7 @@ impl ClassStorage for PostgresTransaction<'_> {
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::class::delete_class_on(&mut connection, target, context)
             .await
@@ -244,7 +244,7 @@ impl ClassRelationStorage for PostgresTransaction<'_> {
         &self,
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedClassRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::relation::create_class_relation_on(&mut connection, prepared, context)
             .await
@@ -255,7 +255,7 @@ impl ClassRelationStorage for PostgresTransaction<'_> {
         &self,
         target: &StorageResolvedClassRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::relation::delete_class_relation_on(&mut connection, target, context)
             .await
@@ -287,7 +287,7 @@ impl ObjectStorage for PostgresTransaction<'_> {
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::create_object_on(
             &self.runtime,
@@ -305,7 +305,7 @@ impl ObjectStorage for PostgresTransaction<'_> {
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::update_object_on(
             &self.runtime,
@@ -323,7 +323,7 @@ impl ObjectStorage for PostgresTransaction<'_> {
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::patch_object_data_on(
             &self.runtime,
@@ -340,7 +340,7 @@ impl ObjectStorage for PostgresTransaction<'_> {
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::delete_object_on(&mut connection, target, context)
             .await
@@ -406,7 +406,7 @@ impl ObjectRelationStorage for PostgresTransaction<'_> {
         &self,
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageResolvedObjectRelation>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::relation::create_object_relation_on(&mut connection, prepared, context)
             .await
@@ -417,7 +417,7 @@ impl ObjectRelationStorage for PostgresTransaction<'_> {
         &self,
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::relation::delete_object_relation_on(&mut connection, target, context)
             .await

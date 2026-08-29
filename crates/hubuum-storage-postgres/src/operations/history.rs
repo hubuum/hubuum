@@ -6,12 +6,13 @@ use hubuum_domain::{
 };
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPrincipalName,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    StorageClassRecord, StorageCollection, StorageExportTemplate, StorageExportTemplateDefinition,
-    StorageHistoryOperation, StorageObject, StoragePage, StorageRemoteHttpMethod,
-    StorageRemoteTarget, StorageRemoteTargetDefinition, StorageRemoteTargetPolicy,
+    StorageClass, StorageClassHistoryRecord, StorageCollection, StorageCollectionHistoryRecord,
+    StorageExportTemplate, StorageExportTemplateDefinition, StorageExportTemplateHistoryRecord,
+    StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryListQuery,
+    StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryPrincipalName, StorageObject,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryRecord,
+    StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
+    StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod, StorageRemoteTargetPolicy,
     StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
@@ -170,10 +171,16 @@ fn project_history_metadata(
     valid_to: Option<DateTime<Utc>>,
     history_entry_id: HistoryRecordId,
     revision: ResourceRevision,
-) -> Result<HistoryMetadata, PostgresStorageError> {
+) -> Result<StorageHistoryMetadata, PostgresStorageError> {
     crate::validate_persisted(
         "history metadata",
-        HistoryMetadata::try_new(operation, valid_from, valid_to, history_entry_id, revision),
+        StorageHistoryMetadata::try_new(
+            operation,
+            valid_from,
+            valid_to,
+            history_entry_id,
+            revision,
+        ),
     )
 }
 
@@ -189,29 +196,35 @@ fn history_operation(value: &str) -> Result<StorageHistoryOperation, PostgresSto
     }
 }
 
-impl TryFrom<CollectionHistoryRow> for CollectionHistoryRecord {
+impl TryFrom<CollectionHistoryRow> for StorageCollectionHistoryRecord {
     type Error = PostgresStorageError;
 
     fn try_from(row: CollectionHistoryRow) -> Result<Self, Self::Error> {
         let metadata = metadata!(row)?;
-        let record = StorageCollection::new(
-            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
-            row.name,
-            row.description,
-            row.parent_collection_id
-                .map(CollectionId::new)
-                .transpose()?,
-        );
-        Ok(Self::new(record, metadata))
+        let record = crate::validate_persisted(
+            "collection history record",
+            StorageCollection::try_new(
+                record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
+                row.name,
+                row.description,
+                row.parent_collection_id
+                    .map(CollectionId::new)
+                    .transpose()?,
+            ),
+        )?;
+        crate::validate_persisted(
+            "collection history projection",
+            Self::try_new(record, metadata),
+        )
     }
 }
 
-impl TryFrom<ClassHistoryRow> for ClassHistoryRecord {
+impl TryFrom<ClassHistoryRow> for StorageClassHistoryRecord {
     type Error = PostgresStorageError;
 
     fn try_from(row: ClassHistoryRow) -> Result<Self, Self::Error> {
         let metadata = metadata!(row)?;
-        let record = StorageClassRecord::builder(
+        let record = StorageClass::builder(
             record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
             CollectionId::new(row.collection_id)?,
@@ -220,11 +233,11 @@ impl TryFrom<ClassHistoryRow> for ClassHistoryRecord {
         .json_schema(row.json_schema)
         .validate_schema(row.validate_schema)
         .build();
-        Ok(Self::new(record, metadata))
+        crate::validate_persisted("class history projection", Self::try_new(record, metadata))
     }
 }
 
-impl TryFrom<ObjectHistoryRow> for ObjectHistoryRecord {
+impl TryFrom<ObjectHistoryRow> for StorageObjectHistoryRecord {
     type Error = PostgresStorageError;
 
     fn try_from(row: ObjectHistoryRow) -> Result<Self, Self::Error> {
@@ -237,11 +250,11 @@ impl TryFrom<ObjectHistoryRow> for ObjectHistoryRecord {
             row.data,
             row.description,
         );
-        Ok(Self::new(record, metadata))
+        crate::validate_persisted("object history projection", Self::try_new(record, metadata))
     }
 }
 
-impl TryFrom<ExportTemplateHistoryRow> for ExportTemplateHistoryRecord {
+impl TryFrom<ExportTemplateHistoryRow> for StorageExportTemplateHistoryRecord {
     type Error = PostgresStorageError;
 
     fn try_from(row: ExportTemplateHistoryRow) -> Result<Self, Self::Error> {
@@ -264,11 +277,14 @@ impl TryFrom<ExportTemplateHistoryRow> for ExportTemplateHistoryRecord {
             row.name,
             definition,
         );
-        Ok(Self::new(record, metadata))
+        crate::validate_persisted(
+            "export-template history projection",
+            Self::try_new(record, metadata),
+        )
     }
 }
 
-impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
+impl TryFrom<RemoteTargetHistoryRow> for StorageRemoteTargetHistoryRecord {
     type Error = PostgresStorageError;
 
     fn try_from(row: RemoteTargetHistoryRow) -> Result<Self, Self::Error> {
@@ -297,7 +313,7 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
             row.description,
             StorageRemoteTargetTransport::try_new(
                 row.method
-                    .parse::<StorageRemoteHttpMethod>()
+                    .parse::<StorageRemoteTargetHttpMethod>()
                     .map_err(|error| {
                         PostgresStorageError::invalid_persisted_value(
                             "remote target history HTTP method",
@@ -331,14 +347,17 @@ impl TryFrom<RemoteTargetHistoryRow> for RemoteTargetHistoryRecord {
             row.name,
             definition,
         );
-        Ok(Self::new(record, metadata))
+        crate::validate_persisted(
+            "remote-target history projection",
+            Self::try_new(record, metadata),
+        )
     }
 }
 
 pub async fn resolve_principal_names(
     runtime: &PostgresRuntime,
     mut principal_ids: Vec<PrincipalId>,
-) -> Result<Vec<HistoryPrincipalName>, PostgresStorageError> {
+) -> Result<Vec<StorageHistoryPrincipalName>, PostgresStorageError> {
     principal_ids.sort_unstable();
     principal_ids.dedup();
     if principal_ids.is_empty() {
@@ -360,7 +379,7 @@ pub async fn resolve_principal_names(
                 .map_err(PostgresStorageError::from)?
                 .into_iter()
                 .map(|(principal_id, name)| {
-                    Ok::<_, PostgresStorageError>(HistoryPrincipalName::new(
+                    Ok::<_, PostgresStorageError>(StorageHistoryPrincipalName::new(
                         PrincipalId::new(principal_id)?,
                         name,
                     ))
@@ -413,10 +432,10 @@ fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorag
     Ok(())
 }
 
-fn visible_collection_ids(scope: &HistoryCollectionScope) -> Option<Vec<i32>> {
+fn visible_collection_ids(scope: &StorageHistoryCollectionScope) -> Option<Vec<i32>> {
     match scope {
-        HistoryCollectionScope::All => None,
-        HistoryCollectionScope::Visible(ids) => {
+        StorageHistoryCollectionScope::All => None,
+        StorageHistoryCollectionScope::Visible(ids) => {
             Some(ids.iter().copied().map(CollectionId::id).collect())
         }
     }
@@ -434,7 +453,7 @@ macro_rules! history_operations {
     ) => {
         pub async fn $list_fn(
             runtime: &PostgresRuntime,
-            query: HistoryListQuery,
+            query: StorageHistoryListQuery,
         ) -> Result<StoragePage<$record>, PostgresStorageError> {
             let (entity_id, options, scope) = query.into_parts();
             let visible_collection_ids = visible_collection_ids(&scope);
@@ -491,7 +510,7 @@ macro_rules! history_operations {
 
         pub async fn $as_of_fn(
             runtime: &PostgresRuntime,
-            query: HistoryAsOfQuery,
+            query: StorageHistoryAsOfQuery,
         ) -> Result<Option<$record>, PostgresStorageError> {
             let (entity_id, at) = query.into_parts();
             runtime
@@ -521,7 +540,7 @@ history_operations!(
     collections_history,
     "collections_history",
     CollectionHistoryRow,
-    CollectionHistoryRecord,
+    StorageCollectionHistoryRecord,
     id
 );
 
@@ -531,7 +550,7 @@ history_operations!(
     hubuumclass_history,
     "hubuumclass_history",
     ClassHistoryRow,
-    ClassHistoryRecord,
+    StorageClassHistoryRecord,
     collection_id
 );
 
@@ -541,7 +560,7 @@ history_operations!(
     export_templates_history,
     "export_templates_history",
     ExportTemplateHistoryRow,
-    ExportTemplateHistoryRecord,
+    StorageExportTemplateHistoryRecord,
     collection_id
 );
 
@@ -551,14 +570,14 @@ history_operations!(
     remote_targets_history,
     "remote_targets_history",
     RemoteTargetHistoryRow,
-    RemoteTargetHistoryRecord,
+    StorageRemoteTargetHistoryRecord,
     collection_id
 );
 
 pub async fn list_object_history(
     runtime: &PostgresRuntime,
-    query: ObjectHistoryListQuery,
-) -> Result<StoragePage<ObjectHistoryRecord>, PostgresStorageError> {
+    query: StorageObjectHistoryListQuery,
+) -> Result<StoragePage<StorageObjectHistoryRecord>, PostgresStorageError> {
     let (object_id, class_id, options, scope) = query.into_parts();
     let visible_collection_ids = visible_collection_ids(&scope);
     validate_history_filters(&options)?;
@@ -607,7 +626,7 @@ pub async fn list_object_history(
                 .load::<ObjectHistoryRow>(connection)
                 .await?
                 .into_iter()
-                .map(ObjectHistoryRecord::try_from)
+                .map(StorageObjectHistoryRecord::try_from)
                 .collect::<Result<Vec<_>, _>>()?;
             crate::persisted_page(rows, total)
         })
@@ -616,8 +635,8 @@ pub async fn list_object_history(
 
 pub async fn get_object_history_as_of(
     runtime: &PostgresRuntime,
-    query: ObjectHistoryAsOfQuery,
-) -> Result<Option<ObjectHistoryRecord>, PostgresStorageError> {
+    query: StorageObjectHistoryAsOfQuery,
+) -> Result<Option<StorageObjectHistoryRecord>, PostgresStorageError> {
     let (object_id, class_id, at) = query.into_parts();
     runtime
         .with_connection(async |connection| {
@@ -633,7 +652,7 @@ pub async fn get_object_history_as_of(
                 .await
                 .optional()
                 .map_err(PostgresStorageError::from)?
-                .map(ObjectHistoryRecord::try_from)
+                .map(StorageObjectHistoryRecord::try_from)
                 .transpose()
         })
         .await

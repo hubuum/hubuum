@@ -5,9 +5,9 @@ use diesel::{SelectableHelper, dsl::count_star};
 use diesel_async::RunQueryDsl;
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    AuthorizationPermission, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
-    ComputedObjectPage, ComputedObjectProjection, ComputedObjectVisibility, StorageObject,
-    StorageVisibility,
+    StorageAuthorizationPermission, StorageComputedObjectEnrichmentQuery,
+    StorageComputedObjectListQuery, StorageComputedObjectPage, StorageComputedObjectProjection,
+    StorageComputedObjectVisibility, StorageObject, StorageVisibility,
 };
 
 use crate::operations::catalog::{apply_object_filters, object_query};
@@ -24,13 +24,13 @@ pub(crate) mod query;
 /// repeatable-read snapshot.
 pub async fn list_computed_objects(
     runtime: &PostgresRuntime,
-    query: ComputedObjectListQuery,
-) -> Result<ComputedObjectPage, PostgresStorageError> {
+    query: StorageComputedObjectListQuery,
+) -> Result<StorageComputedObjectPage, PostgresStorageError> {
     let include_total = query.options().include_total();
     let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
     let class_id = class_id.id();
     let personal_owner_id = personal_owner_id.map(|id| id.id());
-    let (mut request_options, mut options) = options.into_parts();
+    let (mut request_options, mut options, effective_page_limit) = options.into_parts();
     // The execution copy includes pagination tie-breakers. Enforce the public
     // limit against only the sort fields supplied by the caller.
     if request_options
@@ -59,7 +59,7 @@ pub async fn list_computed_objects(
             let Some(visibility) = visibility else {
                 return crate::validate_persisted(
                     "computed object page",
-                    ComputedObjectPage::try_new(
+                    StorageComputedObjectPage::try_new(
                         Vec::new(),
                         include_total.then_some(0),
                         Vec::new(),
@@ -70,7 +70,7 @@ pub async fn list_computed_objects(
             if authorized_object_ids.as_ref().is_some_and(Vec::is_empty) {
                 return crate::validate_persisted(
                     "computed object page",
-                    ComputedObjectPage::try_new(
+                    StorageComputedObjectPage::try_new(
                         Vec::new(),
                         include_total.then_some(0),
                         Vec::new(),
@@ -82,8 +82,8 @@ pub async fn list_computed_objects(
             let permissions = required_permissions(
                 &options,
                 [
-                    AuthorizationPermission::ReadCollection,
-                    AuthorizationPermission::ReadObject,
+                    StorageAuthorizationPermission::ReadCollection,
+                    StorageAuthorizationPermission::ReadObject,
                 ],
             )?;
             let collection_ids =
@@ -149,7 +149,7 @@ pub async fn list_computed_objects(
                 .into_iter()
                 .map(ObjectRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
-            let projected = projected_objects(&objects, projection);
+            let projected = projected_objects(&objects, projection, effective_page_limit);
             let computed = enrichment::enrich_with_query_snapshot(
                 &snapshot_runtime,
                 connection,
@@ -161,7 +161,7 @@ pub async fn list_computed_objects(
 
             crate::validate_persisted(
                 "computed object page",
-                ComputedObjectPage::try_new(objects, total, computed, resolved_options),
+                StorageComputedObjectPage::try_new(objects, total, computed, resolved_options),
             )
         })
         .await
@@ -171,22 +171,22 @@ pub async fn list_computed_objects(
 /// and best-effort read repair, without exposing PostgreSQL to consumers.
 pub async fn enrich_objects_with_computed(
     runtime: &PostgresRuntime,
-    query: ComputedObjectEnrichmentQuery,
+    query: StorageComputedObjectEnrichmentQuery,
 ) -> Result<Vec<hubuum_storage_core::StorageComputedObject>, PostgresStorageError> {
     enrichment::enrich_objects(runtime, query).await
 }
 
 fn query_visibility(
     options: &QueryOptions,
-    visibility: ComputedObjectVisibility,
+    visibility: StorageComputedObjectVisibility,
 ) -> Result<(Option<StorageVisibility>, Option<Vec<i32>>), PostgresStorageError> {
     match visibility {
-        ComputedObjectVisibility::Storage(visibility) => {
+        StorageComputedObjectVisibility::Storage(visibility) => {
             let permissions = required_permissions(
                 options,
                 [
-                    AuthorizationPermission::ReadCollection,
-                    AuthorizationPermission::ReadObject,
+                    StorageAuthorizationPermission::ReadCollection,
+                    StorageAuthorizationPermission::ReadObject,
                 ],
             )?;
             if !visibility.allows_permissions(&permissions) {
@@ -194,14 +194,14 @@ fn query_visibility(
             }
             Ok((Some(visibility), None))
         }
-        ComputedObjectVisibility::AuthorizedObjectIds {
+        StorageComputedObjectVisibility::AuthorizedObjectIds {
             principal_id,
             object_ids,
         } => Ok((
             Some(StorageVisibility::new(
                 principal_id,
                 true,
-                None::<[AuthorizationPermission; 0]>,
+                None::<[StorageAuthorizationPermission; 0]>,
                 None,
             )),
             Some(
@@ -243,19 +243,20 @@ fn filtered_object_query<'query>(
 
 fn projected_objects(
     objects: &[StorageObject],
-    projection: ComputedObjectProjection,
+    projection: StorageComputedObjectProjection,
+    effective_page_limit: usize,
 ) -> Vec<StorageObject> {
     match projection {
-        ComputedObjectProjection::None => Vec::new(),
-        ComputedObjectProjection::All => objects.to_vec(),
-        ComputedObjectProjection::CursorBoundary { page_limit } if objects.len() > page_limit => {
+        StorageComputedObjectProjection::None => Vec::new(),
+        StorageComputedObjectProjection::All => objects.to_vec(),
+        StorageComputedObjectProjection::CursorBoundary if objects.len() > effective_page_limit => {
             objects
-                .get(page_limit.saturating_sub(1))
+                .get(effective_page_limit.saturating_sub(1))
                 .cloned()
                 .into_iter()
                 .collect()
         }
-        ComputedObjectProjection::CursorBoundary { .. } => Vec::new(),
+        StorageComputedObjectProjection::CursorBoundary => Vec::new(),
     }
 }
 
@@ -288,7 +289,8 @@ mod tests {
     fn cursor_projection_selects_the_last_returned_object() {
         let projected = projected_objects(
             &[object(1), object(2), object(3)],
-            ComputedObjectProjection::CursorBoundary { page_limit: 2 },
+            StorageComputedObjectProjection::CursorBoundary,
+            2,
         );
 
         assert_eq!(projected.len(), 1);
@@ -300,7 +302,8 @@ mod tests {
         assert!(
             projected_objects(
                 &[object(1), object(2)],
-                ComputedObjectProjection::CursorBoundary { page_limit: 2 }
+                StorageComputedObjectProjection::CursorBoundary,
+                2,
             )
             .is_empty()
         );

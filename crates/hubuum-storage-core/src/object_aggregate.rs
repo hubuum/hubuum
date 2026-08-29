@@ -10,19 +10,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::page::validate_page_total;
-use crate::{AuthorizationPermission, StorageError, StorageVisibility};
+use crate::{
+    StorageAuthorizationPermission, StorageError, StorageValidationError, StorageVisibility,
+};
 
 /// Authorization strategy for one object-aggregate operation.
 ///
 /// The delegated variant carries the required authorizer so callers cannot
 /// select delegated authorization without supplying it, or attach an
 /// authorizer to storage-owned authorization.
-pub enum ObjectAggregateAuthorization<'authorizer> {
+pub enum StorageObjectAggregateAuthorization<'authorizer> {
     Storage,
     Delegated(&'authorizer dyn ObjectAggregateAuthorizer),
 }
 
-impl fmt::Debug for ObjectAggregateAuthorization<'_> {
+impl fmt::Debug for StorageObjectAggregateAuthorization<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Storage => "Storage",
@@ -72,7 +74,10 @@ pub struct StorageComputedFieldSelector {
 }
 
 impl StorageComputedFieldSelector {
-    pub fn new(scope: ComputedFieldScope, key: impl Into<String>) -> Result<Self, StorageError> {
+    pub fn try_new(
+        scope: ComputedFieldScope,
+        key: impl Into<String>,
+    ) -> Result<Self, StorageError> {
         let key = key.into();
         let valid = !key.is_empty()
             && key.len() <= 64
@@ -156,11 +161,11 @@ impl FromStr for StorageObjectAggregateDimension {
                 .map_err(|error| StorageError::invalid_input(error.to_string()));
         }
         if let Some(key) = value.strip_prefix("computed.shared.") {
-            return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
+            return StorageComputedFieldSelector::try_new(ComputedFieldScope::Shared, key)
                 .map(Self::Computed);
         }
         if let Some(key) = value.strip_prefix("computed.personal.") {
-            return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
+            return StorageComputedFieldSelector::try_new(ComputedFieldScope::Personal, key)
                 .map(Self::Computed);
         }
         Err(StorageError::invalid_input(format!(
@@ -239,11 +244,11 @@ impl FromStr for StorageObjectAggregateMeasureField {
                 .map_err(|error| StorageError::invalid_input(error.to_string()));
         }
         if let Some(key) = value.strip_prefix("computed.shared.") {
-            return StorageComputedFieldSelector::new(ComputedFieldScope::Shared, key)
+            return StorageComputedFieldSelector::try_new(ComputedFieldScope::Shared, key)
                 .map(Self::Computed);
         }
         if let Some(key) = value.strip_prefix("computed.personal.") {
-            return StorageComputedFieldSelector::new(ComputedFieldScope::Personal, key)
+            return StorageComputedFieldSelector::try_new(ComputedFieldScope::Personal, key)
                 .map(Self::Computed);
         }
         Err(StorageError::invalid_input(format!(
@@ -356,7 +361,7 @@ pub struct StorageObjectAggregateSpec {
 }
 
 impl StorageObjectAggregateSpec {
-    pub fn new(
+    pub fn try_new(
         dimensions: impl IntoIterator<Item = StorageObjectAggregateDimension>,
         measures: impl IntoIterator<Item = StorageObjectAggregateMeasure>,
         sort: StorageObjectAggregateSort,
@@ -600,19 +605,19 @@ pub struct StorageObjectAggregateCursor {
 }
 
 impl StorageObjectAggregateCursor {
-    pub fn try_new(sort_key: Value, object_count: i64) -> Result<Self, StorageError> {
+    pub fn try_new(sort_key: Value, object_count: i64) -> Result<Self, StorageValidationError> {
         let Some(dimension_values) = sort_key.as_array() else {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate cursor sort key must be an array",
             ));
         };
         if dimension_values.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate cursor has too many dimension values",
             ));
         }
         if object_count <= 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate cursor object count must be positive",
             ));
         }
@@ -645,37 +650,37 @@ impl fmt::Debug for StorageObjectAggregateSpec {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct ObjectAggregateStorageQuery {
+pub struct StorageObjectAggregateQuery {
     target: StorageObjectAggregateTarget,
     options: QueryOptions,
     spec: StorageObjectAggregateSpec,
     personal_owner_id: Option<PrincipalId>,
-    required_permissions: Vec<AuthorizationPermission>,
+    required_permissions: Vec<StorageAuthorizationPermission>,
     visibility: StorageVisibility,
     page_limit: usize,
     cursor_max_encoded_bytes: usize,
 }
 
-pub struct ObjectAggregateStorageQueryBuilder {
+pub struct StorageObjectAggregateQueryBuilder {
     target: StorageObjectAggregateTarget,
     options: QueryOptions,
     spec: StorageObjectAggregateSpec,
     personal_owner_id: Option<PrincipalId>,
-    required_permissions: Option<Vec<AuthorizationPermission>>,
+    required_permissions: Option<Vec<StorageAuthorizationPermission>>,
     visibility: StorageVisibility,
     page_limit: Option<usize>,
     cursor_max_encoded_bytes: Option<usize>,
 }
 
-impl ObjectAggregateStorageQuery {
+impl StorageObjectAggregateQuery {
     #[must_use]
     pub const fn builder(
         target: StorageObjectAggregateTarget,
         options: QueryOptions,
         spec: StorageObjectAggregateSpec,
         visibility: StorageVisibility,
-    ) -> ObjectAggregateStorageQueryBuilder {
-        ObjectAggregateStorageQueryBuilder {
+    ) -> StorageObjectAggregateQueryBuilder {
+        StorageObjectAggregateQueryBuilder {
             target,
             options,
             spec,
@@ -708,7 +713,7 @@ impl ObjectAggregateStorageQuery {
     }
 
     #[must_use]
-    pub fn required_permissions(&self) -> &[AuthorizationPermission] {
+    pub fn required_permissions(&self) -> &[StorageAuthorizationPermission] {
         &self.required_permissions
     }
 
@@ -728,7 +733,7 @@ impl ObjectAggregateStorageQuery {
     }
 }
 
-impl ObjectAggregateStorageQueryBuilder {
+impl StorageObjectAggregateQueryBuilder {
     #[must_use]
     pub const fn personal_owner_id(mut self, personal_owner_id: Option<PrincipalId>) -> Self {
         self.personal_owner_id = personal_owner_id;
@@ -738,7 +743,7 @@ impl ObjectAggregateStorageQueryBuilder {
     #[must_use]
     pub fn required_permissions(
         mut self,
-        required_permissions: impl IntoIterator<Item = AuthorizationPermission>,
+        required_permissions: impl IntoIterator<Item = StorageAuthorizationPermission>,
     ) -> Self {
         self.required_permissions = Some(required_permissions.into_iter().collect());
         self
@@ -756,10 +761,12 @@ impl ObjectAggregateStorageQueryBuilder {
         self
     }
 
-    pub fn build(self) -> Result<ObjectAggregateStorageQuery, StorageError> {
-        let required_permissions = self.required_permissions.ok_or_else(|| {
+    pub fn try_build(self) -> Result<StorageObjectAggregateQuery, StorageError> {
+        let mut required_permissions = self.required_permissions.ok_or_else(|| {
             StorageError::internal("Object aggregate query is missing required permissions")
         })?;
+        required_permissions.sort_unstable();
+        required_permissions.dedup();
         if required_permissions.is_empty() {
             return Err(StorageError::invalid_input(
                 "Object aggregate query requires at least one permission",
@@ -773,6 +780,15 @@ impl ObjectAggregateStorageQueryBuilder {
                 "Object aggregate page limit must be positive",
             ));
         }
+        if self
+            .options
+            .limit()
+            .is_some_and(|requested_limit| page_limit > requested_limit)
+        {
+            return Err(StorageError::invalid_input(
+                "Object aggregate page limit must not exceed the requested limit",
+            ));
+        }
         let cursor_max_encoded_bytes = self.cursor_max_encoded_bytes.ok_or_else(|| {
             StorageError::internal("Object aggregate query is missing its cursor budget")
         })?;
@@ -781,7 +797,7 @@ impl ObjectAggregateStorageQueryBuilder {
                 "Object aggregate cursor budget must be positive",
             ));
         }
-        Ok(ObjectAggregateStorageQuery {
+        Ok(StorageObjectAggregateQuery {
             target: self.target,
             options: self.options,
             spec: self.spec,
@@ -794,10 +810,10 @@ impl ObjectAggregateStorageQueryBuilder {
     }
 }
 
-impl fmt::Debug for ObjectAggregateStorageQuery {
+impl fmt::Debug for StorageObjectAggregateQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ObjectAggregateStorageQuery")
+            .debug_struct("StorageObjectAggregateQuery")
             .field("target", &self.target)
             .field("spec", &self.spec)
             .field("filter_count", &self.options.filters().len())
@@ -899,9 +915,9 @@ impl StorageObjectAggregateMeasureValue {
         value_count: i64,
         skipped_count: i64,
         value: Option<Value>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if value_count < 0 || skipped_count < 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Object aggregate measure counts must not be negative",
             ));
         }
@@ -912,7 +928,7 @@ impl StorageObjectAggregateMeasureValue {
             StorageObjectAggregateMeasureState::Empty => value_count == 0 && value.is_none(),
         };
         if !value_matches_state {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Object aggregate measure state contradicts its value and count",
             ));
         }
@@ -942,31 +958,31 @@ impl StorageObjectAggregateRow {
         measures: Vec<StorageObjectAggregateMeasureValue>,
         object_count: i64,
         sort_key: Value,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if object_count <= 0 {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate row object count must be positive",
             ));
         }
         let Some(dimension_values) = sort_key.as_array() else {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate row sort key must be an array",
             ));
         };
         if dimension_values.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate row has too many dimension values",
             ));
         }
         if measures.len() > MAX_OBJECT_AGGREGATE_MEASURES {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate row has too many measures",
             ));
         }
         if measures.iter().any(|measure| {
             measure.value_count.checked_add(measure.skipped_count) != Some(object_count)
         }) {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "Object aggregate measure counts must add up to the row object count",
             ));
         }
@@ -995,10 +1011,10 @@ impl StorageObjectAggregatePage {
         rows: Vec<StorageObjectAggregateRow>,
         total: Option<i64>,
         next_cursor: Option<String>,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         validate_page_total(rows.len(), total)?;
         if next_cursor.as_ref().is_some_and(String::is_empty) {
-            return Err(StorageError::internal(
+            return Err(StorageValidationError::invalid(
                 "An object aggregate page cursor must not be empty",
             ));
         }
@@ -1034,13 +1050,13 @@ pub trait ObjectAggregateAuthorizer: Send + Sync {
     async fn authorize_target(
         &self,
         target: StorageObjectAggregateAuthorizationTarget,
-        required_permissions: Vec<AuthorizationPermission>,
+        required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<bool, StorageError>;
 
     async fn authorize_objects(
         &self,
         candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
-        required_permissions: Vec<AuthorizationPermission>,
+        required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Result<Vec<bool>, StorageError>;
 }
 
@@ -1049,8 +1065,8 @@ pub trait ObjectAggregateAuthorizer: Send + Sync {
 pub trait ObjectAggregateStorage: Send + Sync {
     async fn aggregate_objects(
         &self,
-        query: ObjectAggregateStorageQuery,
-        authorization: ObjectAggregateAuthorization<'_>,
+        query: StorageObjectAggregateQuery,
+        authorization: StorageObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError>;
 }
 
@@ -1066,7 +1082,7 @@ mod tests {
         dimension: &str,
         measures: impl IntoIterator<Item = &'static str>,
     ) -> StorageObjectAggregateSpec {
-        StorageObjectAggregateSpec::new(
+        StorageObjectAggregateSpec::try_new(
             [StorageObjectAggregateDimension::from_str(dimension).unwrap()],
             measures
                 .into_iter()
@@ -1246,7 +1262,7 @@ mod tests {
 
     #[test]
     fn aggregate_query_debug_redacts_target_filters_and_cursor() {
-        let query = ObjectAggregateStorageQuery::builder(
+        let query = StorageObjectAggregateQuery::builder(
             StorageObjectAggregateTarget::new(
                 ClassId::new(7).unwrap(),
                 "secret class".to_string(),
@@ -1264,7 +1280,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            StorageObjectAggregateSpec::new(
+            StorageObjectAggregateSpec::try_new(
                 [
                     StorageObjectAggregateDimension::from_str("json_data.secret_dimension")
                         .unwrap(),
@@ -1279,15 +1295,15 @@ mod tests {
             StorageVisibility::new(
                 hubuum_domain::PrincipalId::new(73).unwrap(),
                 false,
-                None::<[AuthorizationPermission; 0]>,
+                None::<[StorageAuthorizationPermission; 0]>,
                 None,
             ),
         )
         .personal_owner_id(PrincipalId::new(42).ok())
-        .required_permissions([AuthorizationPermission::ReadObject])
+        .required_permissions([StorageAuthorizationPermission::ReadObject])
         .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
-        .build()
+        .try_build()
         .unwrap();
 
         let debug = format!("{query:?}");
@@ -1307,14 +1323,14 @@ mod tests {
 
     #[test]
     fn aggregate_query_requires_permissions() {
-        let result = ObjectAggregateStorageQuery::builder(
+        let result = StorageObjectAggregateQuery::builder(
             StorageObjectAggregateTarget::new(
                 ClassId::new(7).unwrap(),
                 "class".to_string(),
                 CollectionId::new(9).unwrap(),
             ),
             empty_query_options(),
-            StorageObjectAggregateSpec::new(
+            StorageObjectAggregateSpec::try_new(
                 [StorageObjectAggregateDimension::Scalar(
                     StorageObjectAggregateScalarField::Name,
                 )],
@@ -1325,28 +1341,28 @@ mod tests {
             StorageVisibility::new(
                 hubuum_domain::PrincipalId::new(73).unwrap(),
                 false,
-                None::<[AuthorizationPermission; 0]>,
+                None::<[StorageAuthorizationPermission; 0]>,
                 None,
             ),
         )
         .required_permissions([])
         .page_limit(20)
         .cursor_max_encoded_bytes(1_000)
-        .build();
+        .try_build();
 
         assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
     }
 
     #[test]
     fn aggregate_query_requires_a_positive_cursor_budget() {
-        let result = ObjectAggregateStorageQuery::builder(
+        let result = StorageObjectAggregateQuery::builder(
             StorageObjectAggregateTarget::new(
                 ClassId::new(7).unwrap(),
                 "class".to_string(),
                 CollectionId::new(9).unwrap(),
             ),
             empty_query_options(),
-            StorageObjectAggregateSpec::new(
+            StorageObjectAggregateSpec::try_new(
                 [StorageObjectAggregateDimension::Scalar(
                     StorageObjectAggregateScalarField::Name,
                 )],
@@ -1357,15 +1373,77 @@ mod tests {
             StorageVisibility::new(
                 hubuum_domain::PrincipalId::new(73).unwrap(),
                 false,
-                None::<[AuthorizationPermission; 0]>,
+                None::<[StorageAuthorizationPermission; 0]>,
                 None,
             ),
         )
-        .required_permissions([AuthorizationPermission::ReadObject])
+        .required_permissions([StorageAuthorizationPermission::ReadObject])
         .page_limit(20)
         .cursor_max_encoded_bytes(0)
-        .build();
+        .try_build();
 
         assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn aggregate_query_rejects_an_effective_limit_above_the_requested_limit() {
+        let options = QueryOptions::new(Vec::new(), Vec::new(), Some(20), None, false).unwrap();
+        let result = StorageObjectAggregateQuery::builder(
+            StorageObjectAggregateTarget::new(
+                ClassId::new(7).unwrap(),
+                "class".to_string(),
+                CollectionId::new(9).unwrap(),
+            ),
+            options,
+            aggregate_spec("name", []),
+            StorageVisibility::new(
+                hubuum_domain::PrincipalId::new(73).unwrap(),
+                false,
+                None::<[StorageAuthorizationPermission; 0]>,
+                None,
+            ),
+        )
+        .required_permissions([StorageAuthorizationPermission::ReadObject])
+        .page_limit(100)
+        .cursor_max_encoded_bytes(1_000)
+        .try_build();
+
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn aggregate_query_normalizes_required_permissions() {
+        let query = StorageObjectAggregateQuery::builder(
+            StorageObjectAggregateTarget::new(
+                ClassId::new(7).unwrap(),
+                "class".to_string(),
+                CollectionId::new(9).unwrap(),
+            ),
+            empty_query_options(),
+            aggregate_spec("name", []),
+            StorageVisibility::new(
+                hubuum_domain::PrincipalId::new(73).unwrap(),
+                false,
+                None::<[StorageAuthorizationPermission; 0]>,
+                None,
+            ),
+        )
+        .required_permissions([
+            StorageAuthorizationPermission::UpdateObject,
+            StorageAuthorizationPermission::ReadObject,
+            StorageAuthorizationPermission::ReadObject,
+        ])
+        .page_limit(20)
+        .cursor_max_encoded_bytes(1_000)
+        .try_build()
+        .unwrap();
+
+        assert_eq!(
+            query.required_permissions(),
+            &[
+                StorageAuthorizationPermission::ReadObject,
+                StorageAuthorizationPermission::UpdateObject,
+            ]
+        );
     }
 }

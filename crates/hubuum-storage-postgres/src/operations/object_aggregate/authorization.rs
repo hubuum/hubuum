@@ -6,19 +6,19 @@ use super::ObjectAggregateRouteTarget;
 use super::candidate::ObjectAggregateCandidate;
 use crate::{PostgresConnection, PostgresStorageError};
 use hubuum_storage_core::{
-    AuthorizationPermission, ObjectAggregateAuthorizer,
+    ObjectAggregateAuthorizer, StorageAuthorizationPermission,
     StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
 };
 
 pub(super) struct DelegatedObjectAggregateAuthorization<'a> {
     authorizer: &'a dyn ObjectAggregateAuthorizer,
-    required_permissions: Vec<AuthorizationPermission>,
+    required_permissions: Vec<StorageAuthorizationPermission>,
 }
 
 impl<'a> DelegatedObjectAggregateAuthorization<'a> {
     pub(super) fn new(
         authorizer: &'a dyn ObjectAggregateAuthorizer,
-        required_permissions: Vec<AuthorizationPermission>,
+        required_permissions: Vec<StorageAuthorizationPermission>,
     ) -> Self {
         Self {
             authorizer,

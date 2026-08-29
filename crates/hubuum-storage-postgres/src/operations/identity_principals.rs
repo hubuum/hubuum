@@ -22,13 +22,16 @@ struct PrincipalGroupRow {
 
 impl PrincipalGroupRow {
     fn into_storage(self) -> Result<StoragePrincipalGroup, PostgresStorageError> {
-        Ok(StoragePrincipalGroup::new(
-            PrincipalId::new(self.principal_id)?,
-            GroupId::new(self.group_id)?,
-            self.created_at.and_utc(),
-            self.updated_at.and_utc(),
-            self.revision.into_domain(),
-        ))
+        crate::validate_persisted(
+            "principal-group membership",
+            StoragePrincipalGroup::try_new(
+                PrincipalId::new(self.principal_id)?,
+                GroupId::new(self.group_id)?,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+                self.revision.into_domain(),
+            ),
+        )
     }
 }
 

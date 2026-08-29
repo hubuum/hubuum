@@ -6,18 +6,21 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
 
-use crate::{MutationOutcome, StorageError, StoragePage, StorageRecordMetadata};
+use crate::{
+    StorageError, StorageMutationOutcome, StoragePage, StorageRecordMetadata,
+    StorageValidationError,
+};
 
 /// HTTP methods supported by Hubuum remote targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StorageRemoteHttpMethod {
+pub enum StorageRemoteTargetHttpMethod {
     Get,
     Post,
     Patch,
     Delete,
 }
 
-impl StorageRemoteHttpMethod {
+impl StorageRemoteTargetHttpMethod {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -29,7 +32,7 @@ impl StorageRemoteHttpMethod {
     }
 }
 
-impl FromStr for StorageRemoteHttpMethod {
+impl FromStr for StorageRemoteTargetHttpMethod {
     type Err = StorageError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -88,7 +91,7 @@ impl FromStr for StorageRemoteTargetSubjectType {
 /// HTTP transport configuration for a remote target.
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetTransport {
-    method: StorageRemoteHttpMethod,
+    method: StorageRemoteTargetHttpMethod,
     url_template: String,
     headers_template: Value,
     body_template: Option<String>,
@@ -98,7 +101,7 @@ pub struct StorageRemoteTargetTransport {
 
 /// Named HTTP transport components used by adapters and application mappers.
 pub struct StorageRemoteTargetTransportParts {
-    method: StorageRemoteHttpMethod,
+    method: StorageRemoteTargetHttpMethod,
     url_template: String,
     headers_template: Value,
     body_template: Option<String>,
@@ -108,7 +111,7 @@ pub struct StorageRemoteTargetTransportParts {
 
 impl StorageRemoteTargetTransportParts {
     #[must_use]
-    pub const fn method(&self) -> StorageRemoteHttpMethod {
+    pub const fn method(&self) -> StorageRemoteTargetHttpMethod {
         self.method
     }
 
@@ -140,26 +143,26 @@ impl StorageRemoteTargetTransportParts {
 
 impl StorageRemoteTargetTransport {
     pub fn try_new(
-        method: StorageRemoteHttpMethod,
+        method: StorageRemoteTargetHttpMethod,
         url_template: impl Into<String>,
         headers_template: Value,
         body_template: Option<String>,
         auth_config: Value,
         timeout_ms: i32,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         let url_template = url_template.into();
         if url_template.trim().is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Remote target URL template must not be empty",
             ));
         }
         if !headers_template.is_object() || !auth_config.is_object() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Remote target headers and authentication configuration must be JSON objects",
             ));
         }
         if timeout_ms <= 0 {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Remote target timeout must be greater than zero",
             ));
         }
@@ -211,16 +214,16 @@ impl StorageRemoteTargetPolicy {
         class_id: Option<ClassId>,
         allowed_subject_types: Vec<StorageRemoteTargetSubjectType>,
         enabled: bool,
-    ) -> Result<Self, StorageError> {
+    ) -> Result<Self, StorageValidationError> {
         if allowed_subject_types.is_empty() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Remote target policy must allow at least one subject type",
             ));
         }
         let mut unique_subject_types = std::collections::HashSet::new();
         for subject_type in &allowed_subject_types {
             if !unique_subject_types.insert(*subject_type) {
-                return Err(StorageError::invalid_input(format!(
+                return Err(StorageValidationError::invalid(format!(
                     "Remote target policy contains duplicate subject type '{}'",
                     subject_type.as_str()
                 )));
@@ -228,7 +231,7 @@ impl StorageRemoteTargetPolicy {
         }
         let allows_objects = unique_subject_types.contains(&StorageRemoteTargetSubjectType::Object);
         if allows_objects != class_id.is_some() {
-            return Err(StorageError::invalid_input(
+            return Err(StorageValidationError::invalid(
                 "Remote target class scope must be present exactly when object subjects are allowed",
             ));
         }
@@ -453,7 +456,7 @@ pub struct StorageRemoteTargetPatchParts {
     class_id: Option<Option<ClassId>>,
     name: Option<String>,
     description: Option<String>,
-    method: Option<StorageRemoteHttpMethod>,
+    method: Option<StorageRemoteTargetHttpMethod>,
     url_template: Option<String>,
     headers_template: Option<Value>,
     body_template: Option<Option<String>>,
@@ -481,7 +484,7 @@ impl StorageRemoteTargetPatchParts {
         self.description.as_deref()
     }
     #[must_use]
-    pub const fn method(&self) -> Option<StorageRemoteHttpMethod> {
+    pub const fn method(&self) -> Option<StorageRemoteTargetHttpMethod> {
         self.method
     }
     #[must_use]
@@ -521,7 +524,7 @@ pub struct StorageRemoteTargetPatch {
     class_id: Option<Option<ClassId>>,
     name: Option<String>,
     description: Option<String>,
-    method: Option<StorageRemoteHttpMethod>,
+    method: Option<StorageRemoteTargetHttpMethod>,
     url_template: Option<String>,
     headers_template: Option<Value>,
     body_template: Option<Option<String>>,
@@ -575,7 +578,7 @@ impl StorageRemoteTargetPatch {
     }
 
     #[must_use]
-    pub const fn with_method(mut self, value: Option<StorageRemoteHttpMethod>) -> Self {
+    pub const fn with_method(mut self, value: Option<StorageRemoteTargetHttpMethod>) -> Self {
         self.method = value;
         self
     }
@@ -793,22 +796,22 @@ pub trait RemoteTargetStorage: Send + Sync {
     async fn create_remote_target(
         &self,
         request: StorageRemoteTargetCreate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError>;
 
     async fn update_remote_target(
         &self,
         request: StorageRemoteTargetUpdate,
-    ) -> Result<MutationOutcome<StorageRemoteTarget>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError>;
 
     async fn delete_remote_target(
         &self,
         request: StorageRemoteTargetDelete,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     async fn record_remote_target_invocation(
         &self,
         request: StorageRemoteTargetInvocation,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
@@ -819,7 +822,7 @@ mod tests {
         StorageRemoteTargetDefinition::new(
             "secret description",
             StorageRemoteTargetTransport::try_new(
-                StorageRemoteHttpMethod::Post,
+                StorageRemoteTargetHttpMethod::Post,
                 "https://secret.invalid/{{ secret }}",
                 serde_json::json!({"x-secret": "{{ secret }}"}),
                 Some("{{ secret }}".to_string()),

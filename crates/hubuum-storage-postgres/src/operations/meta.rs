@@ -3,9 +3,10 @@ use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, ExportTemplateId};
 use hubuum_storage_core::{
-    OperationalExportTemplateAuditEntry, OperationalExportTemplateHealth,
-    OperationalTaskActiveCounts, OperationalTaskKindCounts, OperationalTaskQueueSnapshot,
-    OperationalTaskStatusCounts, OperationalTaskTerminalCounts,
+    StorageOperationalExportTemplateAuditEntry, StorageOperationalExportTemplateHealth,
+    StorageOperationalTaskActiveCounts, StorageOperationalTaskKindCounts,
+    StorageOperationalTaskQueueSnapshot, StorageOperationalTaskStatusCounts,
+    StorageOperationalTaskTerminalCounts,
 };
 
 use crate::{PostgresRuntime, PostgresStorageError, PostgresStorageSnapshot};
@@ -109,7 +110,7 @@ pub async fn load_storage_snapshot(
 
 pub async fn load_task_queue_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<OperationalTaskQueueSnapshot, PostgresStorageError> {
+) -> Result<StorageOperationalTaskQueueSnapshot, PostgresStorageError> {
     const QUERY: &str = r#"
         SELECT
           COUNT(*)::bigint AS total_tasks,
@@ -130,47 +131,58 @@ pub async fn load_task_queue_snapshot(
         FROM tasks
     "#;
 
-    runtime
+    let row = runtime
         .with_connection(async |connection| {
             diesel::sql_query(QUERY)
                 .get_result::<TaskQueueStateRow>(connection)
                 .await
         })
-        .await
-        .map(|row| {
-            let statuses = OperationalTaskStatusCounts::new(
-                row.total_tasks,
-                OperationalTaskActiveCounts::new(
-                    row.queued_tasks,
-                    row.validating_tasks,
-                    row.running_tasks,
-                ),
-                OperationalTaskTerminalCounts::new(
-                    row.succeeded_tasks,
-                    row.failed_tasks,
-                    row.partially_succeeded_tasks,
-                    row.cancelled_tasks,
-                ),
-            );
-            let kinds = OperationalTaskKindCounts::new(
-                row.import_tasks,
-                row.export_tasks,
-                row.reindex_tasks,
-            );
-            OperationalTaskQueueSnapshot::new(
-                statuses,
-                kinds,
-                row.total_task_events,
-                row.total_import_result_rows,
-                row.oldest_queued_at.map(|timestamp| timestamp.and_utc()),
-                row.oldest_active_at.map(|timestamp| timestamp.and_utc()),
-            )
-        })
+        .await?;
+    let active = crate::validate_persisted(
+        "active task counts",
+        StorageOperationalTaskActiveCounts::try_new(
+            row.queued_tasks,
+            row.validating_tasks,
+            row.running_tasks,
+        ),
+    )?;
+    let terminal = crate::validate_persisted(
+        "terminal task counts",
+        StorageOperationalTaskTerminalCounts::try_new(
+            row.succeeded_tasks,
+            row.failed_tasks,
+            row.partially_succeeded_tasks,
+            row.cancelled_tasks,
+        ),
+    )?;
+    let statuses = crate::validate_persisted(
+        "task status counts",
+        StorageOperationalTaskStatusCounts::try_new(row.total_tasks, active, terminal),
+    )?;
+    let kinds = crate::validate_persisted(
+        "task kind counts",
+        StorageOperationalTaskKindCounts::try_new(
+            row.import_tasks,
+            row.export_tasks,
+            row.reindex_tasks,
+        ),
+    )?;
+    crate::validate_persisted(
+        "task queue snapshot",
+        StorageOperationalTaskQueueSnapshot::try_new(
+            statuses,
+            kinds,
+            row.total_task_events,
+            row.total_import_result_rows,
+            row.oldest_queued_at.map(|timestamp| timestamp.and_utc()),
+            row.oldest_active_at.map(|timestamp| timestamp.and_utc()),
+        ),
+    )
 }
 
 pub async fn load_export_template_health(
     runtime: &PostgresRuntime,
-) -> Result<Vec<OperationalExportTemplateHealth>, PostgresStorageError> {
+) -> Result<Vec<StorageOperationalExportTemplateHealth>, PostgresStorageError> {
     const QUERY: &str = r#"
         SELECT
           template_name,
@@ -184,32 +196,33 @@ pub async fn load_export_template_health(
         ORDER BY template_name ASC NULLS FIRST
     "#;
 
-    runtime
+    let rows = runtime
         .with_connection(async |connection| {
             diesel::sql_query(QUERY)
                 .load::<ExportTemplateHealthRow>(connection)
                 .await
         })
-        .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| {
-                    OperationalExportTemplateHealth::new(
-                        row.template_name,
-                        row.runs,
-                        row.warning_total,
-                        row.warning_max,
-                        row.total_duration_ms_total,
-                        row.total_duration_ms_max,
-                    )
-                })
-                .collect()
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            crate::validate_persisted(
+                "export template health snapshot",
+                StorageOperationalExportTemplateHealth::try_new(
+                    row.template_name,
+                    row.runs,
+                    row.warning_total,
+                    row.warning_max,
+                    row.total_duration_ms_total,
+                    row.total_duration_ms_max,
+                ),
+            )
         })
+        .collect()
 }
 
 pub async fn load_export_templates_for_audit(
     runtime: &PostgresRuntime,
-) -> Result<Vec<OperationalExportTemplateAuditEntry>, PostgresStorageError> {
+) -> Result<Vec<StorageOperationalExportTemplateAuditEntry>, PostgresStorageError> {
     const QUERY: &str = r#"
         SELECT id, collection_id, name, template, content_type
         FROM export_templates
@@ -226,7 +239,7 @@ pub async fn load_export_templates_for_audit(
         .and_then(|rows| {
             rows.into_iter()
                 .map(|row| {
-                    Ok(OperationalExportTemplateAuditEntry::new(
+                    Ok(StorageOperationalExportTemplateAuditEntry::new(
                         ExportTemplateId::new(row.id)?,
                         CollectionId::new(row.collection_id)?,
                         row.name,

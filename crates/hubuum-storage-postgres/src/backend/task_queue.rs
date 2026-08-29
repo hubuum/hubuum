@@ -5,8 +5,8 @@ use hubuum_domain::TaskId;
 use hubuum_storage_core::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageError, StorageExportOutput,
     StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
-    StorageTaskAccess, StorageTaskCreateRequest, StorageTaskEvent, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskPageQuery, TaskQueueStorage,
+    StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskEvent,
+    StorageTaskListQuery, StorageTaskOutputLookup, TaskQueueStorage,
 };
 
 use super::PostgresStorage;
@@ -39,7 +39,7 @@ impl TaskQueueStorage for PostgresStorage {
 
     async fn list_task_events(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         postgres_task_queue::list_task_events(self.runtime(), query)
             .await
@@ -48,7 +48,7 @@ impl TaskQueueStorage for PostgresStorage {
 
     async fn list_import_task_results(
         &self,
-        query: StorageTaskPageQuery,
+        query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         postgres_task_queue::list_import_task_results(self.runtime(), query)
             .await

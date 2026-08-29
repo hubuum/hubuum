@@ -1406,12 +1406,15 @@ fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArti
         i32::try_from(artifact.warnings.len()).unwrap_or(i32::MAX),
         artifact.meta.truncated,
     )
-    .durations(StorageTaskDurations::try_new(
-        artifact.timings.total_millis(),
-        artifact.timings.query_millis(),
-        artifact.timings.hydration_millis(),
-        artifact.timings.render_millis(),
-    )?)
+    .durations(
+        StorageTaskDurations::try_new(
+            artifact.timings.total_millis(),
+            artifact.timings.query_millis(),
+            artifact.timings.hydration_millis(),
+            artifact.timings.render_millis(),
+        )
+        .map_err(|error| ApiError::from(error.into_request_error()))?,
+    )
     .try_build()
     .map_err(Into::into)
 }

@@ -200,7 +200,10 @@ pub async fn claim_next_task(
             TaskId::new(row.id)?,
             StorageTaskClaimToken::new(token.to_string()),
         );
-        Ok(StorageTaskClaim::try_new(row.into_storage()?, lease)?)
+        crate::validate_persisted(
+            "task claim",
+            StorageTaskClaim::try_new(row.into_storage()?, lease),
+        )
     })
     .transpose()
 }
@@ -431,7 +434,7 @@ pub async fn fail_task(
     let counts = match kind {
         StorageTaskKind::Import => import_result_counts(runtime, claimed.id).await?,
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            StorageTaskResultCounts::try_new(1, 0, 1)?
+            validated_counts(1, 0, 1)?
         }
         StorageTaskKind::Reindex => {
             validated_counts(stored.processed_items, stored.success_items, 1)?
@@ -555,7 +558,9 @@ async fn finalize_task_connection(
         tasks::processed_items.eq(update.counts.processed()),
         tasks::success_items.eq(update.counts.succeeded()),
         tasks::failed_items.eq(update.counts.failed()),
-        tasks::started_at.eq(update.started_at),
+        tasks::started_at.eq(sql::<Nullable<Timestamp>>("COALESCE(")
+            .bind::<Nullable<Timestamp>, _>(update.started_at)
+            .sql(", started_at)")),
         tasks::finished_at.eq(Some(occurred_at)),
         tasks::request_payload.eq::<Option<Value>>(None),
         tasks::request_redacted_at.eq(Some(occurred_at)),
@@ -592,7 +597,9 @@ async fn update_task_state_row(
                 tasks::processed_items.eq(update.counts.processed()),
                 tasks::success_items.eq(update.counts.succeeded()),
                 tasks::failed_items.eq(update.counts.failed()),
-                tasks::started_at.eq(update.started_at),
+                tasks::started_at.eq(sql::<Nullable<Timestamp>>("COALESCE(")
+                    .bind::<Nullable<Timestamp>, _>(update.started_at)
+                    .sql(", started_at)")),
                 tasks::updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
             ))
             .returning(TaskRow::as_returning())
@@ -791,7 +798,7 @@ async fn recovered_counts(
     match kind {
         StorageTaskKind::Import => import_result_counts_connection(connection, task.id).await,
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            StorageTaskResultCounts::try_new(1, 0, 1).map_err(PostgresStorageError::from)
+            validated_counts(1, 0, 1)
         }
         StorageTaskKind::Reindex => {
             validated_counts(task.processed_items, task.success_items, task.failed_items)

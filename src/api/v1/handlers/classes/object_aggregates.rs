@@ -12,9 +12,9 @@ use crate::extractors::Authenticated;
 use crate::models::object_aggregate::parse_object_aggregate_query;
 use crate::models::search::QueryParamsExt;
 use crate::models::{
-    ClassSelector, HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateCursorBudget,
-    ObjectAggregateRequest, ObjectAggregateRow, ObjectAggregateTarget, Permissions,
-    ResolvedClassTarget, UserID,
+    ClassSelector, HubuumClassID, ObjectAggregateCursorBudget, ObjectAggregateRequest,
+    ObjectAggregateRow, ObjectAggregateTarget, Permissions, ResolvedClassTarget,
+    StorageObjectAggregateAuthorization, UserID,
 };
 use crate::pagination::effective_page_limit;
 use crate::permissions::AppContext;
@@ -136,7 +136,8 @@ async fn read_object_aggregates(
     let mut required = query.query_options().filters().permissions()?;
     required.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
     let required = required.iter().copied().collect::<Vec<_>>();
-    let authorization = ObjectAggregateAuthorization::new(required, requestor.scopes().cloned())?;
+    let authorization =
+        StorageObjectAggregateAuthorization::new(required, requestor.scopes().cloned())?;
 
     let effective_limit = effective_page_limit(query.query_options())?;
     let mut request = ObjectAggregateRequest::builder(aggregate_target, query)

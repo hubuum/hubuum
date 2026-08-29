@@ -4,8 +4,8 @@ use super::*;
 impl AuthenticationStorage for StorageHandle {
     async fn authenticate_bearer_token(
         &self,
-        attempt: AuthenticationAttempt,
-    ) -> Result<AuthenticatedToken, StorageError> {
+        attempt: StorageAuthenticationAttempt,
+    ) -> Result<StorageAuthenticatedToken, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -22,7 +22,7 @@ impl AuthenticationStorage for StorageHandle {
     async fn get_authentication_identity(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthenticationIdentity, StorageError> {
+    ) -> Result<StorageAuthenticationIdentity, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -38,8 +38,8 @@ impl AuthenticationStorage for StorageHandle {
 
     async fn get_authentication_token_scope(
         &self,
-        query: AuthenticationTokenScopeQuery,
-    ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
+        query: StorageAuthenticationTokenScopeQuery,
+    ) -> Result<Option<StorageAuthenticationTokenScope>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -90,7 +90,7 @@ impl LocalIdentityCredentialStorage for StorageHandle {
     async fn reset_local_password(
         &self,
         request: StorageLocalPasswordReset,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::LocalIdentityCredential,
@@ -256,7 +256,7 @@ impl GroupMembershipStorage for StorageHandle {
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StoragePrincipalGroup>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StoragePrincipalGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::GroupMembership,
@@ -277,7 +277,7 @@ impl GroupMembershipStorage for StorageHandle {
         principal_id: PrincipalId,
         group_id: GroupId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::GroupMembership,
@@ -369,7 +369,7 @@ impl ServiceAccountStorage for StorageHandle {
     async fn create_service_account(
         &self,
         request: StorageServiceAccountCreate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ServiceAccount,
@@ -386,7 +386,7 @@ impl ServiceAccountStorage for StorageHandle {
     async fn update_service_account(
         &self,
         request: StorageServiceAccountUpdate,
-    ) -> Result<MutationOutcome<StorageServiceAccount>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ServiceAccount,
@@ -403,7 +403,7 @@ impl ServiceAccountStorage for StorageHandle {
     async fn disable_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ServiceAccount,
@@ -420,7 +420,7 @@ impl ServiceAccountStorage for StorageHandle {
     async fn delete_service_account(
         &self,
         request: StorageServiceAccountMutation,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ServiceAccount,
@@ -474,7 +474,7 @@ impl ExternalIdentityStorage for StorageHandle {
     async fn sync_external_user(
         &self,
         request: StorageExternalUserSync,
-    ) -> Result<MutationOutcome<StorageSyncedHuman>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExternalIdentity,
@@ -545,7 +545,7 @@ impl UserStorage for StorageHandle {
     async fn create_user(
         &self,
         request: StorageUserCreate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::User,
@@ -558,7 +558,7 @@ impl UserStorage for StorageHandle {
     async fn update_user(
         &self,
         request: StorageUserUpdate,
-    ) -> Result<MutationOutcome<StorageUser>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::User,
@@ -571,7 +571,7 @@ impl UserStorage for StorageHandle {
     async fn set_user_password(
         &self,
         request: StorageUserPasswordUpdate,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::User,
@@ -586,7 +586,7 @@ impl UserStorage for StorageHandle {
     async fn delete_user(
         &self,
         request: StorageUserDelete,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::User,
@@ -599,7 +599,7 @@ impl UserStorage for StorageHandle {
     async fn anonymize_user(
         &self,
         request: StorageUserAnonymize,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::User,
@@ -632,7 +632,7 @@ impl TokenStorage for StorageHandle {
     async fn create_token(
         &self,
         request: StorageTokenCreate,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -645,7 +645,7 @@ impl TokenStorage for StorageHandle {
     async fn renew_token(
         &self,
         request: StorageTokenRenew,
-    ) -> Result<MutationOutcome<StorageTokenMetadata>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -699,7 +699,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -712,7 +712,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -729,7 +729,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<MutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -749,7 +749,7 @@ impl AuthorizationDataStorage for StorageHandle {
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<AuthorizationPrincipal, StorageError> {
+    ) -> Result<StorageAuthorizationPrincipal, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -765,7 +765,7 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn is_authorization_principal_group_member(
         &self,
-        query: AuthorizationGroupMembershipQuery,
+        query: StorageAuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -782,8 +782,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn list_authorization_classes(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationClassResource>, StorageError> {
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationClassResource>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -799,8 +799,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn list_authorization_objects(
         &self,
-        query: AuthorizationResourceIds,
-    ) -> Result<Vec<AuthorizationObjectResource>, StorageError> {
+        query: StorageAuthorizationResourceIds,
+    ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -816,7 +816,7 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn authorize_local_collection(
         &self,
-        query: AuthorizationCollectionAccessQuery,
+        query: StorageAuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -833,7 +833,7 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn authorize_local_collections(
         &self,
-        query: AuthorizationCollectionsAccessQuery,
+        query: StorageAuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -850,8 +850,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn list_local_authorized_collections(
         &self,
-        query: AuthorizationCollectionsQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionsQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -867,7 +867,7 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -883,8 +883,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn load_authorization_group_candidates(
         &self,
-        query: AuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        query: StorageAuthorizationGroupCandidateQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -900,7 +900,7 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn get_authorization_policy_snapshot(
         &self,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -916,8 +916,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn list_local_collection_grants(
         &self,
-        query: AuthorizationCollectionGrantListQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError> {
+        query: StorageAuthorizationCollectionGrantListQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -933,8 +933,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn get_local_collection_grant(
         &self,
-        key: AuthorizationGrantKey,
-    ) -> Result<Option<AuthorizationGrant>, StorageError> {
+        key: StorageAuthorizationGrantKey,
+    ) -> Result<Option<StorageAuthorizationGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -950,8 +950,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn get_local_collection_permission_set(
         &self,
-        query: AuthorizationPermissionSetQuery,
-    ) -> Result<AuthorizationPermissionSet, StorageError> {
+        query: StorageAuthorizationPermissionSetQuery,
+    ) -> Result<StorageAuthorizationPermissionSet, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -967,8 +967,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn apply_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -984,8 +984,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn revoke_local_collection_grant(
         &self,
-        mutation: AuthorizationGrantMutation,
-    ) -> Result<MutationOutcome<AuthorizationGrant>, StorageError> {
+        mutation: StorageAuthorizationGrantMutation,
+    ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
@@ -1001,8 +1001,8 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn revoke_all_local_collection_grants(
         &self,
-        request: AuthorizationGrantDelete,
-    ) -> Result<MutationOutcome<()>, StorageError> {
+        request: StorageAuthorizationGrantDelete,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,

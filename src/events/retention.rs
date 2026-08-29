@@ -22,8 +22,8 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
-    EventArchiveSink, EventRetentionBatch, EventRetentionSummary, RetainedEvent, StorageError,
-    StorageHandle, execute_event_retention_batch, storage_handle,
+    EventArchiveSink, StorageError, StorageEventRetentionBatch, StorageEventRetentionSummary,
+    StorageHandle, StorageRetainedEvent, execute_event_retention_batch, storage_handle,
 };
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
@@ -51,7 +51,7 @@ struct FileEventArchiveSink<'a> {
 
 #[async_trait]
 impl EventArchiveSink for FileEventArchiveSink<'_> {
-    async fn archive(&self, batch: &EventRetentionBatch) -> Result<(), StorageError> {
+    async fn archive(&self, batch: &StorageEventRetentionBatch) -> Result<(), StorageError> {
         let Some(path) = self.path.filter(|_| !batch.is_empty()) else {
             return Ok(());
         };
@@ -106,7 +106,7 @@ pub async fn process_event_retention_batch(
     pool: &impl crate::storage::StorageContext,
     settings: EventRetentionSettings,
     archive_path: Option<&Path>,
-) -> Result<EventRetentionSummary, ApiError> {
+) -> Result<StorageEventRetentionSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
     execute_event_retention_batch(
@@ -118,7 +118,9 @@ pub async fn process_event_retention_batch(
     .map_err(Into::into)
 }
 
-fn retention_worker_should_continue(result: &Result<EventRetentionSummary, ApiError>) -> bool {
+fn retention_worker_should_continue(
+    result: &Result<StorageEventRetentionSummary, ApiError>,
+) -> bool {
     match result {
         Ok(summary) => summary.did_work(),
         Err(error) => {
@@ -204,7 +206,7 @@ where
     });
 }
 
-fn archive_event_batch(path: &Path, batch: &EventRetentionBatch) -> Result<(), ApiError> {
+fn archive_event_batch(path: &Path, batch: &StorageEventRetentionBatch) -> Result<(), ApiError> {
     secure_event_archive_directory(path)?;
     let final_path = path.join(format!("{}.jsonl", batch.id().as_uuid()));
     if final_path.try_exists().map_err(|error| {
@@ -334,7 +336,7 @@ fn secure_event_archive_directory(path: &Path) -> Result<(), ApiError> {
 
 fn validate_existing_archive_batch(
     path: &Path,
-    batch: &EventRetentionBatch,
+    batch: &StorageEventRetentionBatch,
 ) -> Result<(), ApiError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to inspect event archive batch: {error}"))
@@ -405,7 +407,7 @@ fn write_event_archive(
     file: &mut impl EventArchiveSinkOutput,
     retention_batch_id: uuid::Uuid,
     archived_at: chrono::NaiveDateTime,
-    events: &[RetainedEvent],
+    events: &[StorageRetainedEvent],
 ) -> Result<(), ApiError> {
     for event in events {
         let event = serde_json::from_str(event.json()).map_err(|error| {
@@ -476,7 +478,7 @@ mod tests {
         }
     }
 
-    fn event() -> RetainedEvent {
+    fn event() -> StorageRetainedEvent {
         let event = serde_json::json!({
             "id": 1,
             "event_id": Uuid::new_v4(),
@@ -503,16 +505,16 @@ mod tests {
             "before_revision": null,
             "after_revision": null,
         });
-        RetainedEvent::try_new(
+        StorageRetainedEvent::try_new(
             crate::events::EventSequence::new(1).unwrap(),
             serde_json::to_string(&event).unwrap(),
         )
         .unwrap()
     }
 
-    fn batch() -> EventRetentionBatch {
-        EventRetentionBatch::new(
-            crate::storage::EventRetentionBatchId::new(Uuid::new_v4()),
+    fn batch() -> StorageEventRetentionBatch {
+        StorageEventRetentionBatch::new(
+            crate::storage::StorageEventRetentionBatchId::new(Uuid::new_v4()),
             vec![event()],
         )
     }
@@ -524,13 +526,13 @@ mod tests {
     #[test]
     fn retention_worker_retries_immediately_after_deleting_rows() {
         assert!(retention_worker_should_continue(&Ok(
-            EventRetentionSummary::new(1, 0),
+            StorageEventRetentionSummary::new(1, 0),
         )));
         assert!(retention_worker_should_continue(&Ok(
-            EventRetentionSummary::new(0, 1),
+            StorageEventRetentionSummary::new(0, 1),
         )));
         assert!(!retention_worker_should_continue(&Ok(
-            EventRetentionSummary::default(),
+            StorageEventRetentionSummary::default(),
         )));
         assert!(!retention_worker_should_continue(&Err(
             ApiError::InternalServerError("boom".to_string()),

@@ -3,9 +3,10 @@ use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventSinkId, EventSubscriptionId};
 use hubuum_storage_core::{
-    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
-    EventMetricsSnapshot, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
-    EventSubscriptionHealthSnapshot,
+    StorageEventDeliveryHealthSnapshot, StorageEventDeliveryStatusSnapshot,
+    StorageEventFanoutSnapshot, StorageEventMetricsSnapshot, StorageEventQueueSnapshot,
+    StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
+    StorageEventSubscriptionHealthSnapshot,
 };
 
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -116,7 +117,7 @@ struct SubscriptionHealthRow {
 
 pub async fn load_event_delivery_health(
     runtime: &PostgresRuntime,
-) -> Result<EventDeliveryHealthSnapshot, PostgresStorageError> {
+) -> Result<StorageEventDeliveryHealthSnapshot, PostgresStorageError> {
     runtime
         .with_connection(async |conn| {
             let fanout = load_fanout_health(conn).await?;
@@ -124,8 +125,8 @@ pub async fn load_event_delivery_health(
             let sinks = load_sink_health(conn).await?;
             let subscriptions = load_subscription_health(conn).await?;
 
-            Ok::<EventDeliveryHealthSnapshot, PostgresStorageError>(
-                EventDeliveryHealthSnapshot::new(fanout, delivery, sinks, subscriptions),
+            Ok::<StorageEventDeliveryHealthSnapshot, PostgresStorageError>(
+                StorageEventDeliveryHealthSnapshot::new(fanout, delivery, sinks, subscriptions),
             )
         })
         .await
@@ -133,20 +134,22 @@ pub async fn load_event_delivery_health(
 
 pub async fn load_event_metrics_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<EventMetricsSnapshot, PostgresStorageError> {
+) -> Result<StorageEventMetricsSnapshot, PostgresStorageError> {
     runtime
         .with_connection(async |conn| {
-            Ok::<EventMetricsSnapshot, PostgresStorageError>(EventMetricsSnapshot::new(
-                load_fanout_health(conn).await?,
-                load_delivery_queue_health(conn).await?,
-            ))
+            Ok::<StorageEventMetricsSnapshot, PostgresStorageError>(
+                StorageEventMetricsSnapshot::new(
+                    load_fanout_health(conn).await?,
+                    load_delivery_queue_health(conn).await?,
+                ),
+            )
         })
         .await
 }
 
 async fn load_fanout_health(
     conn: &mut PostgresConnection,
-) -> Result<EventFanoutSnapshot, PostgresStorageError> {
+) -> Result<StorageEventFanoutSnapshot, PostgresStorageError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -173,17 +176,20 @@ async fn load_fanout_health(
     .get_result::<FanoutHealthRow>(conn)
     .await?;
 
-    Ok(EventFanoutSnapshot::new(
-        row.pending_events,
-        row.in_flight_events,
-        row.stale_claims,
-        row.oldest_pending_age_seconds,
-    ))
+    crate::validate_persisted(
+        "event fanout snapshot",
+        StorageEventFanoutSnapshot::try_new(
+            row.pending_events,
+            row.in_flight_events,
+            row.stale_claims,
+            row.oldest_pending_age_seconds,
+        ),
+    )
 }
 
 async fn load_delivery_queue_health(
     conn: &mut PostgresConnection,
-) -> Result<EventQueueSnapshot, PostgresStorageError> {
+) -> Result<StorageEventQueueSnapshot, PostgresStorageError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -222,16 +228,16 @@ async fn load_delivery_queue_health(
     .get_result::<DeliveryQueueHealthRow>(conn)
     .await?;
 
-    Ok(EventQueueSnapshot::new(
-        status_counts(&row),
-        row.stale_claims,
-        row.oldest_due_age_seconds,
-    ))
+    let counts = status_counts(&row)?;
+    crate::validate_persisted(
+        "event queue snapshot",
+        StorageEventQueueSnapshot::try_new(counts, row.stale_claims, row.oldest_due_age_seconds),
+    )
 }
 
 async fn load_sink_health(
     conn: &mut PostgresConnection,
-) -> Result<Vec<EventSinkHealthSnapshot>, PostgresStorageError> {
+) -> Result<Vec<StorageEventSinkHealthSnapshot>, PostgresStorageError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -281,24 +287,35 @@ async fn load_sink_health(
 
     rows.into_iter()
         .map(|row| {
-            let counts = status_counts(&row);
-            Ok(EventSinkHealthSnapshot::new(
-                EventSinkSnapshot::new(
-                    EventSinkId::new(row.sink_id)?,
-                    row.sink_name,
-                    row.sink_kind,
-                    row.sink_enabled,
+            let counts = status_counts(&row)?;
+            let queue = crate::validate_persisted(
+                "event sink queue snapshot",
+                StorageEventQueueSnapshot::try_new(
+                    counts,
+                    row.stale_claims,
+                    row.oldest_due_age_seconds,
                 ),
-                row.subscription_count,
-                EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
-            ))
+            )?;
+            crate::validate_persisted(
+                "event sink health snapshot",
+                StorageEventSinkHealthSnapshot::try_new(
+                    StorageEventSinkSnapshot::new(
+                        EventSinkId::new(row.sink_id)?,
+                        row.sink_name,
+                        row.sink_kind,
+                        row.sink_enabled,
+                    ),
+                    row.subscription_count,
+                    queue,
+                ),
+            )
         })
         .collect()
 }
 
 async fn load_subscription_health(
     conn: &mut PostgresConnection,
-) -> Result<Vec<EventSubscriptionHealthSnapshot>, PostgresStorageError> {
+) -> Result<Vec<StorageEventSubscriptionHealthSnapshot>, PostgresStorageError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -351,33 +368,46 @@ async fn load_subscription_health(
 
     rows.into_iter()
         .map(|row| {
-            let counts = status_counts(&row);
-            Ok(EventSubscriptionHealthSnapshot::new(
+            let counts = status_counts(&row)?;
+            let queue = crate::validate_persisted(
+                "event subscription queue snapshot",
+                StorageEventQueueSnapshot::try_new(
+                    counts,
+                    row.stale_claims,
+                    row.oldest_due_age_seconds,
+                ),
+            )?;
+            Ok(StorageEventSubscriptionHealthSnapshot::new(
                 EventSubscriptionId::new(row.subscription_id)?,
                 row.subscription_name,
                 CollectionId::new(row.collection_id)?,
                 row.subscription_enabled,
-                EventSinkSnapshot::new(
+                StorageEventSinkSnapshot::new(
                     EventSinkId::new(row.sink_id)?,
                     row.sink_name,
                     row.sink_kind,
                     row.sink_enabled,
                 ),
-                EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
+                queue,
             ))
         })
         .collect()
 }
 
-fn status_counts(row: &impl HasDeliveryCounts) -> EventDeliveryStatusSnapshot {
-    EventDeliveryStatusSnapshot::new(
-        row.total(),
-        row.pending(),
-        row.in_flight(),
-        row.succeeded(),
-        row.failed(),
-        row.dead(),
-        row.retryable(),
+fn status_counts(
+    row: &impl HasDeliveryCounts,
+) -> Result<StorageEventDeliveryStatusSnapshot, PostgresStorageError> {
+    crate::validate_persisted(
+        "event delivery status snapshot",
+        StorageEventDeliveryStatusSnapshot::try_new(
+            row.total(),
+            row.pending(),
+            row.in_flight(),
+            row.succeeded(),
+            row.failed(),
+            row.dead(),
+            row.retryable(),
+        ),
     )
 }
 

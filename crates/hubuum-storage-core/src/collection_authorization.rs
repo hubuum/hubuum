@@ -5,18 +5,18 @@ use hubuum_domain::{CollectionId, GroupId, PrincipalId};
 use hubuum_query::QueryOptions;
 
 use crate::{
-    AuthenticationTokenScope, AuthorizationCollection, AuthorizationGrant, AuthorizationGroup,
-    AuthorizationGroupGrant, AuthorizationPermission, AuthorizationPolicySnapshotRow, StorageError,
-    StoragePage,
+    StorageAuthenticationTokenScope, StorageAuthorizationCollection, StorageAuthorizationGrant,
+    StorageAuthorizationGroup, StorageAuthorizationGroupGrant, StorageAuthorizationPermission,
+    StorageAuthorizationPolicySnapshotRow, StorageError, StoragePage,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct AuthorizationPrincipalCollectionQuery {
+pub struct StorageAuthorizationPrincipalCollectionQuery {
     principal_id: PrincipalId,
     collection_id: CollectionId,
 }
 
-impl AuthorizationPrincipalCollectionQuery {
+impl StorageAuthorizationPrincipalCollectionQuery {
     #[must_use]
     pub const fn new(principal_id: PrincipalId, collection_id: CollectionId) -> Self {
         Self {
@@ -36,10 +36,10 @@ impl AuthorizationPrincipalCollectionQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationPrincipalCollectionQuery {
+impl fmt::Debug for StorageAuthorizationPrincipalCollectionQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationPrincipalCollectionQuery")
+            .debug_struct("StorageAuthorizationPrincipalCollectionQuery")
             .field("principal_id", &"<redacted>")
             .field("collection_id", &"<redacted>")
             .finish()
@@ -47,15 +47,15 @@ impl fmt::Debug for AuthorizationPrincipalCollectionQuery {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct AuthorizationPrincipalCollectionPageQuery {
-    principal: AuthorizationPrincipalCollectionQuery,
+pub struct StorageAuthorizationPrincipalCollectionPageQuery {
+    principal: StorageAuthorizationPrincipalCollectionQuery,
     query_options: QueryOptions,
 }
 
-impl AuthorizationPrincipalCollectionPageQuery {
+impl StorageAuthorizationPrincipalCollectionPageQuery {
     #[must_use]
     pub const fn new(
-        principal: AuthorizationPrincipalCollectionQuery,
+        principal: StorageAuthorizationPrincipalCollectionQuery,
         query_options: QueryOptions,
     ) -> Self {
         Self {
@@ -65,7 +65,7 @@ impl AuthorizationPrincipalCollectionPageQuery {
     }
 
     #[must_use]
-    pub const fn principal(&self) -> AuthorizationPrincipalCollectionQuery {
+    pub const fn principal(&self) -> StorageAuthorizationPrincipalCollectionQuery {
         self.principal
     }
 
@@ -75,10 +75,10 @@ impl AuthorizationPrincipalCollectionPageQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationPrincipalCollectionPageQuery {
+impl fmt::Debug for StorageAuthorizationPrincipalCollectionPageQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationPrincipalCollectionPageQuery")
+            .debug_struct("StorageAuthorizationPrincipalCollectionPageQuery")
             .field("principal", &self.principal)
             .field("filter_count", &self.query_options.filters().len())
             .field("sort_count", &self.query_options.sort().len())
@@ -89,20 +89,20 @@ impl fmt::Debug for AuthorizationPrincipalCollectionPageQuery {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct AuthorizationCollectionVisibilityQuery {
+pub struct StorageAuthorizationCollectionVisibilityQuery {
     principal_id: PrincipalId,
     is_admin: bool,
-    permission: AuthorizationPermission,
-    scope: Option<AuthenticationTokenScope>,
+    permission: StorageAuthorizationPermission,
+    scope: Option<StorageAuthenticationTokenScope>,
 }
 
-impl AuthorizationCollectionVisibilityQuery {
+impl StorageAuthorizationCollectionVisibilityQuery {
     #[must_use]
     pub const fn new(
         principal_id: PrincipalId,
         is_admin: bool,
-        permission: AuthorizationPermission,
-        scope: Option<AuthenticationTokenScope>,
+        permission: StorageAuthorizationPermission,
+        scope: Option<StorageAuthenticationTokenScope>,
     ) -> Self {
         Self {
             principal_id,
@@ -118,7 +118,7 @@ impl AuthorizationCollectionVisibilityQuery {
     }
 
     #[must_use]
-    pub const fn permission(&self) -> AuthorizationPermission {
+    pub const fn permission(&self) -> StorageAuthorizationPermission {
         self.permission
     }
 
@@ -128,7 +128,7 @@ impl AuthorizationCollectionVisibilityQuery {
     }
 
     #[must_use]
-    pub const fn scope(&self) -> Option<&AuthenticationTokenScope> {
+    pub const fn scope(&self) -> Option<&StorageAuthenticationTokenScope> {
         self.scope.as_ref()
     }
 
@@ -138,8 +138,8 @@ impl AuthorizationCollectionVisibilityQuery {
     ) -> (
         PrincipalId,
         bool,
-        AuthorizationPermission,
-        Option<AuthenticationTokenScope>,
+        StorageAuthorizationPermission,
+        Option<StorageAuthenticationTokenScope>,
     ) {
         (
             self.principal_id,
@@ -150,10 +150,10 @@ impl AuthorizationCollectionVisibilityQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationCollectionVisibilityQuery {
+impl fmt::Debug for StorageAuthorizationCollectionVisibilityQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionVisibilityQuery")
+            .debug_struct("StorageAuthorizationCollectionVisibilityQuery")
             .field("principal_id", &"<redacted>")
             .field("is_admin", &self.is_admin)
             .field("permission", &self.permission)
@@ -163,18 +163,18 @@ impl fmt::Debug for AuthorizationCollectionVisibilityQuery {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuthorizationGroupCollectionQuery {
+pub struct StorageAuthorizationGroupCollectionQuery {
     collection_id: CollectionId,
     group_id: GroupId,
-    permission: AuthorizationPermission,
+    permission: StorageAuthorizationPermission,
 }
 
-impl AuthorizationGroupCollectionQuery {
+impl StorageAuthorizationGroupCollectionQuery {
     #[must_use]
     pub const fn new(
         collection_id: CollectionId,
         group_id: GroupId,
-        permission: AuthorizationPermission,
+        permission: StorageAuthorizationPermission,
     ) -> Self {
         Self {
             collection_id,
@@ -194,20 +194,23 @@ impl AuthorizationGroupCollectionQuery {
     }
 
     #[must_use]
-    pub const fn permission(self) -> AuthorizationPermission {
+    pub const fn permission(self) -> StorageAuthorizationPermission {
         self.permission
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuthorizationCollectionGroupsQuery {
+pub struct StorageAuthorizationCollectionGroupsQuery {
     collection_id: CollectionId,
-    permission: AuthorizationPermission,
+    permission: StorageAuthorizationPermission,
 }
 
-impl AuthorizationCollectionGroupsQuery {
+impl StorageAuthorizationCollectionGroupsQuery {
     #[must_use]
-    pub const fn new(collection_id: CollectionId, permission: AuthorizationPermission) -> Self {
+    pub const fn new(
+        collection_id: CollectionId,
+        permission: StorageAuthorizationPermission,
+    ) -> Self {
         Self {
             collection_id,
             permission,
@@ -220,21 +223,21 @@ impl AuthorizationCollectionGroupsQuery {
     }
 
     #[must_use]
-    pub const fn permission(self) -> AuthorizationPermission {
+    pub const fn permission(self) -> StorageAuthorizationPermission {
         self.permission
     }
 }
 
 #[derive(Clone, PartialEq)]
-pub struct AuthorizationCollectionGroupsPageQuery {
-    groups: AuthorizationCollectionGroupsQuery,
+pub struct StorageAuthorizationCollectionGroupsPageQuery {
+    groups: StorageAuthorizationCollectionGroupsQuery,
     query_options: QueryOptions,
 }
 
-impl AuthorizationCollectionGroupsPageQuery {
+impl StorageAuthorizationCollectionGroupsPageQuery {
     #[must_use]
     pub const fn new(
-        groups: AuthorizationCollectionGroupsQuery,
+        groups: StorageAuthorizationCollectionGroupsQuery,
         query_options: QueryOptions,
     ) -> Self {
         Self {
@@ -244,7 +247,7 @@ impl AuthorizationCollectionGroupsPageQuery {
     }
 
     #[must_use]
-    pub const fn groups(&self) -> AuthorizationCollectionGroupsQuery {
+    pub const fn groups(&self) -> StorageAuthorizationCollectionGroupsQuery {
         self.groups
     }
 
@@ -254,10 +257,10 @@ impl AuthorizationCollectionGroupsPageQuery {
     }
 }
 
-impl fmt::Debug for AuthorizationCollectionGroupsPageQuery {
+impl fmt::Debug for StorageAuthorizationCollectionGroupsPageQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AuthorizationCollectionGroupsPageQuery")
+            .debug_struct("StorageAuthorizationCollectionGroupsPageQuery")
             .field("groups", &self.groups)
             .field("filter_count", &self.query_options.filters().len())
             .field("sort_count", &self.query_options.sort().len())
@@ -267,24 +270,24 @@ impl fmt::Debug for AuthorizationCollectionGroupsPageQuery {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizationEffectiveGroupGrant {
-    target_collection: AuthorizationCollection,
-    source_collection: AuthorizationCollection,
+pub struct StorageAuthorizationEffectiveGroupGrant {
+    target_collection: StorageAuthorizationCollection,
+    source_collection: StorageAuthorizationCollection,
     depth: i32,
     inherited: bool,
-    group: AuthorizationGroup,
-    grant: AuthorizationGrant,
+    group: StorageAuthorizationGroup,
+    grant: StorageAuthorizationGrant,
 }
 
-impl AuthorizationEffectiveGroupGrant {
+impl StorageAuthorizationEffectiveGroupGrant {
     #[must_use]
     pub const fn new(
-        target_collection: AuthorizationCollection,
-        source_collection: AuthorizationCollection,
+        target_collection: StorageAuthorizationCollection,
+        source_collection: StorageAuthorizationCollection,
         depth: i32,
         inherited: bool,
-        group: AuthorizationGroup,
-        grant: AuthorizationGrant,
+        group: StorageAuthorizationGroup,
+        grant: StorageAuthorizationGrant,
     ) -> Self {
         Self {
             target_collection,
@@ -300,12 +303,12 @@ impl AuthorizationEffectiveGroupGrant {
     pub fn into_parts(
         self,
     ) -> (
-        AuthorizationCollection,
-        AuthorizationCollection,
+        StorageAuthorizationCollection,
+        StorageAuthorizationCollection,
         i32,
         bool,
-        AuthorizationGroup,
-        AuthorizationGrant,
+        StorageAuthorizationGroup,
+        StorageAuthorizationGrant,
     ) {
         (
             self.target_collection,
@@ -324,47 +327,47 @@ impl AuthorizationEffectiveGroupGrant {
 pub trait CollectionAuthorizationQueryStorage: Send + Sync {
     async fn load_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationGroupGrant>, StorageError>;
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError>;
 
     async fn list_all_principal_collection_permissions(
         &self,
         principal_id: PrincipalId,
-    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
+    ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError>;
 
     async fn list_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroupGrant>, StorageError>;
+        query: StorageAuthorizationPrincipalCollectionPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError>;
 
     async fn list_effective_principal_collection_permissions(
         &self,
-        query: AuthorizationPrincipalCollectionQuery,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
+        query: StorageAuthorizationPrincipalCollectionQuery,
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError>;
 
     async fn list_visible_collections(
         &self,
-        query: AuthorizationCollectionVisibilityQuery,
-    ) -> Result<Vec<AuthorizationCollection>, StorageError>;
+        query: StorageAuthorizationCollectionVisibilityQuery,
+    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError>;
 
     async fn has_group_collection_permission(
         &self,
-        query: AuthorizationGroupCollectionQuery,
+        query: StorageAuthorizationGroupCollectionQuery,
     ) -> Result<bool, StorageError>;
 
     async fn list_effective_group_collection_permissions(
         &self,
         collection_id: CollectionId,
         group_id: GroupId,
-    ) -> Result<Vec<AuthorizationEffectiveGroupGrant>, StorageError>;
+    ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError>;
 
     async fn load_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsQuery,
-    ) -> Result<Vec<AuthorizationGroup>, StorageError>;
+        query: StorageAuthorizationCollectionGroupsQuery,
+    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError>;
 
     async fn list_groups_with_collection_permission(
         &self,
-        query: AuthorizationCollectionGroupsPageQuery,
-    ) -> Result<StoragePage<AuthorizationGroup>, StorageError>;
+        query: StorageAuthorizationCollectionGroupsPageQuery,
+    ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError>;
 }

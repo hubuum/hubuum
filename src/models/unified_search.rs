@@ -71,7 +71,7 @@ pub struct UnifiedSearchCursorToken {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnifiedSearchQuery {
+pub struct StorageUnifiedSearchQuery {
     pub query: String,
     pub kinds: BTreeSet<UnifiedSearchKind>,
     pub limit_per_kind: usize,
@@ -105,7 +105,7 @@ struct UnifiedSearchQueryParts {
     object_cursor: Option<UnifiedSearchCursorToken>,
 }
 
-impl UnifiedSearchQuery {
+impl StorageUnifiedSearchQuery {
     pub fn includes(&self, kind: UnifiedSearchKind) -> bool {
         self.kinds.contains(&kind)
     }
@@ -123,8 +123,8 @@ impl UnifiedSearchQuery {
     }
 }
 
-impl From<&UnifiedSearchQuery> for UnifiedSearchSpec {
-    fn from(value: &UnifiedSearchQuery) -> Self {
+impl From<&StorageUnifiedSearchQuery> for UnifiedSearchSpec {
+    fn from(value: &StorageUnifiedSearchQuery) -> Self {
         Self {
             query: value.query.clone(),
             search_class_schema: value.search_class_schema,
@@ -264,10 +264,10 @@ impl UnifiedSearchQueryParts {
         Ok(())
     }
 
-    fn build(self, page_limits: PageLimits) -> Result<UnifiedSearchQuery, ApiError> {
+    fn build(self, page_limits: PageLimits) -> Result<StorageUnifiedSearchQuery, ApiError> {
         let limit_per_kind = page_limits.resolve(self.limit_per_kind)?;
 
-        Ok(UnifiedSearchQuery {
+        Ok(StorageUnifiedSearchQuery {
             query: self
                 .query
                 .ok_or_else(|| ApiError::BadRequest("missing q".to_string()))?,
@@ -282,7 +282,7 @@ impl UnifiedSearchQueryParts {
     }
 }
 
-pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiError> {
+pub fn parse_unified_search_query(qs: &str) -> Result<StorageUnifiedSearchQuery, ApiError> {
     parse_unified_search_query_with_limits(qs, page_limits()?)
 }
 
@@ -293,7 +293,7 @@ pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiErr
 pub fn parse_unified_search_query_with_limits(
     qs: &str,
     page_limits: PageLimits,
-) -> Result<UnifiedSearchQuery, ApiError> {
+) -> Result<StorageUnifiedSearchQuery, ApiError> {
     let mut parts = UnifiedSearchQueryParts::default();
 
     if !qs.is_empty() {
@@ -451,7 +451,7 @@ fn object_value_matches(value: &serde_json::Value, query_lower: &str) -> bool {
 async fn search_collections<C, S>(
     user: &S,
     backend: &C,
-    params: &UnifiedSearchQuery,
+    params: &StorageUnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&TokenScope>,
     is_admin: bool,
@@ -530,7 +530,7 @@ where
 async fn search_classes<C, S>(
     user: &S,
     backend: &C,
-    params: &UnifiedSearchQuery,
+    params: &StorageUnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&TokenScope>,
     is_admin: bool,
@@ -615,7 +615,7 @@ where
 async fn search_objects<C, S>(
     user: &S,
     backend: &C,
-    params: &UnifiedSearchQuery,
+    params: &StorageUnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&TokenScope>,
     is_admin: bool,
@@ -697,7 +697,7 @@ where
 pub async fn execute_unified_search<C, S>(
     user: &S,
     backend: &C,
-    params: &UnifiedSearchQuery,
+    params: &StorageUnifiedSearchQuery,
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
@@ -802,7 +802,7 @@ where
 pub async fn execute_unified_search_batch<C, S>(
     user: &S,
     backend: &C,
-    params: &UnifiedSearchQuery,
+    params: &StorageUnifiedSearchQuery,
     kind: UnifiedSearchKind,
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>

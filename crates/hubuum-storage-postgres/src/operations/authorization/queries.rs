@@ -7,17 +7,19 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, GroupId, ObjectId, PrincipalId, ResourceId};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
-    AuthorizationClassResource, AuthorizationCollection, AuthorizationCollectionAccessQuery,
-    AuthorizationCollectionGrantListQuery, AuthorizationCollectionGroupsPageQuery,
-    AuthorizationCollectionGroupsQuery, AuthorizationCollectionVisibilityQuery,
-    AuthorizationCollectionsAccessQuery, AuthorizationCollectionsQuery,
-    AuthorizationEffectiveGroupGrant, AuthorizationGrant, AuthorizationGrantKey,
-    AuthorizationGroup, AuthorizationGroupCandidateQuery, AuthorizationGroupCollectionQuery,
-    AuthorizationGroupGrant, AuthorizationGroupMembershipQuery, AuthorizationObjectResource,
-    AuthorizationPermission, AuthorizationPermissionSet, AuthorizationPermissionSetQuery,
-    AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
-    AuthorizationPrincipalCollectionPageQuery, AuthorizationPrincipalCollectionQuery,
-    AuthorizationResourceIds, StoragePage,
+    StorageAuthorizationClassResource, StorageAuthorizationCollection,
+    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionGrantListQuery,
+    StorageAuthorizationCollectionGroupsPageQuery, StorageAuthorizationCollectionGroupsQuery,
+    StorageAuthorizationCollectionVisibilityQuery, StorageAuthorizationCollectionsAccessQuery,
+    StorageAuthorizationCollectionsQuery, StorageAuthorizationEffectiveGroupGrant,
+    StorageAuthorizationGrant, StorageAuthorizationGrantKey, StorageAuthorizationGroup,
+    StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupCollectionQuery,
+    StorageAuthorizationGroupGrant, StorageAuthorizationGroupMembershipQuery,
+    StorageAuthorizationObjectResource, StorageAuthorizationPermission,
+    StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
+    StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
+    StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
+    StorageAuthorizationResourceIds, StoragePage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -28,7 +30,7 @@ use super::rows::{CollectionRow, GroupRow, PermissionRow};
 pub async fn get_authorization_principal(
     runtime: &PostgresRuntime,
     principal_id: i32,
-) -> Result<AuthorizationPrincipal, PostgresStorageError> {
+) -> Result<StorageAuthorizationPrincipal, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::group_memberships;
@@ -39,7 +41,7 @@ pub async fn get_authorization_principal(
                 .select(group_memberships::group_id)
                 .load::<i32>(connection)
                 .await?;
-            Ok::<_, PostgresStorageError>(AuthorizationPrincipal::new(
+            Ok::<_, PostgresStorageError>(StorageAuthorizationPrincipal::new(
                 PrincipalId::new(principal_id)?,
                 group_ids
                     .into_iter()
@@ -52,7 +54,7 @@ pub async fn get_authorization_principal(
 
 pub async fn is_authorization_principal_group_member(
     runtime: &PostgresRuntime,
-    query: AuthorizationGroupMembershipQuery,
+    query: StorageAuthorizationGroupMembershipQuery,
 ) -> Result<bool, PostgresStorageError> {
     use crate::schema::{group_memberships, groups, identity_scopes};
 
@@ -80,8 +82,8 @@ pub async fn is_authorization_principal_group_member(
 
 pub async fn list_authorization_classes(
     runtime: &PostgresRuntime,
-    query: AuthorizationResourceIds,
-) -> Result<Vec<AuthorizationClassResource>, PostgresStorageError> {
+    query: StorageAuthorizationResourceIds,
+) -> Result<Vec<StorageAuthorizationClassResource>, PostgresStorageError> {
     let ids = query
         .ids()
         .iter()
@@ -99,7 +101,7 @@ pub async fn list_authorization_classes(
                 .await?;
             rows.into_iter()
                 .map(|(class_id, owning_collection_id)| {
-                    Ok(AuthorizationClassResource::new(
+                    Ok(StorageAuthorizationClassResource::new(
                         ClassId::new(class_id)?,
                         CollectionId::new(owning_collection_id)?,
                     ))
@@ -111,8 +113,8 @@ pub async fn list_authorization_classes(
 
 pub async fn list_authorization_objects(
     runtime: &PostgresRuntime,
-    query: AuthorizationResourceIds,
-) -> Result<Vec<AuthorizationObjectResource>, PostgresStorageError> {
+    query: StorageAuthorizationResourceIds,
+) -> Result<Vec<StorageAuthorizationObjectResource>, PostgresStorageError> {
     let ids = query
         .ids()
         .iter()
@@ -132,7 +134,7 @@ pub async fn list_authorization_objects(
                 .await?;
             rows.into_iter()
                 .map(|(object_id, owning_collection_id, class_id, object_name)| {
-                    Ok(AuthorizationObjectResource::new(
+                    Ok(StorageAuthorizationObjectResource::new(
                         ObjectId::new(object_id)?,
                         CollectionId::new(owning_collection_id)?,
                         ClassId::new(class_id)?,
@@ -146,7 +148,7 @@ pub async fn list_authorization_objects(
 
 pub async fn authorize_local_collection(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionAccessQuery,
+    query: StorageAuthorizationCollectionAccessQuery,
 ) -> Result<bool, PostgresStorageError> {
     use crate::schema::{group_memberships, permissions};
 
@@ -171,7 +173,7 @@ pub async fn authorize_local_collection(
 
 pub async fn authorize_local_collections(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionsAccessQuery,
+    query: StorageAuthorizationCollectionsAccessQuery,
 ) -> Result<bool, PostgresStorageError> {
     use crate::schema::{collection_closure, group_memberships, permissions};
 
@@ -212,8 +214,8 @@ pub async fn authorize_local_collections(
 
 pub async fn list_local_authorized_collections(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionsQuery,
-) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionsQuery,
+) -> Result<Vec<StorageAuthorizationCollection>, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::collections;
@@ -271,7 +273,7 @@ async fn collection_ids_with_any_grant(
 async fn authorized_collection_ids_for_permission(
     connection: &mut PostgresConnection,
     principal_id: i32,
-    permission: AuthorizationPermission,
+    permission: StorageAuthorizationPermission,
 ) -> Result<Vec<i32>, PostgresStorageError> {
     use crate::schema::{collection_closure, group_memberships, permissions};
 
@@ -296,7 +298,7 @@ async fn authorized_collection_ids_for_permission(
 
 pub async fn load_authorization_collection_candidates(
     runtime: &PostgresRuntime,
-) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationCollection>, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::collections;
@@ -312,8 +314,8 @@ pub async fn load_authorization_collection_candidates(
 
 pub async fn load_authorization_group_candidates(
     runtime: &PostgresRuntime,
-    query: AuthorizationGroupCandidateQuery,
-) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
+    query: StorageAuthorizationGroupCandidateQuery,
+) -> Result<Vec<StorageAuthorizationGroup>, PostgresStorageError> {
     let filters = query.filters().clone();
     runtime
         .with_connection(async |connection| {
@@ -349,7 +351,7 @@ pub async fn load_authorization_group_candidates(
 
 pub async fn get_authorization_policy_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<Vec<AuthorizationPolicySnapshotRow>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::{collections, groups, permissions};
@@ -370,11 +372,14 @@ pub async fn get_authorization_policy_snapshot(
                 .await?;
             rows.into_iter()
                 .map(|(grant, group, collection)| {
-                    Ok::<_, PostgresStorageError>(AuthorizationPolicySnapshotRow::new(
-                        grant.into_storage()?,
-                        group.into_storage()?,
-                        collection.into_storage()?,
-                    ))
+                    crate::validate_persisted(
+                        "authorization policy snapshot",
+                        StorageAuthorizationPolicySnapshotRow::try_new(
+                            grant.into_storage()?,
+                            group.into_storage()?,
+                            collection.into_storage()?,
+                        ),
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -384,8 +389,8 @@ pub async fn get_authorization_policy_snapshot(
 /// Return the direct grants held by a principal's groups on one collection.
 pub async fn load_principal_collection_permissions(
     runtime: &PostgresRuntime,
-    query: AuthorizationPrincipalCollectionQuery,
-) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
+    query: StorageAuthorizationPrincipalCollectionQuery,
+) -> Result<Vec<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             use crate::schema::{group_memberships, groups, permissions};
@@ -410,7 +415,7 @@ pub async fn load_principal_collection_permissions(
 pub async fn list_all_principal_collection_permissions(
     runtime: &PostgresRuntime,
     principal_id: i32,
-) -> Result<Vec<AuthorizationPolicySnapshotRow>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             use crate::schema::{collections, group_memberships, groups, permissions};
@@ -435,11 +440,14 @@ pub async fn list_all_principal_collection_permissions(
                 .await?;
             rows.into_iter()
                 .map(|(grant, group, collection)| {
-                    Ok::<_, PostgresStorageError>(AuthorizationPolicySnapshotRow::new(
-                        grant.into_storage()?,
-                        group.into_storage()?,
-                        collection.into_storage()?,
-                    ))
+                    crate::validate_persisted(
+                        "authorization policy snapshot",
+                        StorageAuthorizationPolicySnapshotRow::try_new(
+                            grant.into_storage()?,
+                            group.into_storage()?,
+                            collection.into_storage()?,
+                        ),
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -449,8 +457,8 @@ pub async fn list_all_principal_collection_permissions(
 /// Return a stable cursor page of a principal's direct grants.
 pub async fn list_principal_collection_permissions(
     runtime: &PostgresRuntime,
-    query: AuthorizationPrincipalCollectionPageQuery,
-) -> Result<StoragePage<AuthorizationGroupGrant>, PostgresStorageError> {
+    query: StorageAuthorizationPrincipalCollectionPageQuery,
+) -> Result<StoragePage<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -475,8 +483,8 @@ pub async fn list_principal_collection_permissions(
 /// Return direct and inherited grants held by a principal's groups.
 pub async fn list_effective_principal_collection_permissions(
     runtime: &PostgresRuntime,
-    query: AuthorizationPrincipalCollectionQuery,
-) -> Result<Vec<AuthorizationEffectiveGroupGrant>, PostgresStorageError> {
+    query: StorageAuthorizationPrincipalCollectionQuery,
+) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             use crate::schema::{collection_closure, group_memberships, groups, permissions};
@@ -514,26 +522,17 @@ pub async fn list_effective_principal_collection_permissions(
 /// Return collections visible through one permission and an optional token scope.
 pub async fn list_visible_collections(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionVisibilityQuery,
-) -> Result<Vec<AuthorizationCollection>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionVisibilityQuery,
+) -> Result<Vec<StorageAuthorizationCollection>, PostgresStorageError> {
     let (principal_id, is_admin, permission, scope) = query.into_parts();
     let principal_id = principal_id.id();
     let (permission_scope, resource_scope) = scope
         .map(|scope| scope.into_parts())
         .unwrap_or((None, None));
-    if let Some(permission_scope) = permission_scope {
-        let allowed = permission_scope
-            .iter()
-            .map(|name| AuthorizationPermission::from_name(name))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                PostgresStorageError::database(format!(
-                    "Invalid permission in persisted token scope: {error}"
-                ))
-            })?;
-        if !allowed.contains(&permission) {
-            return Ok(Vec::new());
-        }
+    if let Some(permission_scope) = permission_scope
+        && !permission_scope.contains(&permission)
+    {
+        return Ok(Vec::new());
     }
     let collection_scope = resource_scope
         .map(|scope| scope.into_parts().0)
@@ -576,7 +575,7 @@ pub async fn list_visible_collections(
 /// Return whether a group's direct or inherited grant contains one permission.
 pub async fn has_group_collection_permission(
     runtime: &PostgresRuntime,
-    query: AuthorizationGroupCollectionQuery,
+    query: StorageAuthorizationGroupCollectionQuery,
 ) -> Result<bool, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
@@ -606,7 +605,7 @@ pub async fn list_effective_group_collection_permissions(
     runtime: &PostgresRuntime,
     collection_id: i32,
     group_id: i32,
-) -> Result<Vec<AuthorizationEffectiveGroupGrant>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             use crate::schema::{collection_closure, groups, permissions};
@@ -640,8 +639,8 @@ pub async fn list_effective_group_collection_permissions(
 /// Return every group with one direct or inherited permission.
 pub async fn load_groups_with_collection_permission(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionGroupsQuery,
-) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionGroupsQuery,
+) -> Result<Vec<StorageAuthorizationGroup>, PostgresStorageError> {
     runtime
         .with_connection(async move |connection| {
             let rows = build_groups_with_permission_query(query)?
@@ -656,8 +655,8 @@ pub async fn load_groups_with_collection_permission(
 /// Return a stable cursor page of groups with one effective permission.
 pub async fn list_groups_with_collection_permission(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionGroupsPageQuery,
-) -> Result<StoragePage<AuthorizationGroup>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionGroupsPageQuery,
+) -> Result<StoragePage<StorageAuthorizationGroup>, PostgresStorageError> {
     if query.query_options().include_total() {
         runtime
             .with_read_only_snapshot(async move |connection| {
@@ -681,13 +680,16 @@ pub async fn list_groups_with_collection_permission(
 
 fn group_grants_from_rows(
     rows: Vec<(GroupRow, PermissionRow)>,
-) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     rows.into_iter()
         .map(|(group, grant)| {
-            Ok(AuthorizationGroupGrant::new(
-                group.into_storage()?,
-                grant.into_storage()?,
-            ))
+            crate::validate_persisted(
+                "authorization group grant",
+                StorageAuthorizationGroupGrant::try_new(
+                    group.into_storage()?,
+                    grant.into_storage()?,
+                ),
+            )
         })
         .collect()
 }
@@ -702,7 +704,7 @@ async fn hydrate_effective_grants(
     connection: &mut PostgresConnection,
     target_collection_id: i32,
     rows: Vec<(i32, i32, GroupRow, PermissionRow)>,
-) -> Result<Vec<AuthorizationEffectiveGroupGrant>, PostgresStorageError> {
+) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, PostgresStorageError> {
     use crate::schema::collections;
 
     if rows.is_empty() {
@@ -740,7 +742,7 @@ async fn hydrate_effective_grants(
                         "Missing source collection {source_collection_id} for effective permission"
                     ))
                 })?;
-            Ok(AuthorizationEffectiveGroupGrant::new(
+            Ok(StorageAuthorizationEffectiveGroupGrant::new(
                 target.clone(),
                 source,
                 depth,
@@ -753,7 +755,7 @@ async fn hydrate_effective_grants(
 }
 
 fn build_principal_grant_query(
-    query: &AuthorizationPrincipalCollectionPageQuery,
+    query: &StorageAuthorizationPrincipalCollectionPageQuery,
 ) -> Result<
     diesel::dsl::IntoBoxed<
         'static,
@@ -804,8 +806,8 @@ fn build_principal_grant_query(
 
 async fn load_principal_grants(
     connection: &mut PostgresConnection,
-    query: &AuthorizationPrincipalCollectionPageQuery,
-) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
+    query: &StorageAuthorizationPrincipalCollectionPageQuery,
+) -> Result<Vec<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     let mut records = build_principal_grant_query(query)?;
     let fields = query
         .query_options()
@@ -831,7 +833,7 @@ async fn load_principal_grants(
 }
 
 fn build_groups_with_permission_query(
-    query: AuthorizationCollectionGroupsQuery,
+    query: StorageAuthorizationCollectionGroupsQuery,
 ) -> Result<crate::schema::groups::BoxedQuery<'static, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::{collection_closure, groups, permissions};
 
@@ -851,7 +853,7 @@ fn build_groups_with_permission_query(
 }
 
 fn build_groups_page_query(
-    query: &AuthorizationCollectionGroupsPageQuery,
+    query: &StorageAuthorizationCollectionGroupsPageQuery,
 ) -> Result<crate::schema::groups::BoxedQuery<'static, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::groups;
 
@@ -887,8 +889,8 @@ fn build_groups_page_query(
 
 async fn load_groups_page(
     connection: &mut PostgresConnection,
-    query: &AuthorizationCollectionGroupsPageQuery,
-) -> Result<Vec<AuthorizationGroup>, PostgresStorageError> {
+    query: &StorageAuthorizationCollectionGroupsPageQuery,
+) -> Result<Vec<StorageAuthorizationGroup>, PostgresStorageError> {
     let mut groups = build_groups_page_query(query)?;
     let fields = query
         .query_options()
@@ -930,8 +932,8 @@ fn group_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresSto
 
 pub async fn list_local_collection_grants(
     runtime: &PostgresRuntime,
-    query: AuthorizationCollectionGrantListQuery,
-) -> Result<StoragePage<AuthorizationGroupGrant>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionGrantListQuery,
+) -> Result<StoragePage<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     let permissions = grant_query_permissions(&query)?;
     if query.query_options().include_total() {
         runtime
@@ -956,9 +958,9 @@ pub async fn list_local_collection_grants(
 
 async fn load_group_grants(
     connection: &mut PostgresConnection,
-    query: &AuthorizationCollectionGrantListQuery,
-    permissions: &[AuthorizationPermission],
-) -> Result<Vec<AuthorizationGroupGrant>, PostgresStorageError> {
+    query: &StorageAuthorizationCollectionGrantListQuery,
+    permissions: &[StorageAuthorizationPermission],
+) -> Result<Vec<StorageAuthorizationGroupGrant>, PostgresStorageError> {
     let mut records = build_group_grant_query(query, permissions)?;
     let fields = query
         .query_options()
@@ -984,8 +986,8 @@ async fn load_group_grants(
 }
 
 fn build_group_grant_query<'a>(
-    query: &'a AuthorizationCollectionGrantListQuery,
-    required_permissions: &'a [AuthorizationPermission],
+    query: &'a StorageAuthorizationCollectionGrantListQuery,
+    required_permissions: &'a [StorageAuthorizationPermission],
 ) -> Result<
     diesel::dsl::IntoBoxed<
         'a,
@@ -1030,8 +1032,8 @@ fn build_group_grant_query<'a>(
 }
 
 fn grant_query_permissions(
-    query: &AuthorizationCollectionGrantListQuery,
-) -> Result<Vec<AuthorizationPermission>, PostgresStorageError> {
+    query: &StorageAuthorizationCollectionGrantListQuery,
+) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     let mut permissions = query.required_permissions().to_vec();
     for parameter in query.query_options().filters() {
         if parameter.field == FilterField::Permissions {
@@ -1045,8 +1047,8 @@ fn grant_query_permissions(
 
 fn parse_permission_filter(
     parameter: &hubuum_query::ParsedQueryParam,
-) -> Result<AuthorizationPermission, PostgresStorageError> {
-    AuthorizationPermission::from_name(&parameter.value)
+) -> Result<StorageAuthorizationPermission, PostgresStorageError> {
+    StorageAuthorizationPermission::from_name(&parameter.value)
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
@@ -1076,8 +1078,8 @@ const fn cursor_field(column: &'static str, sql_type: CursorSqlType) -> CursorSq
 
 pub async fn get_local_collection_grant(
     runtime: &PostgresRuntime,
-    key: AuthorizationGrantKey,
-) -> Result<Option<AuthorizationGrant>, PostgresStorageError> {
+    key: StorageAuthorizationGrantKey,
+) -> Result<Option<StorageAuthorizationGrant>, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::permissions;
@@ -1097,8 +1099,8 @@ pub async fn get_local_collection_grant(
 
 pub async fn get_local_collection_permission_set(
     runtime: &PostgresRuntime,
-    query: AuthorizationPermissionSetQuery,
-) -> Result<AuthorizationPermissionSet, PostgresStorageError> {
+    query: StorageAuthorizationPermissionSetQuery,
+) -> Result<StorageAuthorizationPermissionSet, PostgresStorageError> {
     runtime
         .with_connection(async |connection| {
             use crate::schema::{collection_authorization_state, permissions};
@@ -1147,11 +1149,10 @@ pub async fn get_local_collection_permission_set(
                 .into_iter()
                 .filter_map(|(_, grant)| grant.map(PermissionRow::into_storage))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, PostgresStorageError>(AuthorizationPermissionSet::new(
-                query.collection_id(),
-                revision,
-                grants,
-            ))
+            crate::validate_persisted(
+                "authorization permission set",
+                StorageAuthorizationPermissionSet::try_new(query.collection_id(), revision, grants),
+            )
         })
         .await
 }

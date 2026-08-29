@@ -2,8 +2,9 @@ use chrono::NaiveDateTime;
 use diesel::{Queryable, QueryableByName, Selectable};
 use hubuum_domain::{AuthorizationGrantId, CollectionId, GroupId, IdentityScopeId};
 use hubuum_storage_core::{
-    AuthorizationCollection, AuthorizationGrant, AuthorizationGroup, AuthorizationGroupIdentity,
-    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
+    StorageAuthorizationCollection, StorageAuthorizationGrant, StorageAuthorizationGroup,
+    StorageAuthorizationGroupIdentity, StorageAuthorizationGroupProfile,
+    StorageAuthorizationGroupSyncState, StorageAuthorizationPermission,
 };
 
 use crate::{PostgresRevision, PostgresStorageError};
@@ -21,18 +22,23 @@ pub(super) struct CollectionRow {
 }
 
 impl CollectionRow {
-    pub(super) fn into_storage(self) -> Result<AuthorizationCollection, PostgresStorageError> {
-        Ok(AuthorizationCollection::new(
-            CollectionId::new(self.id)?,
-            self.name,
-            self.description,
-            self.created_at.and_utc(),
-            self.updated_at.and_utc(),
-            self.parent_collection_id
-                .map(CollectionId::new)
-                .transpose()?,
-            self.revision.into_domain(),
-        ))
+    pub(super) fn into_storage(
+        self,
+    ) -> Result<StorageAuthorizationCollection, PostgresStorageError> {
+        crate::validate_persisted(
+            "authorization collection",
+            StorageAuthorizationCollection::try_new(
+                CollectionId::new(self.id)?,
+                self.name,
+                self.description,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+                self.parent_collection_id
+                    .map(CollectionId::new)
+                    .transpose()?,
+                self.revision.into_domain(),
+            ),
+        )
     }
 }
 
@@ -53,27 +59,35 @@ pub(super) struct GroupRow {
 }
 
 impl GroupRow {
-    pub(super) fn into_storage(self) -> Result<AuthorizationGroup, PostgresStorageError> {
-        Ok(AuthorizationGroup::new(
-            AuthorizationGroupIdentity::new(
+    pub(super) fn into_storage(self) -> Result<StorageAuthorizationGroup, PostgresStorageError> {
+        let profile = crate::validate_persisted(
+            "authorization group profile",
+            StorageAuthorizationGroupProfile::try_new(
+                self.description,
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+                self.revision.into_domain(),
+            ),
+        )?;
+        let sync = crate::validate_persisted(
+            "authorization group synchronization state",
+            StorageAuthorizationGroupSyncState::try_new(
+                self.last_sync_attempted_at
+                    .map(|timestamp| timestamp.and_utc()),
+                self.last_sync_success_at
+                    .map(|timestamp| timestamp.and_utc()),
+            ),
+        )?;
+        Ok(StorageAuthorizationGroup::new(
+            StorageAuthorizationGroupIdentity::new(
                 GroupId::new(self.id)?,
                 self.groupname,
                 IdentityScopeId::new(self.identity_scope_id)?,
                 self.managed_by,
                 self.external_key,
             ),
-            AuthorizationGroupProfile::new(
-                self.description,
-                self.created_at.and_utc(),
-                self.updated_at.and_utc(),
-                self.revision.into_domain(),
-            ),
-            AuthorizationGroupSyncState::new(
-                self.last_sync_attempted_at
-                    .map(|timestamp| timestamp.and_utc()),
-                self.last_sync_success_at
-                    .map(|timestamp| timestamp.and_utc()),
-            ),
+            profile,
+            sync,
         ))
     }
 }
@@ -120,112 +134,130 @@ pub(super) struct PermissionRow {
 }
 
 impl PermissionRow {
-    pub(super) fn permissions(self) -> Vec<AuthorizationPermission> {
+    pub(super) fn permissions(self) -> Vec<StorageAuthorizationPermission> {
         let values = [
             (
-                AuthorizationPermission::ReadCollection,
+                StorageAuthorizationPermission::ReadCollection,
                 self.has_read_collection,
             ),
             (
-                AuthorizationPermission::UpdateCollection,
+                StorageAuthorizationPermission::UpdateCollection,
                 self.has_update_collection,
             ),
             (
-                AuthorizationPermission::DeleteCollection,
+                StorageAuthorizationPermission::DeleteCollection,
                 self.has_delete_collection,
             ),
             (
-                AuthorizationPermission::DelegateCollection,
+                StorageAuthorizationPermission::DelegateCollection,
                 self.has_delegate_collection,
             ),
-            (AuthorizationPermission::CreateClass, self.has_create_class),
-            (AuthorizationPermission::ReadClass, self.has_read_class),
-            (AuthorizationPermission::UpdateClass, self.has_update_class),
-            (AuthorizationPermission::DeleteClass, self.has_delete_class),
             (
-                AuthorizationPermission::CreateObject,
+                StorageAuthorizationPermission::CreateClass,
+                self.has_create_class,
+            ),
+            (
+                StorageAuthorizationPermission::ReadClass,
+                self.has_read_class,
+            ),
+            (
+                StorageAuthorizationPermission::UpdateClass,
+                self.has_update_class,
+            ),
+            (
+                StorageAuthorizationPermission::DeleteClass,
+                self.has_delete_class,
+            ),
+            (
+                StorageAuthorizationPermission::CreateObject,
                 self.has_create_object,
             ),
-            (AuthorizationPermission::ReadObject, self.has_read_object),
             (
-                AuthorizationPermission::UpdateObject,
+                StorageAuthorizationPermission::ReadObject,
+                self.has_read_object,
+            ),
+            (
+                StorageAuthorizationPermission::UpdateObject,
                 self.has_update_object,
             ),
             (
-                AuthorizationPermission::DeleteObject,
+                StorageAuthorizationPermission::DeleteObject,
                 self.has_delete_object,
             ),
             (
-                AuthorizationPermission::CreateClassRelation,
+                StorageAuthorizationPermission::CreateClassRelation,
                 self.has_create_class_relation,
             ),
             (
-                AuthorizationPermission::ReadClassRelation,
+                StorageAuthorizationPermission::ReadClassRelation,
                 self.has_read_class_relation,
             ),
             (
-                AuthorizationPermission::UpdateClassRelation,
+                StorageAuthorizationPermission::UpdateClassRelation,
                 self.has_update_class_relation,
             ),
             (
-                AuthorizationPermission::DeleteClassRelation,
+                StorageAuthorizationPermission::DeleteClassRelation,
                 self.has_delete_class_relation,
             ),
             (
-                AuthorizationPermission::CreateObjectRelation,
+                StorageAuthorizationPermission::CreateObjectRelation,
                 self.has_create_object_relation,
             ),
             (
-                AuthorizationPermission::ReadObjectRelation,
+                StorageAuthorizationPermission::ReadObjectRelation,
                 self.has_read_object_relation,
             ),
             (
-                AuthorizationPermission::UpdateObjectRelation,
+                StorageAuthorizationPermission::UpdateObjectRelation,
                 self.has_update_object_relation,
             ),
             (
-                AuthorizationPermission::DeleteObjectRelation,
+                StorageAuthorizationPermission::DeleteObjectRelation,
                 self.has_delete_object_relation,
             ),
             (
-                AuthorizationPermission::ReadTemplate,
+                StorageAuthorizationPermission::ReadTemplate,
                 self.has_read_template,
             ),
             (
-                AuthorizationPermission::CreateTemplate,
+                StorageAuthorizationPermission::CreateTemplate,
                 self.has_create_template,
             ),
             (
-                AuthorizationPermission::UpdateTemplate,
+                StorageAuthorizationPermission::UpdateTemplate,
                 self.has_update_template,
             ),
             (
-                AuthorizationPermission::DeleteTemplate,
+                StorageAuthorizationPermission::DeleteTemplate,
                 self.has_delete_template,
             ),
             (
-                AuthorizationPermission::ReadRemoteTarget,
+                StorageAuthorizationPermission::ReadRemoteTarget,
                 self.has_read_remote_target,
             ),
             (
-                AuthorizationPermission::CreateRemoteTarget,
+                StorageAuthorizationPermission::CreateRemoteTarget,
                 self.has_create_remote_target,
             ),
             (
-                AuthorizationPermission::UpdateRemoteTarget,
+                StorageAuthorizationPermission::UpdateRemoteTarget,
                 self.has_update_remote_target,
             ),
             (
-                AuthorizationPermission::DeleteRemoteTarget,
+                StorageAuthorizationPermission::DeleteRemoteTarget,
                 self.has_delete_remote_target,
             ),
             (
-                AuthorizationPermission::ExecuteRemoteTarget,
+                StorageAuthorizationPermission::ExecuteRemoteTarget,
                 self.has_execute_remote_target,
             ),
-            (AuthorizationPermission::ReadAudit, self.has_read_audit),
             (
-                AuthorizationPermission::ManageEventSubscription,
+                StorageAuthorizationPermission::ReadAudit,
+                self.has_read_audit,
+            ),
+            (
+                StorageAuthorizationPermission::ManageEventSubscription,
                 self.has_manage_event_subscription,
             ),
         ];
@@ -235,14 +267,17 @@ impl PermissionRow {
             .collect()
     }
 
-    pub(super) fn into_storage(self) -> Result<AuthorizationGrant, PostgresStorageError> {
-        Ok(AuthorizationGrant::new(
-            AuthorizationGrantId::new(self.id)?,
-            CollectionId::new(self.collection_id)?,
-            GroupId::new(self.group_id)?,
-            self.permissions(),
-            self.created_at.and_utc(),
-            self.updated_at.and_utc(),
-        ))
+    pub(super) fn into_storage(self) -> Result<StorageAuthorizationGrant, PostgresStorageError> {
+        crate::validate_persisted(
+            "authorization grant",
+            StorageAuthorizationGrant::try_new(
+                AuthorizationGrantId::new(self.id)?,
+                CollectionId::new(self.collection_id)?,
+                GroupId::new(self.group_id)?,
+                self.permissions(),
+                self.created_at.and_utc(),
+                self.updated_at.and_utc(),
+            ),
+        )
     }
 }

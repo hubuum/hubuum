@@ -7,8 +7,9 @@ use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 use crate::permissions::{grant_from_storage, permission_to_storage};
 use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
-    AuthorizationCollectionAccessQuery, AuthorizationDataStorage, AuthorizationGrantDelete,
-    AuthorizationGrantKey, AuthorizationGrantMutation, StorageContext, storage_handle,
+    AuthorizationDataStorage, StorageAuthorizationCollectionAccessQuery,
+    StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
+    StorageAuthorizationGrantMutation, StorageContext, storage_handle,
 };
 
 use super::{AuthzSubject, CollectionAccessors, scope_allows};
@@ -78,7 +79,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         if subject.is_admin(backend).await? {
             return Ok(true);
         }
-        let query = AuthorizationCollectionAccessQuery::new(
+        let query = StorageAuthorizationCollectionAccessQuery::new(
             principal_id_to_storage(subject.principal_id()),
             self.collection_id(backend).await?,
             permission.into_iter().map(permission_to_storage),
@@ -117,9 +118,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let key =
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(
+            self.collection_id(backend).await?,
+            group_id_for_grant,
+        );
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
@@ -164,9 +167,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let key =
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(
+            self.collection_id(backend).await?,
+            group_id_for_grant,
+        );
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
@@ -191,9 +196,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let key =
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_grant);
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(
+            self.collection_id(backend).await?,
+            group_id_for_grant,
+        );
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             replace_existing,
@@ -238,9 +245,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let key =
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke);
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(
+            self.collection_id(backend).await?,
+            group_id_for_revoke,
+        );
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
@@ -264,9 +273,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let key =
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke);
-        let mutation = AuthorizationGrantMutation::new(
+        let key = StorageAuthorizationGrantKey::new(
+            self.collection_id(backend).await?,
+            group_id_for_revoke,
+        );
+        let mutation = StorageAuthorizationGrantMutation::new(
             key,
             permission_list.iter().copied().map(permission_to_storage),
             false,
@@ -428,8 +439,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let request = AuthorizationGrantDelete::new(
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke),
+        let request = StorageAuthorizationGrantDelete::new(
+            StorageAuthorizationGrantKey::new(
+                self.collection_id(backend).await?,
+                group_id_for_revoke,
+            ),
             EventContext::system(),
         );
         storage_handle(backend)
@@ -448,8 +462,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: StorageContext,
     {
-        let request = AuthorizationGrantDelete::new(
-            AuthorizationGrantKey::new(self.collection_id(backend).await?, group_id_for_revoke),
+        let request = StorageAuthorizationGrantDelete::new(
+            StorageAuthorizationGrantKey::new(
+                self.collection_id(backend).await?,
+                group_id_for_revoke,
+            ),
             context.clone(),
         );
         storage_handle(backend)

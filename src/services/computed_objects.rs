@@ -4,17 +4,17 @@ use crate::models::{
     ComputedFieldErrorResponse, ComputedObjectScopesResponse, ComputedScopeResponse, HubuumObject,
     HubuumObjectComputedResponse, SharedComputedScopeResponse, TokenScope,
 };
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{effective_page_limit, prepare_db_pagination};
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::services::storage_boundary::{
     class_id_to_storage, object_from_storage, object_id_to_storage, object_to_storage,
     principal_id_to_storage, visibility as storage_visibility,
 };
 use crate::storage::{
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
-    ComputedObjectQueryOptions, ComputedObjectStorage, ComputedObjectVisibility,
-    StorageComputedFieldError, StorageComputedObject, StorageComputedScope, StorageContext,
-    storage_handle,
+    ComputedObjectStorage, StorageComputedFieldError, StorageComputedObject,
+    StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
+    StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
+    StorageComputedObjectVisibility, StorageComputedScope, StorageContext, storage_handle,
 };
 
 pub(crate) enum ComputedObjectAccess<'a> {
@@ -30,21 +30,19 @@ pub(crate) enum ComputedObjectAccess<'a> {
 }
 
 impl ComputedObjectAccess<'_> {
-    fn into_storage(self) -> Result<ComputedObjectVisibility, ApiError> {
+    fn into_storage(self) -> Result<StorageComputedObjectVisibility, ApiError> {
         match self {
             Self::Storage {
                 principal_id,
                 is_admin,
                 scope,
-            } => Ok(ComputedObjectVisibility::storage(storage_visibility(
-                principal_id,
-                is_admin,
-                scope,
-            )?)),
+            } => Ok(StorageComputedObjectVisibility::storage(
+                storage_visibility(principal_id, is_admin, scope)?,
+            )),
             Self::AuthorizedObjectIds {
                 principal_id,
                 object_ids,
-            } => Ok(ComputedObjectVisibility::authorized_object_ids(
+            } => Ok(StorageComputedObjectVisibility::authorized_object_ids(
                 principal_id_to_storage(principal_id),
                 object_ids
                     .as_slice()
@@ -69,8 +67,9 @@ pub(crate) async fn list_computed_objects(
     personal_owner_id: Option<i32>,
     options: QueryOptions,
     access: ComputedObjectAccess<'_>,
-    projection: ComputedObjectProjection,
+    projection: StorageComputedObjectProjection,
 ) -> Result<ComputedObjectListResult, ApiError> {
+    let page_limit = effective_page_limit(&options)?;
     let computed_sorting = options
         .sort()
         .iter()
@@ -80,9 +79,10 @@ pub(crate) async fn list_computed_objects(
     } else {
         prepare_db_pagination::<HubuumObject>(&options)?
     };
-    let prepared_options = ComputedObjectQueryOptions::try_new(options, execution_options)?;
+    let prepared_options =
+        StorageComputedObjectQueryOptions::try_new(options, execution_options, page_limit)?;
     let (objects, total, computed, resolved_options) = storage_handle(backend)
-        .list_computed_objects(ComputedObjectListQuery::new(
+        .list_computed_objects(StorageComputedObjectListQuery::new(
             class_id_to_storage(class_id),
             personal_owner_id.map(principal_id_to_storage),
             prepared_options,
@@ -111,7 +111,7 @@ pub(crate) async fn enrich_objects_with_computed(
     personal_owner_id: Option<i32>,
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
     storage_handle(backend)
-        .enrich_objects_with_computed(ComputedObjectEnrichmentQuery::new(
+        .enrich_objects_with_computed(StorageComputedObjectEnrichmentQuery::new(
             objects.into_iter().map(object_to_storage).collect(),
             personal_owner_id.map(principal_id_to_storage),
         ))

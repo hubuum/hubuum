@@ -6,7 +6,7 @@ use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::MAX_TOKEN_RESOURCE_SCOPES;
 use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
-use hubuum_storage_core::{AuthorizationPermission, StorageError};
+use hubuum_storage_core::{StorageAuthorizationPermission, StorageError};
 
 use crate::operations::event_record::append_events;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
@@ -78,7 +78,7 @@ impl StoredTokenScopeRows {
                 self.permissions
                     .iter()
                     .map(|permission| {
-                        AuthorizationPermission::from_name(permission)
+                        StorageAuthorizationPermission::from_name(permission)
                             .map(|permission| permission.as_str())
                             .map_err(storage_error_to_postgres)
                     })

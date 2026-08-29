@@ -6,8 +6,8 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, TaskId};
 use serde_json::Value;
 
 use crate::{
-    AuthorizationPermission, StorageClassRecord, StorageCollection, StorageError, StorageObject,
-    StorageRemoteHttpMethod, StorageRemoteTargetSubjectType,
+    StorageAuthorizationPermission, StorageClass, StorageCollection, StorageError, StorageObject,
+    StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
 };
 
 macro_rules! import_dto {
@@ -52,7 +52,7 @@ macro_rules! import_dto {
 pub struct StorageImportRevision(i64);
 
 impl StorageImportRevision {
-    pub fn new(value: i64) -> Result<Self, StorageError> {
+    pub fn try_new(value: i64) -> Result<Self, StorageError> {
         if value <= 0 {
             return Err(StorageError::invalid_input(
                 "import revision must be greater than zero",
@@ -172,7 +172,10 @@ pub struct StorageImportTimestamps {
 }
 
 impl StorageImportTimestamps {
-    pub fn new(created_at: DateTime<Utc>, updated_at: DateTime<Utc>) -> Result<Self, StorageError> {
+    pub fn try_new(
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Self, StorageError> {
         if updated_at < created_at {
             return Err(StorageError::invalid_input(
                 "import updated_at must not be earlier than created_at",
@@ -453,7 +456,7 @@ import_dto!(
         collection_ref: Option<String>,
         collection_key: Option<StorageImportCollectionKey>,
         group_key: StorageImportGroupKey,
-        permissions: Vec<AuthorizationPermission>,
+        permissions: Vec<StorageAuthorizationPermission>,
         replace_existing: bool,
         condition: Option<StorageImportWriteCondition>,
     }
@@ -493,7 +496,7 @@ import_dto!(
         class_key: Option<StorageImportClassKey>,
         name: String,
         description: String,
-        method: StorageRemoteHttpMethod,
+        method: StorageRemoteTargetHttpMethod,
         url_template: String,
         headers_template: Value,
         body_template: Option<String>,
@@ -724,7 +727,7 @@ pub struct StorageImportPlan {
 }
 
 impl StorageImportPlan {
-    pub fn new(items: Vec<StorageImportPlanItem>) -> Result<Self, StorageError> {
+    pub fn try_new(items: Vec<StorageImportPlanItem>) -> Result<Self, StorageError> {
         let mut previous_index = None;
         for item in &items {
             if previous_index.is_some_and(|previous| item.index() <= previous) {
@@ -1450,13 +1453,13 @@ pub trait ImportStorage: Send + Sync {
         &self,
         collection_id: CollectionId,
         name: &str,
-    ) -> Result<Option<StorageClassRecord>, StorageError>;
+    ) -> Result<Option<StorageClass>, StorageError>;
 
     async fn list_import_classes_by_names(
         &self,
         collection_id: CollectionId,
         names: &[String],
-    ) -> Result<Vec<StorageClassRecord>, StorageError>;
+    ) -> Result<Vec<StorageClass>, StorageError>;
 
     async fn get_import_object_by_name(
         &self,
@@ -1524,8 +1527,8 @@ mod tests {
 
     #[test]
     fn revisions_must_be_positive() {
-        assert!(StorageImportRevision::new(0).is_err());
-        assert_eq!(StorageImportRevision::new(7).unwrap().get(), 7);
+        assert!(StorageImportRevision::try_new(0).is_err());
+        assert_eq!(StorageImportRevision::try_new(7).unwrap().get(), 7);
     }
 
     #[test]
@@ -1541,14 +1544,14 @@ mod tests {
             .unwrap()
             .and_utc();
 
-        assert!(StorageImportTimestamps::new(created_at, updated_at).is_err());
+        assert!(StorageImportTimestamps::try_new(created_at, updated_at).is_err());
     }
 
     #[test]
     fn overwrite_condition_allows_create_or_update() {
         assert!(!StorageImportWriteCondition::Overwrite.requires_existing());
         assert!(
-            StorageImportWriteCondition::IfRevision(StorageImportRevision::new(1).unwrap())
+            StorageImportWriteCondition::IfRevision(StorageImportRevision::try_new(1).unwrap())
                 .requires_existing()
         );
     }
@@ -1604,7 +1607,7 @@ mod tests {
             overwrite: false,
         };
 
-        let result = StorageImportPlan::new(vec![
+        let result = StorageImportPlan::try_new(vec![
             StorageImportPlanItem::new(1, operation()),
             StorageImportPlanItem::new(1, operation()),
         ]);
@@ -1618,7 +1621,7 @@ mod tests {
 
     #[test]
     fn import_plan_rejects_invalid_operation_shape() {
-        let result = StorageImportPlan::new(vec![StorageImportPlanItem::new(
+        let result = StorageImportPlan::try_new(vec![StorageImportPlanItem::new(
             0,
             StorageImportOperation::UpsertIdentityScope {
                 input: StorageImportIdentityScope::from_parts(StorageImportIdentityScopeParts {

@@ -12,8 +12,8 @@ use crate::services::storage_boundary::{
     resolved_class_relation_from_storage, resolved_class_relation_to_storage,
 };
 use crate::storage::{
-    ClassRelationStorage, MutationOutcome, StorageClassRelation, StorageClassRelationCreate,
-    StorageError,
+    ClassRelationStorage, StorageClassRelation, StorageClassRelationCreate, StorageError,
+    StorageMutationOutcome,
 };
 
 /// Compose the canonical prepare/create relation lifecycle for callers that
@@ -22,7 +22,7 @@ pub(crate) async fn prepare_and_create_class_relation(
     storage: &dyn ClassRelationStorage,
     command: StorageClassRelationCreate,
     context: &EventContext,
-) -> Result<MutationOutcome<StorageClassRelation>, StorageError> {
+) -> Result<StorageMutationOutcome<StorageClassRelation>, StorageError> {
     let prepared = storage.prepare_class_relation(command).await?;
     Ok(storage
         .create_class_relation(&prepared, context)
@@ -35,7 +35,7 @@ pub(crate) async fn resolve_and_delete_class_relation(
     storage: &dyn ClassRelationStorage,
     relation_id: i32,
     context: &EventContext,
-) -> Result<MutationOutcome<()>, StorageError> {
+) -> Result<StorageMutationOutcome<()>, StorageError> {
     let target = storage
         .resolve_class_relation(class_relation_id_to_storage(relation_id))
         .await?;

@@ -9,16 +9,17 @@ use serde_json::Value;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    MutationOutcome, StorageCollection, StorageError, StorageObject, StorageRecordMetadata,
+    StorageCollection, StorageError, StorageMutationOutcome, StorageObject, StorageRecordMetadata,
+    StorageValidationError,
 };
 
-/// Flat class record used by point and lifecycle operations.
+/// Canonical flat class projection used by point and lifecycle operations.
 ///
-/// Catalog projections use `StorageClass`, which also embeds the collection.
-/// Keeping this record flat prevents lifecycle writes from requiring an
+/// Catalog projections use `StorageClassWithCollection`, which also embeds the collection.
+/// Keeping this projection flat prevents lifecycle writes from requiring an
 /// otherwise unnecessary collection lookup.
 #[derive(Clone, PartialEq)]
-pub struct StorageClassRecord {
+pub struct StorageClass {
     id: ClassId,
     name: String,
     collection_id: CollectionId,
@@ -30,15 +31,15 @@ pub struct StorageClassRecord {
     revision: ResourceRevision,
 }
 
-impl StorageClassRecord {
+impl StorageClass {
     #[must_use]
     pub fn builder(
         metadata: StorageRecordMetadata,
         name: impl Into<String>,
         collection_id: CollectionId,
         description: impl Into<String>,
-    ) -> StorageClassRecordBuilder {
-        StorageClassRecordBuilder {
+    ) -> StorageClassBuilder {
+        StorageClassBuilder {
             metadata,
             name: name.into(),
             collection_id,
@@ -122,7 +123,7 @@ impl StorageClassRecord {
     }
 }
 
-pub struct StorageClassRecordBuilder {
+pub struct StorageClassBuilder {
     metadata: StorageRecordMetadata,
     name: String,
     collection_id: CollectionId,
@@ -131,7 +132,7 @@ pub struct StorageClassRecordBuilder {
     validate_schema: bool,
 }
 
-impl StorageClassRecordBuilder {
+impl StorageClassBuilder {
     #[must_use]
     pub fn json_schema(mut self, json_schema: Option<Value>) -> Self {
         self.json_schema = json_schema;
@@ -145,8 +146,8 @@ impl StorageClassRecordBuilder {
     }
 
     #[must_use]
-    pub fn build(self) -> StorageClassRecord {
-        StorageClassRecord {
+    pub fn build(self) -> StorageClass {
+        StorageClass {
             id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection_id: self.collection_id,
@@ -403,13 +404,24 @@ impl StorageClassUpdateBuilder {
 #[derive(Clone, PartialEq)]
 pub struct StorageResolvedClass {
     selector: StorageClassSelector,
-    class: StorageClassRecord,
+    class: StorageClass,
 }
 
 impl StorageResolvedClass {
-    #[must_use]
-    pub fn new(selector: StorageClassSelector, class: StorageClassRecord) -> Self {
-        Self { selector, class }
+    pub fn try_new(
+        selector: StorageClassSelector,
+        class: StorageClass,
+    ) -> Result<Self, StorageValidationError> {
+        let matches = match &selector {
+            StorageClassSelector::Id(id) => *id == class.id(),
+            StorageClassSelector::Name(name) => name == class.name(),
+        };
+        if !matches {
+            return Err(StorageValidationError::invalid(
+                "resolved class must match its selector",
+            ));
+        }
+        Ok(Self { selector, class })
     }
 
     #[must_use]
@@ -418,12 +430,12 @@ impl StorageResolvedClass {
     }
 
     #[must_use]
-    pub const fn class(&self) -> &StorageClassRecord {
+    pub const fn class(&self) -> &StorageClass {
         &self.class
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageClassSelector, StorageClassRecord) {
+    pub fn into_parts(self) -> (StorageClassSelector, StorageClass) {
         (self.selector, self.class)
     }
 }
@@ -609,22 +621,39 @@ impl StorageObjectDataPatch {
 #[derive(Clone, PartialEq)]
 pub struct StorageResolvedObject {
     selector: StorageObjectSelector,
-    class: StorageClassRecord,
+    class: StorageClass,
     object: StorageObject,
 }
 
 impl StorageResolvedObject {
-    #[must_use]
-    pub fn new(
+    pub fn try_new(
         selector: StorageObjectSelector,
-        class: StorageClassRecord,
+        class: StorageClass,
         object: StorageObject,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StorageValidationError> {
+        let selector_matches = match &selector {
+            StorageObjectSelector::Ids {
+                class_id,
+                object_id,
+            } => *class_id == object.class_id() && *object_id == object.id(),
+            StorageObjectSelector::Names {
+                class_name,
+                object_name,
+            } => class_name == class.name() && object_name == object.name(),
+        };
+        if !selector_matches
+            || class.id() != object.class_id()
+            || class.collection_id() != object.collection_id()
+        {
+            return Err(StorageValidationError::invalid(
+                "resolved object, class, and selector must describe the same resource",
+            ));
+        }
+        Ok(Self {
             selector,
             class,
             object,
-        }
+        })
     }
 
     #[must_use]
@@ -633,7 +662,7 @@ impl StorageResolvedObject {
     }
 
     #[must_use]
-    pub const fn class(&self) -> &StorageClassRecord {
+    pub const fn class(&self) -> &StorageClass {
         &self.class
     }
 
@@ -643,7 +672,7 @@ impl StorageResolvedObject {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageObjectSelector, StorageClassRecord, StorageObject) {
+    pub fn into_parts(self) -> (StorageObjectSelector, StorageClass, StorageObject) {
         (self.selector, self.class, self.object)
     }
 }
@@ -660,20 +689,20 @@ pub trait CollectionStorage: Send + Sync {
         &self,
         command: StorageCollectionCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError>;
 
     async fn update_collection(
         &self,
         id: CollectionId,
         changes: StorageCollectionUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError>;
 
     async fn delete_collection(
         &self,
         id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     async fn list_collection_children(
         &self,
@@ -690,7 +719,7 @@ pub trait CollectionStorage: Send + Sync {
         id: CollectionId,
         new_parent_id: CollectionId,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageCollection>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError>;
 }
 
 /// Complete class lifecycle required from a selectable backend.
@@ -708,20 +737,20 @@ pub trait ClassStorage: Send + Sync {
         &self,
         command: StorageClassCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError>;
 
     async fn update_class(
         &self,
         target: &StorageResolvedClass,
         changes: StorageClassUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageClassRecord>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageClass>, StorageError>;
 
     async fn delete_class(
         &self,
         target: &StorageResolvedClass,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     /// Resolve class names in one backend operation.
     ///
@@ -752,27 +781,27 @@ pub trait ObjectStorage: Send + Sync {
         class: &StorageResolvedClass,
         command: StorageObjectCreate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError>;
 
     async fn update_object(
         &self,
         target: &StorageResolvedObject,
         changes: StorageObjectUpdate,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError>;
 
     async fn patch_object_data(
         &self,
         target: &StorageResolvedObject,
         patch: StorageObjectDataPatch,
         context: &EventContext,
-    ) -> Result<MutationOutcome<StorageObject>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageObject>, StorageError>;
 
     async fn delete_object(
         &self,
         target: &StorageResolvedObject,
         context: &EventContext,
-    ) -> Result<MutationOutcome<()>, StorageError>;
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 
     /// Validate one stored object against its referenced class and collection.
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError>;

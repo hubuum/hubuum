@@ -8,9 +8,9 @@ use diesel::sql_types::BigInt;
 use diesel_async::RunQueryDsl;
 use hubuum_domain::ExportTemplateId;
 use hubuum_storage_core::{
-    ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot,
-    StorageTaskKind, StorageTaskStatus, TaskGaugeAge, TaskGaugeCount, TaskGaugeLastTerminal,
-    TaskGaugeSnapshot,
+    StorageExportTemplateMetricIdentity, StorageInventoryGaugeSnapshot,
+    StorageInventoryMetricsSnapshot, StorageTaskGaugeAge, StorageTaskGaugeCount,
+    StorageTaskGaugeLastTerminal, StorageTaskGaugeSnapshot, StorageTaskKind, StorageTaskStatus,
 };
 
 use crate::schema::{export_templates, tasks};
@@ -74,16 +74,21 @@ struct InventoryMetricsRow {
     remote_targets: i64,
 }
 
-impl From<InventoryMetricsRow> for InventoryMetricsSnapshot {
-    fn from(row: InventoryMetricsRow) -> Self {
-        Self::new(
-            row.collections,
-            row.classes,
-            row.objects,
-            row.users,
-            row.groups,
-            row.service_accounts,
-            row.remote_targets,
+impl TryFrom<InventoryMetricsRow> for StorageInventoryMetricsSnapshot {
+    type Error = PostgresStorageError;
+
+    fn try_from(row: InventoryMetricsRow) -> Result<Self, Self::Error> {
+        crate::validate_persisted(
+            "inventory metrics snapshot",
+            Self::try_new(
+                row.collections,
+                row.classes,
+                row.objects,
+                row.users,
+                row.groups,
+                row.service_accounts,
+                row.remote_targets,
+            ),
         )
     }
 }
@@ -102,9 +107,9 @@ fn storage_task_status(value: &str) -> Result<StorageTaskStatus, PostgresStorage
 
 pub async fn load_inventory_gauge_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<InventoryGaugeSnapshot, PostgresStorageError> {
+) -> Result<StorageInventoryGaugeSnapshot, PostgresStorageError> {
     runtime
-        .with_connection(async |connection| {
+        .with_read_only_snapshot(async |connection| {
             let counts = load_inventory_counts(connection).await?;
             let export_templates = export_templates::table
                 .select((export_templates::id, export_templates::name))
@@ -113,32 +118,38 @@ pub async fn load_inventory_gauge_snapshot(
                 .await?
                 .into_iter()
                 .map(|(id, name)| {
-                    Ok(ExportTemplateMetricIdentity::new(
+                    Ok(StorageExportTemplateMetricIdentity::new(
                         ExportTemplateId::new(id)?,
                         name,
                     ))
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 
-            Ok::<_, PostgresStorageError>(InventoryGaugeSnapshot::new(counts, export_templates))
+            crate::validate_persisted(
+                "inventory gauge snapshot",
+                StorageInventoryGaugeSnapshot::try_new(counts, export_templates),
+            )
         })
         .await
 }
 
 pub async fn load_task_gauge_snapshot(
     runtime: &PostgresRuntime,
-) -> Result<TaskGaugeSnapshot, PostgresStorageError> {
+) -> Result<StorageTaskGaugeSnapshot, PostgresStorageError> {
     runtime
-        .with_connection(async |connection| {
+        .with_read_only_snapshot(async |connection| {
             let counts = load_task_count_rows(connection)
                 .await?
                 .into_iter()
                 .map(|(kind, status, count)| {
-                    Ok(TaskGaugeCount::new(
-                        storage_task_kind(&kind)?,
-                        storage_task_status(&status)?,
-                        count,
-                    ))
+                    crate::validate_persisted(
+                        "task gauge count",
+                        StorageTaskGaugeCount::try_new(
+                            storage_task_kind(&kind)?,
+                            storage_task_status(&status)?,
+                            count,
+                        ),
+                    )
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 
@@ -167,11 +178,20 @@ pub async fn load_task_gauge_snapshot(
                 .await?
                 .into_iter()
                 .map(|(kind, status, finished_at)| {
-                    Ok(TaskGaugeLastTerminal::new(
-                        storage_task_kind(&kind)?,
-                        storage_task_status(&status)?,
-                        finished_at.map(|timestamp| timestamp.and_utc()),
-                    ))
+                    let finished_at = finished_at.ok_or_else(|| {
+                        PostgresStorageError::invalid_persisted_value(
+                            "task gauge terminal state",
+                            "a terminal task group has no finish timestamp",
+                        )
+                    })?;
+                    crate::validate_persisted(
+                        "task gauge terminal state",
+                        StorageTaskGaugeLastTerminal::try_new(
+                            storage_task_kind(&kind)?,
+                            storage_task_status(&status)?,
+                            finished_at.and_utc(),
+                        ),
+                    )
                 })
                 .collect::<Result<Vec<_>, PostgresStorageError>>()?;
 
@@ -193,7 +213,7 @@ pub async fn load_task_gauge_snapshot(
                 .map(|kind| {
                     let (oldest_queued_at, oldest_active_at) =
                         ages_by_kind.remove(&kind).unwrap_or((None, None));
-                    TaskGaugeAge::new(
+                    StorageTaskGaugeAge::new(
                         kind,
                         oldest_queued_at.map(|timestamp| timestamp.and_utc()),
                         oldest_active_at.map(|timestamp| timestamp.and_utc()),
@@ -201,14 +221,17 @@ pub async fn load_task_gauge_snapshot(
                 })
                 .collect();
 
-            Ok::<_, PostgresStorageError>(TaskGaugeSnapshot::new(counts, ages, last_terminal))
+            crate::validate_persisted(
+                "task gauge snapshot",
+                StorageTaskGaugeSnapshot::try_new(counts, ages, last_terminal),
+            )
         })
         .await
 }
 
 async fn load_inventory_counts(
     connection: &mut PostgresConnection,
-) -> Result<InventoryMetricsSnapshot, PostgresStorageError> {
+) -> Result<StorageInventoryMetricsSnapshot, PostgresStorageError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -223,7 +246,7 @@ async fn load_inventory_counts(
     )
     .get_result::<InventoryMetricsRow>(connection)
     .await?;
-    Ok(row.into())
+    row.try_into()
 }
 
 async fn load_task_count_rows(

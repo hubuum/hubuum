@@ -191,9 +191,9 @@ Boundary DTOs should make invalid or ambiguous calls difficult:
 Do not derive Diesel traits on a storage DTO. Define a private adapter row and
 write the conversion at the adapter edge.
 
-Shared resource projections such as `StorageCollection`, `StorageClass`, and
-`StorageObject` are logical views. They are not promises that all native stores
-must share PostgreSQL's schema.
+Shared resource projections such as `StorageCollection`,
+`StorageClassWithCollection`, and `StorageObject` are logical views. They are
+not promises that all native stores must share PostgreSQL's schema.
 
 ## Transactions
 
@@ -220,7 +220,7 @@ must be verified inside the same native transaction as the protected write.
 The transaction compatibility test must prove rollback of both state and audit
 events for every composable lifecycle operation.
 
-Ordinary mutation APIs require `EventContext` and return `MutationOutcome`.
+Ordinary mutation APIs require `EventContext` and return `StorageMutationOutcome`.
 Do not add an optional context, a boolean event switch, or an eventless helper.
 Compatibility code without a user actor uses explicit system attribution.
 Committed outcomes carry the receipt produced by the durable event write;

@@ -103,7 +103,7 @@ event-suppression escape hatch.
 
 ### 2. The Result Proves the Audit Write
 
-An ordinary audited mutation returns `MutationOutcome<T>`:
+An ordinary audited mutation returns `StorageMutationOutcome<T>`:
 
 - `Committed { value, audits }` means state changed and the non-empty `audits`
   set identifies every durable event written for that atomic change.
@@ -111,7 +111,7 @@ An ordinary audited mutation returns `MutationOutcome<T>`:
   carries no receipt, writes no lifecycle event, and must not advance revision
   or modification time merely to manufacture a change.
 
-`AuditReceipt` contains the stable event sequence, event UUID, entity type,
+`StorageAuditReceipt` contains the stable event sequence, event UUID, entity type,
 action, and before and after revisions. It deliberately omits snapshots,
 metadata, actor details, and other permission-scoped audit content. Authorized
 callers retrieve those through `AuditEventStorage`.
@@ -173,8 +173,9 @@ uses the kind for HTTP status and retry behavior. This matrix is normative:
 
 Native error text remains adapter-private. In particular, a pool checkout
 failure is `Unavailable`, while a failed query on an acquired connection is
-`Backend`. Corrupt persisted values are also `Backend`, even when the same DTO
-validator would classify caller-supplied data as invalid input.
+`Backend`. Corrupt persisted values are also `Backend`. Shared DTO validators
+return an unclassified `StorageValidationError`; applications map caller values
+to request errors, while adapters map rejected native projections to `Backend`.
 
 ### 6. Revision Conflicts Preserve the Current Revision
 

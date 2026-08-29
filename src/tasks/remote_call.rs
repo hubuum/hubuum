@@ -26,7 +26,7 @@ use crate::services::storage_boundary::resource_id_to_storage;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
 use crate::storage::{
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteHttpMethod,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetHttpMethod,
     StorageRemoteTargetSubjectType, StorageTaskCompletionArtifact,
 };
 use crate::traits::AuthzSubject;
@@ -310,12 +310,12 @@ fn remote_call_failure(
     }
 }
 
-fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteHttpMethod {
+fn http_method_to_storage(method: RemoteHttpMethod) -> StorageRemoteTargetHttpMethod {
     match method {
-        RemoteHttpMethod::Get => StorageRemoteHttpMethod::Get,
-        RemoteHttpMethod::Post => StorageRemoteHttpMethod::Post,
-        RemoteHttpMethod::Patch => StorageRemoteHttpMethod::Patch,
-        RemoteHttpMethod::Delete => StorageRemoteHttpMethod::Delete,
+        RemoteHttpMethod::Get => StorageRemoteTargetHttpMethod::Get,
+        RemoteHttpMethod::Post => StorageRemoteTargetHttpMethod::Post,
+        RemoteHttpMethod::Patch => StorageRemoteTargetHttpMethod::Patch,
+        RemoteHttpMethod::Delete => StorageRemoteTargetHttpMethod::Delete,
     }
 }
 

@@ -8,7 +8,7 @@ use hubuum_computed_fields::{
 };
 use hubuum_query::ComputedQueryValueType;
 use hubuum_storage_core::{
-    ComputedObjectEnrichmentQuery, StorageComputedFieldError, StorageComputedObject,
+    StorageComputedFieldError, StorageComputedObject, StorageComputedObjectEnrichmentQuery,
     StorageComputedScope, StorageObject, StorageSharedComputedScope,
 };
 
@@ -48,7 +48,7 @@ type EvaluationMaps = (
 
 pub(super) async fn enrich_objects(
     runtime: &PostgresRuntime,
-    query: ComputedObjectEnrichmentQuery,
+    query: StorageComputedObjectEnrichmentQuery,
 ) -> Result<Vec<StorageComputedObject>, PostgresStorageError> {
     let (objects, personal_owner_id) = query.into_parts();
     if objects.is_empty() {

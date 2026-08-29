@@ -22,8 +22,8 @@ operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
 
 Ordinary resource mutations require `EventContext` and return
-`MutationOutcome`. A committed outcome includes a non-empty set of
-non-sensitive `AuditReceipt` values for the durable events written atomically
+`StorageMutationOutcome`. A committed outcome includes a non-empty set of
+non-sensitive `StorageAuditReceipt` values for the durable events written atomically
 with the state change; a genuine no-op returns `Unchanged`. Imports and
 restores use explicit `ImportStorage` and `RestoreStorage` capabilities and do
 not weaken ordinary mutation signatures.
