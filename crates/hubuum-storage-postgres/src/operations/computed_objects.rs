@@ -230,7 +230,7 @@ fn filtered_object_query<'query>(
     if let Some(object_ids) = authorized_object_ids {
         query = query.filter(hubuumobject::id.eq_any(object_ids));
     }
-    query = apply_object_filters(query, options, related_predicate)?;
+    query = apply_object_filters(query, options, related_predicate, None)?;
     for parameter in options
         .filters()
         .iter()

@@ -4,8 +4,9 @@ use crate::models::token::Token;
 use crate::models::user::User;
 use crate::models::{
     CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
-    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, PrincipalKind, PrincipalSettings,
-    PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope, TokenScope,
+    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, MAX_STRUCTURED_SEARCH_BYTES, ObjectDataPatchDocument,
+    PrincipalKind, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument,
+    StructuredSearchRequest, TokenResourceScope, TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::storage::{
@@ -58,6 +59,13 @@ const PRINCIPAL_SETTINGS_MERGE_PATCH_ERROR_CONTEXT: PatchPayloadErrorContext =
         document_kind: "JSON Merge Patch",
         ..PRINCIPAL_SETTINGS_JSON_PATCH_ERROR_CONTEXT
     };
+
+const STRUCTURED_SEARCH_ERROR_CONTEXT: PatchPayloadErrorContext = PatchPayloadErrorContext {
+    sentence_subject: "Structured search",
+    embedded_subject: "structured search",
+    document_kind: "structured search",
+    supported_media_types: JSON_MEDIA_TYPE,
+};
 
 fn unsupported_patch_media_type(supported_media_types: &str) -> ApiError {
     ApiError::UnsupportedMediaType(format!("Content-Type must be {supported_media_types}"))
@@ -139,6 +147,32 @@ impl FromRequest for PrincipalSettingsPatchPayload {
                 SUPPORTED_PRINCIPAL_SETTINGS_PATCH_MEDIA_TYPES,
             )))),
         }
+    }
+}
+
+/// Strict, size-bounded JSON extractor for the structured search DSL.
+pub struct StructuredSearchPayload(StructuredSearchRequest);
+
+impl StructuredSearchPayload {
+    pub fn into_inner(self) -> StructuredSearchRequest {
+        self.0
+    }
+}
+
+impl FromRequest for StructuredSearchPayload {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let body = JsonBody::<StructuredSearchRequest>::new(req, payload, None, true)
+            .limit(MAX_STRUCTURED_SEARCH_BYTES);
+        Box::pin(async move {
+            let request = body
+                .await
+                .map_err(|error| patch_payload_error(error, STRUCTURED_SEARCH_ERROR_CONTEXT))?;
+            request.validate()?;
+            Ok(Self(request))
+        })
     }
 }
 

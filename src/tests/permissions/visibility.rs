@@ -84,7 +84,48 @@ async fn candidate_authorization_bounds_each_expanded_permission_batch() {
     .expect("candidate authorization should succeed");
 
     assert_eq!(authorized, candidates);
-    assert_eq!(backend.authorization_batch_sizes(), vec![256, 44]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![512, 88]);
+}
+
+#[actix_test]
+async fn candidate_authorization_normalizes_each_required_permission() {
+    let backend = MockTreetopBackend::new();
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadClass,
+        resource_kind: ResourceKind::Class,
+        resource_id: Some(11),
+        attrs: ResourceAttrs::default(),
+    });
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadCollection,
+        resource_kind: ResourceKind::Collection,
+        resource_id: Some(5),
+        attrs: ResourceAttrs::default(),
+    });
+    let principal = PrincipalRef::new(1, [7]);
+
+    let authorized = authorize_all_candidates(
+        &backend,
+        &principal,
+        vec![11],
+        None,
+        vec![Permissions::ReadClass, Permissions::ReadCollection],
+        |class_id| ResourceRef {
+            kind: ResourceKind::Class,
+            id: *class_id,
+            attrs: ResourceAttrs {
+                collection_id: Some(5),
+                ..Default::default()
+            },
+        },
+    )
+    .await
+    .expect("normalized candidate authorization should succeed");
+
+    assert_eq!(authorized, vec![11]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![2]);
 }
 
 #[actix_test]

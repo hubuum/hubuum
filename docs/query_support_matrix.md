@@ -12,6 +12,24 @@ Notes:
   supports `revision` filtering and sorting, unless the endpoint is explicitly
   described as an aggregate or non-paginated representation
 
+## Central structured search
+
+`POST /api/v1/search` accepts a versioned JSON DSL with nested `and`, `or`, and
+`not`. The field matrix is target-specific; an object target may also contain
+bounded existential `related` expressions. See [search_api.md](search_api.md)
+for the complete grammar, operator matrix, examples, limits, response union,
+and authorization behavior.
+
+| Target | Filter fields | Sort fields | Default sort |
+| --- | --- | --- | --- |
+| `collection` | `id`, `name`, `description`, `created_at`, `updated_at`, `revision` | Same as filters | `id.asc` |
+| `class` | `id`, `name`, `description`, `collection_id`, `created_at`, `updated_at`, `revision`, `validate_schema`, `json_schema` | All except `validate_schema` and `json_schema` | `id.asc` |
+| `object` | `id`, `name`, `description`, `collection_id`, `created_at`, `updated_at`, `revision`, `json_data`; related predicates accept the same fields | All direct fields except `json_data` | `id.asc` |
+| `audit_event` | `id`, `occurred_at`, `entity_type`, `entity_id`, `entity_name`, `collection_id`, `action`, `actor_kind`, `actor_user_id`, `initiator_user_id`, `summary`, `metadata` | `id`, `occurred_at` | `occurred_at.desc`, `id.desc` |
+| `user` | `id`, `name`, `identity_scope`, `proper_name`, `email`, `created_at`, `updated_at`, `revision` | Same as filters | `id.asc` |
+| `group` | `id`, `name`, `description`, `identity_scope`, `managed_by`, `external_key`, `last_sync_attempted_at`, `last_sync_success_at`, `created_at`, `updated_at`, `revision` | `id`, `name`, `description`, `created_at`, `updated_at`, `revision` | `id.asc` |
+| `service_account` | `id`, `name`, `description`, `identity_scope`, `owner_group_id`, `created_by`, `disabled_at`, `created_at`, `updated_at`, `revision` | `id`, `name`, `identity_scope`, `created_at`, `updated_at`, `revision` | `id.asc` |
+
 ## IAM
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |

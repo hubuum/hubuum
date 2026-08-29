@@ -145,9 +145,11 @@ fn permission_requests<T>(
 ) -> Vec<PermissionRequest> {
     candidates
         .iter()
-        .map(|candidate| PermissionRequest {
-            resource: candidate.resource.clone(),
-            permissions: permissions.to_vec(),
+        .flat_map(|candidate| {
+            permissions.iter().map(|permission| PermissionRequest {
+                resource: candidate.resource.normalized_for_permission(*permission),
+                permissions: vec![*permission],
+            })
         })
         .collect()
 }
@@ -159,17 +161,28 @@ fn candidate_batch_size(permissions: &[Permissions]) -> usize {
 fn allowed_candidate_values<T>(
     candidates: Vec<ResourceScopedCandidate<T>>,
     decisions: Vec<PermissionDecision>,
+    permission_count: usize,
 ) -> Result<Vec<T>, ApiError> {
-    if candidates.len() != decisions.len() {
+    let expected_decisions = candidates.len().saturating_mul(permission_count);
+    if decisions.len() != expected_decisions {
         return Err(ApiError::InternalServerError(
             "Permission backend returned an unexpected number of decisions".to_string(),
         ));
     }
+    if permission_count == 0 {
+        return Ok(candidates
+            .into_iter()
+            .map(|candidate| candidate.value)
+            .collect());
+    }
     Ok(candidates
         .into_iter()
-        .zip(decisions)
-        .filter_map(|(candidate, decision)| {
-            (decision == PermissionDecision::Allow).then_some(candidate.value)
+        .zip(decisions.chunks_exact(permission_count))
+        .filter_map(|(candidate, candidate_decisions)| {
+            candidate_decisions
+                .iter()
+                .all(|decision| *decision == PermissionDecision::Allow)
+                .then_some(candidate.value)
         })
         .collect())
 }
@@ -196,7 +209,7 @@ where
 
         let requests = permission_requests(&batch, permissions);
         let decisions = backend.authorize_many(principal, requests).await?;
-        let allowed = allowed_candidate_values(batch, decisions)?;
+        let allowed = allowed_candidate_values(batch, decisions, permissions.len())?;
         authorized_count += allowed.len();
         allowed.into_iter().for_each(&mut visit);
     }
@@ -338,7 +351,7 @@ mod tests {
             resource: ResourceRef::collection(7),
         }];
 
-        let error = allowed_candidate_values(candidates, Vec::new()).unwrap_err();
+        let error = allowed_candidate_values(candidates, Vec::new(), 1).unwrap_err();
 
         assert_eq!(
             error,

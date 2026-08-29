@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use futures_util::{FutureExt, future::BoxFuture};
 use tracing::debug;
 
 use crate::errors::ApiError;
@@ -8,7 +9,9 @@ use crate::models::search::{
     RelatedClassField, RelatedFilterTarget, RelatedObjectField, SearchOperator,
 };
 use crate::models::{
-    HubuumClassExpanded, HubuumObject, HubuumObjectRelation, Permissions, TokenScope,
+    HubuumClassExpanded, HubuumObject, HubuumObjectRelation,
+    MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES, Permissions, StructuredSearchExpression,
+    StructuredSearchResourceKind, TokenScope,
 };
 use crate::permissions::visibility::{
     AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
@@ -136,7 +139,7 @@ pub(crate) async fn externally_authorized_related_object_ids(
             principal,
             target_candidates,
             scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             object_resource,
         )
         .await?;
@@ -166,6 +169,206 @@ pub(crate) async fn externally_authorized_related_object_ids(
     }
 
     AuthorizedObjectIds::new(intersection.unwrap_or_default()).map(Some)
+}
+
+/// Evaluate a recursive object-search expression when authorization decisions
+/// cannot be embedded in the storage query.
+pub(crate) async fn externally_authorized_structured_objects<S>(
+    storage: &S,
+    permission_backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    scopes: Option<&TokenScope>,
+    mut source_query: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<Vec<HubuumObject>, ApiError>
+where
+    S: StorageContext,
+{
+    if !scope_allows(
+        scopes,
+        &[Permissions::ReadCollection, Permissions::ReadObject],
+    ) {
+        return Ok(Vec::new());
+    }
+
+    let class_id = source_query
+        .filters()
+        .iter()
+        .find(|filter| filter.field == FilterField::ClassId)
+        .map(|filter| {
+            filter.value.parse::<i32>().map_err(|_| {
+                ApiError::InternalServerError(
+                    "Structured object search has an invalid resolved class filter".to_string(),
+                )
+            })
+        })
+        .transpose()?;
+    source_query.set_structured_filter(None);
+    source_query.set_limit(Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1))?;
+    source_query.clear_cursor();
+    source_query.set_include_total(false);
+    let (candidates, _) =
+        catalog::list_objects(storage, principal.user_id, true, None, source_query).await?;
+    ensure_structured_external_candidate_count(candidates.len())?;
+    let visible = authorize_all_candidates(
+        permission_backend,
+        principal,
+        candidates,
+        scopes,
+        vec![Permissions::ReadObject, Permissions::ReadCollection],
+        object_resource,
+    )
+    .await?;
+    let universe = visible
+        .iter()
+        .map(|object| object.id)
+        .collect::<HashSet<_>>();
+    let matched = match expression {
+        Some(expression) => {
+            evaluate_external_structured_expression(
+                storage,
+                permission_backend,
+                principal,
+                scopes,
+                class_id,
+                expression,
+                &universe,
+            )
+            .await?
+        }
+        None => universe,
+    };
+
+    Ok(visible
+        .into_iter()
+        .filter(|object| matched.contains(&object.id))
+        .collect())
+}
+
+fn evaluate_external_structured_expression<'a, S>(
+    storage: &'a S,
+    permission_backend: &'a dyn PermissionBackend,
+    principal: &'a PrincipalRef,
+    scopes: Option<&'a TokenScope>,
+    class_id: Option<i32>,
+    expression: &'a StructuredSearchExpression,
+    universe: &'a HashSet<i32>,
+) -> BoxFuture<'a, Result<HashSet<i32>, ApiError>>
+where
+    S: StorageContext,
+{
+    async move {
+        match expression {
+            StructuredSearchExpression::And { args } => {
+                let mut matched = universe.clone();
+                for argument in args {
+                    let argument_matches = evaluate_external_structured_expression(
+                        storage,
+                        permission_backend,
+                        principal,
+                        scopes,
+                        class_id,
+                        argument,
+                        universe,
+                    )
+                    .await?;
+                    matched.retain(|id| argument_matches.contains(id));
+                    if matched.is_empty() {
+                        break;
+                    }
+                }
+                Ok(matched)
+            }
+            StructuredSearchExpression::Or { args } => {
+                let mut matched = HashSet::new();
+                for argument in args {
+                    matched.extend(
+                        evaluate_external_structured_expression(
+                            storage,
+                            permission_backend,
+                            principal,
+                            scopes,
+                            class_id,
+                            argument,
+                            universe,
+                        )
+                        .await?,
+                    );
+                }
+                matched.retain(|id| universe.contains(id));
+                Ok(matched)
+            }
+            StructuredSearchExpression::Not { arg } => {
+                let excluded = evaluate_external_structured_expression(
+                    storage,
+                    permission_backend,
+                    principal,
+                    scopes,
+                    class_id,
+                    arg,
+                    universe,
+                )
+                .await?;
+                Ok(universe.difference(&excluded).copied().collect())
+            }
+            StructuredSearchExpression::Field { .. } => {
+                let mut filters = Vec::with_capacity(1);
+                if let Some(class_id) = class_id {
+                    filters.push(ParsedQueryParam {
+                        field: FilterField::ClassId,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: class_id.to_string(),
+                    });
+                }
+                let mut query = QueryOptions::new(
+                    filters,
+                    Vec::new(),
+                    Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1),
+                    None,
+                    false,
+                )?;
+                query.set_structured_filter(Some(
+                    expression.query_expression(StructuredSearchResourceKind::Object)?,
+                ));
+                let (matches, _) =
+                    catalog::list_objects(storage, principal.user_id, true, None, query).await?;
+                ensure_structured_external_candidate_count(matches.len())?;
+                Ok(matches
+                    .into_iter()
+                    .map(|object| object.id)
+                    .filter(|id| universe.contains(id))
+                    .collect())
+            }
+            StructuredSearchExpression::Related { predicate } => {
+                let filters = predicate.query_params("dsl")?;
+                let matches = externally_authorized_related_object_ids(
+                    storage,
+                    permission_backend,
+                    principal,
+                    scopes,
+                    &filters,
+                )
+                .await?
+                .unwrap_or_else(AuthorizedObjectIds::empty);
+                Ok(matches
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .filter(|id| universe.contains(id))
+                    .collect())
+            }
+        }
+    }
+    .boxed()
+}
+
+fn ensure_structured_external_candidate_count(count: usize) -> Result<(), ApiError> {
+    if count <= MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES {
+        return Ok(());
+    }
+    Err(ApiError::BadRequest(format!(
+        "Structured search exceeds the {MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES} object safety limit for external authorization; narrow the filter"
+    )))
 }
 
 async fn load_related_target_class(
@@ -427,7 +630,7 @@ async fn externally_authorized_related_group_ids(
             principal,
             object_candidates,
             scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             object_resource,
         )
         .await?

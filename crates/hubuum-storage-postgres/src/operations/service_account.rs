@@ -186,6 +186,18 @@ pub async fn list_manageable_service_accounts(
     validate_positive_id(requestor_id, "requestor id")?;
     runtime
         .with_read_only_snapshot(async move |connection| {
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    crate::operations::structured_search::structured_filter_predicate(
+                        connection,
+                        expression,
+                        crate::operations::structured_search::StructuredResourceKind::ServiceAccount,
+                        None,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let build_query = || -> Result<_, PostgresStorageError> {
                 let mut records =
                     crate::schema::service_accounts::table
@@ -198,6 +210,9 @@ pub async fn list_manageable_service_accounts(
                                     .eq(crate::schema::identity_scopes::id)),
                         )
                         .into_boxed();
+                if let Some(predicate) = structured_predicate.clone() {
+                    records = records.filter(predicate);
+                }
                 if !administrator {
                     records = records.filter(
                         crate::schema::service_accounts::owner_group_id.eq_any(

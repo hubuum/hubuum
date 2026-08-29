@@ -769,6 +769,57 @@ impl fmt::Display for QueryCursor {
     }
 }
 
+/// Semantic field addressed by a recursive structured-search predicate.
+///
+/// The HTTP layer validates which fields are available for a resource kind;
+/// storage adapters map the validated semantic field to their private schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StructuredQueryField {
+    Id,
+    Name,
+    Description,
+    CollectionId,
+    CreatedAt,
+    UpdatedAt,
+    Revision,
+    JsonData,
+    ValidateSchema,
+    JsonSchema,
+    IdentityScope,
+    ProperName,
+    Email,
+    OccurredAt,
+    EntityType,
+    EntityId,
+    EntityName,
+    Action,
+    ActorKind,
+    ActorUserId,
+    InitiatorUserId,
+    Summary,
+    Metadata,
+    ManagedBy,
+    ExternalKey,
+    LastSyncAttemptedAt,
+    LastSyncSuccessAt,
+    OwnerGroupId,
+    CreatedBy,
+    DisabledAt,
+}
+
+/// Backend-neutral recursive predicate prepared by an API or service layer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructuredQueryExpression {
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    Field {
+        field: StructuredQueryField,
+        parameter: ParsedQueryParam,
+    },
+    Related(Vec<ParsedQueryParam>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryOptions {
     filters: QueryFilters,
@@ -776,6 +827,7 @@ pub struct QueryOptions {
     limit: Option<usize>,
     cursor: Option<QueryCursor>,
     include_total: bool,
+    structured_filter: Option<StructuredQueryExpression>,
 }
 
 impl QueryOptions {
@@ -793,6 +845,7 @@ impl QueryOptions {
             limit,
             cursor: cursor.map(QueryCursor::new).transpose()?,
             include_total,
+            structured_filter: None,
         })
     }
 
@@ -810,6 +863,7 @@ impl QueryOptions {
             limit,
             cursor: cursor.map(QueryCursor::new).transpose()?,
             include_total,
+            structured_filter: None,
         })
     }
 
@@ -821,12 +875,22 @@ impl QueryOptions {
             limit: None,
             cursor: None,
             include_total: true,
+            structured_filter: None,
         }
     }
 
     #[must_use]
     pub const fn filters(&self) -> &QueryFilters {
         &self.filters
+    }
+
+    #[must_use]
+    pub const fn structured_filter(&self) -> Option<&StructuredQueryExpression> {
+        self.structured_filter.as_ref()
+    }
+
+    pub fn set_structured_filter(&mut self, filter: Option<StructuredQueryExpression>) {
+        self.structured_filter = filter;
     }
 
     /// Mutably access the bounded filter collection.

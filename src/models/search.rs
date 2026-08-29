@@ -5,9 +5,10 @@ use std::str::FromStr;
 
 pub use hubuum_query::{
     ComputedFieldScope, ComputedQueryValueType, DEFAULT_RELATED_FILTER_DEPTH, DataType,
-    FilterField, MAX_RELATED_FILTER_DEPTH, MAX_RELATED_FILTER_GROUPS, Operator, ParsedQueryParam,
-    QueryFilters, QueryOptions, RelatedClassField, RelatedFilterTarget, RelatedObjectField,
-    RelatedQueryField, SearchOperator, SortParam, decode_query_parameter_pairs,
+    FilterField, JsonFieldPathRef, MAX_RELATED_FILTER_DEPTH, MAX_RELATED_FILTER_GROUPS, Operator,
+    ParsedQueryParam, QueryFilters, QueryOptions, RelatedClassField, RelatedFilterTarget,
+    RelatedObjectField, RelatedQueryField, SearchOperator, SortParam, StructuredQueryExpression,
+    StructuredQueryField, decode_query_parameter_pairs,
 };
 #[cfg(test)]
 use hubuum_query::{

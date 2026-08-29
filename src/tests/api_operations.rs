@@ -194,6 +194,42 @@ where
     post_request_with_headers(pool, token, endpoint, content, vec![]).await
 }
 
+pub async fn post_request_with_permission_backend<T>(
+    pool: &PostgresPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+    permissions: Arc<dyn PermissionBackend>,
+) -> actix_web::dev::ServiceResponse
+where
+    T: Serialize,
+{
+    let app = test::init_service(
+        App::new()
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
+            .wrap(TracingMiddleware::new())
+            .app_data(Data::new(backup_settings()))
+            .app_data(Data::new(restore_settings()))
+            .app_data(Data::new(pool.clone()))
+            .app_data(Data::new(app_context_with_permission_backend(
+                pool.clone(),
+                permissions,
+            )))
+            .configure(prod_api::config),
+    )
+    .await;
+
+    test::TestRequest::post()
+        .insert_header(create_token_header(token))
+        .uri(endpoint)
+        .set_json(&content)
+        .send_request(&app)
+        .await
+        .map_into_boxed_body()
+}
+
 pub async fn delete_request(
     pool: &PostgresPool,
     token: &str,

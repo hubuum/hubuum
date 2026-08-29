@@ -18,6 +18,7 @@ use crate::operations::dynamic_sql::BoundSqlPredicate;
 use crate::operations::json_filter::json_predicate;
 use crate::operations::object::ObjectRow;
 use crate::operations::related_filter::related_object_filter_predicate;
+use crate::operations::structured_search::{StructuredResourceKind, structured_filter_predicate};
 use crate::operations::visibility::{authorized_collection_ids, required_permissions};
 use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
@@ -72,16 +73,30 @@ pub async fn list_collections(
 
     runtime
         .with_read_only_snapshot(async move |connection| {
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    structured_filter_predicate(
+                        connection,
+                        expression,
+                        StructuredResourceKind::Collection,
+                        None,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let total = if include_total {
                 let count_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
-                let count_query = apply_collection_filters(count_query, &options)?;
+                let count_query =
+                    apply_collection_filters(count_query, &options, structured_predicate.clone())?;
                 Some(count_query.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
 
             let row_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
-            let mut row_query = apply_collection_filters(row_query, &options)?;
+            let mut row_query =
+                apply_collection_filters(row_query, &options, structured_predicate)?;
             let fields = collection_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
                 row_query,
@@ -133,15 +148,28 @@ pub async fn list_classes(
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    structured_filter_predicate(
+                        connection,
+                        expression,
+                        StructuredResourceKind::Class,
+                        None,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let build_query = || class_query(&collection_ids, visibility.resources());
             let total = if include_total {
-                let query = apply_class_filters(build_query(), &options)?;
+                let query =
+                    apply_class_filters(build_query(), &options, structured_predicate.clone())?;
                 Some(query.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
 
-            let mut query = apply_class_filters(build_query(), &options)?;
+            let mut query = apply_class_filters(build_query(), &options, structured_predicate)?;
             let fields = class_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
                 query,
@@ -206,16 +234,37 @@ pub async fn list_objects(
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             let related_predicate =
                 related_object_filter_predicate(connection, options.filters(), &visibility).await?;
+            let structured_predicate = match options.structured_filter() {
+                Some(expression) => Some(
+                    structured_filter_predicate(
+                        connection,
+                        expression,
+                        StructuredResourceKind::Object,
+                        Some(&visibility),
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
             let build_query = || object_query(&collection_ids, visibility.resources());
             let total = if include_total {
-                let query =
-                    apply_object_filters(build_query(), &options, related_predicate.clone())?;
+                let query = apply_object_filters(
+                    build_query(),
+                    &options,
+                    related_predicate.clone(),
+                    structured_predicate.clone(),
+                )?;
                 Some(query.count().get_result::<i64>(connection).await?)
             } else {
                 None
             };
 
-            let mut query = apply_object_filters(build_query(), &options, related_predicate)?;
+            let mut query = apply_object_filters(
+                build_query(),
+                &options,
+                related_predicate,
+                structured_predicate,
+            )?;
             let fields = object_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
                 query,
@@ -307,10 +356,14 @@ pub(crate) fn apply_object_filters<'query>(
     mut query: crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg>,
     options: &QueryOptions,
     related_predicate: Option<BoundSqlPredicate>,
+    structured_predicate: Option<BoundSqlPredicate>,
 ) -> Result<crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::hubuumobject;
 
     if let Some(predicate) = related_predicate {
+        query = query.filter(predicate);
+    }
+    if let Some(predicate) = structured_predicate {
         query = query.filter(predicate);
     }
     for parameter in options.filters() {
@@ -455,9 +508,13 @@ fn class_query<'query>(
 fn apply_class_filters<'query>(
     mut query: crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg>,
     options: &QueryOptions,
+    structured_predicate: Option<BoundSqlPredicate>,
 ) -> Result<crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::hubuumclass;
 
+    if let Some(predicate) = structured_predicate {
+        query = query.filter(predicate);
+    }
     for parameter in options.filters() {
         match &parameter.field {
             FilterField::Id => {
@@ -646,9 +703,13 @@ fn collection_query<'query>(
 fn apply_collection_filters<'query>(
     mut query: crate::schema::collections::BoxedQuery<'query, diesel::pg::Pg>,
     options: &QueryOptions,
+    structured_predicate: Option<BoundSqlPredicate>,
 ) -> Result<crate::schema::collections::BoxedQuery<'query, diesel::pg::Pg>, PostgresStorageError> {
     use crate::schema::collections;
 
+    if let Some(predicate) = structured_predicate {
+        query = query.filter(predicate);
+    }
     for parameter in options.filters() {
         match &parameter.field {
             FilterField::Id => {

@@ -45,6 +45,7 @@ pub mod relation_query;
 pub mod remote_target;
 pub mod restore_lifecycle;
 pub mod service_account;
+pub(crate) mod structured_search;
 pub mod task_execution;
 pub mod task_queue;
 pub(crate) mod task_rows;

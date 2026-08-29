@@ -74,39 +74,8 @@ async fn list_visible_events(
         parse_query_parameter_with_passthrough(req.query_string(), &filter_keys)?;
     let filters = parse_audit_event_filters(&mut passthrough, entity_filter)?;
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
-    let (visible_collections, include_collection_less) = if context
-        .permission_backend()
-        .supports_storage_visibility_filtering()
-    {
-        let collections = user_can_on_any(
-            &context,
-            &requestor.principal,
-            Permissions::ReadAudit,
-            requestor.scopes(),
-        )
-        .await?;
-        let include_collection_less =
-            requestor.scopes().is_none() && requestor.principal.is_admin(&context).await?;
-        (collections, include_collection_less)
-    } else if scope_allows(requestor.scopes(), &[Permissions::ReadAudit]) {
-        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
-        let collections = context
-            .permission_backend()
-            .collections_user_can(&principal, &[Permissions::ReadAudit])
-            .await?;
-        let include_collection_less = requestor.scopes().is_none()
-            && context.permission_backend().is_admin(&principal).await?;
-        (collections, include_collection_less)
-    } else {
-        (Vec::new(), false)
-    };
-    let mut accessible_collection_ids = visible_collections
-        .iter()
-        .map(|collection| collection.id)
-        .collect::<Vec<_>>();
-    if let Some(scope) = requestor.scopes() {
-        scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
-    }
+    let (accessible_collection_ids, include_collection_less) =
+        visible_event_scope(&context, &requestor.principal, requestor.scopes()).await?;
     let (events, total_count) = list_audit_events(
         &context,
         accessible_collection_ids,
@@ -116,6 +85,47 @@ async fn list_visible_events(
     )
     .await?;
     ApiResponse::paginated(events, total_count, &params)
+}
+
+pub(crate) async fn visible_event_scope<S>(
+    context: &AppContext,
+    principal: &S,
+    scopes: Option<&crate::models::TokenScope>,
+) -> Result<(Vec<i32>, bool), ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    let (visible_collections, include_collection_less) = if context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
+        let collections =
+            user_can_on_any(context, principal, Permissions::ReadAudit, scopes).await?;
+        let include_collection_less = scopes.is_none() && principal.is_admin(context).await?;
+        (collections, include_collection_less)
+    } else if scope_allows(scopes, &[Permissions::ReadAudit]) {
+        let policy_principal = PrincipalRef::load(context, principal).await?;
+        let collections = context
+            .permission_backend()
+            .collections_user_can(&policy_principal, &[Permissions::ReadAudit])
+            .await?;
+        let include_collection_less = scopes.is_none()
+            && context
+                .permission_backend()
+                .is_admin(&policy_principal)
+                .await?;
+        (collections, include_collection_less)
+    } else {
+        (Vec::new(), false)
+    };
+    let mut accessible_collection_ids = visible_collections
+        .iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
+    if let Some(scope) = scopes {
+        scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
+    }
+    Ok((accessible_collection_ids, include_collection_less))
 }
 
 #[utoipa::path(
