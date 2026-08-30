@@ -12,7 +12,7 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 - Use the [semantic capability group map](storage_boundary/capability-families.md)
   to find the trait that owns an operation and the groups it collaborates with.
 - Use [storage query semantics](storage_boundary/query-semantics.md) for the
-  common paging contract and the current method-specific support matrix.
+  common paging contract and the exhaustive method-specific rules.
 - Use the [backend author guide](storage_boundary/backend-author-guide.md) to implement or evaluate a backend.
 - Use the [maintainer guide](storage_boundary/maintainer-guide.md) to trace a call, locate its implementation, and change the boundary safely.
 - Use [transactions and side effects](storage_boundary/transactions-and-events.md) when a use case spans several resource operations or must define audit behavior.
@@ -20,6 +20,8 @@ PostgreSQL is currently the only selectable backend. The in-memory resource mode
 - Track deliberately deferred work in the
   [storage-boundary follow-up issues](https://github.com/hubuum/hubuum/issues?q=is%3Aissue%20is%3Aopen%20%22Deferred%20from%20%23336%22).
 - Inspect the machine-checked [semantic coverage inventory](storage_boundary/semantic-coverage.toml) for the exact methods, tracked input variants, and test evidence.
+- Inspect the machine-checked [method contract registry](storage_boundary/method-contracts.toml)
+  for exact page, candidate, batch, and complete-collection behavior.
 
 ## The Boundary in One Page
 
@@ -235,7 +237,8 @@ Moving a file does not by itself improve the boundary. Dependencies must continu
 
 The PostgreSQL path is exercised against a real migrated database by shared backend contracts, PostgreSQL-specific tests, service tests, HTTP integration tests, destructive restore tests, query-budget tests, platform and feature builds, production-container tests, and benchmarks. CI also migrates representative data from the adjacent stable release, starts the new application, and restarts the previous application against the migrated schema.
 
-The contract's methods and selected input variants are inventoried mechanically.
+The contract's methods, effects, selected input variants, and collection-shaped
+method semantics are inventoried mechanically.
 Every registered backend runs the reusable six-part audit verifier plus
 compact service, readiness, and authenticated HTTP point/list scenarios.
 Adapter-private deterministic failpoints prove rollback at representative

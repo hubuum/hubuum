@@ -101,10 +101,16 @@ module-system proof against every possible indirect dependency.
 The same architecture suite reads
 `docs/storage_boundary/semantic-coverage.toml`. The inventory must match the
 aggregate trait set, each trait's methods, and each tracked boundary enum's
-variants exactly. Every entry must point to a test function that exists. A new
-method or variant therefore fails locally until its intended semantic evidence
-is recorded. The guard does not inspect test bodies or construct a call graph,
-so invocation and assertion depth remain review responsibilities. The
+variants exactly. Every method must have exactly one effect classification,
+and the context-free mutation set must exactly match the observation and
+workflow-mutation classifications. Named evidence must exist, collectively
+invoke every method directly, and contain an effect assertion. A new method or
+variant therefore fails locally until its intended semantic evidence is
+recorded. The guard does not construct a transitive call graph, so whether a
+helper's assertion proves the relevant effect remains a review responsibility.
+The suite also reads `docs/storage_boundary/method-contracts.toml` and requires
+exact coverage for every page, candidate, batch, and complete read, including
+complete profiles and portable error mappings. The
 observation guard derives its expected method count from this same inventory,
 including resource-operation methods observed by `ObservedStorage`, rather than
 maintaining a second hand-written operation list.

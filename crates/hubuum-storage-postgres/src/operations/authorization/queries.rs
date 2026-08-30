@@ -336,7 +336,9 @@ pub async fn load_authorization_group_candidates(
     let page_limit = query.page_limit();
     runtime
         .with_connection(async |connection| {
-            use crate::schema::groups::dsl::{created_at, groupname, groups, id, updated_at};
+            use crate::schema::groups::dsl::{
+                created_at, description, groupname, groups, id, revision, updated_at,
+            };
 
             let mut candidates = groups.into_boxed();
             for parameter in options.filters() {
@@ -345,11 +347,17 @@ pub async fn load_authorization_group_candidates(
                     FilterField::Name | FilterField::Groupname => {
                         crate::postgres_string_filter!(candidates, parameter, groupname)
                     }
+                    FilterField::Description => {
+                        crate::postgres_string_filter!(candidates, parameter, description)
+                    }
                     FilterField::CreatedAt => {
                         crate::postgres_datetime_filter!(candidates, parameter, created_at)
                     }
                     FilterField::UpdatedAt => {
                         crate::postgres_datetime_filter!(candidates, parameter, updated_at)
+                    }
+                    FilterField::Revision => {
+                        crate::postgres_revision_filter!(candidates, parameter, revision)
                     }
                     FilterField::Permissions => {}
                     _ => {

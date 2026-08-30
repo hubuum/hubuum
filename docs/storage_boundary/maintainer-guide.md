@@ -67,7 +67,8 @@ back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 | Reusable six-part behavioral verifier | `crates/hubuum-storage-conformance/src/lib.rs` |
 | Sealed selectable-backend certification | `src/storage/contract.rs` |
 | Method, variant, and scenario inventory | `docs/storage_boundary/semantic-coverage.toml` |
-| Common query contract and support matrices | `docs/storage_boundary/query-semantics.md` |
+| Common query contract | `docs/storage_boundary/query-semantics.md` |
+| Exact page, candidate, batch, and complete-read profiles | `docs/storage_boundary/method-contracts.toml` |
 | Boundary architecture guards | `src/tests/application_boundary.rs`, `src/tests/workspace_boundaries.rs` |
 | PostgreSQL query budgets | `src/tests/storage_performance.rs` |
 | HTTP integration suites | `tests/api_*_suite/*` |

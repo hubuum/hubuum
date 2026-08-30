@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- The workspace storage contract now exhaustively specifies every pageable,
+  searchable, batched, and complete-collection method, including supported
+  query keys, cursor/count/visibility behavior, ordering, multiplicity,
+  completeness, bounds, snapshot consistency, and portable errors. Adapter
+  changes that omit a method contract now fail the architecture suite.
+- Storage semantic evidence is now method-aware: every contract method has one
+  machine-checked effect classification and direct named evidence, and the
+  context-free writer inventory is enforced exhaustively so new workflow
+  writers cannot be omitted silently.
 - **Breaking (workspace storage API):** authorization candidate reads now
   accept cursor-page query types and return `StorageCandidatePage<T>`, while
   unified-search reads return bounded pages of

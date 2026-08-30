@@ -53,9 +53,10 @@ convenience paths; adapters must not expect shorter aliases in capability
 modules.
 
 Read [storage query semantics](query-semantics.md) before implementing any
-pageable method. It defines the common page contract, the current
-method-specific matrix, and the remaining work required before the interface is
-promoted to a supported external adapter SDK.
+collection-shaped method. It defines the common page contract, while the
+[method contract registry](method-contracts.toml) defines every operation's
+exact carrier, supported query keys, cursor/count/visibility behavior, and
+batch or complete-read semantics.
 
 The following order minimizes rework:
 
@@ -428,9 +429,11 @@ point and list HTTP requests without registering a native client in Actix.
 
 Update `semantic-coverage.toml` when the contract or a tracked input enum
 changes. Its architecture test requires exact trait-method and variant lists
-plus an existing shared or native scenario. Native evidence is appropriate for
-transaction, notification, and driver mechanics; it must not hide a portable
-behavior that every backend should share.
+plus effect classification and method-specific shared or native evidence. Also
+update `method-contracts.toml` whenever a page, candidate, batch, or complete
+read is added or reclassified. Native evidence is appropriate for transaction,
+notification, and driver mechanics; it must not hide a portable behavior that
+every backend should share.
 
 ### Native behavior
 
@@ -488,6 +491,7 @@ A backend is selectable only when all of the following are true:
       registry includes the adapter only afterward.
 - [ ] The service and HTTP smoke contract passes through the backend fixture registry.
 - [ ] `semantic-coverage.toml` exactly inventories methods, variants, and evidence.
+- [ ] `method-contracts.toml` exactly specifies every collection-shaped method.
 - [ ] Native failure, consistency, concurrency, and recovery tests pass.
 - [ ] Service, API, CLI, worker, feature, and packaging tests pass.
 - [ ] Representative database round trips show no unexplained regression.

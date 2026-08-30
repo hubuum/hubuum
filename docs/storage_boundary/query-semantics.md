@@ -5,6 +5,15 @@ backend must preserve. Method-specific query types may narrow the accepted
 filters, sorts, limits, and visibility inputs, but they must not reinterpret
 these rules.
 
+The machine-readable [method contract registry](method-contracts.toml) is the
+normative, exhaustive method-level companion to these common rules. Every
+pageable, searchable, batched, and complete-collection method names its exact
+input carrier and one profile. Query profiles define supported filter and sort
+keys, cursor, visibility, count, snapshot, bound, and error behavior.
+Collection profiles define ordering, duplicate and missing input behavior,
+multiplicity, completeness, bounds, visibility, snapshot consistency, and
+portable errors.
+
 ## Naming and Result Shapes
 
 `get_*` names one point lookup or named snapshot. A required point lookup
@@ -50,6 +59,10 @@ For every pageable operation:
    Contract-specific oversized input uses `InputTooLarge` where documented.
 8. An empty match returns an empty page and an exact total of zero when a total
    was requested. It is not `NotFound`.
+9. A field or combination absent from the method's registry profile is
+   unsupported and returns `InvalidInput`. A recognized field with a malformed
+   value or invalid operator also returns `InvalidInput`; neither case may be
+   silently ignored.
 
 `QueryOptions` is a validated carrier, not a promise that every `FilterField`
 is valid for every operation. Each capability owns its accepted subset.
@@ -86,8 +99,9 @@ it must never be higher than an explicit requested limit.
 
 ## Identity and Collection-Authorization Matrix
 
-This matrix is normative for the membership and collection-authorization page
-operations. Aliases separated by `/` address the same logical field.
+This convenience matrix is extracted from the normative registry for the
+membership and collection-authorization page operations. Aliases separated by
+`/` address the same logical field.
 
 | Operation | Filter fields | Sort fields |
 | --- | --- | --- |
@@ -101,18 +115,16 @@ operations. Aliases separated by `/` address the same logical field.
 The `permissions` filter selects grants containing the requested permission. It
 is a filter only and is not a cursor sort field.
 
-## Publication Status
+## Registry and Publication Status
 
-The common rules above are part of the workspace contract. The table is the
-first method-specific support inventory. Exact filter, sort, cursor, and
-consistency matrices for the remaining pageable capabilities, together with
-ordering, duplicate-input, missing-input, multiplicity, completeness, bounds,
-visibility, and snapshot semantics for batched or complete collection methods,
-still live across trait documentation and compatibility tests and are not yet a
-supported external-crate promise.
+The common rules and exhaustive registry are part of the workspace contract.
+The application-boundary guard derives the required registry keys from the
+method effect inventory, verifies every entry's result shape and portable error
+mapping, rejects unused profiles, and requires method-specific semantic
+evidence. Adding or reclassifying a collection-shaped method therefore requires
+updating its observable contract in the same change.
 
-Before `hubuum-storage-core` is published as an independently certifiable
-adapter SDK, maintainers must complete those method-specific query and
-collection contracts and make their drift machine-checkable. Until then, an
-out-of-tree adapter can compile against the boundary, but certification still
-requires the Hubuum workspace compatibility suite.
+This completes the method-level query and collection specification; it does
+not by itself publish `hubuum-storage-core` as a supported standalone adapter
+SDK. Crate publication, compatibility promises, versioning, and the supported
+certification entry point are a separate policy decision.

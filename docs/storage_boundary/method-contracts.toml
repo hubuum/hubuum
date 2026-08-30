@@ -1,0 +1,935 @@
+# Normative observable contracts for collection-shaped storage methods.
+#
+# Every method classified as page_read, candidate_read, batch_read, or
+# complete_read in semantic-coverage.toml must occur exactly once below. A
+# method entry names its public carrier and one complete semantic profile.
+# Unsupported fields or combinations and malformed values both use the
+# backend-neutral errors named by the profile; adapters must not silently
+# ignore either case.
+
+[query_profiles.group]
+shape = "page"
+filters = ["id", "name/groupname", "identity_scope", "description", "created_at", "updated_at", "revision"]
+sorts = ["id", "name/groupname", "description", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "all groups visible to the caller of this storage capability"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.principal_group]
+shape = "page"
+filters = ["id", "name/groupname", "identity_scope", "description", "created_at", "updated_at"]
+sorts = ["id", "name/groupname", "description", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "membership rows for exactly the carrier principal"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.group_member]
+shape = "page"
+filters = ["id", "name/username", "created_at", "updated_at", "revision"]
+sorts = ["id", "name/username", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "membership rows for exactly the carrier group"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.service_account]
+shape = "page"
+filters = ["id", "name", "identity_scope", "created_at", "updated_at", "revision", "structured"]
+sorts = ["id", "name", "identity_scope", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "administrators see all; other principals see accounts owned by their groups"
+count = "optional exact count after visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.user]
+shape = "page"
+filters = ["id", "name/username", "identity_scope", "proper_name", "email", "created_at", "updated_at", "revision", "structured"]
+sorts = ["id", "name/username", "identity_scope", "proper_name", "email", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "all local human users visible to this administrator capability"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.token]
+shape = "page"
+filters = ["name", "issued_at", "expires_at", "last_used_at", "revision", "state"]
+sorts = ["id", "name", "issued_at", "expires_at", "last_used_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "tokens for exactly the carrier principal; secrets are never returned"
+count = "optional exact count using the same lifecycle observation instant"
+snapshot = "count, page, scopes, and lifecycle state share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.grant]
+shape = "page"
+filters = ["id", "name/groupname", "created_at", "updated_at", "permissions"]
+sorts = ["id", "name/groupname", "created_at", "updated_at"]
+cursor = "opaque keyset over requested sorts plus id; permissions is not sortable"
+visibility = "direct grants in the carrier collection or for the carrier principal"
+count = "optional exact count after permission containment filtering"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.permission_group]
+shape = "page"
+filters = ["id", "name/groupname", "description", "created_at", "updated_at", "revision"]
+sorts = ["id", "name/groupname", "description", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "groups with the required direct or inherited collection permission"
+count = "optional exact count from the effective-permission predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.collection]
+shape = "page"
+filters = ["id", "name", "description", "created_at", "updated_at", "revision", "permissions", "structured"]
+sorts = ["id", "name", "description", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id; permissions and structured are not sortable"
+visibility = "StorageVisibility collection scope and required permissions are applied first"
+count = "optional exact count after visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.class]
+shape = "page"
+filters = ["id", "name", "description", "collections/collection_id", "validate_schema", "json_schema", "created_at", "updated_at", "revision", "permissions", "structured"]
+sorts = ["id", "name", "description", "collections/collection_id", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "StorageVisibility collection/resource scope and required permissions are applied first"
+count = "optional exact count after visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.object]
+shape = "page"
+filters = ["id", "name", "description", "collections/collection_id", "classes/class_id", "json_data", "related", "computed", "created_at", "updated_at", "revision", "permissions", "structured"]
+sorts = ["id", "name", "description", "collections/collection_id", "classes/class_id", "created_at", "updated_at", "revision", "computed"]
+cursor = "opaque keyset over normalized requested sorts plus id"
+visibility = "StorageVisibility collection/resource scope and required permissions are applied first"
+count = "optional exact count after visibility and filters"
+snapshot = "count, page, and computed projections share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds; computed execution fetches one look-ahead row"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.computed_field]
+shape = "page"
+filters = ["id", "name", "description", "class_id", "created_at", "updated_at", "revision"]
+sorts = ["id", "name", "class_id", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "definitions owned by the carrier principal in the carrier class"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.object_aggregate]
+shape = "page"
+filters = ["target collection/class", "id", "name", "description", "collections/collection_id", "classes/class_id", "json_data", "related", "computed", "created_at", "updated_at", "revision", "structured", "group_by name/description/collection_id/created_at/updated_at/json_data/computed", "aggregate count/sum/min/max/avg"]
+sorts = ["dimensions_asc", "dimensions_desc", "object_count_asc", "object_count_desc"]
+cursor = "opaque aggregate keyset bounded by cursor_max_encoded_bytes"
+visibility = "StorageVisibility and required permissions are applied before aggregation"
+count = "optional exact number of aggregate groups"
+snapshot = "count and aggregate page share one read snapshot"
+bounds = "explicit page limit; at most 3 dimensions and 4 measures"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.class_relation]
+shape = "page"
+filters = ["id", "class_from", "class_to", "class_from_name", "class_to_name", "created_at", "updated_at", "revision", "permissions"]
+sorts = ["id", "class_from", "class_to", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "both endpoint classes must pass StorageVisibility"
+count = "optional exact count after visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.object_relation]
+shape = "page"
+filters = ["id", "class_relation", "object_from", "object_to", "created_at", "updated_at", "revision", "permissions"]
+sorts = ["id", "class_relation", "object_from", "object_to", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "both endpoint objects must pass StorageVisibility"
+count = "optional exact count after visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.relation_graph]
+shape = "page"
+filters = ["id", "object_from", "object_to", "class_from", "class_to", "classes/class_id", "collections/collection_id", "collections_from", "collections_to", "name", "name_from", "name_to", "description", "description_from", "description_to", "created_at", "created_at_from", "created_at_to", "updated_at", "updated_at_from", "updated_at_to", "depth", "path", "json_data_from", "json_data_to", "permissions"]
+sorts = ["id", "object_from", "object_to", "class_from", "class_to", "classes/class_id", "collections/collection_id", "collections_from", "collections_to", "name", "name_from", "name_to", "description", "description_from", "description_to", "created_at", "created_at_from", "created_at_to", "updated_at", "updated_at_from", "updated_at_to", "depth", "path"]
+cursor = "opaque keyset over the recursive projection plus a stable endpoint tie-breaker"
+visibility = "root and returned endpoints must pass StorageVisibility"
+count = "optional exact count of visible recursive rows"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit/cursor bounds and validated depth/path constraints"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.audit_event]
+shape = "page"
+filters = ["entity_type", "action", "entity_id", "actor_principal_id", "initiator_principal_id", "collection_id", "occurred_after", "occurred_before", "before_revision", "after_revision"]
+sorts = ["id", "occurred_at"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "accessible collection ids plus explicit collection-less visibility; indirect rows are redacted"
+count = "optional exact count after visibility, redaction eligibility, and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.event_sink]
+shape = "page"
+filters = ["id", "name", "kind", "created_at", "revision"]
+sorts = ["id", "name", "kind", "created_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "administrator event configuration scope"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.event_subscription]
+shape = "page"
+filters = ["id", "name", "created_at", "revision"]
+sorts = ["id", "name", "created_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "only subscriptions in the carrier collection"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.event_delivery]
+shape = "page"
+filters = ["id", "status", "created_at", "updated_at", "next_attempt_at", "subscription_id"]
+sorts = ["id", "status", "created_at", "updated_at", "next_attempt_at"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "administrator delivery queue scope, optionally one subscription"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.history]
+shape = "page"
+filters = ["revision"]
+sorts = ["history_id", "revision"]
+cursor = "opaque keyset over requested sorts plus history_id"
+visibility = "carrier collection scope is applied before resource and revision selection"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.unified_search]
+shape = "candidate"
+filters = ["search_term", "search_extended_document"]
+sorts = ["native text rank desc", "stable resource id asc"]
+cursor = "adapter-owned rank cursor carried by each candidate"
+visibility = "StorageVisibility is applied before ranking and candidate paging"
+count = "none; application authorization decides whether an exact public total is required"
+snapshot = "each candidate page is one read; a cursor continues the same ranking projection"
+bounds = "StorageCandidatePageLimit, maximum 512"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.authorization_collection_candidate]
+shape = "candidate"
+filters = []
+sorts = ["resource id asc"]
+cursor = "opaque id cursor"
+visibility = "all collection candidates; delegated authorization runs after this read"
+count = "none; application authorization owns public totals"
+snapshot = "one bounded candidate read"
+bounds = "StorageCandidatePageLimit, maximum 512"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.authorization_group_candidate]
+shape = "candidate"
+filters = ["id", "name/groupname", "description", "created_at", "updated_at", "revision", "permissions (accepted but application-owned after candidate authorization)"]
+sorts = ["id", "name/groupname", "description", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "ordinary filters run in storage; the permissions predicate runs after delegated authorization"
+count = "none; application authorization owns public totals"
+snapshot = "one bounded candidate read"
+bounds = "StorageCandidatePageLimit, maximum 512"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.remote_target]
+shape = "page"
+filters = ["id", "name", "description", "collections/collection_id", "class_id", "kind", "created_at", "updated_at", "revision"]
+sorts = ["id", "name", "description", "collections/collection_id", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "administrator remote-target scope"
+count = "optional exact count from the page predicate"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.task]
+shape = "page"
+filters = ["typed carrier submitted_by", "typed carrier kind", "typed carrier status"]
+sorts = ["id", "kind", "status", "submitted_by", "created_at", "started_at", "finished_at"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "carrier submitter/kind/status scope prepared by task authorization"
+count = "optional exact count from the same scope"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.task_child]
+shape = "page"
+filters = []
+sorts = ["id"]
+cursor = "opaque id cursor in requested direction"
+visibility = "children of exactly the carrier task"
+count = "optional exact count for that task"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[query_profiles.export_template]
+shape = "page"
+filters = ["id", "name", "description", "collections/collection_id", "kind", "class_id", "created_at", "updated_at", "revision"]
+sorts = ["id", "name", "description", "collections/collection_id", "created_at", "updated_at", "revision"]
+cursor = "opaque keyset over requested sorts plus id"
+visibility = "carrier accessible collection ids"
+count = "optional exact count after collection visibility and filters"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.tree_children]
+shape = "complete"
+ordering = "collection id ascending"
+duplicate_inputs = "not applicable: one collection id"
+missing_inputs = "unknown parent yields an empty collection"
+multiplicity = "one row per direct child"
+completeness = "all direct children"
+bounds = "bounded by stored direct-child cardinality"
+visibility = "internal lifecycle read; no additional authorization filtering"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.tree_ancestors]
+shape = "complete"
+ordering = "nearest parent first, root last"
+duplicate_inputs = "not applicable: one collection id"
+missing_inputs = "unknown collection yields an empty collection"
+multiplicity = "one row per strict ancestor"
+completeness = "the complete strict ancestor chain"
+bounds = "bounded by validated collection-tree depth"
+visibility = "internal lifecycle read; no additional authorization filtering"
+snapshot = "one native recursive read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.strict_class_names]
+shape = "batch"
+ordering = "class id ascending"
+duplicate_inputs = "coalesced"
+missing_inputs = "any missing id returns NotFound and no partial result"
+multiplicity = "at most one pair per unique input id"
+completeness = "all unique ids or an error"
+bounds = "bounded by the validated input vector"
+visibility = "internal identity projection; no additional authorization filtering"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.sparse_id_names]
+shape = "batch"
+ordering = "id ascending"
+duplicate_inputs = "coalesced"
+missing_inputs = "missing ids are omitted"
+multiplicity = "at most one pair per unique input id"
+completeness = "all existing unique ids"
+bounds = "bounded by the validated input vector"
+visibility = "internal identity projection; no additional authorization filtering"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.scoped_complete]
+shape = "complete"
+ordering = "unspecified; callers must not depend on row order"
+duplicate_inputs = "not applicable: one scope carrier"
+missing_inputs = "an unknown or empty scope yields an empty collection unless the carrier validates it"
+multiplicity = "one row per matching persisted identity"
+completeness = "all rows in the carrier scope"
+bounds = "bounded by the persisted scope cardinality"
+visibility = "the carrier defines the complete authorized scope"
+snapshot = "one native read unless the carrier documents stronger aggregation"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.ordered_input_strict]
+shape = "batch"
+ordering = "input order, including repeated ids"
+duplicate_inputs = "preserved and repeated in output"
+missing_inputs = "any missing id returns NotFound and no partial result"
+multiplicity = "exactly one row per input element"
+completeness = "all inputs or an error"
+bounds = "bounded by the validated input vector"
+visibility = "carrier-owned scope and observation policy"
+snapshot = "one read snapshot including enrichment"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.normalized_sparse_ids]
+shape = "batch"
+ordering = "unspecified; callers must key results by returned id"
+duplicate_inputs = "sorted and coalesced by the carrier"
+missing_inputs = "missing ids are omitted"
+multiplicity = "at most one row per unique input id"
+completeness = "all existing visible unique ids"
+bounds = "bounded by the normalized carrier ids"
+visibility = "carrier StorageVisibility or authorization scope is applied before return"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.normalized_boolean_all]
+shape = "batch"
+ordering = "not applicable: boolean result"
+duplicate_inputs = "sorted and coalesced by the carrier"
+missing_inputs = "missing or unauthorized ids make the result false; an empty set is true"
+multiplicity = "one boolean for the whole normalized input set"
+completeness = "true only when every unique input satisfies every required permission"
+bounds = "bounded by the normalized carrier ids"
+visibility = "principal membership and inherited collection grants"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.policy_snapshot]
+shape = "complete"
+ordering = "collection id ascending, then group id ascending"
+duplicate_inputs = "not applicable: no input collection"
+missing_inputs = "an empty policy returns an empty collection"
+multiplicity = "one row per direct group-collection grant"
+completeness = "the complete local authorization policy"
+bounds = "bounded by persisted direct grant cardinality"
+visibility = "administrator/internal policy scope"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.enrichment]
+shape = "batch"
+ordering = "input object order"
+duplicate_inputs = "preserved"
+missing_inputs = "not applicable: complete object values, not ids, are supplied"
+multiplicity = "exactly one enriched row per input object"
+completeness = "all supplied objects, with per-field evaluation errors represented in the row"
+bounds = "bounded by the supplied object vector and configured computed-field limits"
+visibility = "only definitions in shared scope and the optional personal-owner scope"
+snapshot = "definitions and values are read consistently for the batch"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.relation_ids]
+shape = "batch"
+ordering = "relation id ascending"
+duplicate_inputs = "sorted and coalesced by the carrier"
+missing_inputs = "ids with no visible touching/between relation contribute no rows"
+multiplicity = "one row per distinct visible relation"
+completeness = "all visible relations selected by the normalized ids"
+bounds = "bounded by input ids; object-touching queries additionally enforce max_results"
+visibility = "both endpoints must pass StorageVisibility"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.related_roots]
+shape = "batch"
+ordering = "root id ascending, then requested Path/Name/CreatedAt order with stable object-id and path ties"
+duplicate_inputs = "coalesced when alternative paths are not preserved; otherwise each duplicate root preserves another copy of each path"
+missing_inputs = "missing or invisible roots contribute no rows"
+multiplicity = "one row per root/object/path according to preserve_alternative_paths"
+completeness = "all visible matches within the explicit per-root depth and limit"
+bounds = "explicit positive max_depth and per-root limit; oversized requests return InputTooLarge"
+visibility = "root and related objects must pass StorageVisibility"
+snapshot = "one native recursive read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.bidirectional_roots]
+shape = "batch"
+ordering = "root id ascending, then descendant object id, depth, and path ascending"
+duplicate_inputs = "coalesced when alternative paths are not preserved; otherwise each duplicate root preserves another copy of each path"
+missing_inputs = "missing or invisible roots contribute no rows"
+multiplicity = "one row per root/object/path according to preserve_alternative_paths"
+completeness = "all visible matches within the explicit per-root depth and cap"
+bounds = "explicit positive max_depth and per-root cap; oversized requests return InputTooLarge"
+visibility = "root and related objects must pass StorageVisibility"
+snapshot = "one native recursive read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.task_output_summaries]
+shape = "batch"
+ordering = "task id ascending"
+duplicate_inputs = "coalesced"
+missing_inputs = "tasks without the requested output kind are omitted"
+multiplicity = "at most one summary per unique task id"
+completeness = "all stored summaries for the requested ids"
+bounds = "bounded by the input task ids"
+visibility = "task authorization is performed before this storage projection"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.import_names]
+shape = "batch"
+ordering = "unspecified; callers must key results by returned name and id"
+duplicate_inputs = "name inputs are coalesced"
+missing_inputs = "missing names are omitted"
+multiplicity = "one row per matching persisted resource; collection names may match more than once"
+completeness = "all matches in the carrier parent/collection/class scope"
+bounds = "bounded by the input names or stored equal-name cardinality"
+visibility = "import workflow internal scope"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.import_equal_name]
+shape = "complete"
+ordering = "unspecified; callers must key results by returned collection id"
+duplicate_inputs = "not applicable: one name"
+missing_inputs = "a name with no matches yields an empty collection"
+multiplicity = "one row per persisted collection with the exact name"
+completeness = "all exact-name matches across the import-visible collection tree"
+bounds = "bounded by stored equal-name cardinality"
+visibility = "import workflow internal scope"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.fixed_id_complete]
+shape = "complete"
+ordering = "id ascending"
+duplicate_inputs = "optional exclusion id removes that row; otherwise not applicable"
+missing_inputs = "an empty or unknown parent scope yields an empty collection"
+multiplicity = "one row per persisted matching resource"
+completeness = "all rows in the carrier scope"
+bounds = "bounded by persisted scope cardinality"
+visibility = "carrier scope is prepared by application authorization"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."CollectionStorage::list_collection_children"]
+effect = "complete_read"
+carrier = "CollectionId"
+profile = "tree_children"
+
+[methods."CollectionStorage::list_collection_ancestors"]
+effect = "complete_read"
+carrier = "CollectionId"
+profile = "tree_ancestors"
+
+[methods."ClassStorage::resolve_class_names"]
+effect = "batch_read"
+carrier = "Vec<ClassId>"
+profile = "strict_class_names"
+
+[methods."IdentityScopeStorage::resolve_identity_scope_names"]
+effect = "batch_read"
+carrier = "Vec<IdentityScopeId>"
+profile = "sparse_id_names"
+
+[methods."GroupMembershipStorage::list_principal_groups"]
+effect = "page_read"
+carrier = "StoragePrincipalGroupListQuery"
+profile = "principal_group"
+
+[methods."GroupMembershipStorage::load_group_member_principals"]
+effect = "complete_read"
+carrier = "GroupId"
+profile = "scoped_complete"
+
+[methods."GroupMembershipStorage::list_group_members"]
+effect = "page_read"
+carrier = "GroupId + QueryOptions"
+profile = "group_member"
+
+[methods."ServiceAccountStorage::list_manageable_service_accounts"]
+effect = "page_read"
+carrier = "StorageServiceAccountListQuery"
+profile = "service_account"
+
+[methods."UserStorage::list_users"]
+effect = "page_read"
+carrier = "StorageUserListQuery"
+profile = "user"
+
+[methods."TokenStorage::list_retained_tokens"]
+effect = "page_read"
+carrier = "StorageTokenListQuery"
+profile = "token"
+
+[methods."TokenStorage::load_token_metadata_by_ids"]
+effect = "batch_read"
+carrier = "Vec<TokenId> + StorageTokenObservation"
+profile = "ordered_input_strict"
+
+[methods."AuthorizationDataStorage::list_authorization_classes"]
+effect = "batch_read"
+carrier = "StorageAuthorizationResourceIds"
+profile = "normalized_sparse_ids"
+
+[methods."AuthorizationDataStorage::list_authorization_objects"]
+effect = "batch_read"
+carrier = "StorageAuthorizationResourceIds"
+profile = "normalized_sparse_ids"
+
+[methods."AuthorizationDataStorage::authorize_local_collections"]
+effect = "batch_read"
+carrier = "StorageAuthorizationCollectionsAccessQuery"
+profile = "normalized_boolean_all"
+
+[methods."AuthorizationDataStorage::list_local_authorized_collections"]
+effect = "complete_read"
+carrier = "StorageAuthorizationCollectionsQuery"
+profile = "scoped_complete"
+
+[methods."AuthorizationDataStorage::load_authorization_collection_candidates"]
+effect = "candidate_read"
+carrier = "StorageAuthorizationCollectionCandidateQuery"
+profile = "authorization_collection_candidate"
+
+[methods."AuthorizationDataStorage::load_authorization_group_candidates"]
+effect = "candidate_read"
+carrier = "StorageAuthorizationGroupCandidateQuery"
+profile = "authorization_group_candidate"
+
+[methods."AuthorizationDataStorage::get_authorization_policy_snapshot"]
+effect = "complete_read"
+carrier = "no arguments"
+profile = "policy_snapshot"
+
+[methods."AuthorizationDataStorage::list_local_collection_grants"]
+effect = "page_read"
+carrier = "StorageAuthorizationCollectionGrantListQuery"
+profile = "grant"
+
+[methods."CatalogStorage::list_collections"]
+effect = "page_read"
+carrier = "StorageCatalogListQuery"
+profile = "collection"
+
+[methods."CatalogStorage::list_classes"]
+effect = "page_read"
+carrier = "StorageCatalogListQuery"
+profile = "class"
+
+[methods."CatalogStorage::list_objects"]
+effect = "page_read"
+carrier = "StorageCatalogListQuery"
+profile = "object"
+
+[methods."ComputedFieldStorage::list_shared_computed_fields"]
+effect = "complete_read"
+carrier = "ClassId"
+profile = "scoped_complete"
+
+[methods."ComputedFieldStorage::list_personal_computed_fields"]
+effect = "page_read"
+carrier = "StoragePersonalComputedFieldListQuery"
+profile = "computed_field"
+
+[methods."ComputedObjectStorage::list_computed_objects"]
+effect = "page_read"
+carrier = "StorageComputedObjectListQuery"
+profile = "object"
+
+[methods."ComputedObjectStorage::enrich_objects_with_computed"]
+effect = "batch_read"
+carrier = "StorageComputedObjectEnrichmentQuery"
+profile = "enrichment"
+
+[methods."ObjectAggregateStorage::aggregate_objects"]
+effect = "page_read"
+carrier = "StorageObjectAggregateQuery + StorageObjectAggregateAuthorization"
+profile = "object_aggregate"
+
+[methods."RelationQueryStorage::list_class_relations"]
+effect = "page_read"
+carrier = "StorageRelationListQuery"
+profile = "class_relation"
+
+[methods."RelationQueryStorage::list_object_relations"]
+effect = "page_read"
+carrier = "StorageRelationListQuery"
+profile = "object_relation"
+
+[methods."RelationQueryStorage::list_class_relations_touching"]
+effect = "page_read"
+carrier = "StorageRelationTouchingQuery"
+profile = "class_relation"
+
+[methods."RelationQueryStorage::list_object_relations_touching"]
+effect = "page_read"
+carrier = "StorageRelationTouchingQuery"
+profile = "object_relation"
+
+[methods."RelationQueryStorage::list_class_relations_touching_ids"]
+effect = "batch_read"
+carrier = "StorageRelationIdsQuery"
+profile = "relation_ids"
+
+[methods."RelationQueryStorage::list_class_relations_between_ids"]
+effect = "batch_read"
+carrier = "StorageRelationIdsQuery"
+profile = "relation_ids"
+
+[methods."RelationQueryStorage::list_object_relations_touching_ids"]
+effect = "batch_read"
+carrier = "StorageObjectRelationsTouchingIdsQuery"
+profile = "relation_ids"
+
+[methods."RelationQueryStorage::list_object_relations_between_ids"]
+effect = "batch_read"
+carrier = "StorageRelationIdsQuery"
+profile = "relation_ids"
+
+[methods."RelationQueryStorage::list_related_classes"]
+effect = "page_read"
+carrier = "StorageRelationGraphQuery"
+profile = "relation_graph"
+
+[methods."RelationQueryStorage::list_related_objects"]
+effect = "page_read"
+carrier = "StorageRelationGraphQuery"
+profile = "relation_graph"
+
+[methods."RelationQueryStorage::list_related_objects_for_roots"]
+effect = "batch_read"
+carrier = "StorageRelatedObjectsForRootsQuery"
+profile = "related_roots"
+
+[methods."RelationQueryStorage::list_bidirectionally_related_objects_for_roots"]
+effect = "batch_read"
+carrier = "StorageBidirectionalRelatedObjectsQuery"
+profile = "bidirectional_roots"
+
+[methods."AuditEventStorage::list_audit_events"]
+effect = "page_read"
+carrier = "StorageAuditEventListQuery"
+profile = "audit_event"
+
+[methods."EventConfigurationStorage::list_event_sinks"]
+effect = "page_read"
+carrier = "StorageEventSinkListQuery"
+profile = "event_sink"
+
+[methods."EventConfigurationStorage::list_event_subscriptions"]
+effect = "page_read"
+carrier = "StorageEventSubscriptionListQuery"
+profile = "event_subscription"
+
+[methods."EventDeliveryAdministrationStorage::list_event_deliveries"]
+effect = "page_read"
+carrier = "StorageEventDeliveryListQuery"
+profile = "event_delivery"
+
+[methods."HistoryStorage::resolve_history_principal_names"]
+effect = "batch_read"
+carrier = "Vec<PrincipalId>"
+profile = "sparse_id_names"
+
+[methods."HistoryStorage::list_collection_history"]
+effect = "page_read"
+carrier = "StorageHistoryListQuery"
+profile = "history"
+
+[methods."HistoryStorage::list_class_history"]
+effect = "page_read"
+carrier = "StorageHistoryListQuery"
+profile = "history"
+
+[methods."HistoryStorage::list_object_history"]
+effect = "page_read"
+carrier = "StorageObjectHistoryListQuery"
+profile = "history"
+
+[methods."HistoryStorage::list_export_template_history"]
+effect = "page_read"
+carrier = "StorageHistoryListQuery"
+profile = "history"
+
+[methods."HistoryStorage::list_remote_target_history"]
+effect = "page_read"
+carrier = "StorageHistoryListQuery"
+profile = "history"
+
+[methods."OperationalStateStorage::load_export_template_health"]
+effect = "complete_read"
+carrier = "no arguments"
+profile = "fixed_id_complete"
+
+[methods."OperationalStateStorage::load_export_templates_for_audit"]
+effect = "complete_read"
+carrier = "no arguments"
+profile = "fixed_id_complete"
+
+[methods."UnifiedSearchStorage::search_collections"]
+effect = "candidate_read"
+carrier = "StorageUnifiedSearchQuery"
+profile = "unified_search"
+
+[methods."UnifiedSearchStorage::search_classes"]
+effect = "candidate_read"
+carrier = "StorageUnifiedSearchQuery"
+profile = "unified_search"
+
+[methods."UnifiedSearchStorage::search_objects"]
+effect = "candidate_read"
+carrier = "StorageUnifiedSearchQuery"
+profile = "unified_search"
+
+[methods."GroupStorage::list_groups"]
+effect = "page_read"
+carrier = "StorageGroupListQuery"
+profile = "group"
+
+[methods."CollectionAuthorizationQueryStorage::load_principal_collection_permissions"]
+effect = "complete_read"
+carrier = "StorageAuthorizationPrincipalCollectionQuery"
+profile = "scoped_complete"
+
+[methods."CollectionAuthorizationQueryStorage::list_all_principal_collection_permissions"]
+effect = "complete_read"
+carrier = "PrincipalId"
+profile = "scoped_complete"
+
+[methods."CollectionAuthorizationQueryStorage::list_principal_collection_permissions"]
+effect = "page_read"
+carrier = "StorageAuthorizationPrincipalCollectionPageQuery"
+profile = "grant"
+
+[methods."CollectionAuthorizationQueryStorage::list_effective_principal_collection_permissions"]
+effect = "complete_read"
+carrier = "StorageAuthorizationPrincipalCollectionQuery"
+profile = "scoped_complete"
+
+[methods."CollectionAuthorizationQueryStorage::list_visible_collections"]
+effect = "complete_read"
+carrier = "StorageAuthorizationCollectionVisibilityQuery"
+profile = "fixed_id_complete"
+
+[methods."CollectionAuthorizationQueryStorage::list_effective_group_collection_permissions"]
+effect = "complete_read"
+carrier = "CollectionId + GroupId"
+profile = "scoped_complete"
+
+[methods."CollectionAuthorizationQueryStorage::load_groups_with_collection_permission"]
+effect = "complete_read"
+carrier = "StorageAuthorizationCollectionGroupsQuery"
+profile = "fixed_id_complete"
+
+[methods."CollectionAuthorizationQueryStorage::list_groups_with_collection_permission"]
+effect = "page_read"
+carrier = "StorageAuthorizationCollectionGroupsPageQuery"
+profile = "permission_group"
+
+[methods."RemoteTargetStorage::list_remote_targets"]
+effect = "page_read"
+carrier = "StorageRemoteTargetListQuery"
+profile = "remote_target"
+
+[methods."TaskQueueStorage::list_tasks"]
+effect = "page_read"
+carrier = "StorageTaskListQuery"
+profile = "task"
+
+[methods."TaskQueueStorage::list_task_events"]
+effect = "page_read"
+carrier = "StorageTaskChildListQuery"
+profile = "task_child"
+
+[methods."TaskQueueStorage::list_import_task_results"]
+effect = "page_read"
+carrier = "StorageTaskChildListQuery"
+profile = "task_child"
+
+[methods."TaskQueueStorage::list_export_output_summaries"]
+effect = "batch_read"
+carrier = "Vec<TaskId>"
+profile = "task_output_summaries"
+
+[methods."TaskQueueStorage::list_backup_output_summaries"]
+effect = "batch_read"
+carrier = "Vec<TaskId>"
+profile = "task_output_summaries"
+
+[methods."ImportStorage::list_import_collections_by_name"]
+effect = "complete_read"
+carrier = "name"
+profile = "import_equal_name"
+
+[methods."ImportStorage::list_import_classes_by_names"]
+effect = "batch_read"
+carrier = "CollectionId + names"
+profile = "import_names"
+
+[methods."ImportStorage::list_import_objects_by_names"]
+effect = "batch_read"
+carrier = "ClassId + names"
+profile = "import_names"
+
+[methods."ExportTemplateStorage::list_export_templates"]
+effect = "page_read"
+carrier = "StorageExportTemplateListQuery"
+profile = "export_template"
+
+[methods."ExportTemplateStorage::list_export_templates_in_collection"]
+effect = "complete_read"
+carrier = "CollectionId + optional excluded ExportTemplateId"
+profile = "fixed_id_complete"

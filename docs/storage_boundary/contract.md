@@ -8,8 +8,10 @@ The exact Rust surface is `StorageBackend` in
 `crates/hubuum-storage-core/src/backend.rs`. The
 [semantic capability group map](capability-families.md) maps every required
 trait, and
-`semantic-coverage.toml` inventories every method and tracked input variant.
-Those machine-checked sources and this semantic contract must change together.
+`semantic-coverage.toml` inventories every method, effect, tracked input
+variant, and evidence scenario. `method-contracts.toml` exhaustively specifies
+every page, candidate, batch, and complete-collection method. Those
+machine-checked sources and this semantic contract must change together.
 
 ## Scope
 
@@ -302,11 +304,12 @@ reviewed as future publication boundaries and must remain usable by an
 out-of-tree adapter without root or adapter-private access.
 
 That usability is structural: an external crate can consume the types and
-implement the traits. Independent semantic certification remains future work
-until method-specific query matrices, neutral event construction, and the
-broader reusable compatibility fixtures are extracted from the application.
-See [storage query semantics](query-semantics.md) for the current query contract
-and its publication status.
+implement the traits. Method-specific query and collection behavior is now
+normative and exhaustive, but independent semantic certification still depends
+on the workspace compatibility suite. Neutral event construction, reusable
+certification packaging, and publication policy remain separate work. See
+[storage query semantics](query-semantics.md) and the
+[method contract registry](method-contracts.toml).
 
 `hubuum-storage-postgres`, `hubuum-storage-conformance`, and the root `hubuum`
 crate are workspace-internal. The conformance crate is a development dependency
@@ -334,7 +337,8 @@ Any storage-boundary change must update, as applicable:
 1. the owning trait and DTOs;
 2. the `StorageBackend` aggregate and exhaustive application dispatch;
 3. every selectable adapter;
-4. `semantic-coverage.toml` and shared conformance or compatibility scenarios;
+4. `semantic-coverage.toml`, `method-contracts.toml`, and shared conformance or
+   compatibility scenarios;
 5. backend-native consistency and failure tests;
 6. this contract and the affected capability or maintainer guide; and
 7. changelog, OpenAPI, migrations, CI classification, and container inputs
