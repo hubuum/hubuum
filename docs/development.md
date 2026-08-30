@@ -72,7 +72,7 @@ for package classifications, publishing policy, and promotion requirements.
   and backend-specific initialization errors only at the application
   composition edge.
 - `crates/hubuum-storage-conformance`:
-  The workspace-internal six-part behavioral verifier for audited mutation
+  The experimental public six-part behavioral verifier for audited mutation
   receipts, no-ops, rollback, event delivery, telemetry, and exact revision
   conflicts. Retention retry safety has its own protocol verifier. It is a
   development dependency and is not linked into production binaries.

@@ -1,19 +1,22 @@
 [package]
 name = "hubuum-events-core"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Backend-agnostic event catalog and provenance types for Hubuum's unified event & audit stream."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = false
+readme = "../../docs/rust_api/hubuum-events-core.md"
+publish = true
 
 [package.metadata.hubuum]
-rust-api = "workspace-internal"
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-events-core.md"
+release-train = "storage-sdk"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
+hubuum-domain = { version = "=0.1.0", path = "../hubuum-domain" }
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

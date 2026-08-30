@@ -6,15 +6,18 @@ rust-version = "1.88"
 description = "Reusable behavioral conformance contract for Hubuum storage adapters."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = false
+readme = "../../docs/rust_api/hubuum-storage-conformance.md"
+publish = true
 
 [package.metadata.hubuum]
-rust-api = "workspace-internal"
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-storage-conformance.md"
+release-train = "storage-sdk"
 
 [dependencies]
 async-trait = "0.1"
-hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
-hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-domain = { version = "=0.1.0", path = "../hubuum-domain" }
+hubuum-storage-core = { version = "=0.1.0", path = "../hubuum-storage-core" }
 
 [dev-dependencies]
-hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
+hubuum-events-core = { version = "=0.1.0", path = "../hubuum-events-core" }

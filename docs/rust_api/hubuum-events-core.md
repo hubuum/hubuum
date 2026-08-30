@@ -1,6 +1,6 @@
-# `hubuum-events-core` Future Rust API Design
+# `hubuum-events-core` Rust API Policy
 
-Status: workspace-internal; candidate for a later publication review.
+Status: experimental public API in the storage SDK `0.1` release train.
 
 ## Purpose and Callers
 
@@ -10,9 +10,10 @@ may use these types without depending on the server crate.
 
 ## Compatibility
 
-There is no current third-party SemVer promise or crates.io release. A separate
-promotion change must define the initial supported surface and compatibility
-policy. The workspace MSRV is Rust 1.88.
+The crate follows the lockstep versioning, exact dependency, MSRV, feature,
+deprecation, and release rules in the
+[Storage Adapter SDK Compatibility policy](../storage_adapter_sdk.md). The
+release-train MSRV is Rust 1.88.
 
 The default feature set is empty. The `schema` feature adds Utoipa schema
 implementations and is supported. Serialized event values are compatible only
@@ -37,6 +38,6 @@ Cancellation is not applicable.
 
 ## Ownership and Verification
 
-Hubuum maintainers own the workspace crate. Storage and event-sink consumers
-verify it today. A later promotion must enable rustdoc, package, and crates.io
-compatibility gates before the first public release.
+Hubuum maintainers own the crate. Storage and event-sink consumers verify its
+behavior. CI packages it, builds rustdoc with warnings denied, and compares it
+with the latest crates.io release when a baseline exists.

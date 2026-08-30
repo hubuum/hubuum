@@ -83,10 +83,9 @@ helpers that share native transactions and queries.
 ## Boundary Values
 
 Use the request and result DTOs owned by `hubuum-storage-core` and the validated
-values owned by its backend-neutral workspace dependencies. They are designed
-for later publication but remain unpublished in this change. Root application
-models may be converted into those DTOs, but they are not part of the adapter
-contract.
+values owned by the experimental public
+[storage adapter SDK](../storage_adapter_sdk.md). Root application models may
+be converted into those DTOs, but they are not part of the adapter contract.
 
 Boundary values describe application intent and observable results, not the
 adapter's schema.

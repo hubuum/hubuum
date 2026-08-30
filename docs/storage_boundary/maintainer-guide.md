@@ -302,8 +302,8 @@ authentication configuration, or raw driver option string.
   endpoint shape during composition.
 - `hubuum-storage-conformance` owns reusable audit, retention, delivery-fault,
   restore-coordination, lease-loss, and application/service/HTTP compatibility
-  expectations. It is a
-  workspace-internal development dependency, not production code.
+  expectations. It is an experimental public development dependency, not
+  production code.
 - `hubuum-storage-postgres` owns pool construction, schema, migrations, native helpers, and production operation implementations.
 - The root crate owns application services, authorization-policy selection,
   adapter registration, observer wiring, settings and legacy-diagnostics

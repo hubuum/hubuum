@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The experimental public storage adapter SDK now has a closed six-crate
+  crates.io graph, one lockstep `0.1.0` version, exact in-graph dependencies,
+  Rust 1.88 MSRV and feature guarantees, explicit closed/non-exhaustive enum
+  policy, deprecation rules, coordinated release order, and adapter upgrade
+  process. `hubuum-storage-conformance` is the supported certification entry
+  point; the root application and PostgreSQL adapter remain internal.
+
 ### Changed
 
 - The workspace storage contract now exhaustively specifies every pageable,

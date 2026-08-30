@@ -1,15 +1,18 @@
 [package]
 name = "hubuum-query"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "App-neutral query parsing and search parameter types for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = false
+readme = "../../docs/rust_api/hubuum-query.md"
+publish = true
 
 [package.metadata.hubuum]
-rust-api = "workspace-internal"
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-query.md"
+release-train = "storage-sdk"
 
 [dependencies]
 base64 = "0.23"

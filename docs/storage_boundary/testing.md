@@ -181,15 +181,14 @@ The suite covers these semantic-group behaviors:
 
 The aggregate trait guarantees that every method exists. The semantic coverage
 inventory guarantees that the method and tracked input-variant lists cannot
-drift unnoticed. The compatibility suite supplies representative semantics by
-semantic capability group and directly invokes most methods. A listed scenario is not mechanical
-method-level evidence: broad scenarios may cover several methods, and the guard
-does not verify which ones they call. Some native worker operations—most
-notably delivery claims—still receive their deepest coverage in
-PostgreSQL-specific tests. Optional notification providers are tested beside
+drift unnoticed. Named scenarios collectively invoke every method directly and
+assert observable effects. Broad scenarios may still cover several methods,
+and the guard does not construct a transitive call graph. Some native worker
+operations—most notably delivery claims—receive their deepest failure coverage
+in PostgreSQL-specific tests. Optional notification providers are tested beside
 their adapter rather than inventoried as complete-backend traits.
 
-`hubuum-storage-conformance` owns the reusable, workspace-internal,
+`hubuum-storage-conformance` owns the reusable, experimental public,
 backend-independent six-part audit verifier. Each adapter supplies an isolated
 fixture through `BackendAuditFixture`; the root registry invokes it for every
 `BackendTestEnvironment` entry. A selectable backend must demonstrate:

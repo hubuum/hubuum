@@ -14,10 +14,12 @@ and its committed OpenAPI document. Rust API consumers should use
 `hubuum-client-rust`, which wraps that HTTP contract. The Python client follows
 the same boundary.
 
-Every workspace package currently sets `publish = false`. The backend-neutral
-boundary crates are being shaped as candidates for a later publication change,
-but this decision does not create a third-party SemVer promise. Public Rust
-visibility remains an implementation detail until a separate promotion review.
+The six-crate storage adapter SDK is classified `experimental-public` and has a
+documented crates.io publication graph. Its exact compatibility rules are in
+the [Storage Adapter SDK Compatibility policy](storage_adapter_sdk.md). All
+other workspace packages remain unpublished. Public Rust visibility in those
+internal packages remains an implementation detail until a separate promotion
+review.
 
 ## Current consumers
 
@@ -77,19 +79,19 @@ manifest.
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-computed-fields` | Workspace-internal |
-| `hubuum-domain` | Workspace-internal |
+| `hubuum-domain` | Experimental public |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |
 | `hubuum-event-sink-webhook` | Workspace-internal |
 | `hubuum-event-sinks-common` | Workspace-internal |
-| `hubuum-events-core` | Workspace-internal |
+| `hubuum-events-core` | Experimental public |
 | `hubuum-outbound-http` | Workspace-internal |
-| `hubuum-query` | Workspace-internal |
-| `hubuum-storage-core` | Workspace-internal |
-| `hubuum-storage-conformance` | Workspace-internal |
+| `hubuum-query` | Experimental public |
+| `hubuum-storage-core` | Experimental public |
+| `hubuum-storage-conformance` | Experimental public |
 | `hubuum-storage-postgres` | Workspace-internal |
-| `hubuum-task-core` | Workspace-internal |
+| `hubuum-task-core` | Experimental public |
 | `hubuum-templates` | Workspace-internal |
 
 The machine values are:
@@ -99,15 +101,21 @@ The machine values are:
 - `experimental-public`; and
 - `stable-public`.
 
+`experimental-public` is a supported pre-1.0 source API with the versioning and
+migration rules in its package policy. It does not mean “unversioned” or
+“best-effort.” `stable-public` additionally promises ordinary post-1.0 SemVer.
+
 `scripts/check-rust-api-policy.py` rejects an unclassified package. Internal
 classifications require Cargo publishing to be disabled; public classifications
 require `publish = true` or a registry allowlist containing `crates-io`, plus a
-package-specific policy document that resolves to a readable file inside this
-repository. The checker uses Cargo's resolved workspace membership, including
-automatically admitted in-tree path dependencies. CI and tagged release
-validation run the policy and its regression fixtures. The CI change classifier
-also discovers declared policy document paths so their deletion or movement
-cannot bypass validation as a documentation-only change.
+package-specific policy document that is also packaged as the crate readme.
+Public crates cannot depend on internal workspace packages. Packages in a named
+release train must share one version and use exact requirements for every
+in-train path dependency. The checker uses Cargo's resolved workspace
+membership, including automatically admitted in-tree path dependencies. CI and
+tagged release validation run the policy and its regression fixtures. The CI
+change classifier also discovers declared policy document paths so their
+deletion or movement cannot bypass validation as a documentation-only change.
 
 ## Internal package rules
 
@@ -173,6 +181,12 @@ An intentional supported-API break requires the correct version change, a
 changelog entry labeled as a supported Rust crate break, and migration guidance.
 Narrow baseline-specific exceptions are preferred over disabling compatibility
 validation.
+
+The storage SDK promotion applies this process to a closed, exact-version
+release train. Its package graph, feature matrix, MSRV, enum policy,
+deprecation timeline, aggregate evolution rules, release order, and adapter
+upgrade steps are defined in
+[Storage Adapter SDK Compatibility](storage_adapter_sdk.md).
 
 ## Changelog terminology
 
