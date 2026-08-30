@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-08-30
+
 ### Added
 
 - Added an experimental process-local `memory` storage backend that implements

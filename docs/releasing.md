@@ -70,16 +70,17 @@ Once the tag is pushed, the CI workflow will:
 
 ## Rust package compatibility
 
-All current workspace packages, including backend-neutral crates, are internal
-and set `publish = false`. A crate becomes eligible for crates.io publication
-only through a separate promotion to experimental or stable public status. The
-authoritative classification, package list, and promotion process are documented in
-[Rust API Boundary](rust_api_boundary.md).
+The six crates in the experimental storage adapter SDK are public and allow
+crates.io publication. They are released together under the separate process
+documented in [Storage Adapter SDK Compatibility](storage_adapter_sdk.md). All
+other workspace packages remain internal and set `publish = false`. The
+authoritative classification, package list, and promotion process are
+documented in [Rust API Boundary](rust_api_boundary.md).
 
 CI rejects missing classifications and any internal package that enables Cargo
-publishing. A future `experimental-public` or `stable-public` package is
-required to allow crates.io publishing with `publish = true` or an allowlist
-containing `crates-io`. It is automatically checked with the pinned
+publishing. An `experimental-public` or `stable-public` package must allow
+crates.io publishing with `publish = true` or an allowlist containing
+`crates-io`. It is automatically checked with the pinned
 `cargo-semver-checks` version, rustdoc warnings denied, all features, and
 Cargo's clean packaged-source build. Promote a package only in a dedicated
 change containing its API policy, release owner, versioning rules, and
