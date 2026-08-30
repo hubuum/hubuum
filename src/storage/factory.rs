@@ -147,9 +147,16 @@ pub(crate) struct StorageSettings {
 
 enum StorageAdapterSettings {
     Postgres(PostgresPoolSettings),
+    Memory,
 }
 
 impl StorageSettings {
+    pub(crate) const fn memory() -> Self {
+        Self {
+            adapter: StorageAdapterSettings::Memory,
+        }
+    }
+
     pub(crate) fn postgres(connection_url: impl Into<String>) -> PostgresStorageSettingsBuilder {
         PostgresStorageSettingsBuilder {
             connection_url: connection_url.into(),
@@ -170,6 +177,10 @@ impl fmt::Debug for StorageSettings {
                 .field("max_connections", &settings.max_size())
                 .field("statement_timeout_ms", &settings.statement_timeout_ms())
                 .field("acquire_timeout_ms", &settings.acquire_timeout_ms())
+                .finish(),
+            StorageAdapterSettings::Memory => formatter
+                .debug_struct("StorageSettings")
+                .field("backend", &StorageBackendKind::Memory.as_str())
                 .finish(),
         }
     }
@@ -312,6 +323,7 @@ pub(crate) fn initialize_storage(
 ) -> Result<StorageHandle, StorageError> {
     match &settings.adapter {
         StorageAdapterSettings::Postgres(settings) => PostgresAdapterFactory::initialize(settings),
+        StorageAdapterSettings::Memory => Ok(StorageHandle::memory()),
     }
 }
 
@@ -321,6 +333,7 @@ pub(crate) fn run_storage_migrations(settings: &StorageSettings) -> Result<usize
         StorageAdapterSettings::Postgres(settings) => {
             PostgresAdapterFactory::run_migrations(settings)
         }
+        StorageAdapterSettings::Memory => Ok(0),
     }
 }
 

@@ -7,7 +7,7 @@ use actix_web::{App, http, test, web::Data};
 use async_trait::async_trait;
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryStatus,
-    GroupId, ObjectId, ObjectRelationId, PrincipalId, ResourceId, ResourceRevision,
+    GroupId, ObjectId, ObjectRelationId, PrincipalId, ResourceId, UserId,
 };
 use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -25,6 +25,7 @@ use hubuum_storage_conformance::{
     verify_lease_loss_fault_contract, verify_restore_coordination_fault_contract,
 };
 use hubuum_storage_core::StorageTaskClaimToken;
+use hubuum_storage_memory::MemoryStorage;
 use hubuum_storage_postgres::{
     PostgresFaultController, PostgresFaultPoint, PostgresObserver,
     PostgresStorage as AdapterPostgresStorage,
@@ -54,10 +55,10 @@ use crate::models::search::{
     parse_query_parameter_with_computed_filters_and_passthrough,
 };
 use crate::models::{
-    CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, ImportAtomicity, ImportClassInput, ImportCollectionInput, ImportMode,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    RemoteTargetHistory,
+    ClassKey, CollectionHistory, CollectionID, CollectionKey, ExportTemplateHistory,
+    HubuumClassHistory, HubuumObjectHistory, ImportAtomicity, ImportClassInput,
+    ImportCollectionInput, ImportMode, ImportObjectInput, ImportWriteCondition, NewHubuumClass,
+    NewHubuumObject, RemoteTargetHistory, ResourceRevision,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, LocalPermissionBackend};
@@ -112,23 +113,23 @@ use crate::storage::{
     StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
     StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
-    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection,
-    StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
-    StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
-    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
-    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
-    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
-    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
-    StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate,
-    StorageTaskChildListQuery, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
-    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageQueryBudget, StorageRelatedDirection, StorageRelatedObjectsForRootsQuery,
+    StorageRelatedSort, StorageRelationGraphQuery, StorageRelationIdsQuery,
+    StorageRelationListQuery, StorageRelationTouchingQuery, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
+    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
+    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
+    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
+    StorageRevisionPrecondition, StorageRevisionTarget, StorageServiceAccountCreate,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate, StorageTaskChildListQuery,
+    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
     StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
     StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUnifiedSearchQuery,
@@ -136,7 +137,7 @@ use crate::storage::{
     StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
     TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
 };
-use crate::traits::{CanDelete, CanSave};
+use crate::traits::CanSave;
 use hubuum_storage_postgres::PostgresPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -209,18 +210,21 @@ impl ObjectAggregateAuthorizer for PausingObjectAggregateAuthorizer {
 /// harness. Concrete resources stay inside the matching adapter branch.
 #[derive(Clone)]
 enum BackendTestEnvironment {
+    Memory { storage: MemoryStorage },
     Postgres { pool: PostgresPool },
 }
 
 impl BackendTestEnvironment {
     fn kind(&self) -> StorageBackendKind {
         match self {
+            Self::Memory { .. } => StorageBackendKind::Memory,
             Self::Postgres { .. } => StorageBackendKind::Postgres,
         }
     }
 
     fn storage(&self) -> StorageHandle {
         match self {
+            Self::Memory { storage } => StorageHandle::from_registered_backend(storage.clone()),
             Self::Postgres { pool } => StorageHandle::postgres(pool.clone()),
         }
     }
@@ -233,6 +237,9 @@ fn available_backend_environments() -> impl Iterator<Item = BackendTestEnvironme
     let postgres_pool = pool();
     StorageBackendKind::ALL.into_iter().map(move |kind| {
         let environment = match kind {
+            StorageBackendKind::Memory => BackendTestEnvironment::Memory {
+                storage: MemoryStorage::new(),
+            },
             StorageBackendKind::Postgres => BackendTestEnvironment::Postgres {
                 pool: postgres_pool.get_ref().clone(),
             },
@@ -249,6 +256,386 @@ fn available_backends() -> impl Iterator<Item = StorageHandle> {
         assert_eq!(backend.descriptor().kind(), expected_kind);
         backend
     })
+}
+
+struct BackendUserFixture {
+    id: UserId,
+    principal_id: PrincipalId,
+    raw_token: String,
+    token_hash: String,
+}
+
+async fn create_backend_user(backend: &StorageHandle, name: &str) -> BackendUserFixture {
+    let user = backend
+        .create_user(StorageUserCreate::new(
+            None,
+            name,
+            "storage-contract-password-hash",
+            Some("Storage Contract User".to_string()),
+            Some(format!("{name}@example.invalid")),
+            EventContext::system(),
+        ))
+        .await
+        .expect("backend-local compatibility user should be created")
+        .into_value();
+    let id = user.into_parts().id();
+    let principal_id = principal_id(id.id());
+    let raw_token = prefix("backend_user_token");
+    let token_hash = crate::models::Token::storage_hash_from_raw(&raw_token);
+    backend
+        .create_token(StorageTokenCreate::new(
+            principal_id,
+            &token_hash,
+            StorageTokenIssuancePolicy::try_new(24, 24)
+                .expect("backend-local token policy should be valid"),
+            EventContext::system(),
+        ))
+        .await
+        .expect("backend-local compatibility token should be created")
+        .into_value();
+    BackendUserFixture {
+        id,
+        principal_id,
+        raw_token,
+        token_hash,
+    }
+}
+
+async fn delete_backend_user(backend: &StorageHandle, user: BackendUserFixture) {
+    backend
+        .delete_user(StorageUserDelete::new(user.id, EventContext::system()))
+        .await
+        .expect("backend-local compatibility user should be removed")
+        .into_value();
+}
+
+struct BackendObjectFixture {
+    collection: crate::storage::StorageCollection,
+    class: crate::storage::StorageClass,
+    objects: Vec<StorageObject>,
+    owned_group: Option<crate::storage::StorageIdentityGroup>,
+}
+
+async fn create_backend_object_fixture(
+    backend: &StorageHandle,
+    needle: &str,
+    object_documents: Vec<serde_json::Value>,
+) -> BackendObjectFixture {
+    let owner_group = backend
+        .create_group(
+            StorageGroupCreate::new(
+                None,
+                format!("{needle}_owner"),
+                Some("backend-local compatibility owner".to_string()),
+            ),
+            &EventContext::system(),
+        )
+        .await
+        .expect("backend-local compatibility owner group should be created")
+        .into_value();
+    let mut fixture = create_backend_object_fixture_for_owner(
+        backend,
+        needle,
+        object_documents,
+        owner_group.id(),
+    )
+    .await;
+    fixture.owned_group = Some(owner_group);
+    fixture
+}
+
+async fn create_backend_object_fixture_for_owner(
+    backend: &StorageHandle,
+    needle: &str,
+    object_documents: Vec<serde_json::Value>,
+    owner_group_id: GroupId,
+) -> BackendObjectFixture {
+    let collection = backend
+        .collection_store()
+        .create_collection(
+            StorageCollectionCreate::new(
+                format!("{needle}_collection"),
+                "backend-local compatibility collection",
+                owner_group_id,
+                None,
+            ),
+            &EventContext::system(),
+        )
+        .await
+        .expect("backend-local compatibility collection should be created")
+        .into_value();
+    let class = backend
+        .class_store()
+        .create_class(
+            StorageClassCreate::builder(
+                format!("{needle}_class"),
+                collection.id(),
+                "backend-local compatibility class",
+            )
+            .build(),
+            &EventContext::system(),
+        )
+        .await
+        .expect("backend-local compatibility class should be created")
+        .into_value();
+    let resolved_class = backend
+        .class_store()
+        .resolve_class(StorageClassSelector::Id(class.id()))
+        .await
+        .expect("backend-local compatibility class should resolve");
+    let mut objects = Vec::with_capacity(object_documents.len());
+    for (index, data) in object_documents.into_iter().enumerate() {
+        objects.push(
+            backend
+                .object_store()
+                .create_object(
+                    &resolved_class,
+                    StorageObjectCreate::new(
+                        format!("{needle}_object_{index}"),
+                        collection.id(),
+                        class.id(),
+                        data,
+                        "backend-local compatibility object",
+                    ),
+                    &EventContext::system(),
+                )
+                .await
+                .expect("backend-local compatibility object should be created")
+                .into_value(),
+        );
+    }
+    BackendObjectFixture {
+        collection,
+        class,
+        objects,
+        owned_group: None,
+    }
+}
+
+async fn delete_backend_object_fixture(backend: &StorageHandle, fixture: BackendObjectFixture) {
+    for object in fixture.objects {
+        let resolved = backend
+            .object_store()
+            .get_object(object.id())
+            .await
+            .expect("backend-local compatibility object should resolve for cleanup");
+        backend
+            .object_store()
+            .delete_object(&resolved, &EventContext::system())
+            .await
+            .expect("backend-local compatibility object should be removed")
+            .into_value();
+    }
+    let class = backend
+        .class_store()
+        .resolve_class(StorageClassSelector::Id(fixture.class.id()))
+        .await
+        .expect("backend-local compatibility class should resolve for cleanup");
+    backend
+        .class_store()
+        .delete_class(&class, &EventContext::system())
+        .await
+        .expect("backend-local compatibility class should be removed")
+        .into_value();
+    backend
+        .collection_store()
+        .delete_collection(fixture.collection.id(), &EventContext::system())
+        .await
+        .expect("backend-local compatibility collection should be removed")
+        .into_value();
+    if let Some(group) = fixture.owned_group {
+        backend
+            .delete_group(group.id(), &EventContext::system())
+            .await
+            .expect("backend-local compatibility owner group should be removed")
+            .into_value();
+    }
+}
+
+struct BackendRelationFixture {
+    collection: crate::storage::StorageCollection,
+    owner_group: crate::storage::StorageIdentityGroup,
+    classes: Vec<crate::storage::StorageClass>,
+    objects: Vec<StorageObject>,
+    class_relation_id: ClassRelationId,
+    object_relation_id: ObjectRelationId,
+}
+
+async fn create_backend_relation_fixture(
+    backend: &StorageHandle,
+    needle: &str,
+) -> BackendRelationFixture {
+    let owner_group = backend
+        .create_group(
+            StorageGroupCreate::new(
+                None,
+                format!("{needle}_owner"),
+                Some("backend-local relation owner".to_string()),
+            ),
+            &EventContext::system(),
+        )
+        .await
+        .expect("backend-local relation owner group should be created")
+        .into_value();
+    let collection = backend
+        .collection_store()
+        .create_collection(
+            StorageCollectionCreate::new(
+                format!("{needle}_collection"),
+                "backend-local relation collection",
+                owner_group.id(),
+                None,
+            ),
+            &EventContext::system(),
+        )
+        .await
+        .expect("backend-local relation collection should be created")
+        .into_value();
+    let mut classes = Vec::new();
+    for suffix in ["one", "two"] {
+        classes.push(
+            backend
+                .class_store()
+                .create_class(
+                    StorageClassCreate::builder(
+                        format!("{needle}_class_{suffix}"),
+                        collection.id(),
+                        format!("backend-local relation class {suffix}"),
+                    )
+                    .build(),
+                    &EventContext::system(),
+                )
+                .await
+                .expect("backend-local relation class should be created")
+                .into_value(),
+        );
+    }
+    let prepared_class_relation = backend
+        .class_relation_store()
+        .prepare_class_relation(
+            StorageClassRelationCreate::builder(classes[0].id(), classes[1].id()).build(),
+        )
+        .await
+        .expect("backend-local class relation should prepare");
+    let class_relation = backend
+        .class_relation_store()
+        .create_class_relation(&prepared_class_relation, &EventContext::system())
+        .await
+        .expect("backend-local class relation should be created")
+        .into_value();
+    let class_relation_id = ClassRelationId::from(class_relation.relation().metadata().id());
+    let mut objects = Vec::new();
+    for (index, class) in classes.iter().enumerate() {
+        let resolved_class = backend
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await
+            .expect("backend-local relation class should resolve");
+        objects.push(
+            backend
+                .object_store()
+                .create_object(
+                    &resolved_class,
+                    StorageObjectCreate::new(
+                        format!("{needle}_object_{index}"),
+                        collection.id(),
+                        class.id(),
+                        serde_json::json!({}),
+                        "backend-local relation object",
+                    ),
+                    &EventContext::system(),
+                )
+                .await
+                .expect("backend-local relation object should be created")
+                .into_value(),
+        );
+    }
+    let prepared_object_relation = backend
+        .object_relation_store()
+        .prepare_object_relation(StorageObjectRelationCreateSelector::Explicit(
+            StorageObjectRelationCreate::new(objects[0].id(), objects[1].id(), class_relation_id),
+        ))
+        .await
+        .expect("backend-local object relation should prepare");
+    let object_relation = backend
+        .object_relation_store()
+        .create_object_relation(&prepared_object_relation, &EventContext::system())
+        .await
+        .expect("backend-local object relation should be created")
+        .into_value();
+    let object_relation_id = ObjectRelationId::from(object_relation.relation().metadata().id());
+    BackendRelationFixture {
+        collection,
+        owner_group,
+        classes,
+        objects,
+        class_relation_id,
+        object_relation_id,
+    }
+}
+
+async fn delete_backend_relation_fixture(backend: &StorageHandle, fixture: BackendRelationFixture) {
+    let object_relation = backend
+        .object_relation_store()
+        .resolve_object_relation(StorageObjectRelationSelector::Id(
+            fixture.object_relation_id,
+        ))
+        .await
+        .expect("backend-local object relation should resolve for cleanup");
+    backend
+        .object_relation_store()
+        .delete_object_relation(&object_relation, &EventContext::system())
+        .await
+        .expect("backend-local object relation should be removed")
+        .into_value();
+    for object in fixture.objects {
+        let object = backend
+            .object_store()
+            .get_object(object.id())
+            .await
+            .expect("backend-local relation object should resolve for cleanup");
+        backend
+            .object_store()
+            .delete_object(&object, &EventContext::system())
+            .await
+            .expect("backend-local relation object should be removed")
+            .into_value();
+    }
+    let class_relation = backend
+        .class_relation_store()
+        .resolve_class_relation(fixture.class_relation_id)
+        .await
+        .expect("backend-local class relation should resolve for cleanup");
+    backend
+        .class_relation_store()
+        .delete_class_relation(&class_relation, &EventContext::system())
+        .await
+        .expect("backend-local class relation should be removed")
+        .into_value();
+    for class in fixture.classes {
+        let class = backend
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await
+            .expect("backend-local relation class should resolve for cleanup");
+        backend
+            .class_store()
+            .delete_class(&class, &EventContext::system())
+            .await
+            .expect("backend-local relation class should be removed")
+            .into_value();
+    }
+    backend
+        .collection_store()
+        .delete_collection(fixture.collection.id(), &EventContext::system())
+        .await
+        .expect("backend-local relation collection should be removed")
+        .into_value();
+    backend
+        .delete_group(fixture.owner_group.id(), &EventContext::system())
+        .await
+        .expect("backend-local relation owner group should be removed")
+        .into_value();
 }
 
 #[derive(Debug, Default)]
@@ -936,9 +1323,372 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
     }
 }
 
+struct MemoryAuditContractFixture {
+    backend: StorageHandle,
+    group_id: GroupId,
+    sink_id: hubuum_domain::EventSinkId,
+    subscription_id: hubuum_domain::EventSubscriptionId,
+    collection_id: CollectionId,
+    logical_observer: Arc<RecordingStorageObserver>,
+    sink_deliveries: Arc<AtomicUsize>,
+}
+
+impl MemoryAuditContractFixture {
+    async fn new(storage: MemoryStorage) -> Result<Self, FixtureError> {
+        let logical_observer = Arc::new(RecordingStorageObserver::default());
+        let backend =
+            StorageHandle::from_registered_backend_with_observer(storage, logical_observer.clone());
+        let context = EventContext::system();
+        let group = backend
+            .create_group(
+                StorageGroupCreate::new(
+                    None,
+                    prefix("memory_audit_contract_group"),
+                    Some("memory audit contract owner".to_string()),
+                ),
+                &context,
+            )
+            .await?
+            .into_value();
+        let sink = backend
+            .create_event_sink(
+                StorageEventSinkCreate::builder(
+                    prefix("memory_audit_contract_sink"),
+                    "webhook",
+                    context.clone(),
+                )
+                .configuration(serde_json::json!({}))
+                .enabled(true)
+                .try_build()?,
+            )
+            .await?
+            .into_value();
+        let collection = backend
+            .collection_store()
+            .create_collection(
+                StorageCollectionCreate::new(
+                    prefix("memory_audit_contract_collection"),
+                    "memory audit contract collection before committed probe",
+                    group.id(),
+                    None,
+                ),
+                &context,
+            )
+            .await?
+            .into_value();
+        let subscription = backend
+            .create_event_subscription(
+                StorageEventSubscriptionCreate::builder(
+                    collection.id(),
+                    sink.id(),
+                    prefix("memory_audit_contract_subscription"),
+                    context,
+                )
+                .entity_types(vec![EntityType::Collection])
+                .actions(vec![Action::Updated])
+                .routing(serde_json::json!({}))
+                .enabled(true)
+                .try_build()?,
+            )
+            .await?
+            .into_value();
+        Ok(Self {
+            backend,
+            group_id: group.id(),
+            sink_id: sink.id(),
+            subscription_id: subscription.id(),
+            collection_id: collection.id(),
+            logical_observer,
+            sink_deliveries: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    fn query_options() -> QueryOptions {
+        QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, true)
+            .expect("memory audit contract query options must be valid")
+    }
+
+    async fn collection_events(&self) -> Result<Vec<StorageAuditEvent>, FixtureError> {
+        let (events, _) = self
+            .backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![self.collection_id],
+                false,
+                StorageAuditEventFilters::new()
+                    .entity_type(Some(EntityType::Collection))
+                    .entity_id(Some(EventEntityId::new(self.collection_id.id())?)),
+                Self::query_options(),
+            ))
+            .await?
+            .into_parts();
+        Ok(events)
+    }
+
+    async fn all_event_count(&self) -> Result<usize, FixtureError> {
+        let (events, _) = self
+            .backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                Vec::new(),
+                true,
+                StorageAuditEventFilters::new(),
+                Self::query_options(),
+            ))
+            .await?
+            .into_parts();
+        Ok(events.len())
+    }
+
+    async fn cleanup_resources(&self) -> Result<(), FixtureError> {
+        let context = EventContext::system();
+        self.backend
+            .delete_event_subscription(StorageEventSubscriptionDelete::new(
+                self.collection_id,
+                self.subscription_id,
+                context.clone(),
+            ))
+            .await?
+            .into_value();
+        self.backend
+            .collection_store()
+            .delete_collection(self.collection_id, &context)
+            .await?
+            .into_value();
+        self.backend
+            .delete_event_sink(StorageEventSinkDelete::new(self.sink_id, context.clone()))
+            .await?
+            .into_value();
+        self.backend
+            .delete_group(self.group_id, &context)
+            .await?
+            .into_value();
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl BackendAuditFixture for MemoryAuditContractFixture {
+    async fn committed_mutation(&self) -> Result<CommittedMutationProbe, FixtureError> {
+        let before = self
+            .backend
+            .collection_store()
+            .get_collection(self.collection_id)
+            .await?;
+        let outcome = self
+            .backend
+            .collection_store()
+            .update_collection(
+                self.collection_id,
+                StorageCollectionUpdate::new(
+                    None,
+                    Some("audited committed memory probe update".to_string()),
+                ),
+                &EventContext::system(),
+            )
+            .await?;
+        let expected_document = hubuum_events_core::AuditDocument::builder(format!(
+            "Updated collection '{}'",
+            outcome.value().name()
+        ))
+        .before(before.audit_snapshot())
+        .after(outcome.value().audit_snapshot())
+        .try_build()?;
+        let receipt = outcome
+            .audits()
+            .map(hubuum_storage_core::StorageAuditReceipts::first)
+            .ok_or_else(|| std::io::Error::other("committed memory update had no receipt"))?;
+        let event = self
+            .collection_events()
+            .await?
+            .into_iter()
+            .find(|event| event.clone().into_parts().0.id() == receipt.sequence())
+            .ok_or_else(|| std::io::Error::other("memory receipt event was not queryable"))?;
+        Ok(CommittedMutationProbe::new(
+            outcome.map(drop),
+            event,
+            expected_document,
+        ))
+    }
+
+    async fn unchanged_mutation(&self) -> Result<UnchangedMutationProbe, FixtureError> {
+        let before = self.collection_events().await?.len();
+        let outcome = self
+            .backend
+            .collection_store()
+            .update_collection(
+                self.collection_id,
+                StorageCollectionUpdate::new(None, None),
+                &EventContext::system(),
+            )
+            .await?;
+        let after = self.collection_events().await?.len();
+        Ok(UnchangedMutationProbe::new(
+            outcome.map(drop),
+            after.saturating_sub(before),
+        ))
+    }
+
+    async fn rolled_back_mutation(&self) -> Result<RollbackProbe, FixtureError> {
+        let name = prefix("memory_audit_contract_rollback");
+        let before = self.all_event_count().await?;
+        let collection = ImportCollectionInput {
+            ref_: Some("collection:memory_audit_rollback".to_string()),
+            name: name.clone(),
+            description: "must roll back".to_string(),
+            parent_collection_ref: None,
+            parent_collection_key: None,
+            condition: None,
+            timestamps: None,
+        };
+        let class = ImportClassInput {
+            ref_: None,
+            name: prefix("memory_audit_contract_rollback_class"),
+            description: "must fail".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+            collection_ref: Some("collection:missing".to_string()),
+            collection_key: None,
+            condition: None,
+            timestamps: None,
+        };
+        let plan = StorageImportPlan::try_new(vec![
+            StorageImportPlanItem::new(
+                0,
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateCollection(collection),
+                )
+                .map_err(|error| std::io::Error::other(error.to_string()))?,
+            ),
+            StorageImportPlanItem::new(
+                1,
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateClass(class),
+                )
+                .map_err(|error| std::io::Error::other(error.to_string()))?,
+            ),
+        ])?;
+        if self.backend.apply_import_strict(plan).await.is_ok() {
+            return Err(std::io::Error::other("memory rollback probe did not fail").into());
+        }
+        let root = self.backend.get_import_root_collection().await?;
+        let state_change_persisted = self
+            .backend
+            .get_import_collection_child_by_name(root.id(), &name)
+            .await?
+            .is_some();
+        let audit_event_persisted = self.all_event_count().await? != before;
+        Ok(RollbackProbe::new(
+            state_change_persisted,
+            audit_event_persisted,
+        ))
+    }
+
+    async fn fanout_to_recording_sink(&self) -> Result<FanoutProbe, FixtureError> {
+        let settings = EventFanoutSettings::new(1_000, 30_000)?;
+        self.backend.process_event_fanout_batch(settings).await?;
+        let (deliveries, _) = self
+            .backend
+            .list_event_deliveries(
+                StorageEventDeliveryListQuery::new(Self::query_options())
+                    .subscription_id(Some(self.subscription_id)),
+            )
+            .await?
+            .into_parts();
+        let delivery_count = deliveries.len();
+        let settings = EventDeliverySettings::builder()
+            .batch_size(1_000)
+            .lock_timeout_ms(30_000)
+            .transport_timeout_ms(25_000)
+            .retry_backoff_base_ms(1_000)
+            .retry_backoff_max_ms(10_000)
+            .max_attempts(3)
+            .build()?;
+        let resolver = ContractSinkResolver {
+            recording: ContractRecordingSink {
+                deliveries: self.sink_deliveries.clone(),
+            },
+            discard: ContractDiscardSink,
+        };
+        let (work, _) = self
+            .backend
+            .claim_event_delivery_batch(settings)
+            .await?
+            .into_parts();
+        for item in work {
+            crate::events::process_event_delivery_work_item(
+                &self.backend,
+                settings,
+                &resolver,
+                item,
+            )
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        }
+        Ok(FanoutProbe::new(
+            delivery_count,
+            self.sink_deliveries.load(Ordering::Relaxed),
+        ))
+    }
+
+    async fn observations(&self) -> Result<ObservationProbe, FixtureError> {
+        let observations = self.logical_observer.observations();
+        Ok(ObservationProbe::new(
+            self.logical_observer
+                .operation_count("collection", "create_collection"),
+            self.logical_observer
+                .operation_count("event_configuration", "create_event_subscription"),
+            self.all_event_count().await?,
+            observations
+                .iter()
+                .filter(|observation| observation.result() != "success")
+                .count(),
+        ))
+    }
+
+    async fn revision_conflict(&self) -> Result<RevisionConflictProbe, FixtureError> {
+        let collection = self
+            .backend
+            .collection_store()
+            .get_collection(self.collection_id)
+            .await?;
+        let current_revision = collection.revision();
+        let stale_revision = current_revision.checked_advance()?;
+        let error = self
+            .backend
+            .run_in_scope_send(
+                StorageExecutionScope::default().with_revision_precondition(Some(
+                    StorageRevisionPrecondition::new(
+                        StorageRevisionTarget::Collection(self.collection_id),
+                        vec![stale_revision],
+                    ),
+                )),
+                self.backend.collection_store().update_collection(
+                    self.collection_id,
+                    StorageCollectionUpdate::new(
+                        None,
+                        Some("stale memory conformance update must not persist".to_string()),
+                    ),
+                    &EventContext::system(),
+                ),
+            )
+            .await
+            .expect_err("stale memory storage mutation must fail");
+        Ok(RevisionConflictProbe::new(error, current_revision))
+    }
+
+    async fn cleanup(&self) -> Result<(), FixtureError> {
+        self.cleanup_resources().await
+    }
+}
+
 impl BackendTestEnvironment {
     async fn verify_audit_contract(&self) -> Result<ContractReport, FixtureError> {
         match self {
+            Self::Memory { storage } => {
+                let fixture = MemoryAuditContractFixture::new(storage.clone()).await?;
+                verify_backend_audit_contract(&fixture)
+                    .await
+                    .map_err(Into::into)
+            }
             Self::Postgres { pool } => {
                 let fixture = PostgresAuditContractFixture::new(pool.clone()).await?;
                 verify_backend_audit_contract(&fixture)
@@ -984,7 +1734,8 @@ async fn backend_registration_does_not_require_optional_application_providers() 
 
 struct BackendApplicationFixture {
     backend: StorageHandle,
-    administrator: crate::models::User,
+    administrator: Option<crate::models::User>,
+    memory_user: Option<BackendUserFixture>,
     bearer_token: String,
 }
 
@@ -992,6 +1743,26 @@ async fn backend_application_fixture(
     environment: &BackendTestEnvironment,
 ) -> BackendApplicationFixture {
     match environment {
+        BackendTestEnvironment::Memory { .. } => {
+            let backend = environment.storage();
+            let memory_user = create_backend_user(&backend, &prefix("memory_app_admin")).await;
+            backend
+                .add_group_member(
+                    memory_user.principal_id,
+                    group_id(1),
+                    &EventContext::system(),
+                )
+                .await
+                .expect("memory compatibility administrator should join the admin group")
+                .into_value();
+            let bearer_token = memory_user.raw_token.clone();
+            BackendApplicationFixture {
+                backend,
+                administrator: None,
+                memory_user: Some(memory_user),
+                bearer_token,
+            }
+        }
         BackendTestEnvironment::Postgres { pool } => {
             let administrator = crate::tests::create_test_admin(pool).await;
             let bearer_token = administrator
@@ -1001,7 +1772,8 @@ async fn backend_application_fixture(
                 .get_token();
             BackendApplicationFixture {
                 backend: environment.storage(),
-                administrator,
+                administrator: Some(administrator),
+                memory_user: None,
                 bearer_token,
             }
         }
@@ -1011,8 +1783,14 @@ async fn backend_application_fixture(
 impl BackendApplicationFixture {
     async fn cleanup(self, environment: &BackendTestEnvironment) {
         match environment {
+            BackendTestEnvironment::Memory { .. } => {
+                if let Some(user) = self.memory_user {
+                    delete_backend_user(&self.backend, user).await;
+                }
+            }
             BackendTestEnvironment::Postgres { pool } => {
                 self.administrator
+                    .expect("PostgreSQL fixture has an application administrator")
                     .delete_without_events(pool)
                     .await
                     .expect("backend compatibility administrator should be removed");
@@ -1458,7 +2236,6 @@ async fn every_available_storage_backend_supplies_consistent_inventory_counts() 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_group_behavior() {
     let _permit = postgres_permit().await;
-    let pool = pool();
 
     for backend in available_backends() {
         let initial_name = prefix("group_contract");
@@ -1510,14 +2287,9 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         assert!(listed.iter().any(|group| group.id() == created.id()));
         assert!(total_count.is_some_and(|count| count >= listed.len() as i64));
 
-        let user = crate::tests::create_user_with_params(
-            pool.get_ref(),
-            &prefix("group_contract_user"),
-            "testpassword",
-        )
-        .await;
+        let user = create_backend_user(&backend, &prefix("group_contract_user")).await;
         backend
-            .add_group_member(principal_id(user.id), created.id(), &EventContext::system())
+            .add_group_member(user.principal_id, created.id(), &EventContext::system())
             .await
             .expect("certified backend should add group members")
             .into_value();
@@ -1529,7 +2301,7 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         assert!(
             members
                 .iter()
-                .any(|member| member.id() == principal_id(user.id))
+                .any(|member| member.id() == user.principal_id)
         );
         let query_options = QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
             .expect("contract query must be valid");
@@ -1540,12 +2312,12 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
         assert!(
             page.rows()
                 .iter()
-                .any(|member| member.principal().id() == principal_id(user.id))
+                .any(|member| member.principal().id() == user.principal_id)
         );
         assert_eq!(page.total(), Some(1));
 
         backend
-            .remove_group_member(principal_id(user.id), created.id(), &EventContext::system())
+            .remove_group_member(user.principal_id, created.id(), &EventContext::system())
             .await
             .expect("certified backend should remove group members")
             .into_value();
@@ -1562,37 +2334,32 @@ async fn every_available_storage_backend_supplies_complete_group_behavior() {
                 .into_value(),
             1
         );
+        delete_backend_user(&backend, user).await;
     }
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_principal_behavior() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("principal_contract_user"),
-        "testpassword",
-    )
-    .await;
-    let event_context = EventContext::user(principal_id(user.id), None, None);
 
     for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("principal_contract_user")).await;
+        let event_context = EventContext::user(user.principal_id, None, None);
         let loaded = backend
-            .get_principal(principal_id(user.id))
+            .get_principal(user.principal_id)
             .await
             .expect("certified backend should load principals");
-        assert_eq!(loaded.id(), principal_id(user.id));
+        assert_eq!(loaded.id(), user.principal_id);
 
         let initial = backend
-            .get_principal_settings(principal_id(user.id))
+            .get_principal_settings(user.principal_id)
             .await
             .expect("certified backend should load principal settings");
         assert_eq!(initial.document(), &serde_json::json!({}));
 
         let replaced = backend
             .update_principal_settings(
-                principal_id(user.id),
+                user.principal_id,
                 StoragePrincipalSettingsMutation::Replace(serde_json::json!({
                     "theme": "light",
                     "notifications": {"email": true}
@@ -1606,7 +2373,7 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
 
         let merged = backend
             .update_principal_settings(
-                principal_id(user.id),
+                user.principal_id,
                 StoragePrincipalSettingsMutation::MergePatch(serde_json::json!({
                     "notifications": {"push": true}
                 })),
@@ -1620,7 +2387,7 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
 
         let patched = backend
             .update_principal_settings(
-                principal_id(user.id),
+                user.principal_id,
                 StoragePrincipalSettingsMutation::JsonPatch(serde_json::json!([
                     {"op": "replace", "path": "/theme", "value": "dark"}
                 ])),
@@ -1633,7 +2400,7 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
 
         let reset = backend
             .update_principal_settings(
-                principal_id(user.id),
+                user.principal_id,
                 StoragePrincipalSettingsMutation::Reset,
                 &event_context,
             )
@@ -1641,28 +2408,19 @@ async fn every_available_storage_backend_supplies_complete_principal_behavior() 
             .expect("certified backend should reset principal settings")
             .into_value();
         assert_eq!(reset.document(), &serde_json::json!({}));
+        delete_backend_user(&backend, user).await;
     }
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_authentication_projections() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("authentication_user"),
-        "testpassword",
-    )
-    .await;
-    let token = user
-        .create_token(pool.get_ref())
-        .await
-        .expect("authentication compatibility token should be created");
 
     for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("authentication_user")).await;
         let observed_at = chrono::Utc::now();
         let attempt = StorageAuthenticationAttempt::try_new(
-            StorageAuthenticationCredential::new(token.storage_hash()),
+            StorageAuthenticationCredential::new(&user.token_hash),
             observed_at,
             observed_at - chrono::Duration::days(1),
         )
@@ -1671,16 +2429,16 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
             .authenticate_bearer_token(attempt)
             .await
             .expect("certified backend should validate active bearer credentials");
-        assert_eq!(authenticated.principal_id(), principal_id(user.id));
+        assert_eq!(authenticated.principal_id(), user.principal_id);
         assert!(!authenticated.is_scoped());
 
         let identity = backend
-            .get_authentication_identity(principal_id(user.id))
+            .get_authentication_identity(user.principal_id)
             .await
             .expect("certified backend should supply authentication identity data");
         let (principal, human) = identity.into_parts();
 
-        assert_eq!(principal.id(), principal_id(user.id));
+        assert_eq!(principal.id(), user.principal_id);
         assert!(principal.is_human());
         assert!(human.is_some());
 
@@ -1696,31 +2454,34 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
         let (permissions, resources) = scope.into_parts();
         assert_eq!(permissions, Some(Vec::new()));
         assert_eq!(resources, None);
+        delete_backend_user(&backend, user).await;
     }
-
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("authentication compatibility fixture should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_identity_operations() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let username = prefix("identity_contract_user");
-    let user =
-        crate::tests::create_user_with_params(pool.get_ref(), &username, "testpassword").await;
-    let _token = user
-        .create_token(pool.get_ref())
-        .await
-        .expect("identity compatibility token should be created");
-    let owner_group = crate::tests::create_test_group(pool.get_ref()).await;
-    owner_group
-        .add_member_without_events(pool.get_ref(), &user)
-        .await
-        .expect("identity compatibility membership should be created");
 
     for backend in available_backends() {
+        let username = prefix("identity_contract_user");
+        let user = create_backend_user(&backend, &username).await;
+        let owner_group = backend
+            .create_group(
+                StorageGroupCreate::new(
+                    None,
+                    prefix("identity_contract_owner_group"),
+                    Some("identity compatibility owner group".to_string()),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("backend-local identity owner group should be created")
+            .into_value();
+        backend
+            .add_group_member(user.principal_id, owner_group.id(), &EventContext::system())
+            .await
+            .expect("backend-local identity membership should be created")
+            .into_value();
         assert!(
             !backend
                 .is_default_admin_bootstrap_required()
@@ -1759,10 +2520,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         );
 
         let membership = backend
-            .get_principal_group(principal_id(user.id), group_id(owner_group.id))
+            .get_principal_group(user.principal_id, owner_group.id())
             .await
             .expect("certified backend should load effective memberships");
-        assert_eq!(membership.principal_id(), principal_id(user.id));
+        assert_eq!(membership.principal_id(), user.principal_id);
         let group_options = prepare_db_pagination::<crate::models::Group>(
             &QueryOptions::new(Vec::new(), Vec::new(), Some(20), None, true)
                 .expect("contract query must be valid"),
@@ -1770,7 +2531,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         .expect("identity compatibility group query should be valid");
         let (groups, group_total) = backend
             .list_principal_groups(StoragePrincipalGroupListQuery::new(
-                principal_id(user.id),
+                user.principal_id,
                 group_options,
             ))
             .await
@@ -1780,16 +2541,16 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         assert!(
             groups
                 .into_iter()
-                .any(|group| group.id() == group_id(owner_group.id))
+                .any(|group| group.id() == owner_group.id())
         );
         assert!(
             backend
-                .is_human_owner_group_member(principal_id(user.id), group_id(owner_group.id))
+                .is_human_owner_group_member(user.principal_id, owner_group.id())
                 .await
                 .expect("certified backend should evaluate human ownership")
         );
 
-        let event_context = EventContext::user(principal_id(user.id), None, None);
+        let event_context = EventContext::user(user.principal_id, None, None);
         let contract_username = prefix("complete_user_contract");
         let contract_user = backend
             .create_user(StorageUserCreate::new(
@@ -1999,7 +2760,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         .expect("identity compatibility token query should be valid");
         let (tokens, token_total) = backend
             .list_retained_tokens(StorageTokenListQuery::new(
-                principal_id(user.id),
+                user.principal_id,
                 token_options,
                 StorageTokenListState::Active,
                 token_observation,
@@ -2008,7 +2769,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("certified backend should list retained tokens")
             .into_parts();
         assert_eq!(token_total, Some(1));
-        assert_eq!(tokens[0].principal_id(), principal_id(user.id));
+        assert_eq!(tokens[0].principal_id(), user.principal_id);
         let password_reset = backend
             .reset_local_password(StorageLocalPasswordReset::new(
                 &username,
@@ -2026,8 +2787,8 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .create_service_account(StorageServiceAccountCreate::new(
                 &service_account_name,
                 "identity contract",
-                group_id(owner_group.id),
-                Some(principal_id(user.id)),
+                owner_group.id(),
+                Some(user.principal_id),
                 event_context.clone(),
             ))
             .await
@@ -2037,7 +2798,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .get_service_account(created.id())
             .await
             .expect("certified backend should load service accounts");
-        assert_eq!(loaded.owner_group_id(), group_id(owner_group.id));
+        assert_eq!(loaded.owner_group_id(), owner_group.id());
         let point = backend
             .get_service_account_details(created.id())
             .await
@@ -2052,7 +2813,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("identity compatibility service-account query should be valid");
         let (accounts, account_total) = backend
             .list_manageable_service_accounts(StorageServiceAccountListQuery::new(
-                principal_id(user.id),
+                user.principal_id,
                 true,
                 service_account_options,
             ))
@@ -2168,11 +2929,18 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .await
             .expect("certified backend should delete service accounts")
             .into_value();
+        backend
+            .remove_group_member(user.principal_id, owner_group.id(), &EventContext::system())
+            .await
+            .expect("backend-local identity membership should be removed")
+            .into_value();
+        backend
+            .delete_group(owner_group.id(), &EventContext::system())
+            .await
+            .expect("backend-local identity owner group should be removed")
+            .into_value();
+        delete_backend_user(&backend, user).await;
     }
-
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("identity compatibility user should be removed");
 }
 
 #[actix_web::test]
@@ -2377,10 +3145,11 @@ async fn every_available_storage_backend_supplies_the_export_query_scope() {
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_the_complete_import_contract() {
     let _permit = postgres_permit().await;
-    let pool = pool();
     let preflight_name = prefix("import_preflight_collection");
     let best_effort_name = prefix("import_best_effort_collection");
     let rollback_name = prefix("import_rollback_collection");
+    let class_name = prefix("import_preflight_class");
+    let object_name = prefix("import_preflight_object");
     let collection_input = |name: &str, reference: &str| ImportCollectionInput {
         ref_: Some(reference.to_string()),
         name: name.to_string(),
@@ -2488,16 +3257,51 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 .expect("certified backend should look up import groups")
         );
 
-        let preflight_plan = StorageImportPlan::try_new(vec![StorageImportPlanItem::new(
-            0,
-            crate::services::import_boundary::import_operation_to_storage(
-                ApplicationImportOperation::CreateCollection(collection_input(
-                    &preflight_name,
-                    "collection:preflight",
-                )),
-            )
-            .expect("valid collection input should cross the storage boundary"),
-        )])
+        let preflight_plan = StorageImportPlan::try_new(vec![
+            StorageImportPlanItem::new(
+                0,
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateCollection(collection_input(
+                        &preflight_name,
+                        "collection:preflight",
+                    )),
+                )
+                .expect("valid collection input should cross the storage boundary"),
+            ),
+            StorageImportPlanItem::new(
+                1,
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateClass(ImportClassInput {
+                        ref_: Some("class:preflight".to_string()),
+                        name: class_name.clone(),
+                        description: "storage compatibility import class".to_string(),
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        collection_ref: Some("collection:preflight".to_string()),
+                        collection_key: None,
+                        condition: None,
+                        timestamps: None,
+                    }),
+                )
+                .expect("valid class input should cross the storage boundary"),
+            ),
+            StorageImportPlanItem::new(
+                2,
+                crate::services::import_boundary::import_operation_to_storage(
+                    ApplicationImportOperation::CreateObject(ImportObjectInput {
+                        ref_: Some("object:preflight".to_string()),
+                        name: object_name.clone(),
+                        description: "storage compatibility import object".to_string(),
+                        data: serde_json::json!({"state": "created"}),
+                        class_ref: Some("class:preflight".to_string()),
+                        class_key: None,
+                        condition: None,
+                        timestamps: None,
+                    }),
+                )
+                .expect("valid object input should cross the storage boundary"),
+            ),
+        ])
         .expect("valid operations should form an import plan");
         let (preflight, aborted) = backend
             .preflight_import(
@@ -2508,15 +3312,11 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .expect("certified backend should preflight an import")
             .into_parts();
         assert!(!aborted);
-        assert_eq!(preflight.len(), 1);
+        assert_eq!(preflight.len(), 3);
         assert!(
             preflight
                 .into_iter()
-                .next()
-                .unwrap()
-                .into_parts()
-                .2
-                .is_none()
+                .all(|result| result.into_parts().2.is_none())
         );
         assert!(
             backend
@@ -2531,6 +3331,79 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .apply_import_strict(preflight_plan)
             .await
             .expect("certified backend should atomically apply a strict import");
+
+        let imported_collection = backend
+            .get_import_collection_child_by_name(root_id, &preflight_name)
+            .await
+            .expect("committed import collection should remain queryable")
+            .expect("committed import collection should exist");
+        let imported_class = backend
+            .get_import_class_by_name(imported_collection.id(), &class_name)
+            .await
+            .expect("committed import class should remain queryable")
+            .expect("committed import class should exist");
+        let imported_object = backend
+            .get_import_object_by_name(imported_class.id(), &object_name)
+            .await
+            .expect("committed import object should remain queryable")
+            .expect("committed import object should exist");
+        assert_eq!(
+            imported_object.data(),
+            &serde_json::json!({"state": "created"})
+        );
+
+        let stale_revision = ResourceRevision::new(
+            imported_object
+                .revision()
+                .get()
+                .checked_add(1)
+                .expect("test revision should not overflow"),
+        )
+        .expect("test revision should remain positive");
+        let stale_update = StorageImportPlan::try_new(vec![StorageImportPlanItem::new(
+            0,
+            crate::services::import_boundary::import_operation_to_storage(
+                ApplicationImportOperation::UpdateObject {
+                    object_id: imported_object.id().id(),
+                    input: ImportObjectInput {
+                        ref_: None,
+                        name: object_name.clone(),
+                        description: "stale update must not persist".to_string(),
+                        data: serde_json::json!({"state": "stale"}),
+                        class_ref: None,
+                        class_key: Some(ClassKey {
+                            name: class_name.clone(),
+                            collection_ref: None,
+                            collection_key: Some(CollectionKey {
+                                name: preflight_name.clone(),
+                                path: Some(vec![root_name.clone()]),
+                            }),
+                        }),
+                        condition: Some(ImportWriteCondition::IfRevision {
+                            expected_revision: stale_revision,
+                        }),
+                        timestamps: None,
+                    },
+                },
+            )
+            .expect("valid object update should cross the storage boundary"),
+        )])
+        .expect("valid object update should form an import plan");
+        let error = backend
+            .apply_import_strict(stale_update)
+            .await
+            .expect_err("stale import updates must be rejected");
+        assert_eq!(error.kind(), StorageErrorKind::PreconditionFailed);
+        assert_eq!(error.current_revision(), Some(imported_object.revision()));
+        assert_eq!(
+            backend
+                .get_import_object_by_name(imported_class.id(), &object_name)
+                .await
+                .expect("rejected import object should remain queryable")
+                .expect("rejected import object should still exist")
+                .data(),
+            &serde_json::json!({"state": "created"})
+        );
 
         let rollback_plan = StorageImportPlan::try_new(vec![
             StorageImportPlanItem::new(
@@ -2617,17 +3490,43 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
         assert!(best_effort[0].error().is_none());
         assert!(best_effort[1].error().is_some());
 
-        for name in [&preflight_name, &best_effort_name] {
-            let collection = backend
-                .get_import_collection_child_by_name(root_id, name)
+        let object_target = backend
+            .object_store()
+            .resolve_object(StorageObjectSelector::Ids {
+                class_id: imported_class.id(),
+                object_id: imported_object.id(),
+            })
+            .await
+            .expect("imported object should resolve for cleanup");
+        backend
+            .object_store()
+            .delete_object(&object_target, &EventContext::system())
+            .await
+            .expect("imported object should be removed")
+            .into_value();
+        let class_target = backend
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(imported_class.id()))
+            .await
+            .expect("imported class should resolve for cleanup");
+        backend
+            .class_store()
+            .delete_class(&class_target, &EventContext::system())
+            .await
+            .expect("imported class should be removed")
+            .into_value();
+        let best_effort_collection = backend
+            .get_import_collection_child_by_name(root_id, &best_effort_name)
+            .await
+            .expect("committed import collection should remain queryable")
+            .expect("committed import collection should exist");
+        for collection in [imported_collection, best_effort_collection] {
+            backend
+                .collection_store()
+                .delete_collection(collection.id(), &EventContext::system())
                 .await
-                .expect("committed import collection should remain queryable")
-                .expect("committed import collection should exist");
-            crate::services::storage_boundary::collection_from_storage(collection)
-                .expect("backend collection should satisfy application invariants")
-                .delete_without_events(pool.get_ref())
-                .await
-                .expect("import compatibility fixture should be removed");
+                .expect("import compatibility fixture should be removed")
+                .into_value();
         }
     }
 }
@@ -2635,24 +3534,19 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_the_complete_task_queue() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("task_queue_user"),
-        "testpassword",
-    )
-    .await;
     let options = || {
         QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true)
             .expect("contract query must be valid")
     };
 
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let user = create_backend_user(&backend, &prefix("task_queue_user")).await;
         let task = backend
             .create_task(
                 StorageTaskCreateRequest::builder(
                     StorageTaskKind::Import,
-                    principal_id(user.id),
+                    user.principal_id,
                     serde_json::json!({"items": []}),
                     0,
                 )
@@ -2679,7 +3573,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
 
         let (tasks, total) = backend
             .list_tasks(StorageTaskListQuery::new(
-                Some(principal_id(user.id)),
+                Some(user.principal_id),
                 Some(StorageTaskKind::Import),
                 Some(StorageTaskStatus::Queued),
                 options(),
@@ -2753,35 +3647,29 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
             Ok(StorageTaskOutputLookup::Missing)
         ));
 
-        hubuum_storage_postgres::test_support::delete_task(pool.get_ref(), task_id)
-            .await
-            .expect("task queue compatibility fixture should be removed");
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            hubuum_storage_postgres::test_support::delete_task(pool, task_id)
+                .await
+                .expect("task queue compatibility fixture should be removed");
+        }
+        delete_backend_user(&backend, user).await;
     }
-
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("task queue compatibility user should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_the_complete_task_state_machine() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("task_execution_user"),
-        "testpassword",
-    )
-    .await;
 
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let user = create_backend_user(&backend, &prefix("task_execution_user")).await;
         let mut fixture_ids = Vec::new();
         for task_kind in StorageTaskKind::ALL {
             let task = backend
                 .create_task(
                     StorageTaskCreateRequest::builder(
                         task_kind,
-                        principal_id(user.id),
+                        user.principal_id,
                         serde_json::json!({"compatibility": true}),
                         1,
                     )
@@ -2804,10 +3692,12 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("certified backend should create an executable task");
             fixture_ids.push(task.id());
         }
-        for task_id in &fixture_ids {
-            hubuum_storage_postgres::test_support::prioritize_task(pool.get_ref(), *task_id)
-                .await
-                .expect("compatibility tasks should be made claim-first");
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            for task_id in &fixture_ids {
+                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
+                    .await
+                    .expect("compatibility tasks should be made claim-first");
+            }
         }
 
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(60_000)
@@ -2897,7 +3787,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             .create_task(
                 StorageTaskCreateRequest::builder(
                     StorageTaskKind::Export,
-                    principal_id(user.id),
+                    user.principal_id,
                     serde_json::json!({"compatibility_kind_mismatch": true}),
                     1,
                 )
@@ -2915,14 +3805,22 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
         fixture_ids.push(mismatched_kind_task.id());
         // This subcase verifies completion validation, not queue scheduling. Claim the
         // exact fixture so a concurrent task from another contract cannot be consumed.
-        let mismatched_kind_claim =
-            hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
-                pool.get_ref(),
-                mismatched_kind_task.id(),
-                lease_duration,
-            )
-            .await
-            .expect("certified backend should claim the kind mismatch fixture");
+        let mismatched_kind_claim = match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                    pool,
+                    mismatched_kind_task.id(),
+                    lease_duration,
+                )
+                .await
+                .expect("certified backend should claim the kind mismatch fixture")
+            }
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(lease_duration)
+                .await
+                .expect("memory backend should claim the kind mismatch fixture")
+                .expect("the kind mismatch fixture should be queued"),
+        };
         let mismatched_kind_error = backend
             .complete_task(
                 StorageTaskCompletion::try_new(
@@ -2957,7 +3855,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .create_task(
                     StorageTaskCreateRequest::builder(
                         task_kind,
-                        principal_id(user.id),
+                        user.principal_id,
                         serde_json::json!({"compatibility_failure": true}),
                         1,
                     )
@@ -2981,10 +3879,12 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             failure_fixture_ids.push(task.id());
             fixture_ids.push(task.id());
         }
-        for task_id in &failure_fixture_ids {
-            hubuum_storage_postgres::test_support::prioritize_task(pool.get_ref(), *task_id)
-                .await
-                .expect("failure fixtures should be made claim-first");
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            for task_id in &failure_fixture_ids {
+                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
+                    .await
+                    .expect("failure fixtures should be made claim-first");
+            }
         }
         let failed = backend
             .claim_next_task(lease_duration)
@@ -3010,14 +3910,13 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             .await
             .expect("certified backend should purge expired backup outputs");
 
-        hubuum_storage_postgres::test_support::delete_tasks(pool.get_ref(), &fixture_ids)
-            .await
-            .expect("task execution compatibility fixtures should be removed");
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            hubuum_storage_postgres::test_support::delete_tasks(pool, &fixture_ids)
+                .await
+                .expect("task execution compatibility fixtures should be removed");
+        }
+        delete_backend_user(&backend, user).await;
     }
-
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("task execution compatibility user should be removed");
 }
 
 fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskCompletionArtifact {
@@ -3067,6 +3966,12 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
     let _permit = postgres_permit().await;
 
     for backend in available_backends() {
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &prefix("backup_snapshot"),
+            vec![serde_json::json!({"backed_up": true})],
+        )
+        .await;
         let (state, history) = backend
             .capture_backup_snapshot(false)
             .await
@@ -3078,6 +3983,28 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         );
         for section in crate::storage::StorageBackupStateSection::ALL {
             assert!(state.contains_key(section));
+        }
+        for (section, expected_id) in [
+            (
+                crate::storage::StorageBackupStateSection::Collections,
+                fixture.collection.id().id(),
+            ),
+            (
+                crate::storage::StorageBackupStateSection::Classes,
+                fixture.class.id().id(),
+            ),
+            (
+                crate::storage::StorageBackupStateSection::Objects,
+                fixture.objects[0].id().id(),
+            ),
+        ] {
+            assert!(
+                state[&section]
+                    .iter()
+                    .any(|row| row.get("id").and_then(serde_json::Value::as_i64)
+                        == Some(i64::from(expected_id))),
+                "{section} must project the backend's stored fixture"
+            );
         }
         assert!(history.is_none());
 
@@ -3101,34 +4028,18 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         for section in crate::storage::StorageBackupHistorySection::ALL {
             assert!(history.contains_key(section));
         }
+        delete_backend_object_fixture(&backend, fixture).await;
     }
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_export_template_lifecycle() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let owner = crate::tests::create_test_user(pool.get_ref()).await;
-    let fixture = crate::tests::create_collection_fixture(
-        pool.get_ref(),
-        &prefix("export_template_collection"),
-    )
-    .await;
-    let collection_id = fixture.collection.id;
-    let storage_collection_id = self::collection_id(collection_id);
-    let class = NewHubuumClass {
-        name: prefix("export_template_class"),
-        collection_id,
-        json_schema: None,
-        validate_schema: Some(false),
-        description: "export-template compatibility class".to_string(),
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("export-template compatibility class should be created");
-    let event_context = EventContext::user(principal_id(owner.id), None, None);
 
     for backend in available_backends() {
+        let owner = create_backend_user(&backend, &prefix("export_template_owner")).await;
+        let storage_collection_id = self::collection_id(1);
+        let event_context = EventContext::user(owner.principal_id, None, None);
         let name = prefix("export_template");
         let definition = StorageExportTemplateDefinition::new(
             "compatibility fragment",
@@ -3206,37 +4117,18 @@ async fn every_available_storage_backend_supplies_export_template_lifecycle() {
             .expect("certified backend should delete an export template")
             .into_value();
         assert!(backend.get_export_template(template_id).await.is_err());
+        delete_backend_user(&backend, owner).await;
     }
-
-    class
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("export-template compatibility class should be removed");
-    fixture
-        .cleanup()
-        .await
-        .expect("export-template compatibility collection should be removed");
-    owner
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("export-template compatibility owner should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let owner = crate::tests::create_test_user(pool.get_ref()).await;
-    let fixture = crate::tests::create_collection_fixture(
-        pool.get_ref(),
-        &prefix("remote_target_collection"),
-    )
-    .await;
-    let collection_id = fixture.collection.id;
-    let storage_collection_id = self::collection_id(collection_id);
-    let event_context = EventContext::user(principal_id(owner.id), None, None);
 
     for backend in available_backends() {
+        let owner = create_backend_user(&backend, &prefix("remote_target_owner")).await;
+        let storage_collection_id = self::collection_id(1);
+        let event_context = EventContext::user(owner.principal_id, None, None);
         let name = prefix("remote_target");
         let created = backend
             .create_remote_target(StorageRemoteTargetCreate::new(
@@ -3320,7 +4212,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
                 target_id,
                 hubuum_domain::TaskId::new(12345).unwrap(),
                 crate::storage::StorageRemoteTargetSubjectType::Collection,
-                ResourceId::new(collection_id).unwrap(),
+                ResourceId::new(storage_collection_id.id()).unwrap(),
                 event_context.clone(),
             ))
             .await
@@ -3335,16 +4227,8 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
             .expect("certified backend should delete a remote target")
             .into_value();
         assert!(backend.get_remote_target(target_id).await.is_err());
+        delete_backend_user(&backend, owner).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("remote-target compatibility fixture should be removed");
-    owner
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("remote-target compatibility user should be removed");
 }
 
 #[actix_web::test]
@@ -3486,6 +4370,8 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
         assert_eq!(expired_summary.status(), StorageRestoreJobStatus::Expired);
     }
 
+    staged_ids.sort_unstable();
+    staged_ids.dedup();
     hubuum_storage_postgres::test_support::delete_restore_jobs(pool.get_ref(), &staged_ids)
         .await
         .expect("restore compatibility fixtures should be removed");
@@ -4025,49 +4911,49 @@ async fn every_available_storage_backend_supplies_relation_lifecycle() {
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_local_authorization_data() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let user = crate::tests::create_user_with_params(
-        pool.get_ref(),
-        &prefix("authorization_user"),
-        "testpassword",
-    )
-    .await;
-    let group = crate::tests::create_test_group(pool.get_ref()).await;
-    group
-        .add_member_without_events(pool.get_ref(), &user)
-        .await
-        .expect("authorization compatibility membership should be created");
-    let collection = crate::tests::create_collection_fixture(
-        pool.get_ref(),
-        &prefix("authorization_collection"),
-    )
-    .await;
-    let needle = prefix("authorization_resource");
-    let fixture = crate::tests::create_object_fixture(
-        pool.get_ref(),
-        collection,
-        NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "authorization compatibility class".to_string(),
-        },
-        vec![NewHubuumObject {
-            name: format!("{needle}_object"),
-            collection_id: 0,
-            hubuum_class_id: 0,
-            data: serde_json::json!({}),
-            description: "authorization compatibility object".to_string(),
-        }],
-    )
-    .await
-    .expect("authorization compatibility resource fixture should be created");
-    let collection_id = collection_id(fixture.collection_id());
-    let principal_id = principal_id(user.id);
-    let group_id = group_id(group.id);
 
     for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("authorization_user")).await;
+        let owner_group = backend
+            .create_group(
+                StorageGroupCreate::new(
+                    None,
+                    prefix("authorization_owner_group"),
+                    Some("authorization compatibility owner".to_string()),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("backend-local authorization owner group should be created")
+            .into_value();
+        let group = backend
+            .create_group(
+                StorageGroupCreate::new(
+                    None,
+                    prefix("authorization_group"),
+                    Some("authorization compatibility group".to_string()),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("backend-local authorization group should be created")
+            .into_value();
+        backend
+            .add_group_member(user.principal_id, group.id(), &EventContext::system())
+            .await
+            .expect("backend-local authorization membership should be created")
+            .into_value();
+        let fixture = create_backend_object_fixture_for_owner(
+            &backend,
+            &prefix("authorization_resource"),
+            vec![serde_json::json!({})],
+            owner_group.id(),
+        )
+        .await;
+        let collection_id = fixture.collection.id();
+        let principal_id = user.principal_id;
+        let group_id = group.id();
+
         let principal = backend
             .get_authorization_principal(principal_id)
             .await
@@ -4076,7 +4962,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
         let membership = StorageAuthorizationGroupMembershipQuery::new(
             principal_id,
-            &group.groupname,
+            group.name(),
             LOCAL_IDENTITY_SCOPE,
         );
         assert!(
@@ -4088,33 +4974,27 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
         let classes = backend
             .list_authorization_classes(StorageAuthorizationResourceIds::new([
-                ResourceId::new(fixture.class.id).unwrap(),
-                ResourceId::new(fixture.class.id).unwrap(),
+                ResourceId::new(fixture.class.id().id()).unwrap(),
+                ResourceId::new(fixture.class.id().id()).unwrap(),
             ]))
             .await
             .expect("certified backend should project authorization class facts");
         assert_eq!(classes.len(), 1);
-        assert_eq!(classes[0].id(), ClassId::new(fixture.class.id).unwrap());
+        assert_eq!(classes[0].id(), fixture.class.id());
         assert_eq!(classes[0].collection_id(), collection_id);
 
         let objects = backend
             .list_authorization_objects(StorageAuthorizationResourceIds::new([
-                ResourceId::new(fixture.objects[0].id).unwrap(),
-                ResourceId::new(fixture.objects[0].id).unwrap(),
+                ResourceId::new(fixture.objects[0].id().id()).unwrap(),
+                ResourceId::new(fixture.objects[0].id().id()).unwrap(),
             ]))
             .await
             .expect("certified backend should project authorization object facts");
         assert_eq!(objects.len(), 1);
-        assert_eq!(
-            objects[0].id(),
-            ObjectId::new(fixture.objects[0].id).unwrap()
-        );
+        assert_eq!(objects[0].id(), fixture.objects[0].id());
         assert_eq!(objects[0].collection_id(), collection_id);
-        assert_eq!(
-            objects[0].class_id(),
-            ClassId::new(fixture.class.id).unwrap()
-        );
-        assert_eq!(objects[0].name(), fixture.objects[0].name);
+        assert_eq!(objects[0].class_id(), fixture.class.id());
+        assert_eq!(objects[0].name(), fixture.objects[0].name());
 
         let access_query = || {
             StorageAuthorizationCollectionAccessQuery::new(
@@ -4345,7 +5225,7 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                     vec![ParsedQueryParam {
                         field: FilterField::Description,
                         operator: SearchOperator::Equals { is_negated: false },
-                        value: group.description.clone(),
+                        value: group.description().to_string(),
                     }],
                     Vec::new(),
                     None,
@@ -4401,38 +5281,37 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
             .await
             .expect("certified backend should remove the local grant row")
             .into_value();
-    }
 
-    group
-        .remove_member_without_events(&user, pool.get_ref())
-        .await
-        .expect("authorization compatibility membership should be removed");
-    group
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("authorization compatibility group should be removed");
-    fixture
-        .cleanup()
-        .await
-        .expect("authorization compatibility collection should be removed");
-    user.delete_without_events(pool.get_ref())
-        .await
-        .expect("authorization compatibility user should be removed");
+        backend
+            .remove_group_member(user.principal_id, group.id(), &EventContext::system())
+            .await
+            .expect("backend-local authorization membership should be removed")
+            .into_value();
+        backend
+            .delete_group(group.id(), &EventContext::system())
+            .await
+            .expect("backend-local authorization group should be removed")
+            .into_value();
+        delete_backend_object_fixture(&backend, fixture).await;
+        backend
+            .delete_group(owner_group.id(), &EventContext::system())
+            .await
+            .expect("backend-local authorization owner group should be removed")
+            .into_value();
+        delete_backend_user(&backend, user).await;
+    }
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_temporal_history() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let fixture =
-        crate::tests::create_collection_fixture(pool.get_ref(), &prefix("history_collection"))
-            .await;
-    let actor_name = prefix("history_actor");
-    let actor =
-        crate::tests::create_user_with_params(pool.get_ref(), &actor_name, "testpassword").await;
-    let at = chrono::Utc::now();
 
     for backend in available_backends() {
+        let fixture =
+            create_backend_object_fixture(&backend, &prefix("history_resource"), Vec::new()).await;
+        let actor_name = prefix("history_actor");
+        let actor = create_backend_user(&backend, &actor_name).await;
+        let at = chrono::Utc::now();
         let collection_options = prepare_db_pagination::<CollectionHistory>(
             &crate::models::search::parse_query_parameter("limit=10")
                 .expect("history compatibility query should parse"),
@@ -4440,7 +5319,7 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         .expect("collection history pagination should prepare");
         let collection_page = backend
             .list_collection_history(StorageHistoryListQuery::new(
-                ResourceId::new(fixture.collection.id).unwrap(),
+                ResourceId::new(fixture.collection.id().id()).unwrap(),
                 collection_options,
                 StorageHistoryCollectionScope::All,
             ))
@@ -4452,7 +5331,7 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         assert!(
             backend
                 .get_collection_history_as_of(StorageHistoryAsOfQuery::new(
-                    ResourceId::new(fixture.collection.id).unwrap(),
+                    ResourceId::new(fixture.collection.id().id()).unwrap(),
                     at,
                 ))
                 .await
@@ -4559,53 +5438,30 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         );
 
         let names = backend
-            .resolve_history_principal_names(vec![principal_id(actor.id)])
+            .resolve_history_principal_names(vec![actor.principal_id])
             .await
             .expect("certified backend should resolve history principal names");
         assert!(names.into_iter().any(|row| {
             let (principal_id, name) = row.into_parts();
-            principal_id.id() == actor.id && name == actor_name
+            principal_id == actor.principal_id && name == actor_name
         }));
+        delete_backend_object_fixture(&backend, fixture).await;
+        delete_backend_user(&backend, actor).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("history compatibility collection should be removed");
-    actor
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("history compatibility actor should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_catalog_queries() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("catalog_query");
-    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
-    let fixture = crate::tests::create_object_fixture(
-        pool.get_ref(),
-        collection,
-        NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "catalog compatibility class".to_string(),
-        },
-        vec![NewHubuumObject {
-            name: format!("{needle}_object"),
-            collection_id: 0,
-            hubuum_class_id: 0,
-            data: serde_json::json!({"needle": needle}),
-            description: "catalog compatibility object".to_string(),
-        }],
-    )
-    .await
-    .expect("catalog compatibility fixture should be created");
 
     for backend in available_backends() {
+        let needle = prefix("catalog_query");
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &needle,
+            vec![serde_json::json!({"needle": needle})],
+        )
+        .await;
         let request = || {
             StorageCatalogListQuery::new(
                 QueryOptions::new(
@@ -4637,7 +5493,7 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
         assert_eq!(collection_total, Some(1));
         assert!(collections.into_iter().any(|row| {
             let (id, ..) = row.into_parts();
-            id.id() == fixture.collection.collection.id
+            id == fixture.collection.id()
         }));
 
         let (classes, class_total) = backend
@@ -4648,7 +5504,7 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
         assert_eq!(class_total, Some(1));
         assert!(classes.into_iter().any(|row| {
             let (id, ..) = row.into_parts();
-            id.id() == fixture.class.id
+            id == fixture.class.id()
         }));
 
         let (objects, object_total) = backend
@@ -4659,65 +5515,48 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
         assert_eq!(object_total, Some(1));
         assert!(objects.into_iter().any(|row| {
             let (id, ..) = row.into_parts();
-            id.id() == fixture.objects[0].id
+            id == fixture.objects[0].id()
         }));
+        delete_backend_object_fixture(&backend, fixture).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("catalog compatibility fixture should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_computed_object_queries() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("computed_object_query");
-    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
-    let fixture = crate::tests::create_object_fixture(
-        pool.get_ref(),
-        collection,
-        NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "computed-object compatibility class".to_string(),
-        },
-        vec![NewHubuumObject {
-            name: format!("{needle}_object"),
-            collection_id: 0,
-            hubuum_class_id: 0,
-            data: serde_json::json!({"compatibility": needle}),
-            description: "computed-object compatibility object".to_string(),
-        }],
-    )
-    .await
-    .expect("computed-object compatibility fixture should be created");
-    let owner = crate::tests::create_test_user(pool.get_ref()).await;
-    let class_id = ClassId::new(fixture.class.id).expect("persisted class id must be positive");
-    let fixture_collection_id = self::collection_id(fixture.collection.collection.id);
-    let _ = StorageHandle::postgres(pool.get_ref().clone())
-        .create_shared_computed_field(StorageSharedComputedFieldCreate::new(
-            class_id,
-            fixture_collection_id,
-            principal_id(owner.id),
-            StorageComputedFieldDefinitionInput::new(
-                "compatibility".to_string(),
-                "Compatibility".to_string(),
-                serde_json::json!({
-                    "type": "first_non_null",
-                    "paths": ["/compatibility"]
-                }),
-                "string".to_string(),
-            ),
-            EventContext::user(principal_id(owner.id), None, None),
-        ))
-        .await
-        .expect("computed-object compatibility definition should be inserted");
 
     for backend in available_backends() {
+        let needle = prefix("computed_object_query");
+        let owner = create_backend_user(&backend, &prefix("computed_object_owner")).await;
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &needle,
+            vec![serde_json::json!({"compatibility": needle})],
+        )
+        .await;
+        let class_id = fixture.class.id();
+        let fixture_collection_id = fixture.collection.id();
+        let created_definition = backend
+            .create_shared_computed_field(StorageSharedComputedFieldCreate::new(
+                class_id,
+                fixture_collection_id,
+                owner.principal_id,
+                StorageComputedFieldDefinitionInput::new(
+                    "compatibility".to_string(),
+                    "Compatibility".to_string(),
+                    serde_json::json!({
+                        "type": "first_non_null",
+                        "paths": ["/compatibility"]
+                    }),
+                    "string".to_string(),
+                ),
+                EventContext::user(owner.principal_id, None, None),
+            ))
+            .await
+            .expect("computed-object compatibility definition should be inserted")
+            .into_value()
+            .into_parts()
+            .0;
         let (options, passthrough) = parse_query_parameter_with_computed_filters_and_passthrough(
             &format!("computed.shared.compatibility__equals={needle}&sort=id"),
             &[],
@@ -4736,7 +5575,7 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
             .expect("computed-object execution query should be valid");
         let (rows, total, computed, _) = backend
             .list_computed_objects(StorageComputedObjectListQuery::new(
-                ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
+                class_id,
                 None,
                 StorageComputedObjectQueryOptions::try_new(options, execution_options, page_limit)
                     .expect("computed-object queries should be coherent"),
@@ -4750,66 +5589,33 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
         assert_eq!(rows.len(), 1);
         assert_eq!(computed.len(), 1);
 
-        let object = &fixture.objects[0];
         let enriched = backend
             .enrich_objects_with_computed(StorageComputedObjectEnrichmentQuery::new(
-                vec![StorageObject::new(
-                    StorageRecordMetadata::try_new(
-                        ResourceId::new(object.id).expect("persisted resource id must be positive"),
-                        object.created_at.and_utc(),
-                        object.updated_at.and_utc(),
-                        ResourceRevision::new(object.revision.get())
-                            .expect("persisted revision must be positive"),
-                    )
-                    .expect("persisted object timestamps must be ordered"),
-                    object.name.clone(),
-                    collection_id(object.collection_id),
-                    ClassId::new(object.hubuum_class_id)
-                        .expect("persisted class id must be positive"),
-                    object.data.clone(),
-                    object.description.clone(),
-                )],
+                vec![fixture.objects[0].clone()],
                 None,
             ))
             .await
             .expect("certified backend should enrich objects with computed values");
         assert_eq!(enriched.len(), 1);
+        backend
+            .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
+                class_id,
+                fixture_collection_id,
+                ComputedFieldDefinitionId::new(created_definition.metadata().id().id()).unwrap(),
+                owner.principal_id,
+                EventContext::system(),
+            ))
+            .await
+            .expect("computed-object compatibility definition should be removed")
+            .into_value();
+        delete_backend_object_fixture(&backend, fixture).await;
+        delete_backend_user(&backend, owner).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("computed-object compatibility fixture should be removed");
-    owner
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("computed-object compatibility owner should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_computed_fields() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("computed_fields");
-    let owner = crate::tests::create_test_user(pool.get_ref()).await;
-    let fixture = crate::tests::create_class_fixture(
-        pool.get_ref(),
-        crate::tests::create_collection_fixture(pool.get_ref(), &needle).await,
-        vec![NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "computed-field lifecycle compatibility class".to_string(),
-        }],
-    )
-    .await
-    .expect("computed-field lifecycle compatibility fixture should be created");
-    let class_id =
-        ClassId::new(fixture.classes[0].id).expect("persisted class id must be positive");
-    let collection_id = self::collection_id(fixture.collection.collection.id);
-    let owner_id = principal_id(owner.id);
-    let event_context = EventContext::user(owner_id, None, None);
     let definition = |key: &str| {
         StorageComputedFieldDefinitionInput::new(
             key.to_string(),
@@ -4823,7 +5629,15 @@ async fn every_available_storage_backend_supplies_computed_fields() {
         .with_description("Backend compatibility definition".to_string())
     };
 
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let owner = create_backend_user(&backend, &prefix("computed_fields_owner")).await;
+        let fixture =
+            create_backend_object_fixture(&backend, &prefix("computed_fields"), Vec::new()).await;
+        let class_id = fixture.class.id();
+        let collection_id = fixture.collection.id();
+        let owner_id = owner.principal_id;
+        let event_context = EventContext::user(owner_id, None, None);
         let initial_state = backend
             .get_computed_field_state(class_id)
             .await
@@ -4891,22 +5705,37 @@ async fn every_available_storage_backend_supplies_computed_fields() {
         let rebuild_task_id = rebuild_state
             .active_task_id()
             .expect("rebuild request should identify its task");
-        let claim_token = uuid::Uuid::new_v4();
-        hubuum_storage_postgres::test_support::assign_task_lease(
-            pool.get_ref(),
-            rebuild_task_id,
-            StorageTaskStatus::Validating,
-            claim_token,
-            chrono::Utc::now().naive_utc()
-                + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
-        )
-        .await
-        .expect("compatibility rebuild should receive a live backend claim");
+        let lease = match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                let claim_token = uuid::Uuid::new_v4();
+                hubuum_storage_postgres::test_support::assign_task_lease(
+                    pool,
+                    rebuild_task_id,
+                    StorageTaskStatus::Validating,
+                    claim_token,
+                    chrono::Utc::now().naive_utc()
+                        + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
+                )
+                .await
+                .expect("compatibility rebuild should receive a live backend claim");
+                StorageTaskLease::new(
+                    rebuild_task_id,
+                    StorageTaskClaimToken::new(claim_token.to_string()),
+                )
+            }
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(
+                    StorageTaskLeaseDuration::from_milliseconds(60_000)
+                        .expect("computed rebuild lease duration should be valid"),
+                )
+                .await
+                .expect("memory rebuild task should be claimable")
+                .expect("memory rebuild task should be queued")
+                .lease()
+                .clone(),
+        };
         let rebuilt = backend
-            .execute_computed_field_rebuild(StorageTaskLease::new(
-                rebuild_task_id,
-                StorageTaskClaimToken::new(claim_token.to_string()),
-            ))
+            .execute_computed_field_rebuild(lease)
             .await
             .expect("certified backend should execute a claimed computed-field rebuild");
         assert_eq!(rebuilt.status(), StorageTaskStatus::Succeeded);
@@ -4984,16 +5813,14 @@ async fn every_available_storage_backend_supplies_computed_fields() {
             .expect("certified backend should delete a shared computed field")
             .into_value();
         assert_eq!(deleted_state.class_id(), class_id);
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            hubuum_storage_postgres::test_support::delete_task(pool, rebuild_task_id)
+                .await
+                .expect("computed rebuild compatibility task should be removed");
+        }
+        delete_backend_object_fixture(&backend, fixture).await;
+        delete_backend_user(&backend, owner).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("computed-field lifecycle fixture should be removed");
-    owner
-        .delete_without_events(pool.get_ref())
-        .await
-        .expect("computed-field lifecycle owner should be removed");
 }
 
 #[actix_web::test]
@@ -5001,29 +5828,6 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
     use hubuum_storage_core::{StorageObjectAggregateDimension, StorageObjectAggregateScalarField};
 
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("object_aggregate");
-    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
-    let fixture = crate::tests::create_object_fixture(
-        pool.get_ref(),
-        collection,
-        NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: None,
-            validate_schema: Some(false),
-            description: "object-aggregate compatibility class".to_string(),
-        },
-        vec![NewHubuumObject {
-            name: format!("{needle}_object"),
-            collection_id: 0,
-            hubuum_class_id: 0,
-            data: serde_json::json!({"compatibility": true}),
-            description: "object-aggregate compatibility object".to_string(),
-        }],
-    )
-    .await
-    .expect("object-aggregate compatibility fixture should be created");
     let visibility = || {
         StorageVisibility::new(
             principal_id(i32::MAX),
@@ -5032,53 +5836,58 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
             None,
         )
     };
-    let query = || {
-        StorageObjectAggregateQuery::builder(
-            StorageObjectAggregateTarget::new(
-                ClassId::new(fixture.class.id).expect("persisted class id must be positive"),
-                fixture.class.name.clone(),
-                collection_id(fixture.class.collection_id),
-            ),
-            QueryOptions::new(
-                vec![
-                    ParsedQueryParam {
-                        field: FilterField::ClassId,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: fixture.class.id.to_string(),
-                    },
-                    ParsedQueryParam {
-                        field: FilterField::CollectionId,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: fixture.class.collection_id.to_string(),
-                    },
-                ],
-                Vec::new(),
-                Some(50),
-                None,
-                true,
-            )
-            .expect("contract query must be valid"),
-            StorageObjectAggregateSpec::try_new(
-                [StorageObjectAggregateDimension::Scalar(
-                    StorageObjectAggregateScalarField::Name,
-                )],
-                [],
-                StorageObjectAggregateSort::DimensionsAscending,
-            )
-            .expect("compatibility aggregate spec should be valid"),
-            visibility(),
-        )
-        .required_permissions([
-            StorageAuthorizationPermission::ReadObject,
-            StorageAuthorizationPermission::ReadCollection,
-        ])
-        .page_limit(50)
-        .cursor_max_encoded_bytes(4_096)
-        .try_build()
-        .expect("compatibility aggregate query should be valid")
-    };
-
     for backend in available_backends() {
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &prefix("object_aggregate"),
+            vec![serde_json::json!({"compatibility": true})],
+        )
+        .await;
+        let query = || {
+            StorageObjectAggregateQuery::builder(
+                StorageObjectAggregateTarget::new(
+                    fixture.class.id(),
+                    fixture.class.name().to_string(),
+                    fixture.collection.id(),
+                ),
+                QueryOptions::new(
+                    vec![
+                        ParsedQueryParam {
+                            field: FilterField::ClassId,
+                            operator: SearchOperator::Equals { is_negated: false },
+                            value: fixture.class.id().to_string(),
+                        },
+                        ParsedQueryParam {
+                            field: FilterField::CollectionId,
+                            operator: SearchOperator::Equals { is_negated: false },
+                            value: fixture.collection.id().to_string(),
+                        },
+                    ],
+                    Vec::new(),
+                    Some(50),
+                    None,
+                    true,
+                )
+                .expect("contract query must be valid"),
+                StorageObjectAggregateSpec::try_new(
+                    [StorageObjectAggregateDimension::Scalar(
+                        StorageObjectAggregateScalarField::Name,
+                    )],
+                    [],
+                    StorageObjectAggregateSort::DimensionsAscending,
+                )
+                .expect("compatibility aggregate spec should be valid"),
+                visibility(),
+            )
+            .required_permissions([
+                StorageAuthorizationPermission::ReadObject,
+                StorageAuthorizationPermission::ReadCollection,
+            ])
+            .page_limit(50)
+            .cursor_max_encoded_bytes(4_096)
+            .try_build()
+            .expect("compatibility aggregate query should be valid")
+        };
         let storage_page = backend
             .aggregate_objects(query(), StorageObjectAggregateAuthorization::Storage)
             .await
@@ -5099,12 +5908,8 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
         assert_eq!(rows.len(), 1);
         assert_eq!(total, Some(1));
         assert!(next_cursor.is_none());
+        delete_backend_object_fixture(&backend, fixture).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("object-aggregate compatibility fixture should be removed");
 }
 
 #[actix_web::test]
@@ -5219,83 +6024,17 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_relation_queries() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("relation_query");
-    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
-    let class_one = NewHubuumClass {
-        name: format!("{needle}_class_one"),
-        collection_id: collection.collection.id,
-        json_schema: None,
-        validate_schema: Some(false),
-        description: "relation compatibility source class".to_string(),
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("source class should be created");
-    let class_two = NewHubuumClass {
-        name: format!("{needle}_class_two"),
-        collection_id: collection.collection.id,
-        json_schema: None,
-        validate_schema: Some(false),
-        description: "relation compatibility target class".to_string(),
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("target class should be created");
-    let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_one.id,
-        to_hubuum_class_id: class_two.id,
-        forward_template_alias: None,
-        reverse_template_alias: None,
-        from_max_relations: None,
-        to_max_relations: None,
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("class relation should be created");
-    let object_one = NewHubuumObject {
-        name: format!("{needle}_object_one"),
-        collection_id: collection.collection.id,
-        hubuum_class_id: class_one.id,
-        data: serde_json::json!({}),
-        description: "relation compatibility source object".to_string(),
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("source object should be created");
-    let object_two = NewHubuumObject {
-        name: format!("{needle}_object_two"),
-        collection_id: collection.collection.id,
-        hubuum_class_id: class_two.id,
-        data: serde_json::json!({}),
-        description: "relation compatibility target object".to_string(),
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("target object should be created");
-    let object_relation = NewHubuumObjectRelation {
-        from_hubuum_object_id: object_one.id,
-        to_hubuum_object_id: object_two.id,
-        class_relation_id: class_relation.id,
-    }
-    .save_without_events(pool.get_ref())
-    .await
-    .expect("object relation should be created");
-    let class_one_id = ResourceId::new(class_one.id).expect("persisted class id must be positive");
-    let class_two_id = ResourceId::new(class_two.id).expect("persisted class id must be positive");
-    let class_two_typed_id =
-        ClassId::new(class_two.id).expect("persisted class id must be positive");
-    let class_relation_id = ClassRelationId::new(class_relation.id)
-        .expect("persisted class-relation id must be positive");
-    let object_one_id = ObjectId::new(object_one.id).expect("persisted object id must be positive");
-    let object_one_resource_id =
-        ResourceId::new(object_one.id).expect("persisted object id must be positive");
-    let object_two_resource_id =
-        ResourceId::new(object_two.id).expect("persisted object id must be positive");
-    let object_relation_id = ObjectRelationId::new(object_relation.id)
-        .expect("persisted object-relation id must be positive");
 
     for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("relation_query")).await;
+        let class_one_id = ResourceId::new(fixture.classes[0].id().id()).unwrap();
+        let class_two_id = ResourceId::new(fixture.classes[1].id().id()).unwrap();
+        let class_two_typed_id = fixture.classes[1].id();
+        let class_relation_id = fixture.class_relation_id;
+        let object_one_id = fixture.objects[0].id();
+        let object_one_resource_id = ResourceId::new(object_one_id.id()).unwrap();
+        let object_two_resource_id = ResourceId::new(fixture.objects[1].id().id()).unwrap();
+        let object_relation_id = fixture.object_relation_id;
         let visibility = || {
             StorageVisibility::new(
                 principal_id(i32::MAX),
@@ -5464,42 +6203,22 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             .await
             .expect("certified backend should traverse bidirectional root graphs");
         assert_eq!(bidirectional.len(), 1);
+        delete_backend_relation_fixture(&backend, fixture).await;
     }
-
-    collection
-        .cleanup()
-        .await
-        .expect("relation compatibility collection should be removed");
 }
 
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_ranked_unified_search() {
     let _permit = postgres_permit().await;
-    let pool = pool();
-    let needle = prefix("unified_search");
-    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
-    let fixture = crate::tests::create_object_fixture(
-        pool.get_ref(),
-        collection,
-        NewHubuumClass {
-            name: format!("{needle}_class"),
-            collection_id: 0,
-            json_schema: Some(serde_json::json!({"title": needle})),
-            validate_schema: Some(false),
-            description: "unified search compatibility class".to_string(),
-        },
-        vec![NewHubuumObject {
-            name: format!("{needle}_object"),
-            collection_id: 0,
-            hubuum_class_id: 0,
-            data: serde_json::json!({"needle": needle}),
-            description: "unified search compatibility object".to_string(),
-        }],
-    )
-    .await
-    .expect("unified search compatibility fixture should be created");
 
     for backend in available_backends() {
+        let needle = prefix("unified_search");
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &needle,
+            vec![serde_json::json!({"needle": needle})],
+        )
+        .await;
         let request = || {
             StorageUnifiedSearchQuery::new(
                 needle.clone(),
@@ -5524,7 +6243,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         assert!(collections.into_iter().any(|row| {
             let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
-            id.id() == fixture.collection.collection.id
+            id == fixture.collection.id()
         }));
 
         let classes = backend
@@ -5536,7 +6255,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         assert!(classes.into_iter().any(|row| {
             let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
-            id.id() == fixture.class.id
+            id == fixture.class.id()
         }));
 
         let objects = backend
@@ -5548,14 +6267,10 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         assert!(objects.into_iter().any(|row| {
             let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
-            id.id() == fixture.objects[0].id
+            id == fixture.objects[0].id()
         }));
+        delete_backend_object_fixture(&backend, fixture).await;
     }
-
-    fixture
-        .cleanup()
-        .await
-        .expect("unified search compatibility fixture should be removed");
 }
 
 #[actix_web::test]

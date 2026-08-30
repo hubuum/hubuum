@@ -5,6 +5,7 @@ use hubuum_domain::{
     EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
     RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
+use hubuum_storage_memory::MemoryStorage;
 #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
 use hubuum_storage_postgres::PostgresPool;
 use hubuum_storage_postgres::PostgresStorage;
@@ -142,6 +143,7 @@ struct StorageHandleInner {
 
 pub(crate) enum BackendImplementation {
     Postgres(PostgresStorage),
+    Memory(MemoryStorage),
 }
 
 pub(crate) trait RegisteredStorageBackend:
@@ -157,6 +159,14 @@ impl RegisteredStorageBackend for PostgresStorage {
 
     fn into_implementation(self) -> BackendImplementation {
         BackendImplementation::Postgres(self)
+    }
+}
+
+impl RegisteredStorageBackend for MemoryStorage {
+    const KIND: StorageBackendKind = StorageBackendKind::Memory;
+
+    fn into_implementation(self) -> BackendImplementation {
+        BackendImplementation::Memory(self)
     }
 }
 
@@ -199,6 +209,7 @@ macro_rules! dispatch_backend {
     ($handle:expr, |$backend:ident| $call:expr) => {
         match &$handle.inner.implementation {
             BackendImplementation::Postgres($backend) => $call,
+            BackendImplementation::Memory($backend) => $call,
         }
     };
 }
@@ -220,6 +231,10 @@ pub use api::StorageContext;
 pub(crate) use api::storage_handle;
 
 impl StorageHandle {
+    pub(crate) fn memory() -> Self {
+        Self::from_registered_backend(MemoryStorage::new())
+    }
+
     #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
     pub(crate) fn postgres(pool: PostgresPool) -> Self {
         Self::from_postgres_backend(super::factory::compose_postgres(pool))
@@ -271,7 +286,7 @@ impl StorageHandle {
         Self::from_registered_backend_with_observer(backend, Arc::new(ApplicationStorageObserver))
     }
 
-    fn from_registered_backend_with_observer<S>(
+    pub(crate) fn from_registered_backend_with_observer<S>(
         backend: S,
         observer: Arc<dyn StorageObserver>,
     ) -> Self

@@ -33,6 +33,7 @@ members = [
     "crates/hubuum-query",
     "crates/hubuum-storage-core",
     "crates/hubuum-storage-conformance",
+    "crates/hubuum-storage-memory",
     "crates/hubuum-storage-postgres",
     "crates/hubuum-task-core",
     "crates/hubuum-templates",
@@ -91,6 +92,7 @@ hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"]
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
 hubuum-storage-core = { path = "crates/hubuum-storage-core" }
+hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
