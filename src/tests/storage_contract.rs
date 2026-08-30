@@ -75,30 +75,31 @@ use crate::storage::{
     RemoteTargetStorage, RestoreStorage, ServiceAccountStorage, StorageAuditEvent,
     StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuthenticationAttempt,
     StorageAuthenticationCredential, StorageAuthenticationTokenScopeQuery,
-    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionGrantListQuery,
-    StorageAuthorizationCollectionGroupsPageQuery, StorageAuthorizationCollectionGroupsQuery,
-    StorageAuthorizationCollectionVisibilityQuery, StorageAuthorizationCollectionsAccessQuery,
-    StorageAuthorizationCollectionsQuery, StorageAuthorizationGrantDelete,
-    StorageAuthorizationGrantKey, StorageAuthorizationGrantMutation,
-    StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupCollectionQuery,
-    StorageAuthorizationGroupMembershipQuery, StorageAuthorizationPermission,
-    StorageAuthorizationPermissionSetQuery, StorageAuthorizationPrincipalCollectionPageQuery,
-    StorageAuthorizationPrincipalCollectionQuery, StorageAuthorizationResourceIds,
-    StorageBackendKind, StorageBackupTaskArtifact, StorageBidirectionalRelatedObjectsQuery,
-    StorageCallSite, StorageCatalogListQuery, StorageClassCreate, StorageClassSelector,
-    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
-    StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
-    StorageComputedObjectVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
-    StorageEventDeliveryListQuery, StorageEventRetentionBatch, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
-    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
+    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionCandidateQuery,
+    StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionGroupsPageQuery,
+    StorageAuthorizationCollectionGroupsQuery, StorageAuthorizationCollectionVisibilityQuery,
+    StorageAuthorizationCollectionsAccessQuery, StorageAuthorizationCollectionsQuery,
+    StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
+    StorageAuthorizationGrantMutation, StorageAuthorizationGroupCandidateQuery,
+    StorageAuthorizationGroupCollectionQuery, StorageAuthorizationGroupMembershipQuery,
+    StorageAuthorizationPermission, StorageAuthorizationPermissionSetQuery,
+    StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
+    StorageAuthorizationResourceIds, StorageBackendKind, StorageBackupTaskArtifact,
+    StorageBidirectionalRelatedObjectsQuery, StorageCallSite, StorageCandidatePageLimit,
+    StorageCatalogListQuery, StorageClassCreate, StorageClassSelector, StorageClassUpdate,
+    StorageCollectionCreate, StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageComputedObjectEnrichmentQuery,
+    StorageComputedObjectListQuery, StorageComputedObjectProjection,
+    StorageComputedObjectQueryOptions, StorageComputedObjectVisibility,
+    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
+    StorageEventRetentionBatch, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
+    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
+    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
     StorageHistoryCollectionScope, StorageHistoryListQuery, StorageImportPlan,
     StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
@@ -134,7 +135,6 @@ use crate::storage::{
     TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::{CanDelete, CanSave};
-use hubuum_query::QueryFilters;
 use hubuum_storage_postgres::PostgresPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -3930,9 +3930,17 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         assert!(!items.is_empty());
 
         let collection_candidates = backend
-            .load_authorization_collection_candidates()
+            .load_authorization_collection_candidates(
+                StorageAuthorizationCollectionCandidateQuery::new(
+                    None,
+                    StorageCandidatePageLimit::try_new(512)
+                        .expect("contract candidate page limit should be valid"),
+                ),
+            )
             .await
-            .expect("certified backend should list authorization collection candidates");
+            .expect("certified backend should list authorization collection candidates")
+            .into_parts()
+            .0;
         assert!(
             collection_candidates
                 .iter()
@@ -3941,10 +3949,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
         let group_candidates = backend
             .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
-                QueryFilters::default(),
+                QueryOptions::empty(),
+                StorageCandidatePageLimit::try_new(512)
+                    .expect("contract candidate page limit should be valid"),
             ))
             .await
-            .expect("certified backend should list authorization group candidates");
+            .expect("certified backend should list authorization group candidates")
+            .into_parts()
+            .0;
         assert!(
             group_candidates
                 .iter()
@@ -5088,7 +5100,8 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         let request = || {
             StorageUnifiedSearchQuery::new(
                 needle.clone(),
-                10,
+                StorageCandidatePageLimit::try_new(10)
+                    .expect("contract candidate page limit should be valid"),
                 StorageVisibility::new(
                     principal_id(i32::MAX),
                     true,
@@ -5102,8 +5115,11 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         let collections = backend
             .search_collections(request())
             .await
-            .expect("certified backend should search collections");
+            .expect("certified backend should search collections")
+            .into_parts()
+            .0;
         assert!(collections.into_iter().any(|row| {
+            let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
             id.id() == fixture.collection.collection.id
         }));
@@ -5111,8 +5127,11 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         let classes = backend
             .search_classes(request())
             .await
-            .expect("certified backend should search classes");
+            .expect("certified backend should search classes")
+            .into_parts()
+            .0;
         assert!(classes.into_iter().any(|row| {
+            let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
             id.id() == fixture.class.id
         }));
@@ -5120,8 +5139,11 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
         let objects = backend
             .search_objects(request())
             .await
-            .expect("certified backend should search objects");
+            .expect("certified backend should search objects")
+            .into_parts()
+            .0;
         assert!(objects.into_iter().any(|row| {
+            let (row, _) = row.into_parts();
             let (id, ..) = row.into_parts();
             id.id() == fixture.objects[0].id
         }));

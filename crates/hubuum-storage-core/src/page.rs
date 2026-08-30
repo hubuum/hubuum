@@ -1,4 +1,82 @@
+use std::num::NonZeroUsize;
+
 use crate::StorageValidationError;
+
+/// Hard ceiling for one backend-neutral candidate page.
+///
+/// Application code may choose a smaller page to control row size or policy
+/// request width. Keeping the ceiling in the storage contract prevents an
+/// adapter from turning a bounded enumeration request back into an unbounded
+/// materialization.
+pub const MAX_STORAGE_CANDIDATE_PAGE_SIZE: usize = 512;
+
+/// Validated maximum number of rows in one candidate page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageCandidatePageLimit(NonZeroUsize);
+
+impl StorageCandidatePageLimit {
+    pub fn try_new(value: usize) -> Result<Self, StorageValidationError> {
+        let value = NonZeroUsize::new(value).ok_or_else(|| {
+            StorageValidationError::invalid("A storage candidate page limit must be positive")
+        })?;
+        if value.get() > MAX_STORAGE_CANDIDATE_PAGE_SIZE {
+            return Err(StorageValidationError::invalid(format!(
+                "A storage candidate page limit must not exceed {MAX_STORAGE_CANDIDATE_PAGE_SIZE}"
+            )));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// One bounded page from a larger candidate enumeration.
+///
+/// The cursor remains operation-specific: callers advance from the last row
+/// using that operation's stable ordering contract when `has_more` is true.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageCandidatePage<T> {
+    rows: Vec<T>,
+    has_more: bool,
+}
+
+impl<T> StorageCandidatePage<T> {
+    pub fn try_new(
+        rows: Vec<T>,
+        has_more: bool,
+        limit: StorageCandidatePageLimit,
+    ) -> Result<Self, StorageValidationError> {
+        if rows.len() > limit.get() {
+            return Err(StorageValidationError::invalid(
+                "A storage candidate page exceeds its requested limit",
+            ));
+        }
+        if rows.is_empty() && has_more {
+            return Err(StorageValidationError::invalid(
+                "An empty storage candidate page cannot report more rows",
+            ));
+        }
+        Ok(Self { rows, has_more })
+    }
+
+    #[must_use]
+    pub fn rows(&self) -> &[T] {
+        &self.rows
+    }
+
+    #[must_use]
+    pub const fn has_more(&self) -> bool {
+        self.has_more
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<T>, bool) {
+        (self.rows, self.has_more)
+    }
+}
 
 pub(crate) fn validate_page_total(
     row_count: usize,
@@ -78,6 +156,30 @@ impl<T> StoragePage<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_page_limits_are_positive_and_bounded() {
+        assert!(StorageCandidatePageLimit::try_new(0).is_err());
+        assert_eq!(
+            StorageCandidatePageLimit::try_new(MAX_STORAGE_CANDIDATE_PAGE_SIZE)
+                .unwrap()
+                .get(),
+            MAX_STORAGE_CANDIDATE_PAGE_SIZE
+        );
+        assert!(StorageCandidatePageLimit::try_new(MAX_STORAGE_CANDIDATE_PAGE_SIZE + 1).is_err());
+    }
+
+    #[test]
+    fn candidate_pages_enforce_the_requested_bound() {
+        let limit = StorageCandidatePageLimit::try_new(2).unwrap();
+        let page = StorageCandidatePage::try_new(vec![1, 2], true, limit).unwrap();
+
+        assert_eq!(page.rows(), &[1, 2]);
+        assert!(page.has_more());
+        assert_eq!(page.into_parts(), (vec![1, 2], true));
+        assert!(StorageCandidatePage::try_new(vec![1, 2, 3], false, limit).is_err());
+        assert!(StorageCandidatePage::<()>::try_new(Vec::new(), true, limit).is_err());
+    }
 
     #[test]
     fn page_preserves_rows_and_optional_total() {

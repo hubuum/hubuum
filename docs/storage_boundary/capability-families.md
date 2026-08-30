@@ -173,7 +173,7 @@ external policy evaluation, public authorization resources, and conversion to
 
 | Surface | Responsibility | Representative operations |
 | --- | --- | --- |
-| `AuthorizationDataStorage` facts | Principal membership, resource facts, and bounded or complete policy-engine inputs | `get_authorization_principal`, `list_authorization_objects`, `load_authorization_collection_candidates` |
+| `AuthorizationDataStorage` facts | Principal membership, resource facts, bounded policy-engine candidate pages, and explicitly bounded complete inputs | `get_authorization_principal`, `list_authorization_objects`, `load_authorization_collection_candidates` |
 | `AuthorizationDataStorage` decisions | Built-in local-policy checks over one or more collections | `authorize_local_collection`, `list_local_authorized_collections` |
 | `AuthorizationDataStorage` grants | Revisioned local-grant reads, mutations, and policy snapshots | `get_local_collection_permission_set`, `apply_local_collection_grant`, `get_authorization_policy_snapshot` |
 | `CollectionAuthorizationQueryStorage` | Legacy and administration projections for direct, inherited, effective, visible, and paged permissions | `list_visible_collections`, `list_effective_principal_collection_permissions`, `list_groups_with_collection_permission` |
@@ -195,7 +195,9 @@ Required trait: `CatalogStorage`.
 
 Owns permission-aware, filterable, cursor-paged collection, class, and object
 lists with optional exact totals. The application owns public cursor encoding
-and external-policy post-authorization.
+and external-policy post-authorization. Delegated collection lists traverse
+bounded storage pages, authorize before public paging, retain only one response
+page plus look-ahead, and scan all pages only when an exact total is requested.
 
 ### `computed_object_queries`
 
@@ -244,7 +246,11 @@ timed reads.
 Required trait: `UnifiedSearchStorage`.
 
 Owns ranked collection, class, and object search with stable per-kind cursors
-and token visibility pushdown. The three projections form one capability.
+and token visibility pushdown. Each operation returns a validated bounded
+candidate page whose rows carry adapter-owned ranking cursors. Delegated policy
+evaluation can therefore authorize successive pages without reconstructing
+native rank or retaining the complete match set. The three projections form
+one capability.
 
 ## Workflow Groups
 

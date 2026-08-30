@@ -121,25 +121,35 @@ cursor list normally performs one row query, plus one count query when
 Treetop cannot be joined into a PostgreSQL query. Its authoritative list path
 therefore has three stages:
 
-1. Load all rows matching the non-permission filters from PostgreSQL.
+1. Load at most 128 rows matching the non-permission filters from PostgreSQL
+   in stable cursor order.
 2. Load the caller's group ids once.
 3. Send the candidate resources to Treetop in batches of at most 512 Cedar
-   decisions, then apply sorting, the cursor, and the page limit to the allowed
-   rows.
+   decisions, retain only the allowed response page plus one look-ahead row,
+   and continue from the storage cursor only when more candidates are needed.
 
-The authorized total is computed from that same candidate set, so Treetop list
-requests do not issue a separate SQL count query. Class and object relation
-lists add one bulk endpoint-metadata query; they do not perform endpoint queries
-per relation. Permission-grid lists perform one filtered group query followed by
-`ceil(groups * permissions / 512)` Treetop requests, replacing the former
-sequential request per group.
+When `include_total=true`, Hubuum visits every bounded candidate page to compute
+the exact authorized total, but it does not retain the complete candidate or
+authorized set. When totals are skipped, enumeration stops as soon as the
+requested response page and its look-ahead row are authorized. Class and object
+relation lists add one bulk endpoint-metadata query per candidate batch; they do
+not perform endpoint queries per relation. Permission-grid lists use the same
+bounded group-page protocol.
 
-This makes Treetop list work proportional to the number of rows matching the
-ordinary filters, not merely the returned page size. Deployments with very large
-candidate sets should monitor authorization batch latency and candidate counts.
-A policy-aware reverse index or materialized visibility cache would be required
-to recover SQL-style page complexity while preserving exact counts for arbitrary
-Cedar policies.
+Exact totals still make Treetop work proportional to the number of rows matching
+the ordinary filters, while skipped totals make work proportional to the rows
+needed to fill the response. Unified search uses the same bounded protocol and
+uses adapter-owned ranking cursors, so extended JSON search can advance without
+reconstructing database ordering in the application.
+
+Two event and remote-target visibility paths require a complete authorized
+collection-id set. Those callers must explicitly request a validated total
+candidate bound, currently capped at 10,000. Hubuum returns service unavailable
+instead of retaining or silently truncating a larger set. Deployments with very
+large candidate sets should monitor authorization batch latency and candidate
+counts. A policy-aware reverse index or materialized visibility cache would be
+required to recover SQL-style exact-count complexity for arbitrary Cedar
+policies.
 
 ## Relation policies: OR vs AND semantics
 

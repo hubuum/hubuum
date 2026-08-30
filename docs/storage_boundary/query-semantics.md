@@ -54,6 +54,26 @@ For every pageable operation:
 `QueryOptions` is a validated carrier, not a promise that every `FilterField`
 is valid for every operation. Each capability owns its accepted subset.
 
+### Candidate Page Contract
+
+`StorageCandidatePageLimit` validates a positive per-read bound no greater than
+512. `StorageCandidatePage<T>` contains no more than that many rows and reports
+whether the stable operation-specific cursor can continue the enumeration. An
+empty candidate page cannot report more rows.
+
+Delegated authorization applies ordinary filters and stable sorting in storage,
+authorizes each bounded candidate page, and applies the public page limit only
+after authorization. A skipped total permits early termination after one
+authorized response page plus look-ahead. An exact total visits all candidate
+pages but retains only that bounded response window. Unified-search candidates
+carry the adapter-owned rank cursor with every row so application code does not
+reconstruct native ordering.
+
+An operation that must return a complete authorized set requires an explicit,
+validated total candidate bound. It returns an error when the enumeration would
+exceed that bound; it does not silently truncate or fall back to an unbounded
+`Vec<T>`.
+
 Two operation-shaped carriers preserve application-prepared pagination forms.
 `StorageGroupListQuery` carries one record query; the adapter derives an
 optional exact count from the same filters without applying its sorting, limit,

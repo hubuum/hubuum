@@ -9,7 +9,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
-use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::pagination::{SKIPPED_TOTAL_COUNT, prepare_db_pagination};
 use crate::permissions::storage::{
     collection_from_storage, grant_from_storage, group_grant_from_storage, permission_to_storage,
 };
@@ -21,7 +21,7 @@ use crate::storage::{
     StorageAuthorizationGrantMutation, StorageAuthorizationGroupMembershipQuery, StorageHandle,
 };
 
-use super::backend::PermissionBackend;
+use super::backend::{CompleteCollectionCandidateLimit, PermissionBackend};
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
 
@@ -141,6 +141,7 @@ impl PermissionBackend for LocalPermissionBackend {
         &self,
         principal: &PrincipalRef,
         permissions: &[Permissions],
+        candidate_limit: CompleteCollectionCandidateLimit,
     ) -> Result<Vec<Collection>, ApiError> {
         let start = Instant::now();
         let query = StorageAuthorizationCollectionsQuery::new(
@@ -154,6 +155,12 @@ impl PermissionBackend for LocalPermissionBackend {
             .into_iter()
             .map(collection_from_storage)
             .collect::<Result<Vec<_>, _>>()?;
+        if rows.len() > candidate_limit.get() {
+            return Err(ApiError::ServiceUnavailable(format!(
+                "Local authorization collection enumeration exceeds the requested {}-candidate bound",
+                candidate_limit.get()
+            )));
+        }
         record_reverse_query(
             BACKEND_KIND,
             "collections_user_can",
@@ -171,13 +178,14 @@ impl PermissionBackend for LocalPermissionBackend {
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
+        let prepared_page = prepare_db_pagination::<GroupPermission>(page)?;
         let query = StorageAuthorizationCollectionGrantListQuery::new(
             collection_id,
             permissions_filter
                 .iter()
                 .copied()
                 .map(permission_to_storage),
-            page.clone(),
+            prepared_page,
         );
         let (rows, total) = self
             .storage

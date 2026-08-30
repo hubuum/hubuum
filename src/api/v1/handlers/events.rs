@@ -13,7 +13,9 @@ use crate::models::{
     RemoteTargetID, UserID,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::permissions::{AppContext, PrincipalRef};
+use crate::permissions::{
+    AppContext, CompleteCollectionCandidateLimit, MAX_COMPLETE_COLLECTION_CANDIDATES, PrincipalRef,
+};
 use crate::services::event_administration::{list_audit_events, parse_audit_event_filters};
 use crate::traits::AuthzSubject;
 use crate::traits::scope_allows;
@@ -107,7 +109,11 @@ where
         let policy_principal = PrincipalRef::load(context, principal).await?;
         let collections = context
             .permission_backend()
-            .collections_user_can(&policy_principal, &[Permissions::ReadAudit])
+            .collections_user_can(
+                &policy_principal,
+                &[Permissions::ReadAudit],
+                CompleteCollectionCandidateLimit::try_new(MAX_COMPLETE_COLLECTION_CANDIDATES)?,
+            )
             .await?;
         let include_collection_less = scopes.is_none()
             && context

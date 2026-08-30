@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use async_trait::async_trait;
 
 use crate::errors::ApiError;
@@ -9,6 +11,34 @@ use crate::models::{
 use super::types::{
     AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
+
+pub const MAX_COMPLETE_COLLECTION_CANDIDATES: usize = 10_000;
+
+/// Explicit retention ceiling for operations that require a complete
+/// authorized collection list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompleteCollectionCandidateLimit(NonZeroUsize);
+
+impl CompleteCollectionCandidateLimit {
+    pub fn try_new(value: usize) -> Result<Self, ApiError> {
+        let value = NonZeroUsize::new(value).ok_or_else(|| {
+            ApiError::BadRequest(
+                "A complete collection candidate limit must be positive".to_string(),
+            )
+        })?;
+        if value.get() > MAX_COMPLETE_COLLECTION_CANDIDATES {
+            return Err(ApiError::BadRequest(format!(
+                "A complete collection candidate limit must not exceed {MAX_COMPLETE_COLLECTION_CANDIDATES}"
+            )));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+}
 
 #[async_trait]
 pub trait PermissionBackend: Send + Sync {
@@ -112,10 +142,14 @@ pub trait PermissionBackend: Send + Sync {
         &self,
         principal: &PrincipalRef,
         permissions: &[Permissions],
+        candidate_limit: CompleteCollectionCandidateLimit,
     ) -> Result<Vec<Collection>, ApiError>;
 
     /// (group, permission) pairs visible on a collection, paginated.
-    /// Returns `(rows, total_count)` so handlers can populate `X-Total-Count`.
+    ///
+    /// `page` is the unprepared public query contract. Implementations apply
+    /// the stable sort, cursor, and one-row look-ahead. Returns
+    /// `(rows, total_count)` so handlers can populate `X-Total-Count`.
     async fn groups_with_permissions_on(
         &self,
         collection_id: CollectionID,
@@ -187,4 +221,24 @@ pub trait PermissionBackend: Send + Sync {
     /// may authorize from the local store without exposing provenance, or
     /// provide provenance through another authoritative store.
     fn supports_permission_provenance(&self) -> bool;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complete_collection_candidate_limits_are_positive_and_bounded() {
+        assert!(CompleteCollectionCandidateLimit::try_new(0).is_err());
+        assert_eq!(
+            CompleteCollectionCandidateLimit::try_new(MAX_COMPLETE_COLLECTION_CANDIDATES)
+                .unwrap()
+                .get(),
+            MAX_COMPLETE_COLLECTION_CANDIDATES
+        );
+        assert!(
+            CompleteCollectionCandidateLimit::try_new(MAX_COMPLETE_COLLECTION_CANDIDATES + 1)
+                .is_err()
+        );
+    }
 }

@@ -4,7 +4,9 @@ use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::EventIdentifierError;
-use hubuum_storage_core::{StorageError, StorageErrorKind, StoragePage};
+use hubuum_storage_core::{
+    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
+};
 use tracing::{debug, error};
 
 const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
@@ -145,6 +147,20 @@ pub(crate) fn persisted_page<T>(
     total: Option<i64>,
 ) -> Result<StoragePage<T>, PostgresStorageError> {
     validate_persisted("storage page", StoragePage::try_new(rows, total))
+}
+
+pub(crate) fn persisted_candidate_page<T>(
+    mut rows: Vec<T>,
+    limit: StorageCandidatePageLimit,
+) -> Result<StorageCandidatePage<T>, PostgresStorageError> {
+    let has_more = rows.len() > limit.get();
+    if has_more {
+        rows.truncate(limit.get());
+    }
+    validate_persisted(
+        "storage candidate page",
+        StorageCandidatePage::try_new(rows, has_more, limit),
+    )
 }
 
 pub(crate) fn validate_persisted<T, E>(
@@ -486,6 +502,17 @@ mod tests {
             error.to_string(),
             "PostgreSQL persisted storage page failed contract validation"
         );
+    }
+
+    #[test]
+    fn persisted_candidate_pages_retain_only_the_requested_bound() {
+        let limit = StorageCandidatePageLimit::try_new(128).unwrap();
+        let page = persisted_candidate_page((1..=700).collect::<Vec<_>>(), limit).unwrap();
+
+        assert_eq!(page.rows().len(), 128);
+        assert!(page.has_more());
+        assert_eq!(page.rows().first(), Some(&1));
+        assert_eq!(page.rows().last(), Some(&128));
     }
 
     #[derive(Debug)]

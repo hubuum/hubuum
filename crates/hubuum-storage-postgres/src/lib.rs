@@ -69,7 +69,7 @@ pub(crate) use diagnostics::{
 };
 pub use diagnostics::{PostgresPoolState, PostgresStorageSnapshot};
 pub use error::PostgresStorageError;
-pub(crate) use error::{persisted_page, validate_persisted};
+pub(crate) use error::{persisted_candidate_page, persisted_page, validate_persisted};
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub use failpoints::{

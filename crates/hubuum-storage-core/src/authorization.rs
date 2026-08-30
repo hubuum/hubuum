@@ -7,10 +7,13 @@ use hubuum_domain::{
     ResourceId, ResourceRevision,
 };
 use hubuum_events_core::EventContext;
-use hubuum_query::{QueryFilters, QueryOptions};
+use hubuum_query::QueryOptions;
 
 use crate::validation::validate_sync_timestamps;
-use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageValidationError};
+use crate::{
+    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageMutationOutcome,
+    StoragePage, StorageValidationError,
+};
 
 /// Permission vocabulary persisted by a local authorization store.
 ///
@@ -508,25 +511,70 @@ impl fmt::Debug for StorageAuthorizationGroupIdentity {
     }
 }
 
-/// Filters used while enumerating authorization group candidates.
+/// One stable, id-ordered page request for authorization collection candidates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageAuthorizationCollectionCandidateQuery {
+    after_id: Option<CollectionId>,
+    page_limit: StorageCandidatePageLimit,
+}
+
+impl StorageAuthorizationCollectionCandidateQuery {
+    #[must_use]
+    pub const fn new(
+        after_id: Option<CollectionId>,
+        page_limit: StorageCandidatePageLimit,
+    ) -> Self {
+        Self {
+            after_id,
+            page_limit,
+        }
+    }
+
+    #[must_use]
+    pub const fn after_id(&self) -> Option<CollectionId> {
+        self.after_id
+    }
+
+    #[must_use]
+    pub const fn page_limit(&self) -> StorageCandidatePageLimit {
+        self.page_limit
+    }
+}
+
+/// Filtered, deterministically ordered authorization group candidate page.
 ///
-/// Candidate enumeration deliberately excludes pagination and sorting: the
-/// policy backend must see every matching group before it can authorize and
-/// paginate the result.
+/// `options` carries the application-normalized sort and cursor. The
+/// constructor replaces its public page size with the validated internal
+/// candidate look-ahead limit and disables count work. The policy backend
+/// authorizes each returned page before deciding which rows belong to the
+/// caller's public page.
 #[derive(Clone, PartialEq)]
 pub struct StorageAuthorizationGroupCandidateQuery {
-    filters: QueryFilters,
+    options: QueryOptions,
+    page_limit: StorageCandidatePageLimit,
 }
 
 impl StorageAuthorizationGroupCandidateQuery {
     #[must_use]
-    pub const fn new(filters: QueryFilters) -> Self {
-        Self { filters }
+    pub fn new(mut options: QueryOptions, page_limit: StorageCandidatePageLimit) -> Self {
+        options.set_include_total(false);
+        options
+            .set_limit(Some(page_limit.get().saturating_add(1)))
+            .expect("a validated storage candidate page limit plus look-ahead must be valid");
+        Self {
+            options,
+            page_limit,
+        }
     }
 
     #[must_use]
-    pub const fn filters(&self) -> &QueryFilters {
-        &self.filters
+    pub const fn options(&self) -> &QueryOptions {
+        &self.options
+    }
+
+    #[must_use]
+    pub const fn page_limit(&self) -> StorageCandidatePageLimit {
+        self.page_limit
     }
 }
 
@@ -534,7 +582,10 @@ impl fmt::Debug for StorageAuthorizationGroupCandidateQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageAuthorizationGroupCandidateQuery")
-            .field("filter_count", &self.filters.len())
+            .field("filter_count", &self.options.filters().len())
+            .field("sort_count", &self.options.sort().len())
+            .field("has_cursor", &self.options.cursor().is_some())
+            .field("page_limit", &self.page_limit)
             .finish_non_exhaustive()
     }
 }
@@ -1258,12 +1309,13 @@ pub trait AuthorizationDataStorage: Send + Sync {
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError>;
+        query: StorageAuthorizationCollectionCandidateQuery,
+    ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError>;
 
     async fn load_authorization_group_candidates(
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError>;
+    ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError>;
 
     async fn get_authorization_policy_snapshot(
         &self,

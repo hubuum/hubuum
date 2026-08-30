@@ -14,8 +14,8 @@ use crate::models::{
     NewCollectionWithAssignee, Permissions, PermissionsList, PrincipalID, UpdateCollection,
     UpdateCollectionParent,
 };
-use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::pagination::{SKIPPED_TOTAL_COUNT, prepare_db_pagination};
+use crate::permissions::visibility::authorize_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
@@ -96,25 +96,25 @@ pub async fn get_collections(
         if !scope_allows(requestor.scopes(), &[Permissions::ReadCollection]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = catalog_service::list_collections(
-            &context,
-            user.id().id(),
-            true,
-            None,
-            candidate_options,
-        )
-        .await?;
         let principal = PrincipalRef::load(&context, user).await?;
-        let search_params = prepare_db_pagination::<Collection>(&params)?;
-        let page = authorize_cursor_page(
+        let principal_id = user.id().id();
+        let page = authorize_cursor_page_from_storage(
             context.permission_backend(),
             &principal,
-            candidates,
             requestor.scopes(),
             vec![Permissions::ReadCollection],
-            &search_params,
+            &params,
+            |candidate_options| async {
+                let (candidates, _) = catalog_service::list_collections(
+                    &context,
+                    principal_id,
+                    true,
+                    None,
+                    candidate_options,
+                )
+                .await?;
+                Ok(candidates)
+            },
             |collection| ResourceRef::collection(collection.id),
         )
         .await?;
@@ -497,10 +497,9 @@ pub async fn get_collection_permissions(
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
 
-    let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let (permissions, total_count) = context
         .permission_backend()
-        .groups_with_permissions_on(*collection_id, &[], &search_params)
+        .groups_with_permissions_on(*collection_id, &[], &params)
         .await?;
     Ok(Either::Right(ApiResponse::paginated(
         permissions,
@@ -1192,7 +1191,7 @@ pub async fn get_collection_groups_with_permission(
     } else {
         let (permissions, total_count) = context
             .permission_backend()
-            .groups_with_permissions_on(collection_id, &[permission], &search_params)
+            .groups_with_permissions_on(collection_id, &[permission], &query_options)
             .await?;
         (
             permissions.into_iter().map(|row| row.group).collect(),

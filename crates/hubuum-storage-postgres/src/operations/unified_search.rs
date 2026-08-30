@@ -4,10 +4,11 @@ use diesel::sql_query;
 use diesel::sql_types::{Array, BigInt, Bool, Integer, Text};
 use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{ClassId, CollectionId};
+use hubuum_domain::{ClassId, CollectionId, ResourceId};
 use hubuum_storage_core::{
-    StorageAuthorizationPermission, StorageClassWithCollection, StorageCollection, StorageObject,
-    StorageResourceScope, StorageUnifiedSearchQuery,
+    StorageAuthorizationPermission, StorageCandidatePage, StorageClassWithCollection,
+    StorageCollection, StorageObject, StorageResourceScope, StorageUnifiedSearchCandidate,
+    StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
 };
 
 use crate::revision::record_metadata;
@@ -15,7 +16,8 @@ use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 const COLLECTION_SEARCH_SQL: &str = r#"
     SELECT c.id, c.name, c.description, c.created_at, c.updated_at,
-           c.parent_collection_id, c.revision
+           c.parent_collection_id, c.revision, ranked.search_rank,
+           lower(c.name) AS search_name
     FROM collections c
     CROSS JOIN LATERAL (
         SELECT CASE
@@ -44,7 +46,8 @@ const COLLECTION_SEARCH_SQL: &str = r#"
 
 const CLASS_SEARCH_SQL: &str = r#"
     SELECT c.id, c.name, c.collection_id, c.json_schema, c.validate_schema,
-           c.description, c.created_at, c.updated_at, c.revision
+           c.description, c.created_at, c.updated_at, c.revision,
+           ranked.search_rank, lower(c.name) AS search_name
     FROM hubuumclass c
     CROSS JOIN LATERAL (
         SELECT CASE
@@ -80,7 +83,8 @@ const CLASS_SEARCH_SQL: &str = r#"
 
 const OBJECT_SEARCH_SQL: &str = r#"
     SELECT o.id, o.name, o.collection_id, o.hubuum_class_id, o.data,
-           o.description, o.created_at, o.updated_at, o.revision
+           o.description, o.created_at, o.updated_at, o.revision,
+           ranked.search_rank, lower(o.name) AS search_name
     FROM hubuumobject o
     CROSS JOIN LATERAL (
         SELECT CASE
@@ -114,6 +118,46 @@ const OBJECT_SEARCH_SQL: &str = r#"
     ORDER BY ranked.search_rank, lower(o.name), o.id
     LIMIT $13
 "#;
+
+#[derive(QueryableByName)]
+#[diesel(table_name = crate::schema::collections)]
+struct RankedCollectionRow {
+    id: i32,
+    name: String,
+    description: String,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    parent_collection_id: Option<i32>,
+    revision: PostgresRevision,
+    #[diesel(sql_type = Integer)]
+    search_rank: i32,
+    #[diesel(sql_type = Text)]
+    search_name: String,
+}
+
+impl RankedCollectionRow {
+    fn into_candidate(
+        self,
+    ) -> Result<StorageUnifiedSearchCandidate<StorageCollection>, PostgresStorageError> {
+        let cursor = StorageUnifiedSearchCursor::new(
+            self.search_rank,
+            self.search_name.clone(),
+            ResourceId::new(self.id)?,
+        );
+        let item = crate::validate_persisted(
+            "unified-search collection",
+            StorageCollection::try_new(
+                record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+                self.name,
+                self.description,
+                self.parent_collection_id
+                    .map(CollectionId::new)
+                    .transpose()?,
+            ),
+        )?;
+        Ok(StorageUnifiedSearchCandidate::new(item, cursor))
+    }
+}
 
 #[derive(Queryable, QueryableByName)]
 #[diesel(table_name = crate::schema::collections)]
@@ -157,13 +201,23 @@ struct ClassRow {
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
     revision: PostgresRevision,
+    #[diesel(sql_type = Integer)]
+    search_rank: i32,
+    #[diesel(sql_type = Text)]
+    search_name: String,
 }
 
 impl ClassRow {
-    fn into_storage(
+    fn into_candidate(
         self,
         collections: &HashMap<i32, StorageCollection>,
-    ) -> Result<StorageClassWithCollection, PostgresStorageError> {
+    ) -> Result<StorageUnifiedSearchCandidate<StorageClassWithCollection>, PostgresStorageError>
+    {
+        let cursor = StorageUnifiedSearchCursor::new(
+            self.search_rank,
+            self.search_name.clone(),
+            ResourceId::new(self.id)?,
+        );
         let collection = collections
             .get(&self.collection_id)
             .cloned()
@@ -173,7 +227,7 @@ impl ClassRow {
                     self.id, self.collection_id
                 ))
             })?;
-        Ok(StorageClassWithCollection::builder(
+        let item = StorageClassWithCollection::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             collection,
@@ -181,7 +235,8 @@ impl ClassRow {
         )
         .json_schema(self.json_schema)
         .validate_schema(self.validate_schema)
-        .build())
+        .build();
+        Ok(StorageUnifiedSearchCandidate::new(item, cursor))
     }
 }
 
@@ -197,20 +252,30 @@ struct ObjectRow {
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
     revision: PostgresRevision,
+    #[diesel(sql_type = Integer)]
+    search_rank: i32,
+    #[diesel(sql_type = Text)]
+    search_name: String,
 }
 
-impl TryFrom<ObjectRow> for StorageObject {
-    type Error = PostgresStorageError;
-
-    fn try_from(row: ObjectRow) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
-            row.name,
-            CollectionId::new(row.collection_id)?,
-            ClassId::new(row.hubuum_class_id)?,
-            row.data,
-            row.description,
-        ))
+impl ObjectRow {
+    fn into_candidate(
+        self,
+    ) -> Result<StorageUnifiedSearchCandidate<StorageObject>, PostgresStorageError> {
+        let cursor = StorageUnifiedSearchCursor::new(
+            self.search_rank,
+            self.search_name.clone(),
+            ResourceId::new(self.id)?,
+        );
+        let item = StorageObject::new(
+            record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
+            self.name,
+            CollectionId::new(self.collection_id)?,
+            ClassId::new(self.hubuum_class_id)?,
+            self.data,
+            self.description,
+        );
+        Ok(StorageUnifiedSearchCandidate::new(item, cursor))
     }
 }
 
@@ -273,25 +338,29 @@ impl ResourceBinds {
     }
 }
 
-fn bounded_limit(limit: usize) -> i64 {
-    i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX)
+fn bounded_limit(query: &StorageUnifiedSearchQuery) -> i64 {
+    i64::try_from(query.page_limit().get().saturating_add(1)).unwrap_or(i64::MAX)
 }
 
 pub async fn search_collections(
     runtime: &PostgresRuntime,
     query: StorageUnifiedSearchQuery,
-) -> Result<Vec<StorageCollection>, PostgresStorageError> {
+) -> Result<
+    StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>,
+    PostgresStorageError,
+> {
+    let page_limit = query.page_limit();
     if !query
         .visibility()
         .allows_permissions(&[StorageAuthorizationPermission::ReadCollection])
     {
-        return Ok(Vec::new());
+        return crate::persisted_candidate_page(Vec::new(), page_limit);
     }
     let resources = ResourceBinds::from_scope(query.visibility().resources());
     let cursor = CursorBinds::from_query(&query);
     let principal_id = query.visibility().principal_id();
     let is_admin = query.visibility().is_admin();
-    let limit = bounded_limit(query.limit());
+    let limit = bounded_limit(&query);
     let search_term = query.search_term().to_string();
     runtime
         .with_connection(async move |connection| {
@@ -306,9 +375,13 @@ pub async fn search_collections(
                 .bind::<Text, _>(cursor.name)
                 .bind::<Integer, _>(cursor.id)
                 .bind::<BigInt, _>(limit)
-                .load::<CollectionRow>(connection)
+                .load::<RankedCollectionRow>(connection)
                 .await?;
-            rows.into_iter().map(TryInto::try_into).collect()
+            let rows = rows
+                .into_iter()
+                .map(RankedCollectionRow::into_candidate)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_candidate_page(rows, page_limit)
         })
         .await
 }
@@ -316,18 +389,22 @@ pub async fn search_collections(
 pub async fn search_classes(
     runtime: &PostgresRuntime,
     query: StorageUnifiedSearchQuery,
-) -> Result<Vec<StorageClassWithCollection>, PostgresStorageError> {
+) -> Result<
+    StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
+    PostgresStorageError,
+> {
+    let page_limit = query.page_limit();
     if !query.visibility().allows_permissions(&[
         StorageAuthorizationPermission::ReadCollection,
         StorageAuthorizationPermission::ReadClass,
     ]) {
-        return Ok(Vec::new());
+        return crate::persisted_candidate_page(Vec::new(), page_limit);
     }
     let resources = ResourceBinds::from_scope(query.visibility().resources());
     let cursor = CursorBinds::from_query(&query);
     let principal_id = query.visibility().principal_id();
     let is_admin = query.visibility().is_admin();
-    let limit = bounded_limit(query.limit());
+    let limit = bounded_limit(&query);
     let search_extended_document = query.searches_extended_document();
     let search_term = query.search_term().to_string();
     runtime
@@ -348,7 +425,7 @@ pub async fn search_classes(
                 .load::<ClassRow>(connection)
                 .await?;
             if rows.is_empty() {
-                return Ok(Vec::new());
+                return crate::persisted_candidate_page(Vec::new(), page_limit);
             }
             let collection_ids = rows.iter().map(|row| row.collection_id).collect::<Vec<_>>();
             let collections = {
@@ -365,9 +442,11 @@ pub async fn search_classes(
                     })
                     .collect::<Result<HashMap<_, _>, PostgresStorageError>>()?
             };
-            rows.into_iter()
-                .map(|row| row.into_storage(&collections))
-                .collect()
+            let rows = rows
+                .into_iter()
+                .map(|row| row.into_candidate(&collections))
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_candidate_page(rows, page_limit)
         })
         .await
 }
@@ -375,18 +454,20 @@ pub async fn search_classes(
 pub async fn search_objects(
     runtime: &PostgresRuntime,
     query: StorageUnifiedSearchQuery,
-) -> Result<Vec<StorageObject>, PostgresStorageError> {
+) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, PostgresStorageError>
+{
+    let page_limit = query.page_limit();
     if !query.visibility().allows_permissions(&[
         StorageAuthorizationPermission::ReadCollection,
         StorageAuthorizationPermission::ReadObject,
     ]) {
-        return Ok(Vec::new());
+        return crate::persisted_candidate_page(Vec::new(), page_limit);
     }
     let resources = ResourceBinds::from_scope(query.visibility().resources());
     let cursor = CursorBinds::from_query(&query);
     let principal_id = query.visibility().principal_id();
     let is_admin = query.visibility().is_admin();
-    let limit = bounded_limit(query.limit());
+    let limit = bounded_limit(&query);
     let search_extended_document = query.searches_extended_document();
     let search_term = query.search_term().to_string();
     runtime
@@ -407,7 +488,11 @@ pub async fn search_objects(
                 .bind::<BigInt, _>(limit)
                 .load::<ObjectRow>(connection)
                 .await?;
-            rows.into_iter().map(TryInto::try_into).collect()
+            let rows = rows
+                .into_iter()
+                .map(ObjectRow::into_candidate)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_candidate_page(rows, page_limit)
         })
         .await
 }

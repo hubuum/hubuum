@@ -17,7 +17,9 @@ pub mod visibility;
 #[doc(hidden)]
 pub mod test_support;
 
-pub use backend::PermissionBackend;
+pub use backend::{
+    CompleteCollectionCandidateLimit, MAX_COMPLETE_COLLECTION_CANDIDATES, PermissionBackend,
+};
 pub use context::{AppContext, AuthorizationContext, AuthorizationMode};
 pub use local::LocalPermissionBackend;
 pub(crate) use storage::{

@@ -14,19 +14,29 @@ use crate::models::search::{QueryOptions, QueryParamsExt};
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
-use crate::pagination::{known_count_or_skipped, paginate_in_memory};
+use crate::pagination::{
+    effective_page_limit, encode_cursor, item_is_after_cursor, known_count_or_skipped,
+    prepare_db_pagination,
+};
 use crate::storage::{
-    AuthorizationDataStorage, StorageAuthorizationGroupCandidateQuery, StorageHandle,
+    AuthorizationDataStorage, StorageAuthorizationCollectionCandidateQuery,
+    StorageAuthorizationGroupCandidateQuery, StorageCandidatePageLimit, StorageHandle,
 };
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
-use super::backend::PermissionBackend;
+use super::backend::{CompleteCollectionCandidateLimit, PermissionBackend};
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
 use super::storage::{collection_from_storage, group_from_storage};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
 const BACKEND_KIND: &str = "treetop";
 const MAX_CEDAR_REQUESTS_PER_BATCH: usize = 512;
+const AUTHORIZATION_CANDIDATE_PAGE_SIZE: usize = 128;
+
+fn authorization_candidate_page_limit(maximum: usize) -> StorageCandidatePageLimit {
+    StorageCandidatePageLimit::try_new(maximum.min(AUTHORIZATION_CANDIDATE_PAGE_SIZE))
+        .expect("the fixed authorization candidate page size must be valid")
+}
 
 pub mod error;
 pub mod mapping;
@@ -360,56 +370,78 @@ impl PermissionBackend for TreetopPermissionBackend {
         &self,
         principal: &PrincipalRef,
         permissions: &[Permissions],
+        candidate_limit: CompleteCollectionCandidateLimit,
     ) -> Result<Vec<Collection>, ApiError> {
-        // Enumerate candidates from storage, then filter via Treetop.
-        // We load all collections without any permission filtering, then
-        // use paginate_authorized to filter via Treetop batch authorization.
         let start = Instant::now();
-        let all_collections = self
-            .storage
-            .load_authorization_collection_candidates()
-            .await?
-            .into_iter()
-            .map(collection_from_storage)
-            .collect::<Result<Vec<_>, _>>()?;
-        let candidate_count = all_collections.len();
         let tested_permissions = if permissions.is_empty() {
             Permissions::all()
         } else {
             permissions
         };
         let width = tested_permissions.len();
-        let check_count = candidate_count.checked_mul(width).ok_or_else(|| {
-            ApiError::InternalServerError("too many collection permission checks".into())
-        })?;
         let user = cedar_user(principal).map_err(treetop_validation_to_api_error)?;
-        let requests = all_collections.iter().flat_map(|collection| {
-            let user = user.clone();
-            tested_permissions.iter().map(move |permission| {
-                let resource =
-                    ResourceRef::for_permission_on_collection(*permission, collection.id);
-                Ok(TreetopRequest::new(
-                    user.clone(),
-                    cedar_action(*permission)?,
-                    cedar_resource(&resource)?,
-                ))
-            })
-        });
-        let decisions = self
-            .authorize_cedar_requests(Box::new(requests), check_count)
-            .await?;
-        let rows = all_collections
-            .into_iter()
-            .zip(decisions.chunks(width))
-            .filter_map(|(collection, decisions)| {
-                let allowed = if permissions.is_empty() {
-                    decisions.iter().any(|decision| *decision)
-                } else {
-                    decisions.iter().all(|decision| *decision)
-                };
-                allowed.then_some(collection)
-            })
-            .collect::<Vec<_>>();
+        let page_limit = authorization_candidate_page_limit(candidate_limit.get());
+        let mut after_id = None;
+        let mut candidate_count = 0_usize;
+        let mut rows = Vec::new();
+
+        loop {
+            let page = self
+                .storage
+                .load_authorization_collection_candidates(
+                    StorageAuthorizationCollectionCandidateQuery::new(after_id, page_limit),
+                )
+                .await?;
+            let (candidate_rows, has_more) = page.into_parts();
+            candidate_count = candidate_count.saturating_add(candidate_rows.len());
+            if candidate_count > candidate_limit.get()
+                || (candidate_count == candidate_limit.get() && has_more)
+            {
+                return Err(ApiError::ServiceUnavailable(format!(
+                    "External authorization collection enumeration exceeds the requested {}-candidate bound",
+                    candidate_limit.get()
+                )));
+            }
+            after_id = candidate_rows.last().map(|collection| collection.id());
+            let collections = candidate_rows
+                .into_iter()
+                .map(collection_from_storage)
+                .collect::<Result<Vec<_>, _>>()?;
+            let check_count = collections.len().checked_mul(width).ok_or_else(|| {
+                ApiError::InternalServerError("too many collection permission checks".into())
+            })?;
+            let requests = collections.iter().flat_map(|collection| {
+                let user = user.clone();
+                tested_permissions.iter().map(move |permission| {
+                    let resource =
+                        ResourceRef::for_permission_on_collection(*permission, collection.id);
+                    Ok(TreetopRequest::new(
+                        user.clone(),
+                        cedar_action(*permission)?,
+                        cedar_resource(&resource)?,
+                    ))
+                })
+            });
+            let decisions = self
+                .authorize_cedar_requests(Box::new(requests), check_count)
+                .await?;
+            rows.extend(
+                collections
+                    .into_iter()
+                    .zip(decisions.chunks(width))
+                    .filter_map(|(collection, decisions)| {
+                        let allowed = if permissions.is_empty() {
+                            decisions.iter().any(|decision| *decision)
+                        } else {
+                            decisions.iter().all(|decision| *decision)
+                        };
+                        allowed.then_some(collection)
+                    }),
+            );
+            if !has_more {
+                break;
+            }
+        }
         record_reverse_query(
             BACKEND_KIND,
             "collections_user_can",
@@ -428,75 +460,100 @@ impl PermissionBackend for TreetopPermissionBackend {
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
         let collection_id = collection_id.id();
-        let all_groups = self
-            .storage
-            .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
-                page.filters().clone(),
-            ))
-            .await?
-            .into_iter()
-            .map(group_from_storage)
-            .collect::<Result<Vec<_>, _>>()?;
-        let candidate_count = all_groups.len();
-
-        if all_groups.is_empty() {
-            return Ok((Vec::new(), known_count_or_skipped(page, 0)));
+        let response_limit = effective_page_limit(page)?.saturating_add(1);
+        let mut candidate_source = page.clone();
+        if page.include_total() {
+            candidate_source.clear_cursor();
         }
-
-        // For each group, build every Permission request against this
-        // collection. Treetop returns decisions in input order, so we know
-        // which group/permission each maps to.
+        let mut candidate_options = prepare_db_pagination::<GroupPermission>(&candidate_source)?;
+        candidate_options.set_include_total(false);
+        let candidate_page_limit =
+            authorization_candidate_page_limit(AUTHORIZATION_CANDIDATE_PAGE_SIZE);
         let perms = Permissions::all();
         let mut effective_filter = page.filters().permissions()?;
         effective_filter.ensure_contains(permissions_filter);
-        let check_count = all_groups.len().checked_mul(perms.len()).ok_or_else(|| {
-            ApiError::InternalServerError("too many group permission checks".into())
-        })?;
-        let requests = all_groups.iter().flat_map(|group| {
-            let user = cedar_user(&PrincipalRef::new(0, [group.id]));
-            perms.iter().map(move |permission| {
-                let resource =
-                    ResourceRef::for_permission_on_collection(*permission, collection_id);
-                Ok(TreetopRequest::new(
-                    user.clone()?,
-                    cedar_action(*permission)?,
-                    cedar_resource(&resource)?,
+        let mut rows = Vec::with_capacity(response_limit);
+        let mut candidate_count = 0_usize;
+        let mut authorized_count = 0_usize;
+
+        loop {
+            let candidate_page = self
+                .storage
+                .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
+                    candidate_options.clone(),
+                    candidate_page_limit,
                 ))
-            })
-        });
-        let decisions = self
-            .authorize_cedar_requests(Box::new(requests), check_count)
-            .await?;
-
-        let mut all_results: Vec<GroupPermission> = Vec::new();
-        for (group, decisions) in all_groups.iter().zip(decisions.chunks(perms.len())) {
-            let row = synthesize_permission_for_group(collection_id, group, decisions);
-
-            // Filter:
-            //   - empty filter → include if any permission is Allow
-            //   - non-empty   → include only if ALL filter permissions are Allow
-            let include = if effective_filter.iter().next().is_none() {
-                permission_has_any_grant(&row)
+                .await?;
+            let (candidate_rows, has_more) = candidate_page.into_parts();
+            let groups = candidate_rows
+                .into_iter()
+                .map(group_from_storage)
+                .collect::<Result<Vec<_>, _>>()?;
+            candidate_count = candidate_count.saturating_add(groups.len());
+            let next_cursor = if has_more {
+                groups
+                    .last()
+                    .map(|group| encode_cursor(group, candidate_options.sort()))
+                    .transpose()?
             } else {
-                effective_filter.iter().all(|wanted| {
-                    let idx = perms
-                        .iter()
-                        .position(|p| p == wanted)
-                        .expect("Permissions::all() must contain every variant");
-                    decisions[idx]
-                })
+                None
             };
+            let check_count = groups.len().checked_mul(perms.len()).ok_or_else(|| {
+                ApiError::InternalServerError("too many group permission checks".into())
+            })?;
+            let requests = groups.iter().flat_map(|group| {
+                let user = cedar_user(&PrincipalRef::new(0, [group.id]));
+                perms.iter().map(move |permission| {
+                    let resource =
+                        ResourceRef::for_permission_on_collection(*permission, collection_id);
+                    Ok(TreetopRequest::new(
+                        user.clone()?,
+                        cedar_action(*permission)?,
+                        cedar_resource(&resource)?,
+                    ))
+                })
+            });
+            let decisions = self
+                .authorize_cedar_requests(Box::new(requests), check_count)
+                .await?;
 
-            if include {
-                all_results.push(GroupPermission {
-                    group: group.clone(),
-                    permission: row,
-                });
+            for (group, decisions) in groups.iter().zip(decisions.chunks(perms.len())) {
+                let permission = synthesize_permission_for_group(collection_id, group, decisions);
+                let include = if effective_filter.iter().next().is_none() {
+                    permission_has_any_grant(&permission)
+                } else {
+                    effective_filter.iter().all(|wanted| {
+                        let index = perms
+                            .iter()
+                            .position(|permission| permission == wanted)
+                            .expect("Permissions::all() must contain every variant");
+                        decisions[index]
+                    })
+                };
+                if include {
+                    authorized_count = authorized_count.saturating_add(1);
+                    let row = GroupPermission {
+                        group: group.clone(),
+                        permission,
+                    };
+                    let belongs_to_response = page
+                        .cursor()
+                        .map(|cursor| item_is_after_cursor(&row, cursor, candidate_options.sort()))
+                        .transpose()?
+                        .unwrap_or(true);
+                    if belongs_to_response && rows.len() < response_limit {
+                        rows.push(row);
+                    }
+                }
             }
+
+            if (!page.include_total() && rows.len() >= response_limit) || !has_more {
+                break;
+            }
+            candidate_options.set_cursor(next_cursor)?;
         }
 
-        let total_count = known_count_or_skipped(page, all_results.len() as i64);
-        let rows = paginate_in_memory(all_results, page)?;
+        let total_count = known_count_or_skipped(page, authorized_count as i64);
 
         record_reverse_query(
             BACKEND_KIND,

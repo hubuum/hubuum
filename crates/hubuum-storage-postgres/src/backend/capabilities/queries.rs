@@ -285,7 +285,8 @@ impl UnifiedSearchStorage for PostgresStorage {
     async fn search_collections(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageCollection>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>, StorageError>
+    {
         crate::operations::unified_search::search_collections(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -294,7 +295,10 @@ impl UnifiedSearchStorage for PostgresStorage {
     async fn search_classes(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageClassWithCollection>, StorageError> {
+    ) -> Result<
+        StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
+        StorageError,
+    > {
         crate::operations::unified_search::search_classes(self.runtime(), query)
             .await
             .map_err(StorageError::from)
@@ -303,7 +307,8 @@ impl UnifiedSearchStorage for PostgresStorage {
     async fn search_objects(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageObject>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, StorageError>
+    {
         crate::operations::unified_search::search_objects(self.runtime(), query)
             .await
             .map_err(StorageError::from)
