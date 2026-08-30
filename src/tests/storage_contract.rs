@@ -86,47 +86,49 @@ use crate::storage::{
     StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
     StorageAuthorizationResourceIds, StorageBackendKind, StorageBackupTaskArtifact,
     StorageBidirectionalRelatedObjectsQuery, StorageCallSite, StorageCandidatePageLimit,
-    StorageCatalogListQuery, StorageClassCreate, StorageClassSelector, StorageClassUpdate,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
-    StorageComputedFieldVisibility, StorageComputedObjectEnrichmentQuery,
-    StorageComputedObjectListQuery, StorageComputedObjectProjection,
-    StorageComputedObjectQueryOptions, StorageComputedObjectVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
-    StorageEventRetentionBatch, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
-    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
-    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
-    StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
+    StorageCatalogListQuery, StorageClassCreate, StorageClassRelationCreate, StorageClassSelector,
+    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
+    StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
+    StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
+    StorageComputedObjectVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
+    StorageEventDeliveryListQuery, StorageEventRetentionBatch, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
+    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
     StorageHistoryCollectionScope, StorageHistoryListQuery, StorageImportPlan,
     StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateQuery,
     StorageObjectAggregateSort, StorageObjectAggregateSpec, StorageObjectAggregateTarget,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery,
-    StorageObjectRelationsTouchingIdsQuery, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePrincipalGroupListQuery,
-    StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke, StorageQueryBudget,
-    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectsForRootsQuery,
-    StorageRelatedSort, StorageRelationGraphQuery, StorageRelationIdsQuery,
-    StorageRelationListQuery, StorageRelationTouchingQuery, StorageRemoteCallArtifactOutcome,
-    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
-    StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
-    StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
-    StorageRevisionPrecondition, StorageRevisionTarget, StorageServiceAccountCreate,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate, StorageTaskChildListQuery,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageObjectCreate, StorageObjectDataPatch, StorageObjectHistoryAsOfQuery,
+    StorageObjectHistoryListQuery, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationSelector,
+    StorageObjectRelationsTouchingIdsQuery, StorageObjectSelector, StorageObjectUpdate,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
+    StoragePrincipalGroupListQuery, StoragePrincipalSettingsMutation, StoragePrincipalTokensRevoke,
+    StorageQueryBudget, StorageRecordMetadata, StorageRelatedDirection,
+    StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
+    StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
+    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate,
+    StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetInvocation,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageRestoreArtifactSummary,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJobStatus,
+    StorageRestoreStageCreate, StorageRevisionPrecondition, StorageRevisionTarget,
+    StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate,
+    StorageTaskChildListQuery, StorageTaskCompletion, StorageTaskCompletionArtifact,
+    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
+    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
+    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
     StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
     StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUnifiedSearchQuery,
@@ -1102,18 +1104,24 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
     let _permit = postgres_permit().await;
 
     for backend in available_backends() {
-        backend
+        let inventory = backend
             .get_inventory_metrics_snapshot()
             .await
             .expect("certified backend should supply inventory metrics");
-        backend
+        assert!(inventory.counts().collections() >= 1);
+
+        let tasks = backend
             .get_task_metrics_snapshot()
             .await
             .expect("certified backend should supply task metrics");
-        backend
+        assert_eq!(tasks.ages().len(), StorageTaskKind::ALL.len());
+
+        let events = backend
             .get_event_metrics_snapshot()
             .await
             .expect("certified backend should supply event metrics");
+        assert!(events.fanout().pending_events() >= 0);
+        assert!(events.delivery().counts().total() >= 0);
     }
 }
 
@@ -3507,6 +3515,24 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
             .expect("certified backend should move collections")
             .into_value();
         assert_eq!(moved.parent_collection_id(), Some(collection_id(1)));
+        let loaded = collections
+            .get_collection(created.id())
+            .await
+            .expect("certified backend should load collections by id");
+        assert_eq!(loaded, moved);
+        let children = collections
+            .list_collection_children(collection_id(1))
+            .await
+            .expect("certified backend should list direct collection children");
+        assert!(children.iter().any(|child| child.id() == created.id()));
+        let ancestors = collections
+            .list_collection_ancestors(created.id())
+            .await
+            .expect("certified backend should list collection ancestors");
+        assert_eq!(
+            ancestors.first().map(|ancestor| ancestor.id()),
+            Some(collection_id(1))
+        );
         collections
             .delete_collection(created.id(), &EventContext::system())
             .await
@@ -3628,6 +3654,357 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
         .delete_without_events(pool.get_ref())
         .await
         .expect("class lifecycle group should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_object_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let group = crate::tests::create_test_group(pool.get_ref()).await;
+
+    for backend in available_backends() {
+        let collections = backend.collection_store();
+        let collection = collections
+            .create_collection(
+                StorageCollectionCreate::new(
+                    prefix("object_lifecycle_collection"),
+                    "object lifecycle collection",
+                    group_id(group.id),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the object collection")
+            .into_value();
+        let classes = backend.class_store();
+        let class = classes
+            .create_class(
+                StorageClassCreate::builder(
+                    prefix("object_lifecycle_class"),
+                    collection.id(),
+                    "object lifecycle class",
+                )
+                .json_schema(Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}}
+                })))
+                .validate_schema(true)
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the object class")
+            .into_value();
+        let resolved_class = classes
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await
+            .expect("certified backend should resolve the object class");
+        let objects = backend.object_store();
+        let object_name = prefix("object_lifecycle");
+        let create = StorageObjectCreate::new(
+            &object_name,
+            collection.id(),
+            class.id(),
+            serde_json::json!({"value": 1}),
+            "object lifecycle",
+        );
+        objects
+            .validate_object_create(create.clone())
+            .await
+            .expect("certified backend should validate object creation");
+        let created = objects
+            .create_object(&resolved_class, create, &EventContext::system())
+            .await
+            .expect("certified backend should create objects")
+            .into_value();
+        objects
+            .validate_object(created.clone())
+            .await
+            .expect("certified backend should validate stored objects");
+
+        let loaded = objects
+            .get_object(created.id())
+            .await
+            .expect("certified backend should load objects by id");
+        assert_eq!(loaded.object(), &created);
+        let resolved = objects
+            .resolve_object(StorageObjectSelector::Names {
+                class_name: class.name().to_string(),
+                object_name: object_name.clone(),
+            })
+            .await
+            .expect("certified backend should resolve objects by name");
+        assert_eq!(resolved.object().id(), created.id());
+
+        let update = StorageObjectUpdate::builder()
+            .description(Some("updated object lifecycle".to_string()))
+            .build();
+        objects
+            .validate_object_update(created.id(), update.clone())
+            .await
+            .expect("certified backend should validate object updates");
+        let updated = objects
+            .update_object(&resolved, update, &EventContext::system())
+            .await
+            .expect("certified backend should update objects")
+            .into_value();
+        assert_eq!(updated.description(), "updated object lifecycle");
+
+        let patch_document = serde_json::from_value(serde_json::json!([
+            {"op": "replace", "path": "/value", "value": 2}
+        ]))
+        .expect("object lifecycle patch should be valid");
+        let patch: StorageObjectDataPatch =
+            crate::services::storage_boundary::object_patch_to_storage(patch_document)
+                .expect("object lifecycle patch should cross the storage boundary");
+        let updated_target = objects
+            .get_object(created.id())
+            .await
+            .expect("updated object should remain resolvable");
+        let patched = objects
+            .patch_object_data(&updated_target, patch, &EventContext::system())
+            .await
+            .expect("certified backend should patch object data")
+            .into_value();
+        assert_eq!(patched.data(), &serde_json::json!({"value": 2}));
+
+        let delete_target = objects
+            .get_object(created.id())
+            .await
+            .expect("patched object should remain resolvable");
+        objects
+            .delete_object(&delete_target, &EventContext::system())
+            .await
+            .expect("certified backend should delete objects")
+            .into_value();
+        assert_eq!(
+            objects
+                .get_object(created.id())
+                .await
+                .err()
+                .expect("deleted objects must not resolve")
+                .kind(),
+            StorageErrorKind::NotFound
+        );
+        classes
+            .delete_class(&resolved_class, &EventContext::system())
+            .await
+            .expect("object lifecycle class should be removable")
+            .into_value();
+        collections
+            .delete_collection(collection.id(), &EventContext::system())
+            .await
+            .expect("object lifecycle collection should be removable")
+            .into_value();
+    }
+
+    group
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("object lifecycle group should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_relation_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let group = crate::tests::create_test_group(pool.get_ref()).await;
+
+    for backend in available_backends() {
+        let collections = backend.collection_store();
+        let collection = collections
+            .create_collection(
+                StorageCollectionCreate::new(
+                    prefix("relation_lifecycle_collection"),
+                    "relation lifecycle collection",
+                    group_id(group.id),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the relation collection")
+            .into_value();
+        let classes = backend.class_store();
+        let from_class = classes
+            .create_class(
+                StorageClassCreate::builder(
+                    prefix("relation_lifecycle_from_class"),
+                    collection.id(),
+                    "relation lifecycle source class",
+                )
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the source class")
+            .into_value();
+        let to_class = classes
+            .create_class(
+                StorageClassCreate::builder(
+                    prefix("relation_lifecycle_to_class"),
+                    collection.id(),
+                    "relation lifecycle target class",
+                )
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the target class")
+            .into_value();
+
+        let class_relations = backend.class_relation_store();
+        let prepared_class_relation = class_relations
+            .prepare_class_relation(
+                StorageClassRelationCreate::builder(from_class.id(), to_class.id()).build(),
+            )
+            .await
+            .expect("certified backend should prepare class relations");
+        assert_eq!(prepared_class_relation.from_class().id(), from_class.id());
+        assert_eq!(prepared_class_relation.to_class().id(), to_class.id());
+        let class_relation = class_relations
+            .create_class_relation(&prepared_class_relation, &EventContext::system())
+            .await
+            .expect("certified backend should create class relations")
+            .into_value();
+        let class_relation_id = ClassRelationId::from(class_relation.relation().metadata().id());
+        let resolved_class_relation = class_relations
+            .resolve_class_relation(class_relation_id)
+            .await
+            .expect("certified backend should resolve class relations");
+        assert_eq!(
+            resolved_class_relation.relation(),
+            class_relation.relation()
+        );
+
+        let objects = backend.object_store();
+        let from_object = objects
+            .create_object(
+                &classes
+                    .resolve_class(StorageClassSelector::Id(from_class.id()))
+                    .await
+                    .expect("source class should resolve"),
+                StorageObjectCreate::new(
+                    prefix("relation_lifecycle_from_object"),
+                    collection.id(),
+                    from_class.id(),
+                    serde_json::json!({}),
+                    "relation lifecycle source object",
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the source object")
+            .into_value();
+        let to_object = objects
+            .create_object(
+                &classes
+                    .resolve_class(StorageClassSelector::Id(to_class.id()))
+                    .await
+                    .expect("target class should resolve"),
+                StorageObjectCreate::new(
+                    prefix("relation_lifecycle_to_object"),
+                    collection.id(),
+                    to_class.id(),
+                    serde_json::json!({}),
+                    "relation lifecycle target object",
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .expect("certified backend should create the target object")
+            .into_value();
+
+        let object_relations = backend.object_relation_store();
+        let prepared_object_relation = object_relations
+            .prepare_object_relation(StorageObjectRelationCreateSelector::Explicit(
+                StorageObjectRelationCreate::new(
+                    from_object.id(),
+                    to_object.id(),
+                    class_relation_id,
+                ),
+            ))
+            .await
+            .expect("certified backend should prepare object relations");
+        assert_eq!(prepared_object_relation.from_object(), &from_object);
+        assert_eq!(prepared_object_relation.to_object(), &to_object);
+        let object_relation = object_relations
+            .create_object_relation(&prepared_object_relation, &EventContext::system())
+            .await
+            .expect("certified backend should create object relations")
+            .into_value();
+        let object_relation_id = ObjectRelationId::from(object_relation.relation().metadata().id());
+        let resolved_object_relation = object_relations
+            .resolve_object_relation(StorageObjectRelationSelector::Id(object_relation_id))
+            .await
+            .expect("certified backend should resolve object relations");
+        assert_eq!(
+            resolved_object_relation.relation(),
+            object_relation.relation()
+        );
+
+        object_relations
+            .delete_object_relation(&resolved_object_relation, &EventContext::system())
+            .await
+            .expect("certified backend should delete object relations")
+            .into_value();
+        assert_eq!(
+            object_relations
+                .resolve_object_relation(StorageObjectRelationSelector::Id(object_relation_id))
+                .await
+                .err()
+                .expect("deleted object relations must not resolve")
+                .kind(),
+            StorageErrorKind::NotFound
+        );
+        for object in [from_object, to_object] {
+            let target = objects
+                .get_object(object.id())
+                .await
+                .expect("relation lifecycle object should resolve for cleanup");
+            objects
+                .delete_object(&target, &EventContext::system())
+                .await
+                .expect("relation lifecycle object should be removable")
+                .into_value();
+        }
+        class_relations
+            .delete_class_relation(&resolved_class_relation, &EventContext::system())
+            .await
+            .expect("certified backend should delete class relations")
+            .into_value();
+        assert_eq!(
+            class_relations
+                .resolve_class_relation(class_relation_id)
+                .await
+                .err()
+                .expect("deleted class relations must not resolve")
+                .kind(),
+            StorageErrorKind::NotFound
+        );
+        for class in [from_class, to_class] {
+            let target = classes
+                .resolve_class(StorageClassSelector::Id(class.id()))
+                .await
+                .expect("relation lifecycle class should resolve for cleanup");
+            classes
+                .delete_class(&target, &EventContext::system())
+                .await
+                .expect("relation lifecycle class should be removable")
+                .into_value();
+        }
+        collections
+            .delete_collection(collection.id(), &EventContext::system())
+            .await
+            .expect("relation lifecycle collection should be removable")
+            .into_value();
+    }
+
+    group
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("relation lifecycle group should be removed");
 }
 
 #[actix_web::test]
@@ -3949,7 +4326,18 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
 
         let group_candidates = backend
             .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
-                QueryOptions::empty(),
+                QueryOptions::new(
+                    vec![ParsedQueryParam {
+                        field: FilterField::Description,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: group.description.clone(),
+                    }],
+                    Vec::new(),
+                    None,
+                    None,
+                    false,
+                )
+                .expect("authorization candidate query should be valid"),
                 StorageCandidatePageLimit::try_new(512)
                     .expect("contract candidate page limit should be valid"),
             ))
@@ -5198,10 +5586,12 @@ async fn every_available_storage_backend_supplies_event_health() {
     let _permit = postgres_permit().await;
 
     for backend in available_backends() {
-        backend
+        let health = backend
             .get_event_delivery_health()
             .await
             .expect("certified backend should expose event delivery health");
+        assert!(health.fanout().pending_events() >= 0);
+        assert!(health.delivery().counts().total() >= 0);
     }
 }
 
@@ -5406,10 +5796,11 @@ async fn every_available_storage_backend_processes_event_fanout() {
         .expect("compatibility fan-out settings should be valid");
 
     for backend in available_backends() {
-        backend
+        let processed = backend
             .process_event_fanout_batch(settings)
             .await
             .expect("certified backend should process event fan-out");
+        assert!(processed <= settings.batch_size());
     }
 }
 

@@ -117,12 +117,14 @@ ordinary user mutations.
 The following review-maintained list is intended to cover every
 `StorageBackend` method that may durably write without accepting an
 `EventContext`. They are deliberately outside the ordinary audited-mutation
-category. The current guard proves that each listed name is a real trait method;
-it does not yet infer write effects from method bodies or mechanically prove
-the reverse direction. That inference is deferred. Until it exists, reviewers
-must add every new context-free writer to `semantic-coverage.toml`, place it in
-one of these semantic categories, and review it here. An ordinary resource or
-configuration mutation is not eligible for an exception.
+category. Every contract method now has exactly one effect classification, and
+the guard requires this inventory to equal the union of `observation` and
+`workflow_mutation` methods. Reviewers must classify and test a new
+context-free writer, add it to the appropriate category here and in
+`semantic-coverage.toml`, or the architecture suite fails. Source inspection
+does not infer write effects, so choosing the correct effect remains a review
+responsibility. An ordinary resource or configuration mutation is not eligible
+for an exception.
 
 - Best-effort observation: `AuthenticationStorage::authenticate_bearer_token`
   may throttle-write token use time. This does not change authorization or

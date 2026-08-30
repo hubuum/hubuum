@@ -136,7 +136,20 @@ fn storage_semantic_manifest(root: &Path) -> toml::Value {
 }
 
 #[cfg(test)]
+fn storage_method_contract_manifest(root: &Path) -> toml::Value {
+    let path = root.join("docs/storage_boundary/method-contracts.toml");
+    let source = read_source(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    toml::from_str(&source).expect("storage method contracts should be valid TOML")
+}
+
+#[cfg(test)]
 fn assert_scenario_exists(root: &Path, scenario: &str) {
+    let _ = scenario_body(root, scenario);
+}
+
+#[cfg(test)]
+fn scenario_body(root: &Path, scenario: &str) -> String {
     let (path, symbol) = scenario.split_once("::").unwrap_or_else(|| {
         panic!("semantic coverage scenario must use path::symbol syntax: {scenario}")
     });
@@ -147,6 +160,35 @@ fn assert_scenario_exists(root: &Path, scenario: &str) {
         source.contains(&format!("fn {symbol}")),
         "semantic coverage scenario {scenario} does not name a function in its source"
     );
+    item_body(&source, "fn", symbol).to_string()
+}
+
+#[cfg(test)]
+const STORAGE_METHOD_EFFECTS: &[&str] = &[
+    "observation",
+    "point_read",
+    "page_read",
+    "candidate_read",
+    "batch_read",
+    "complete_read",
+    "validation",
+    "audited_mutation",
+    "workflow_mutation",
+    "execution_scope",
+    "transaction",
+];
+
+#[cfg(test)]
+fn scenario_asserts_an_effect(body: &str) -> bool {
+    [
+        "assert!(",
+        "assert_eq!(",
+        "assert_ne!(",
+        "matches!(",
+        ".expect_err(",
+    ]
+    .iter()
+    .any(|assertion| body.contains(assertion))
 }
 
 #[cfg(test)]
@@ -317,6 +359,7 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         "storage family bounds and semantic inventory must change together"
     );
 
+    let mut missing_method_evidence = Vec::new();
     for (trait_name, value) in traits {
         let entry = value
             .as_table()
@@ -327,10 +370,45 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
             .unwrap_or_else(|| panic!("trait {trait_name} is missing its source"));
         let source = read_source(&root.join(source_path))
             .unwrap_or_else(|error| panic!("could not read {source_path}: {error}"));
+        let methods = toml_string_set(entry, "methods");
         assert_eq!(
-            toml_string_set(entry, "methods"),
+            methods,
             trait_methods(&source, trait_name),
             "trait method inventory drifted for {trait_name}"
+        );
+
+        let effects = entry
+            .get("effects")
+            .and_then(toml::Value::as_table)
+            .unwrap_or_else(|| {
+                panic!("trait {trait_name} is missing method effect classifications")
+            });
+        let mut classified_methods = BTreeSet::new();
+        for (effect, values) in effects {
+            assert!(
+                STORAGE_METHOD_EFFECTS.contains(&effect.as_str()),
+                "trait {trait_name} uses unknown method effect {effect}"
+            );
+            let values = values
+                .as_array()
+                .unwrap_or_else(|| panic!("trait {trait_name} effect {effect} must be an array"));
+            for value in values {
+                let method = value.as_str().unwrap_or_else(|| {
+                    panic!("trait {trait_name} effect {effect} entries must be method names")
+                });
+                assert!(
+                    methods.contains(method),
+                    "trait {trait_name} effect {effect} names unknown method {method}"
+                );
+                assert!(
+                    classified_methods.insert(method.to_string()),
+                    "trait {trait_name} method {method} has more than one effect"
+                );
+            }
+        }
+        assert_eq!(
+            classified_methods, methods,
+            "trait {trait_name} must classify every method effect exactly once"
         );
 
         let scenarios = ["shared_scenarios", "native_scenarios"]
@@ -342,10 +420,31 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
             !scenarios.is_empty(),
             "trait {trait_name} must name shared or adapter-native semantic evidence"
         );
-        for scenario in scenarios {
-            assert_scenario_exists(&root, &scenario);
+        let scenario_bodies = scenarios
+            .iter()
+            .map(|scenario| (scenario, scenario_body(&root, scenario)))
+            .collect::<Vec<_>>();
+        assert!(
+            scenario_bodies
+                .iter()
+                .any(|(_, body)| scenario_asserts_an_effect(body)),
+            "trait {trait_name} must name an effect-asserting semantic scenario"
+        );
+        for scenario in &scenarios {
+            assert_scenario_exists(&root, scenario);
         }
+        missing_method_evidence.extend(methods.iter().filter_map(|method| {
+            let invocation = format!(".{method}(");
+            (!scenario_bodies
+                .iter()
+                .any(|(_, body)| body.contains(&invocation)))
+            .then(|| format!("{trait_name}::{method}"))
+        }));
     }
+    assert!(
+        missing_method_evidence.is_empty(),
+        "storage methods lack a named scenario that directly invokes the method and asserts effects: {missing_method_evidence:#?}"
+    );
 
     let context_free_mutations = manifest
         .get("context_free_mutations")
@@ -387,6 +486,38 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
         }
     }
 
+    let expected_context_free = traits
+        .iter()
+        .flat_map(|(trait_name, value)| {
+            let effects = value
+                .as_table()
+                .and_then(|entry| entry.get("effects"))
+                .and_then(toml::Value::as_table)
+                .expect("every trait has checked effect classifications");
+            ["observation", "workflow_mutation"]
+                .into_iter()
+                .filter_map(|effect| effects.get(effect))
+                .flat_map(|values| {
+                    values
+                        .as_array()
+                        .expect("checked effect classifications are arrays")
+                })
+                .map(|method| {
+                    format!(
+                        "{trait_name}::{}",
+                        method
+                            .as_str()
+                            .expect("checked effect classifications contain strings")
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        classified, expected_context_free,
+        "context-free writer inventory must exactly match observation and workflow-mutation effects"
+    );
+
     let enums = manifest
         .get("enums")
         .and_then(toml::Value::as_table)
@@ -419,6 +550,164 @@ fn storage_semantic_coverage_inventory_matches_traits_variants_and_evidence() {
             assert_scenario_exists(&root, &scenario);
         }
     }
+}
+
+#[test]
+fn storage_collection_method_contracts_match_effect_inventory() {
+    const COLLECTION_EFFECTS: [&str; 4] =
+        ["page_read", "candidate_read", "batch_read", "complete_read"];
+    const QUERY_PROFILE_FIELDS: [&str; 10] = [
+        "shape",
+        "filters",
+        "sorts",
+        "cursor",
+        "visibility",
+        "count",
+        "snapshot",
+        "bounds",
+        "invalid_error",
+        "unsupported_error",
+    ];
+    const COLLECTION_PROFILE_FIELDS: [&str; 11] = [
+        "shape",
+        "ordering",
+        "duplicate_inputs",
+        "missing_inputs",
+        "multiplicity",
+        "completeness",
+        "bounds",
+        "visibility",
+        "snapshot",
+        "invalid_error",
+        "unsupported_error",
+    ];
+
+    let root = repository_root();
+    let semantic = storage_semantic_manifest(&root);
+    let semantic_traits = semantic
+        .get("traits")
+        .and_then(toml::Value::as_table)
+        .expect("semantic coverage should have a traits table");
+    let mut expected = std::collections::BTreeMap::new();
+    for (trait_name, value) in semantic_traits {
+        let effects = value
+            .get("effects")
+            .and_then(toml::Value::as_table)
+            .unwrap_or_else(|| panic!("trait {trait_name} should classify effects"));
+        for effect in COLLECTION_EFFECTS {
+            if let Some(methods) = effects.get(effect).and_then(toml::Value::as_array) {
+                for method in methods {
+                    let method = method.as_str().unwrap_or_else(|| {
+                        panic!("trait {trait_name} effect {effect} should contain method names")
+                    });
+                    expected.insert(format!("{trait_name}::{method}"), effect.to_string());
+                }
+            }
+        }
+    }
+
+    let contracts = storage_method_contract_manifest(&root);
+    let methods = contracts
+        .get("methods")
+        .and_then(toml::Value::as_table)
+        .expect("method contracts should have a methods table");
+    assert_eq!(
+        methods.keys().cloned().collect::<BTreeSet<_>>(),
+        expected.keys().cloned().collect::<BTreeSet<_>>(),
+        "method contracts must cover every collection-shaped storage method exactly"
+    );
+    let query_profiles = contracts
+        .get("query_profiles")
+        .and_then(toml::Value::as_table)
+        .expect("method contracts should have query profiles");
+    let collection_profiles = contracts
+        .get("collection_profiles")
+        .and_then(toml::Value::as_table)
+        .expect("method contracts should have collection profiles");
+    let mut used_query_profiles = BTreeSet::new();
+    let mut used_collection_profiles = BTreeSet::new();
+
+    for (qualified_method, value) in methods {
+        let entry = value
+            .as_table()
+            .unwrap_or_else(|| panic!("method contract {qualified_method} should be a table"));
+        let effect = entry
+            .get("effect")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("method contract {qualified_method} needs an effect"));
+        assert_eq!(
+            Some(effect),
+            expected.get(qualified_method).map(String::as_str),
+            "method contract effect drifted for {qualified_method}"
+        );
+        assert!(
+            entry
+                .get("carrier")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|carrier| !carrier.trim().is_empty()),
+            "method contract {qualified_method} needs its exact input carrier"
+        );
+        let profile_name = entry
+            .get("profile")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("method contract {qualified_method} needs a profile"));
+        let (profiles, required_fields, used_profiles) = match effect {
+            "page_read" | "candidate_read" => (
+                query_profiles,
+                QUERY_PROFILE_FIELDS.as_slice(),
+                &mut used_query_profiles,
+            ),
+            "batch_read" | "complete_read" => (
+                collection_profiles,
+                COLLECTION_PROFILE_FIELDS.as_slice(),
+                &mut used_collection_profiles,
+            ),
+            other => panic!("method contract {qualified_method} has unsupported effect {other}"),
+        };
+        let profile = profiles
+            .get(profile_name)
+            .and_then(toml::Value::as_table)
+            .unwrap_or_else(|| {
+                panic!("method contract {qualified_method} names missing profile {profile_name}")
+            });
+        used_profiles.insert(profile_name.to_string());
+        for field in required_fields {
+            assert!(
+                profile.contains_key(*field),
+                "profile {profile_name} used by {qualified_method} is missing {field}"
+            );
+        }
+        for field in ["invalid_error", "unsupported_error"] {
+            assert_eq!(
+                profile.get(field).and_then(toml::Value::as_str),
+                Some("InvalidInput"),
+                "profile {profile_name} must map {field} to the portable InvalidInput error"
+            );
+        }
+        let expected_shape = match effect {
+            "page_read" => "page",
+            "candidate_read" => "candidate",
+            "batch_read" => "batch",
+            "complete_read" => "complete",
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            profile.get("shape").and_then(toml::Value::as_str),
+            Some(expected_shape),
+            "profile {profile_name} has the wrong result shape for {qualified_method}"
+        );
+    }
+
+    assert_eq!(
+        used_query_profiles,
+        query_profiles.keys().cloned().collect(),
+        "query profiles must all be used"
+    );
+    assert_eq!(
+        used_collection_profiles,
+        collection_profiles.keys().cloned().collect(),
+        "collection profiles must all be used"
+    );
 }
 
 #[test]

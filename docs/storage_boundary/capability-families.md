@@ -452,5 +452,7 @@ When a semantic capability group changes, update all of the following together:
 5. Backend-native tests where consistency or failure mechanics change.
 6. `semantic-coverage.toml`, including exact methods, tracked variants, and
    shared or native scenario evidence.
-7. This document and any sanitized administrator settings affected by the
+7. `method-contracts.toml` when a page, candidate, batch, or complete read is
+   added or changed.
+8. This document and any sanitized administrator settings affected by the
    change.

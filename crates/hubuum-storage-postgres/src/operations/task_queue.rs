@@ -400,6 +400,7 @@ pub async fn list_tasks(
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
     let (submitted_by, kind, status, options) = query.into_parts();
     let submitted_by = submitted_by.map(PrincipalId::id);
+    reject_query_filters(&options, "tasks")?;
     let options = crate::cursor::normalize_query_options(options, FilterField::Id, false)?;
     if options.include_total() {
         runtime
@@ -1005,6 +1006,7 @@ fn normalize_task_child_page_options(
     options: QueryOptions,
     resource: &str,
 ) -> Result<QueryOptions, PostgresStorageError> {
+    reject_query_filters(&options, resource)?;
     let options = crate::cursor::normalize_query_options(options, FilterField::Id, false)?;
     if options
         .sort()
@@ -1016,6 +1018,18 @@ fn normalize_task_child_page_options(
         )));
     }
     Ok(options)
+}
+
+fn reject_query_filters(
+    options: &QueryOptions,
+    resource: &str,
+) -> Result<(), PostgresStorageError> {
+    if options.filters().is_empty() {
+        return Ok(());
+    }
+    Err(PostgresStorageError::invalid_input(format!(
+        "QueryOptions filters are not supported for {resource}; use the typed query scope"
+    )))
 }
 
 fn decode_i64_page_cursor(
@@ -1093,7 +1107,7 @@ fn validate_positive_task_id(task_id: i32) -> Result<(), PostgresStorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hubuum_query::SortParam;
+    use hubuum_query::{ParsedQueryParam, SearchOperator, SortParam};
     use hubuum_storage_core::StorageErrorKind;
 
     #[test]
@@ -1122,6 +1136,46 @@ mod tests {
         .unwrap();
 
         assert_eq!(task_cursor_fields(&options).unwrap().len(), 7);
+    }
+
+    #[test]
+    fn task_pages_reject_untyped_query_filters() {
+        let options = QueryOptions::new(
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Status,
+                SearchOperator::Equals { is_negated: false },
+                "queued",
+            )],
+            Vec::new(),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let error = reject_query_filters(&options, "tasks").unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_child_pages_reject_query_filters() {
+        let options = QueryOptions::new(
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Id,
+                SearchOperator::Equals { is_negated: false },
+                "1",
+            )],
+            Vec::new(),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let error = normalize_task_child_page_options(options, "task events").unwrap_err();
+
+        assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
     }
 
     #[test]
