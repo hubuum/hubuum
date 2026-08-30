@@ -16,7 +16,10 @@ use crate::models::{
     HubuumObjectRelationID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumObject, NewHubuumObjectRelation, ObjectAggregateCursorBudget, ObjectAggregateRequest,
     ObjectAggregateTarget, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
-    Permissions, StorageObjectAggregateAuthorization, UpdateCollection, UpdateHubuumClass,
+    Permissions, STRUCTURED_SEARCH_VERSION, StorageObjectAggregateAuthorization,
+    StructuredClassSelector, StructuredRelatedPredicate, StructuredSearchExpression,
+    StructuredSearchField, StructuredSearchFieldPredicate, StructuredSearchOperator,
+    StructuredSearchRequest, StructuredSearchTarget, UpdateCollection, UpdateHubuumClass,
     UpdateHubuumObject, UserID, parse_object_aggregate_query,
 };
 use crate::services::Services;
@@ -95,6 +98,136 @@ async fn object_relation_budget_fixture(
         class_relation_id: class_relation.id,
     });
     (fixture, services, selector)
+}
+
+struct StructuredSearchPerformanceFixture {
+    collection: CollectionFixture,
+    source_class_id: HubuumClassID,
+    target_class_id: HubuumClassID,
+    selective_target_name: String,
+    target_name_fragment: String,
+}
+
+impl StructuredSearchPerformanceFixture {
+    async fn new(scope: &TestScope, label: &str) -> Self {
+        let collection = scope.collection_fixture(label).await;
+        let mut classes = Vec::new();
+        for depth in 0..=crate::models::search::MAX_RELATED_FILTER_DEPTH {
+            classes.push(
+                NewHubuumClass {
+                    collection_id: collection.collection.id,
+                    name: scope.scoped_name(&format!("{label}_class_{depth:02}")),
+                    description: "structured search performance class".to_string(),
+                    json_schema: None,
+                    validate_schema: None,
+                }
+                .save_without_events(&scope.pool)
+                .await
+                .expect("structured search performance class should save"),
+            );
+        }
+
+        let mut class_relations = Vec::new();
+        for endpoints in classes.windows(2) {
+            class_relations.push(
+                NewHubuumClassRelation {
+                    from_hubuum_class_id: endpoints[0].id,
+                    to_hubuum_class_id: endpoints[1].id,
+                    forward_template_alias: None,
+                    reverse_template_alias: None,
+                    from_max_relations: None,
+                    to_max_relations: None,
+                }
+                .save_without_events(&scope.pool)
+                .await
+                .expect("structured search performance class relation should save"),
+            );
+        }
+
+        let target_name_fragment = scope.scoped_name(&format!("{label}_target"));
+        let selective_target_name = format!("{target_name_fragment}_0");
+        for chain in 0..2 {
+            let mut objects = Vec::new();
+            for (depth, class) in classes.iter().enumerate() {
+                let name = if depth == usize::from(crate::models::search::MAX_RELATED_FILTER_DEPTH)
+                {
+                    format!("{target_name_fragment}_{chain}")
+                } else {
+                    scope.scoped_name(&format!("{label}_node_{depth:02}_{chain}"))
+                };
+                objects.push(
+                    NewHubuumObject {
+                        collection_id: collection.collection.id,
+                        hubuum_class_id: class.id,
+                        name,
+                        description: "structured search performance object".to_string(),
+                        data: serde_json::json!({"chain": chain, "depth": depth}),
+                    }
+                    .save_without_events(&scope.pool)
+                    .await
+                    .expect("structured search performance object should save"),
+                );
+            }
+            for (depth, endpoints) in objects.windows(2).enumerate() {
+                NewHubuumObjectRelation {
+                    from_hubuum_object_id: endpoints[0].id,
+                    to_hubuum_object_id: endpoints[1].id,
+                    class_relation_id: class_relations[depth].id,
+                }
+                .save_without_events(&scope.pool)
+                .await
+                .expect("structured search performance object relation should save");
+            }
+        }
+
+        Self {
+            collection,
+            source_class_id: HubuumClassID::new(classes[0].id).expect("valid source class id"),
+            target_class_id: HubuumClassID::new(classes.last().expect("target class").id)
+                .expect("valid target class id"),
+            selective_target_name,
+            target_name_fragment,
+        }
+    }
+
+    fn query(
+        &self,
+        operator: StructuredSearchOperator,
+        value: &str,
+    ) -> crate::models::search::QueryOptions {
+        let request = StructuredSearchRequest {
+            version: STRUCTURED_SEARCH_VERSION,
+            target: StructuredSearchTarget::Object {
+                class: Some(StructuredClassSelector::Id {
+                    id: self.source_class_id,
+                }),
+            },
+            filter: Some(StructuredSearchExpression::Related {
+                predicate: StructuredRelatedPredicate {
+                    class: StructuredClassSelector::Id {
+                        id: self.target_class_id,
+                    },
+                    filters: vec![StructuredSearchFieldPredicate {
+                        field: StructuredSearchField::Name,
+                        operator,
+                        path: None,
+                        value: Some(Value::String(value.to_string())),
+                    }],
+                    depth: crate::models::search::MAX_RELATED_FILTER_DEPTH,
+                },
+            }),
+            sort: Vec::new(),
+            limit: Some(20),
+            cursor: None,
+            include_total: false,
+        };
+        request
+            .validate()
+            .expect("performance request should validate");
+        request
+            .query_options(Some(self.source_class_id), None)
+            .expect("performance query options should build")
+    }
 }
 
 #[derive(QueryableByName)]
@@ -1082,6 +1215,81 @@ async fn object_page_query_count_is_constant_with_page_size() {
     assert_eq!(large_queries.connection_checkouts(), 1);
 
     fixture.cleanup().await.expect("object fixture cleanup");
+}
+
+#[actix_web::test]
+async fn structured_related_depth_limit_has_fixed_query_shape_and_skips_count_work() {
+    let scope = TestScope::new();
+    let fixture =
+        StructuredSearchPerformanceFixture::new(&scope, "structured_search_depth_limit").await;
+    let subject = UserID::new(1).expect("valid synthetic runtime-admin subject id");
+
+    let run = |operator, value: &str| {
+        let query = fixture.query(operator, value);
+        async {
+            crate::services::catalog::list_objects(&scope.pool, subject.id(), true, None, query)
+                .await
+        }
+    };
+
+    let (selective, selective_queries) = capture_queries(run(
+        StructuredSearchOperator::Equals,
+        &fixture.selective_target_name,
+    ))
+    .await;
+    let (selective_rows, selective_total) = selective.expect("selective search should succeed");
+    assert_eq!(selective_rows.len(), 1);
+    assert_eq!(selective_total, None);
+
+    let (non_selective, non_selective_queries) = capture_queries(run(
+        StructuredSearchOperator::Icontains,
+        &fixture.target_name_fragment,
+    ))
+    .await;
+    let (non_selective_rows, non_selective_total) =
+        non_selective.expect("non-selective search should succeed");
+    assert_eq!(non_selective_rows.len(), 2);
+    assert_eq!(non_selective_total, None);
+
+    assert_eq!(
+        selective_queries.total_queries(),
+        non_selective_queries.total_queries()
+    );
+    assert_eq!(
+        selective_queries.domain_queries(),
+        non_selective_queries.domain_queries()
+    );
+    assert_eq!(
+        selective_queries.control_queries(),
+        non_selective_queries.control_queries()
+    );
+    assert_eq!(
+        selective_queries.connection_checkouts(),
+        non_selective_queries.connection_checkouts()
+    );
+    assert_eq!(
+        non_selective_queries.total_queries(),
+        7,
+        "{:#?}",
+        non_selective_queries.query_counts()
+    );
+    assert_eq!(non_selective_queries.domain_queries(), 4);
+    assert_eq!(non_selective_queries.control_queries(), 3);
+    assert_eq!(non_selective_queries.connection_checkouts(), 1);
+    assert_eq!(selective_queries.queries_matching("WITH RECURSIVE"), 1);
+    assert_eq!(non_selective_queries.queries_matching("WITH RECURSIVE"), 1);
+    assert_eq!(
+        non_selective_queries.queries_matching("SELECT count("),
+        0,
+        "include_total=false must not execute a count query: {:#?}",
+        non_selective_queries.query_counts()
+    );
+
+    fixture
+        .collection
+        .cleanup()
+        .await
+        .expect("structured search performance fixture cleanup");
 }
 
 #[actix_web::test]

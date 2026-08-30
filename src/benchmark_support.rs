@@ -14,7 +14,19 @@ use crate::services::Services;
 #[cfg(feature = "postgres-bench")]
 use crate::storage::{BenchmarkStorageContext, StorageHandle};
 #[cfg(feature = "postgres-bench")]
+use crate::{
+    errors::ApiError,
+    models::{
+        HubuumClassID, HubuumObject, STRUCTURED_SEARCH_VERSION, StructuredClassSelector,
+        StructuredRelatedPredicate, StructuredSearchExpression, StructuredSearchField,
+        StructuredSearchFieldPredicate, StructuredSearchOperator, StructuredSearchRequest,
+        StructuredSearchTarget,
+    },
+};
+#[cfg(feature = "postgres-bench")]
 use hubuum_storage_postgres::PostgresPool;
+#[cfg(feature = "postgres-bench")]
+use serde_json::Value;
 
 /// Build the collection service around the production observability wrapper.
 ///
@@ -46,4 +58,58 @@ pub fn storage_for_postgres(pool: PostgresPool) -> BenchmarkStorageContext {
 #[must_use]
 pub fn services_for_storage(storage: &BenchmarkStorageContext) -> Services {
     Services::from_storage(storage.clone())
+}
+
+/// Run the production PostgreSQL structured-related-object query used by the
+/// self-contained storage benchmark.
+///
+/// Fixture construction resolves both class IDs before the timed region. The
+/// synthetic administrator ID is safe because SQL-backed administrator
+/// visibility does not consult group membership, while the catalog adapter
+/// still applies its normal collection, class, object, and relation scopes.
+#[cfg(feature = "postgres-bench")]
+#[doc(hidden)]
+pub async fn structured_related_object_search(
+    storage: &BenchmarkStorageContext,
+    source_class_id: HubuumClassID,
+    target_class_id: HubuumClassID,
+    target_operator: StructuredSearchOperator,
+    target_value: &str,
+    depth: u8,
+) -> Result<Vec<HubuumObject>, ApiError> {
+    let request = StructuredSearchRequest {
+        version: STRUCTURED_SEARCH_VERSION,
+        target: StructuredSearchTarget::Object {
+            class: Some(StructuredClassSelector::Id {
+                id: source_class_id,
+            }),
+        },
+        filter: Some(StructuredSearchExpression::Related {
+            predicate: StructuredRelatedPredicate {
+                class: StructuredClassSelector::Id {
+                    id: target_class_id,
+                },
+                filters: vec![StructuredSearchFieldPredicate {
+                    field: StructuredSearchField::Name,
+                    operator: target_operator,
+                    path: None,
+                    value: Some(Value::String(target_value.to_string())),
+                }],
+                depth,
+            },
+        }),
+        sort: Vec::new(),
+        limit: Some(250),
+        cursor: None,
+        include_total: false,
+    };
+    // This request is constructed from typed benchmark inputs above. Do not
+    // call the public HTTP validator here: page-limit validation reads the
+    // application CLI configuration, which must remain uninitialized while
+    // Criterion owns the benchmark process arguments.
+    let options = request.query_options(Some(source_class_id), None)?;
+    let (rows, total) =
+        crate::services::catalog::list_objects(storage, 1, true, None, options).await?;
+    debug_assert!(total.is_none(), "benchmark search must skip exact counts");
+    Ok(rows)
 }

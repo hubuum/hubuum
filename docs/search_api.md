@@ -492,6 +492,34 @@ caller to narrow the query. PostgreSQL work is bounded by
 `HUBUUM_DB_STATEMENT_TIMEOUT_MS`; pool acquisition remains bounded by
 `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS`.
 
+#### Measured depth-10 baseline
+
+The self-contained `storage_postgres_criterion` benchmark exercises the
+production recursive query at the maximum related depth. Its fixture contains
+128 independent chains of 11 objects: 1,408 objects and 1,280 relations in
+total. The selective case matches one target by exact name; the non-selective
+case matches all 128 targets by a case-insensitive substring. Both request 250
+rows with `include_total=false`. Fixture creation, migration, `ANALYZE`, and
+warmup are outside the timed region.
+
+The reference run on 2026-08-30 used PostgreSQL 18.4 in the pinned benchmark
+container, Rust 1.98.0, and an Intel Xeon Silver 4216 host. Criterion collected
+100 samples after its normal three-second warmup:
+
+| Target predicate | Matched roots | Median | Median 95% interval |
+| --- | ---: | ---: | ---: |
+| Exact target name | 1 | 15.636 ms | 15.631–15.645 ms |
+| Case-insensitive substring | 128 | 24.039 ms | 24.033–24.044 ms |
+
+These host-specific numbers are a reference baseline, not a latency SLO. Pull
+requests compare the same benchmark between base and head. The deterministic
+storage test separately pins both cases to one pool checkout, four domain
+queries, three transaction-control statements, one recursive result query,
+and no count query. This measured workload does not justify another graph
+index: the recursive CTE can traverse the existing
+`idx_hubuumobject_relation_on_from_to` and
+`idx_hubuumobject_relation_on_to` indexes in their respective directions.
+
 ### Errors and compatibility
 
 The endpoint uses the normal `ApiError` response shape. Common statuses are:
@@ -548,3 +576,21 @@ database connection before result events are paced by the client, preventing a
 slow or disconnected consumer from occupying the connection pool. A disconnect
 before completion drops the pending search future; database statements remain
 bounded by the configured statement timeout.
+
+The initial streaming decision uses these measured or enforced bounds:
+
+| Property | Page-progressive behavior |
+| --- | --- |
+| Time to `started` | Emitted before polling search execution; zero search queries must complete first |
+| Time to first `result` | At least the complete authorized page-query latency; 15.636–24.039 ms in the depth-10 reference cases above |
+| Connection occupancy under a slow client | Zero after the page future resolves; result pacing owns the completed page, not a database connection |
+| Buffered result memory | Linear in the effective page limit; at most 250 rows with the default maximum-page configuration |
+| Disconnect before completion | Drops the pending execution future; PostgreSQL work remains bounded by the statement timeout |
+| Disconnect during result delivery | Drops only the completed in-memory page and stream state |
+
+Database-row streaming would improve first-result latency only by retaining a
+pool connection across client backpressure and by weakening the point at which
+authorization and global ordering are final. The measured depth-10 page latency
+does not justify that tradeoff for version 1. Revisit this decision if
+base/head benchmarks or production pool telemetry show that page completion,
+memory, or cancellation behavior is the limiting resource.
