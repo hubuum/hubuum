@@ -1447,7 +1447,12 @@ jobs:
 
   build-main-linux-artifacts:
     name: Build static main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' &&
+      needs.ci-gate.result == 'success' &&
+      needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
       - ci-gate
@@ -1515,7 +1520,12 @@ jobs:
 
   build-main-native-artifacts:
     name: Build native main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' &&
+      needs.ci-gate.result == 'success' &&
+      needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
       - ci-gate
@@ -1614,7 +1624,12 @@ jobs:
 
   publish-main-container-images:
     name: Build main container (${{ matrix.platform.arch }})
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' &&
+      needs.ci-gate.result == 'success' &&
+      needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
       - ci-gate
@@ -1684,7 +1699,10 @@ jobs:
 
   publish-main-container-manifests:
     name: Create main multi-arch manifest
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.publish-main-container-images.result == 'success'
     needs: publish-main-container-images
     runs-on: ubuntu-24.04
     permissions:

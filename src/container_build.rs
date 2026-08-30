@@ -666,6 +666,43 @@ fn main_builds_remain_run_artifacts_without_a_rolling_github_release() {
 }
 
 #[test]
+fn main_publication_runs_after_inapplicable_ci_jobs_are_skipped() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+
+    for (job, next_job) in [
+        ("build-main-linux-artifacts", "build-main-native-artifacts"),
+        (
+            "build-main-native-artifacts",
+            "publish-main-container-images",
+        ),
+        (
+            "publish-main-container-images",
+            "publish-main-container-manifests",
+        ),
+    ] {
+        let job_definition =
+            lines_between(&workflow, &format!("  {job}:"), &format!("  {next_job}:"))
+                .unwrap_or_else(|| panic!("CI should define {job} before {next_job}"))
+                .join("\n");
+
+        assert!(job_definition.contains("    if: >-\n      always() &&"));
+        assert!(job_definition.contains("needs.changes.result == 'success'"));
+        assert!(job_definition.contains("needs.ci-gate.result == 'success'"));
+        assert!(job_definition.contains("needs.changes.outputs.artifacts == 'true'"));
+    }
+
+    let manifest_job = lines_between(
+        &workflow,
+        "  publish-main-container-manifests:",
+        "  publish-tag-container-images:",
+    )
+    .expect("CI should define main manifest publication before tagged publication")
+    .join("\n");
+    assert!(manifest_job.contains("    if: >-\n      always() &&"));
+    assert!(manifest_job.contains("needs.publish-main-container-images.result == 'success'"));
+}
+
+#[test]
 fn main_container_manifest_is_sha_addressed_before_channel_promotion() {
     let workflow = read_repository_text(".github/workflows/ci.yml");
     let job_start = workflow
