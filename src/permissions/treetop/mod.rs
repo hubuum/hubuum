@@ -532,18 +532,17 @@ impl PermissionBackend for TreetopPermissionBackend {
                 };
                 if include {
                     authorized_count = authorized_count.saturating_add(1);
+                    let row = GroupPermission {
+                        group: group.clone(),
+                        permission,
+                    };
                     let belongs_to_response = page
                         .cursor()
-                        .map(|cursor| {
-                            item_is_after_cursor(&permission, cursor, candidate_options.sort())
-                        })
+                        .map(|cursor| item_is_after_cursor(&row, cursor, candidate_options.sort()))
                         .transpose()?
                         .unwrap_or(true);
                     if belongs_to_response && rows.len() < response_limit {
-                        rows.push(GroupPermission {
-                            group: group.clone(),
-                            permission,
-                        });
+                        rows.push(row);
                     }
                 }
             }
