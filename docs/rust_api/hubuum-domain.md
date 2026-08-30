@@ -1,19 +1,20 @@
-# `hubuum-domain` Future Rust API Design
+# `hubuum-domain` Rust API Policy
 
-Status: workspace-internal; candidate for a later publication review.
+Status: experimental public API in the storage SDK `0.1` release train.
 
 ## Purpose and Callers
 
 `hubuum-domain` provides validated, persistence-neutral policy values shared by
-Hubuum applications and storage adapters. A future external backend crate could
-depend on these types after promotion. It is not an HTTP client or a server
+Hubuum applications and storage adapters. External backend crates may depend on
+these types without linking the server. It is not an HTTP client or a server
 embedding API.
 
 ## Compatibility
 
-There is no current third-party SemVer promise or crates.io release. A separate
-promotion change must define the initial supported surface and compatibility
-policy. The workspace MSRV is Rust 1.88.
+The crate follows the lockstep versioning, exact dependency, MSRV, feature,
+deprecation, and release rules in the
+[Storage Adapter SDK Compatibility policy](../storage_adapter_sdk.md). The
+release-train MSRV is Rust 1.88.
 
 Its values are in-memory contracts; it makes no wire-format guarantee unless a
 type's documentation explicitly says otherwise. The optional `openapi` feature
@@ -39,6 +40,7 @@ without exposing PostgreSQL JSONB rules or an adapter error to callers.
 
 ## Ownership and Verification
 
-Hubuum maintainers own the workspace crate. Ordinary workspace tests and the
-storage consumers verify it today. A later promotion must enable rustdoc,
-package, and crates.io compatibility gates before the first public release.
+Hubuum maintainers own the crate. Ordinary workspace tests and storage
+consumers verify its behavior. CI packages it, builds rustdoc with warnings
+denied, and compares it with the latest crates.io release when a baseline
+exists.

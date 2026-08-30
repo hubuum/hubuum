@@ -6,10 +6,13 @@ rust-version = "1.88"
 description = "Backend-neutral domain types and validation for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
-publish = false
+readme = "../../docs/rust_api/hubuum-domain.md"
+publish = true
 
 [package.metadata.hubuum]
-rust-api = "workspace-internal"
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-domain.md"
+release-train = "storage-sdk"
 
 [dependencies]
 bigdecimal = "0.4"

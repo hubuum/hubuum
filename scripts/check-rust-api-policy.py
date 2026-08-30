@@ -26,10 +26,12 @@ VALID_STATUSES = INTERNAL_STATUSES | PUBLIC_STATUSES
 @dataclass(frozen=True)
 class PackagePolicy:
     name: str
+    version: str
     manifest: str
     rust_api: str
     publish: bool
     policy_document: str | None
+    release_train: str | None
 
 
 @dataclass(frozen=True)
@@ -218,6 +220,9 @@ def declared_policy_documents(root: Path) -> list[str]:
 
 def package_policy(root: Path, manifest: Path) -> PackagePolicy:
     name, package, hubuum = package_manifest(root, manifest)
+    version = package.get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"package {name} must declare a version")
     rust_api = hubuum.get("rust-api") if hubuum is not None else None
     if rust_api not in VALID_STATUSES:
         fail(
@@ -227,11 +232,18 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
 
     publish = cargo_publish_policy(name, package.get("publish", True))
     policy_document = hubuum.get("policy-document") if hubuum is not None else None
+    release_train = hubuum.get("release-train") if hubuum is not None else None
+    if release_train is not None and (
+        not isinstance(release_train, str) or not release_train.strip()
+    ):
+        fail(f"package {name} has an invalid release-train")
     if rust_api in INTERNAL_STATUSES:
         if publish.enabled:
             fail(f"internal package {name} must disable publishing")
         if policy_document is not None:
             fail(f"internal package {name} must not declare policy-document")
+        if release_train is not None:
+            fail(f"internal package {name} must not declare release-train")
     else:
         if not publish.enabled:
             fail(
@@ -248,14 +260,111 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
             name,
             policy_document,
         )
+        readme = package.get("readme")
+        if not isinstance(readme, str) or not readme:
+            fail(f"public package {name} must package its policy document as readme")
+        readme_path = (manifest.parent / readme).resolve()
+        policy_path = (root / policy_document).resolve()
+        if readme_path != policy_path:
+            fail(
+                f"public package {name} readme must be its declared policy document "
+                f"{policy_document}"
+            )
 
     return PackagePolicy(
         name=name,
+        version=version,
         manifest=str(manifest.relative_to(root)),
         rust_api=rust_api,
         publish=publish.enabled,
         policy_document=policy_document,
+        release_train=release_train,
     )
+
+
+def dependency_tables(data: dict[str, object]) -> list[dict[str, object]]:
+    tables: list[dict[str, object]] = []
+    for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+        table = data.get(key)
+        if isinstance(table, dict):
+            tables.append(table)
+    targets = data.get("target")
+    if isinstance(targets, dict):
+        for target in targets.values():
+            if not isinstance(target, dict):
+                continue
+            for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+                table = target.get(key)
+                if isinstance(table, dict):
+                    tables.append(table)
+    return tables
+
+
+def validate_public_dependency_graph(root: Path, result: list[PackagePolicy]) -> None:
+    by_manifest = {
+        (root / policy.manifest).resolve(): policy
+        for policy in result
+    }
+    for policy in result:
+        if policy.rust_api not in PUBLIC_STATUSES:
+            continue
+        manifest = (root / policy.manifest).resolve()
+        data = read_manifest(manifest)
+        for table in dependency_tables(data):
+            for dependency_name, dependency in table.items():
+                if not isinstance(dependency, dict) or "path" not in dependency:
+                    continue
+                path = dependency.get("path")
+                if not isinstance(path, str) or not path:
+                    fail(
+                        f"public package {policy.name} has an invalid path dependency "
+                        f"for {dependency_name}"
+                    )
+                dependency_manifest = (manifest.parent / path / "Cargo.toml").resolve()
+                dependency_policy = by_manifest.get(dependency_manifest)
+                if dependency_policy is None:
+                    fail(
+                        f"public package {policy.name} path dependency {dependency_name} "
+                        "must resolve to a workspace package"
+                    )
+                if dependency_policy.rust_api not in PUBLIC_STATUSES:
+                    fail(
+                        f"public package {policy.name} must not depend on internal "
+                        f"workspace package {dependency_policy.name}"
+                    )
+                requirement = dependency.get("version")
+                if not isinstance(requirement, str) or not requirement:
+                    fail(
+                        f"public package {policy.name} path dependency "
+                        f"{dependency_policy.name} must declare a registry version"
+                    )
+                if policy.release_train is not None:
+                    if dependency_policy.release_train != policy.release_train:
+                        fail(
+                            f"release train {policy.release_train} package {policy.name} "
+                            f"must not depend on workspace package {dependency_policy.name} "
+                            "from another release train"
+                        )
+                    expected = f"={dependency_policy.version}"
+                    if requirement != expected:
+                        fail(
+                            f"release train {policy.release_train} dependency "
+                            f"{policy.name} -> {dependency_policy.name} must use exact "
+                            f"requirement {expected}"
+                        )
+
+    trains: dict[str, list[PackagePolicy]] = {}
+    for policy in result:
+        if policy.release_train is not None:
+            trains.setdefault(policy.release_train, []).append(policy)
+    for train, packages in trains.items():
+        versions = {package.version for package in packages}
+        if len(versions) != 1:
+            rendered = ", ".join(
+                f"{package.name}={package.version}"
+                for package in sorted(packages, key=lambda item: item.name)
+            )
+            fail(f"release train {train} packages must share one version: {rendered}")
 
 
 def policies(root: Path) -> list[PackagePolicy]:
@@ -265,7 +374,9 @@ def policies(root: Path) -> list[PackagePolicy]:
     names = [policy.name for policy in result]
     if len(names) != len(set(names)):
         fail("workspace package names must be unique")
-    return sorted(result, key=lambda policy: policy.name)
+    result = sorted(result, key=lambda policy: policy.name)
+    validate_public_dependency_graph(root, result)
+    return result
 
 
 def main() -> int:

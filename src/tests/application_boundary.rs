@@ -1596,10 +1596,17 @@ fn every_registered_backend_runs_the_reusable_six_part_audit_contract() {
     let root = repository_root();
     let manifest = read_source(&root.join("crates/hubuum-storage-conformance/Cargo.toml"))
         .expect("storage conformance manifest should be readable");
-    assert!(
-        manifest.contains("publish = false"),
-        "the conformance harness must remain workspace-internal"
-    );
+    for required in [
+        "publish = true",
+        "rust-api = \"experimental-public\"",
+        "policy-document = \"docs/rust_api/hubuum-storage-conformance.md\"",
+        "release-train = \"storage-sdk\"",
+    ] {
+        assert!(
+            manifest.contains(required),
+            "the public conformance harness is missing {required}"
+        );
+    }
 
     let fixture = read_source(&root.join("src/tests/storage_contract.rs"))
         .expect("registered backend contract fixture should be readable");

@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "hubuum-templates"

@@ -124,7 +124,7 @@ mapping, rejects unused profiles, and requires method-specific semantic
 evidence. Adding or reclassifying a collection-shaped method therefore requires
 updating its observable contract in the same change.
 
-This completes the method-level query and collection specification; it does
-not by itself publish `hubuum-storage-core` as a supported standalone adapter
-SDK. Crate publication, compatibility promises, versioning, and the supported
-certification entry point are a separate policy decision.
+This completes the method-level query and collection specification used by the
+experimental public [storage adapter SDK](../storage_adapter_sdk.md). The SDK
+policy defines crate publication, compatibility, versioning, and the supported
+conformance entry point.

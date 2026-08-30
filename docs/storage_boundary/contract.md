@@ -297,25 +297,23 @@ container inputs, and native migration tests as required.
 
 ## Packaging and Public API
 
-`hubuum-storage-core` is the experimental extension surface. It and its
-backend-neutral dependencies remain workspace-internal in this change; this
-pull request does not publish them as external crates. Their APIs are still
-reviewed as future publication boundaries and must remain usable by an
-out-of-tree adapter without root or adapter-private access.
+`hubuum-storage-core` is the experimental public extension surface. It, its
+backend-neutral dependencies, and `hubuum-storage-conformance` form the
+exact-version [storage adapter SDK](../storage_adapter_sdk.md). They must remain
+usable by an out-of-tree adapter without root or adapter-private access.
 
-That usability is structural: an external crate can consume the types and
-implement the traits. Method-specific query and collection behavior is now
-normative and exhaustive, but independent semantic certification still depends
-on the workspace compatibility suite. Neutral event construction, reusable
-certification packaging, and publication policy remain separate work. See
+An external crate can consume the types, implement the traits, and use the
+published conformance harness. Method-specific query and collection behavior
+is normative and exhaustive. Neutral audit-document construction and
+validation by a second complete adapter remain follow-up work. See
 [storage query semantics](query-semantics.md) and the
 [method contract registry](method-contracts.toml).
 
-`hubuum-storage-postgres`, `hubuum-storage-conformance`, and the root `hubuum`
-crate are workspace-internal. The conformance crate is a development dependency
-of the application and must not enter production binaries. PostgreSQL schema,
-migrations, native clients, and telemetry types remain in the PostgreSQL
-adapter rather than leaking into `hubuum-storage-core`.
+`hubuum-storage-postgres` and the root `hubuum` crate are workspace-internal.
+The conformance crate is a public development dependency and must not enter
+production binaries. PostgreSQL schema, migrations, native clients, and
+telemetry types remain in the PostgreSQL adapter rather than leaking into
+`hubuum-storage-core`.
 
 ## Performance Contract
 

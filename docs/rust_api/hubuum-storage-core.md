@@ -1,14 +1,14 @@
-# `hubuum-storage-core` Future Rust API Design
+# `hubuum-storage-core` Rust API Policy
 
-Status: workspace-internal; candidate for a later publication review.
+Status: experimental public API in the storage SDK `0.1` release train.
 
 ## Purpose and Callers
 
 `hubuum-storage-core` is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
 `StorageError` taxonomy, and the aggregate `StorageBackend` compile-time check.
-The interface is designed so a backend crate may later live outside this
-workspace, but this change does not publish or support that packaging yet.
+Backend crates may live outside this workspace and depend on the supported SDK
+graph without linking the server.
 Hubuum uses static Cargo composition; this is not a dynamic plugin ABI and has
 no runtime contract version handshake.
 
@@ -36,9 +36,10 @@ HTTP clients should use Hubuum's versioned API instead of this storage API.
 
 ## Compatibility
 
-There is no current third-party SemVer promise or crates.io release. A separate
-promotion change must define the initial supported surface, versioning, and
-adapter migration policy. The workspace MSRV is Rust 1.88.
+The crate follows the lockstep versioning, exact dependency, MSRV, deprecation,
+aggregate evolution, and adapter upgrade rules in the
+[Storage Adapter SDK Compatibility policy](../storage_adapter_sdk.md). The
+release-train MSRV is Rust 1.88.
 
 There are no feature flags. DTOs are in-memory Rust contracts, not durable or
 wire formats unless their documentation explicitly says otherwise. Backend
@@ -87,16 +88,16 @@ labels.
 
 ## Ownership and Verification
 
-Hubuum maintainers own the workspace crate. The PostgreSQL adapter is the
+Hubuum maintainers own the crate. The PostgreSQL adapter is the
 reference implementation, and shared compatibility tests exercise every
 statically registered backend. The
-workspace-internal `hubuum-storage-conformance` harness certifies durable
+experimental public `hubuum-storage-conformance` harness certifies durable
 receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
 External-crate integration tests implement all 44 complete-backend traits,
 compile every one of their 249 methods, exercise every transaction port, and
-name public construction paths for all current adapter-returned values. This
-prevents accidental reliance on crate-private adapter hooks before a later
-promotion review.
+name public construction paths for all current adapter-returned values. CI also
+packages the crate, builds rustdoc with warnings denied, and compares it with
+the latest crates.io release when a baseline exists.

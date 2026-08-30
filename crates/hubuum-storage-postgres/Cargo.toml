@@ -27,8 +27,8 @@ diesel_migrations = { version = "2.3.2", optional = true }
 futures-util = "0.3"
 hubuum-computed-fields = { path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
-hubuum-events-core = { version = "0.0.1", path = "../hubuum-events-core" }
-hubuum-query = { version = "0.0.1", path = "../hubuum-query" }
+hubuum-events-core = { version = "0.1.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.1.0", path = "../hubuum-query" }
 hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
 hubuum-templates = { version = "0.0.1", path = "../hubuum-templates" }
 ipnet = "2.12"
