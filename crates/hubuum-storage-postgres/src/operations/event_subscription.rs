@@ -5,7 +5,9 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventSinkId, EventSubscriptionId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent, redact_event_sink_config};
+use hubuum_events_core::{
+    Action, AuditDocument, EntityType, EventContext, NewEvent, redact_event_sink_config,
+};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageEventSink, StorageEventSinkCreate, StorageEventSinkDelete,
@@ -738,23 +740,26 @@ async fn append_sink_audit(
     before: Option<&EventSinkRow>,
     after: &EventSinkRow,
 ) -> Result<StorageAuditReceipt, PostgresStorageError> {
-    let event = NewEvent::new(
+    let document = AuditDocument::try_new(
+        format!("Event sink '{}' {}", after.name, action.as_str()),
+        before.map(event_sink_snapshot),
+        (action != Action::Deleted).then(|| event_sink_snapshot(after)),
+        json!({
+            "sink_id": after.id,
+            "kind": after.kind,
+            "enabled": after.enabled,
+        }),
+    )?;
+    let event = NewEvent::from_document(
         EntityType::EventSink,
         action,
         context.actor_kind(),
-        format!("Event sink '{}' {}", after.name, action.as_str()),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
-    .with_entity_name(&after.name)
-    .with_before_opt(before.map(event_sink_snapshot))
-    .with_after_opt((action != Action::Deleted).then(|| event_sink_snapshot(after)))
-    .with_metadata(json!({
-        "sink_id": after.id,
-        "kind": after.kind,
-        "enabled": after.enabled,
-    }));
+    .with_entity_name(&after.name);
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 
@@ -765,25 +770,28 @@ async fn append_subscription_audit(
     before: Option<&EventSubscriptionRow>,
     after: &EventSubscriptionRow,
 ) -> Result<StorageAuditReceipt, PostgresStorageError> {
-    let event = NewEvent::new(
+    let document = AuditDocument::try_new(
+        format!("Event subscription '{}' {}", after.name, action.as_str()),
+        before.map(event_subscription_snapshot),
+        (action != Action::Deleted).then(|| event_subscription_snapshot(after)),
+        json!({
+            "subscription_id": after.id,
+            "sink_id": after.sink_id,
+            "collection_id": after.collection_id,
+            "enabled": after.enabled,
+        }),
+    )?;
+    let event = NewEvent::from_document(
         EntityType::EventSubscription,
         action,
         context.actor_kind(),
-        format!("Event subscription '{}' {}", after.name, action.as_str()),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
-    .with_before_opt(before.map(event_subscription_snapshot))
-    .with_after_opt((action != Action::Deleted).then(|| event_subscription_snapshot(after)))
-    .with_metadata(json!({
-        "subscription_id": after.id,
-        "sink_id": after.sink_id,
-        "collection_id": after.collection_id,
-        "enabled": after.enabled,
-    }));
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?);
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 

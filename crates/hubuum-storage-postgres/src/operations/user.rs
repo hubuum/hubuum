@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{IdentityScopeId, UserId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
     StorageMutationOutcome, StoragePage, StorageUser, StorageUserAnonymize, StorageUserCreate,
@@ -348,14 +348,13 @@ pub async fn create_user(
                 .get_result::<UserRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
-            let event = user_event(
-                &user,
-                &name,
-                Action::Created,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("User '{name}' created"),
-            )?
-            .with_after(user.snapshot(&name, revision));
+                None,
+                Some(user.snapshot(&name, revision)),
+                json!({}),
+            )?;
+            let event = user_event(&user, &name, Action::Created, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 user.into_storage()?,
@@ -406,16 +405,13 @@ pub async fn update_user(
                 revoke_all_tokens(connection, user_id).await?;
             }
             let after_revision = principal_revision(connection, user_id).await?;
-            let event = user_event(
-                &after,
-                &name,
-                Action::Updated,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("User '{name}' updated"),
-            )?
-            .with_before(before.snapshot(&name, before_revision))
-            .with_after(after.snapshot(&name, after_revision))
-            .with_metadata(json!({ "password_changed": password_changed }));
+                Some(before.snapshot(&name, before_revision)),
+                Some(after.snapshot(&name, after_revision)),
+                json!({ "password_changed": password_changed }),
+            )?;
+            let event = user_event(&after, &name, Action::Updated, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 after.into_storage()?,
@@ -457,20 +453,17 @@ pub(crate) async fn set_user_password_on_connection(
     let revoked = revoke_all_tokens(connection, user_id).await?;
     let after = load_user_row(connection, user_id).await?;
     let after_revision = principal_revision(connection, user_id).await?;
-    let event = user_event(
-        &after,
-        &name,
-        Action::Updated,
-        context,
+    let document = AuditDocument::try_new(
         format!("User '{name}' password changed"),
-    )?
-    .with_before(before.snapshot(&name, before_revision))
-    .with_after(after.snapshot(&name, after_revision))
-    .with_metadata(json!({
-        "password_changed": true,
-        "revoked_token_count": revoked,
-        "credential_reset": credential_reset,
-    }));
+        Some(before.snapshot(&name, before_revision)),
+        Some(after.snapshot(&name, after_revision)),
+        json!({
+            "password_changed": true,
+            "revoked_token_count": revoked,
+            "credential_reset": credential_reset,
+        }),
+    )?;
+    let event = user_event(&after, &name, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(revoked, audit))
 }
@@ -492,14 +485,13 @@ pub async fn delete_user(
             )
             .execute(connection)
             .await?;
-            let event = user_event(
-                &user,
-                &name,
-                Action::Deleted,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("User '{name}' deleted"),
-            )?
-            .with_before(user.snapshot(&name, before_revision));
+                Some(user.snapshot(&name, before_revision)),
+                None,
+                json!({}),
+            )?;
+            let event = user_event(&user, &name, Action::Deleted, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(deleted, audit))
         })
@@ -556,16 +548,13 @@ pub async fn anonymize_user(
             let after = load_user_row(connection, user_id).await?;
             let anonymized_name = principal_name(connection, user_id).await?;
             let after_revision = principal_revision(connection, user_id).await?;
-            let event = user_event(
-                &after,
-                &name,
-                Action::Updated,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("User '{name}' anonymized"),
-            )?
-            .with_before(before.snapshot(&name, before_revision))
-            .with_after(after.snapshot(&anonymized_name, after_revision))
-            .with_metadata(json!({ "anonymized": true }));
+                Some(before.snapshot(&name, before_revision)),
+                Some(after.snapshot(&anonymized_name, after_revision)),
+                json!({ "anonymized": true }),
+            )?;
+            let event = user_event(&after, &name, Action::Updated, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed((), audit))
         })
@@ -721,9 +710,9 @@ fn user_event(
     name: &str,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::User, action, context.actor_kind(), summary)
+    NewEvent::from_document(EntityType::User, action, context.actor_kind(), document)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
         .and_then(|event| {
             Ok(event

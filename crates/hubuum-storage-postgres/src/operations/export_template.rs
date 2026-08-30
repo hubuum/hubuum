@@ -3,7 +3,7 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageExportTemplate, StorageExportTemplateCreate,
@@ -611,19 +611,23 @@ async fn append_export_template_audit(
     before: Option<&ExportTemplateRow>,
     after: &ExportTemplateRow,
 ) -> Result<StorageAuditReceipt, PostgresStorageError> {
-    let event = NewEvent::new(
+    let document = AuditDocument::try_new(
+        format!("Export template '{}' {}", after.name, action.as_str()),
+        before.map(ExportTemplateRow::audit_snapshot),
+        (action != Action::Deleted).then(|| after.audit_snapshot()),
+        json!({}),
+    )?;
+    let event = NewEvent::from_document(
         EntityType::ExportTemplate,
         action,
         context.actor_kind(),
-        format!("Export template '{}' {}", after.name, action.as_str()),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
-    .with_before_opt(before.map(ExportTemplateRow::audit_snapshot))
-    .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?);
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 

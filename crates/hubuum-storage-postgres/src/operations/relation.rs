@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, ClassRelationId, ObjectId, normalize_template_alias};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageClassRelation, StorageClassRelationCreate, StorageMutationOutcome, StorageObject,
     StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
@@ -240,8 +240,15 @@ pub(crate) async fn create_class_relation_on(
         ));
     }
     let relation = insert_class_relation(connection, &command).await?;
-    let event = class_relation_event(&relation, Action::Created, context, &from_class, &to_class)?
-        .with_after(relation.snapshot());
+    let event = class_relation_event(
+        &relation,
+        Action::Created,
+        context,
+        &from_class,
+        &to_class,
+        None,
+        Some(relation.snapshot()),
+    )?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         crate::validate_persisted(
@@ -290,8 +297,15 @@ pub(crate) async fn delete_class_relation_on(
         ));
     }
     delete_class_relation_row(connection, relation.id).await?;
-    let event = class_relation_event(&relation, Action::Deleted, context, &from_class, &to_class)?
-        .with_before(relation.snapshot());
+    let event = class_relation_event(
+        &relation,
+        Action::Deleted,
+        context,
+        &from_class,
+        &to_class,
+        Some(relation.snapshot()),
+        None,
+    )?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed((), audit))
 }
@@ -476,9 +490,15 @@ pub(crate) async fn create_object_relation_on(
         prepared.class_relation(),
     )?;
     let relation = insert_object_relation(connection, command).await?;
-    let event =
-        object_relation_event(relation, Action::Created, context, &from_object, &to_object)?
-            .with_after(relation.snapshot());
+    let event = object_relation_event(
+        relation,
+        Action::Created,
+        context,
+        &from_object,
+        &to_object,
+        None,
+        Some(relation.snapshot()),
+    )?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         crate::validate_persisted(
@@ -532,9 +552,15 @@ pub(crate) async fn delete_object_relation_on(
         ));
     }
     delete_object_relation_row(connection, relation.id).await?;
-    let event =
-        object_relation_event(relation, Action::Deleted, context, &from_object, &to_object)?
-            .with_before(relation.snapshot());
+    let event = object_relation_event(
+        relation,
+        Action::Deleted,
+        context,
+        &from_object,
+        &to_object,
+        Some(relation.snapshot()),
+        None,
+    )?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed((), audit))
 }
@@ -976,28 +1002,35 @@ fn class_relation_event(
     context: &EventContext,
     from_class: &ClassRow,
     to_class: &ClassRow,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(
-        EntityType::ClassRelation,
-        action,
-        context.actor_kind(),
+    let document = AuditDocument::try_new(
         format!(
             "Class relation {} -> {} {}",
             relation.from_hubuum_class_id,
             relation.to_hubuum_class_id,
             action_verb(action)
         ),
+        before,
+        after,
+        json!({
+            "from_class_id": from_class.id,
+            "to_class_id": to_class.id,
+            "related_collection_ids": [from_class.collection_id, to_class.collection_id],
+        }),
+    )?;
+    NewEvent::from_document(
+        EntityType::ClassRelation,
+        action,
+        context.actor_kind(),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
     .and_then(|event| {
         Ok(event
             .with_context(context)
-            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?)
-            .with_metadata(json!({
-                "from_class_id": from_class.id,
-                "to_class_id": to_class.id,
-                "related_collection_ids": [from_class.collection_id, to_class.collection_id],
-            })))
+            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?))
     })
 }
 
@@ -1007,31 +1040,38 @@ fn object_relation_event(
     context: &EventContext,
     from_object: &ObjectRow,
     to_object: &ObjectRow,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(
-        EntityType::ObjectRelation,
-        action,
-        context.actor_kind(),
+    let document = AuditDocument::try_new(
         format!(
             "Object relation {} -> {} {}",
             relation.from_hubuum_object_id,
             relation.to_hubuum_object_id,
             action_verb(action)
         ),
+        before,
+        after,
+        json!({
+            "class_relation_id": relation.class_relation_id,
+            "from_object_id": from_object.id,
+            "to_object_id": to_object.id,
+            "from_class_id": from_object.hubuum_class_id,
+            "to_class_id": to_object.hubuum_class_id,
+            "related_collection_ids": [from_object.collection_id, to_object.collection_id],
+        }),
+    )?;
+    NewEvent::from_document(
+        EntityType::ObjectRelation,
+        action,
+        context.actor_kind(),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
     .and_then(|event| {
         Ok(event
             .with_context(context)
-            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?)
-            .with_metadata(json!({
-                "class_relation_id": relation.class_relation_id,
-                "from_object_id": from_object.id,
-                "to_object_id": to_object.id,
-                "from_class_id": from_object.hubuum_class_id,
-                "to_class_id": to_object.hubuum_class_id,
-                "related_collection_ids": [from_object.collection_id, to_object.collection_id],
-            })))
+            .with_entity_id(hubuum_events_core::EventEntityId::new(relation.id)?))
     })
 }
 

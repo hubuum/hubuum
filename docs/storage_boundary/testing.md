@@ -18,7 +18,7 @@ The obligations being tested are defined by the normative
 | Resource lifecycle semantics | Strong | Focused resource-operation contracts run against PostgreSQL and a deterministic memory model, including whole-graph transaction commit and state-plus-event rollback. |
 | Boundary direction and type isolation | Strong | Compile-time aggregate bounds plus architecture and workspace source guards reject known PostgreSQL, Diesel, pool, and `ApiError` leaks. |
 | Mandatory family-bound availability | Strong | `StorageBackend` requires every trait, opt-in is explicit, dispatch is exhaustive, and a sealed certification gate covers every selectable kind. |
-| Audit/event contract | Strong | The reusable conformance harness verifies a durable receipt, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
+| Audit/event contract | Strong | The reusable conformance harness verifies exact portable audit documents, durable receipts, no-op behavior, rollback, outbox-to-sink delivery, and logical/backend/failure telemetry for every registered backend. |
 | Every method's observable semantics | Strong inventory, curated scenarios | A machine-checked inventory must exactly match every complete-backend trait method and selected input-enum variant, and each entry names shared or native evidence. The guard verifies names and test existence, not that a test invokes each listed method or asserts all of its effects. |
 | Application and HTTP behavior | Strong | Every registered backend runs a service point read, readiness, and representative authenticated point/list HTTP requests. Larger integration suites exercise the remaining real application path. |
 | Concurrency and failure recovery | Good | Portable runners own delivery, restore-coordination, and lease-loss expectations; adapters provide deterministic fault injection. Native connection-loss, notification, transaction, retention, and atomicity tests cover implementation mechanics. |
@@ -58,6 +58,11 @@ not prove PostgreSQL transaction isolation.
 `hubuum-storage-core` unit tests validate constructors, builders, invariants,
 redaction, cursor values, error taxonomy, and other backend-neutral behavior.
 They are deterministic and require no database.
+
+`hubuum-events-core` tests additionally validate `AuditDocument` object shapes,
+revision-aware schema selection, and redacted diagnostics. Storage-core tests
+pin canonical collection snapshot fields and timestamp representation without
+using a native row.
 
 Three `hubuum-storage-core` integration tests compile as external crates.
 `external_adapter_api.rs` verifies transaction-scoped resource ports and
@@ -153,6 +158,13 @@ backend. Every registered backend is then exercised through `Services`, the
 readiness handler, and authenticated collection point and list routes. The
 Actix application receives only `AppContext`; adapter-native clients remain
 inside the exhaustive fixture-construction match.
+
+The common committed-mutation probe receives both the persisted event and an
+independently constructed expected `AuditDocument`. It matches the receipt to
+the event and then compares summary, snapshots, metadata, and schema version
+exactly. PostgreSQL's collection fixture builds its expectation from
+`StorageCollection::audit_snapshot`, so the portable assertion does not use a
+PostgreSQL row or its private serializer.
 
 The suite covers these semantic-group behaviors:
 

@@ -128,6 +128,7 @@ pub use history::{
     StorageObjectHistoryListQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
 };
 pub use hubuum_domain::PrincipalKind;
+pub use hubuum_events_core::AuditDocument;
 pub use identity::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder,
     StorageAuthenticationAttempt, StorageAuthenticationCredential, StorageAuthenticationHuman,

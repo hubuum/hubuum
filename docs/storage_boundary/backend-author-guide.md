@@ -134,6 +134,28 @@ contract. Convert them to native keys only inside the adapter. Treat
 query intent; do not reinterpret their private representation or add SQL
 concepts to the shared query crate.
 
+### Audit documents
+
+Construct every new event body through `AuditDocument::try_new` or
+`AuditDocument::builder(...).try_build()`, then attach its entity and
+provenance with `NewEvent::from_document`. The builder owns document-shape
+validation and chooses schema version 1 or revision-aware version 2. Do not
+write an adapter-local schema-version constant or populate summary, snapshots,
+and metadata directly on a native event row.
+
+Use canonical snapshot methods on boundary projections where they are
+available. For a collection, convert the native row to `StorageCollection`
+and call `audit_snapshot()`. This preserves the established timestamp,
+identifier, parent, and revision representation without making a new adapter
+copy PostgreSQL row serialization. Keep the native event insert type private;
+it should only translate `NewEvent` accessors into storage columns.
+
+The selectable-backend conformance fixture supplies an expected
+`AuditDocument` independently of the persisted event and compares every field
+exactly. Add equivalent expectations when expanding its representative
+mutations. Receipt equality alone is insufficient because it does not cover
+summary, snapshots, metadata, or schema version.
+
 ### Projection validation
 
 Fallible value constructors and projection builders use `try_new` and

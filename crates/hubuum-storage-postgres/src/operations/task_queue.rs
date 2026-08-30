@@ -13,7 +13,7 @@ use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelpe
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventSequence, MutationProvenance, NewEvent,
+    Action, ActorKind, AuditDocument, EntityType, EventSequence, MutationProvenance, NewEvent,
 };
 use hubuum_query::{CursorValue, FilterField, QueryOptions};
 use hubuum_storage_core::{
@@ -800,19 +800,20 @@ async fn insert_queued_task(
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
     );
-    let event = NewEvent::new(
-        EntityType::Task,
-        Action::Queued,
-        ActorKind::User,
+    let document = AuditDocument::try_new(
         "Task queued",
-    )
-    .map_err(|error| PostgresStorageError::internal(error.to_string()))?
-    .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
-    .with_metadata(json!({
-        "task_id": task.id,
-        "task_kind": task.kind,
-    }))
-    .with_mutation_provenance(&provenance);
+        None,
+        None,
+        json!({
+            "task_id": task.id,
+            "task_kind": task.kind,
+        }),
+    )?;
+    let event =
+        NewEvent::from_document(EntityType::Task, Action::Queued, ActorKind::User, document)
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?
+            .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
+            .with_mutation_provenance(&provenance);
     append_event(connection, &event).await?;
     notify_task_queue(connection, task.id).await?;
     Ok(task)

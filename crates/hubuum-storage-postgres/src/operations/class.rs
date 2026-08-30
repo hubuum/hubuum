@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, validate_json_schema, validate_json_schema_for_instances};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageClass, StorageClassCreate, StorageClassSelector, StorageClassUpdate,
     StorageMutationOutcome, StorageResolvedClass,
@@ -143,13 +143,13 @@ pub(crate) async fn create_class_on(
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     validate_class_create(&command)?;
     let class = insert_class(connection, &command).await?;
-    let event = class_event(
-        &class,
-        Action::Created,
-        context,
+    let document = AuditDocument::try_new(
         format!("Class '{}' created", class.name),
-    )?
-    .with_after(class.snapshot());
+        None,
+        Some(class.snapshot()),
+        json!({}),
+    )?;
+    let event = class_event(&class, Action::Created, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         class.into_storage()?,
@@ -190,14 +190,13 @@ pub(crate) async fn update_class_on(
     .set(update)
     .get_result::<ClassRow>(connection)
     .await?;
-    let event = class_event(
-        &updated,
-        Action::Updated,
-        context,
+    let document = AuditDocument::try_new(
         format!("Class '{}' updated", updated.name),
-    )?
-    .with_before(before.snapshot())
-    .with_after(updated.snapshot());
+        Some(before.snapshot()),
+        Some(updated.snapshot()),
+        json!({}),
+    )?;
+    let event = class_event(&updated, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         updated.into_storage()?,
@@ -231,13 +230,13 @@ pub(crate) async fn delete_class_on(
     )
     .execute(connection)
     .await?;
-    let event = class_event(
-        &before,
-        Action::Deleted,
-        context,
+    let document = AuditDocument::try_new(
         format!("Class '{}' deleted", before.name),
-    )?
-    .with_before(before.snapshot());
+        Some(before.snapshot()),
+        None,
+        json!({}),
+    )?;
+    let event = class_event(&before, Action::Deleted, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed((), audit))
 }
@@ -396,9 +395,9 @@ fn class_event(
     class: &ClassRow,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::Class, action, context.actor_kind(), summary)
+    NewEvent::from_document(EntityType::Class, action, context.actor_kind(), document)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
         .and_then(|event| {
             Ok(event

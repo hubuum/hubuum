@@ -8,6 +8,12 @@ The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
 
+New event bodies are constructed as backend-neutral `AuditDocument` values.
+The type validates object-shaped snapshots and metadata and owns schema-version
+selection: version 1 has no numeric resource revision, while version 2 carries
+a positive `revision` in at least one snapshot. Storage adapters add entity and
+actor coordinates but do not define a separate document shape.
+
 At the storage boundary, ordinary audited mutations require an explicit actor
 context and return a committed receipt identifying that durable event. A
 receipt is non-sensitive proof of persistence, not an audit projection; event

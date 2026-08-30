@@ -9,7 +9,7 @@ use diesel::upsert::excluded;
 use diesel::{Insertable, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, UserId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageExternalPrincipalState, StorageExternalUserSync, StorageMutationOutcome,
     StorageSyncedHuman,
@@ -254,23 +254,28 @@ pub async fn sync_external_user(
             remove_stale_memberships(connection, scope_id, principal.id, &synced_group_ids).await?;
 
             let context = EventContext::system();
-            let event = NewEvent::new(
+            let document = AuditDocument::try_new(
+                format!("External identity '{name}' synced in scope '{scope_name}'"),
+                None,
+                None,
+                json!({
+                    "principal_id": principal.id,
+                    "identity_scope": scope_name,
+                    "provider_kind": provider_kind,
+                    "external_subject": subject,
+                    "synced_group_count": synced_group_count,
+                }),
+            )?;
+            let event = NewEvent::from_document(
                 EntityType::ExternalIdentitySync,
                 Action::Succeeded,
                 context.actor_kind(),
-                format!("External identity '{name}' synced in scope '{scope_name}'"),
+                document,
             )
             .map_err(|error| PostgresStorageError::database(error.to_string()))?
             .with_context(&context)
             .with_entity_id(hubuum_events_core::EventEntityId::new(principal.id)?)
-            .with_entity_name(name)
-            .with_metadata(json!({
-                "principal_id": principal.id,
-                "identity_scope": scope_name,
-                "provider_kind": provider_kind,
-                "external_subject": subject,
-                "synced_group_count": synced_group_count,
-            }));
+            .with_entity_name(name);
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 user.into_storage()?,
