@@ -149,6 +149,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 .acquire_timeout_ms(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS)
                 .build()?
         }
+        StorageBackendKind::Memory => StorageSettings::memory(),
     };
 
     #[cfg(feature = "embedded-migrations")]

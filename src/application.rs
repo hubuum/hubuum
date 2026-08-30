@@ -110,6 +110,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
             .build()
             .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
+        StorageBackendKind::Memory => StorageSettings::memory(),
     };
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));

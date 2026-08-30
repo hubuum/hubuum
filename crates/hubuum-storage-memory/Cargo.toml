@@ -1,0 +1,25 @@
+[package]
+name = "hubuum-storage-memory"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Independent in-memory storage adapter used to validate Hubuum's storage contract."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+async-trait = "0.1"
+chrono = "0.4"
+hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "0.1.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.1.0", path = "../hubuum-query" }
+hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-task-core = { version = "0.1.0", path = "../hubuum-task-core" }
+json-patch = "4"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+tokio = { version = "1", features = ["rt", "sync"] }
+uuid = { version = "1", features = ["v4"] }

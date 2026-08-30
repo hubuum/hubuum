@@ -6,6 +6,7 @@ mod private {
     pub trait Sealed {}
 
     impl Sealed for hubuum_storage_postgres::PostgresStorage {}
+    impl Sealed for hubuum_storage_memory::MemoryStorage {}
 }
 
 /// Application-level certification gate for selectable storage adapters.
@@ -16,10 +17,12 @@ mod private {
 pub(crate) trait CertifiedStorageBackend: StorageBackend + private::Sealed {}
 
 impl CertifiedStorageBackend for hubuum_storage_postgres::PostgresStorage {}
+impl CertifiedStorageBackend for hubuum_storage_memory::MemoryStorage {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_storage_memory::MemoryStorage;
     use hubuum_storage_postgres::PostgresStorage;
 
     fn assert_certified_backend<T: CertifiedStorageBackend>() {}
@@ -27,5 +30,10 @@ mod tests {
     #[test]
     fn postgres_satisfies_the_complete_storage_backend_contract() {
         assert_certified_backend::<PostgresStorage>();
+    }
+
+    #[test]
+    fn memory_satisfies_the_complete_storage_backend_contract() {
+        assert_certified_backend::<MemoryStorage>();
     }
 }

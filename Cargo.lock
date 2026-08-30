@@ -2099,6 +2099,7 @@ dependencies = [
  "hubuum-query",
  "hubuum-storage-conformance",
  "hubuum-storage-core",
+ "hubuum-storage-memory",
  "hubuum-storage-postgres",
  "hubuum-task-core",
  "hubuum-templates",
@@ -2319,6 +2320,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-storage-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hubuum-domain",
+ "hubuum-events-core",
+ "hubuum-query",
+ "hubuum-storage-core",
+ "hubuum-task-core",
+ "json-patch",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 

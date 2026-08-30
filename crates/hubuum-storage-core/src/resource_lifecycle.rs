@@ -121,6 +121,22 @@ impl StorageClass {
             self.revision,
         )
     }
+
+    /// Return the canonical class snapshot stored in audit documents.
+    #[must_use]
+    pub fn audit_snapshot(&self) -> Value {
+        serde_json::json!({
+            "id": self.id.id(),
+            "name": self.name,
+            "collection_id": self.collection_id.id(),
+            "json_schema": self.json_schema,
+            "validate_schema": self.validate_schema,
+            "description": self.description,
+            "created_at": self.created_at.naive_utc(),
+            "updated_at": self.updated_at.naive_utc(),
+            "revision": self.revision.get(),
+        })
+    }
 }
 
 pub struct StorageClassBuilder {

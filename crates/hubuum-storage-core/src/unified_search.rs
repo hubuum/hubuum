@@ -680,6 +680,22 @@ impl StorageObject {
     pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
+
+    /// Return the canonical object snapshot stored in audit documents.
+    #[must_use]
+    pub fn audit_snapshot(&self) -> Value {
+        serde_json::json!({
+            "id": self.id.id(),
+            "name": self.name,
+            "collection_id": self.collection_id.id(),
+            "hubuum_class_id": self.class_id.id(),
+            "data": self.data,
+            "description": self.description,
+            "created_at": self.created_at.naive_utc(),
+            "updated_at": self.updated_at.naive_utc(),
+            "revision": self.revision.get(),
+        })
+    }
 }
 
 /// Mandatory backend contract for the three ranked unified-search projections.

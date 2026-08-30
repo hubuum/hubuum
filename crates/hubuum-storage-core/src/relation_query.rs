@@ -178,6 +178,23 @@ impl StorageClassRelation {
             revision,
         )
     }
+
+    /// Return the canonical class-relation snapshot stored in audit documents.
+    #[must_use]
+    pub fn audit_snapshot(&self) -> Value {
+        serde_json::json!({
+            "id": ClassRelationId::from(self.metadata.id()).id(),
+            "from_hubuum_class_id": self.from_class_id.id(),
+            "to_hubuum_class_id": self.to_class_id.id(),
+            "forward_template_alias": self.forward_template_alias,
+            "reverse_template_alias": self.reverse_template_alias,
+            "from_max_relations": self.from_max_relations,
+            "to_max_relations": self.to_max_relations,
+            "created_at": self.metadata.created_at().naive_utc(),
+            "updated_at": self.metadata.updated_at().naive_utc(),
+            "revision": self.metadata.revision().get(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,6 +267,20 @@ impl StorageObjectRelation {
             updated_at,
             revision,
         )
+    }
+
+    /// Return the canonical object-relation snapshot stored in audit documents.
+    #[must_use]
+    pub fn audit_snapshot(&self) -> Value {
+        serde_json::json!({
+            "id": ObjectRelationId::from(self.metadata.id()).id(),
+            "from_hubuum_object_id": self.from_object_id.id(),
+            "to_hubuum_object_id": self.to_object_id.id(),
+            "class_relation_id": self.class_relation_id.id(),
+            "created_at": self.metadata.created_at().naive_utc(),
+            "updated_at": self.metadata.updated_at().naive_utc(),
+            "revision": self.metadata.revision().get(),
+        })
     }
 }
 

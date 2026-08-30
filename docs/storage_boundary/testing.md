@@ -153,6 +153,30 @@ the native fixture resources for each adapter. Generic tests derive an opaque
 the shared scenarios. PostgreSQL pools do not appear in shared fixture
 function signatures.
 
+The registry contains the PostgreSQL adapter and the independent
+`hubuum-storage-memory::MemoryStorage` adapter. Unlike the focused
+`MemoryStorageModel` above, the latter implements every capability aggregated
+by `StorageBackend`, is selectable through normal application composition, and
+stores its complete process-local state behind an opaque handle. It exists to
+certify boundary portability, not to provide durable production storage.
+
+Implementing the second complete adapter exposed contract friction that type
+bounds alone did not reveal:
+
+- The import operation enum was exhaustive, but the shared scenario exercised
+  only collection creation. The scenario now persists a collection, class, and
+  object graph and verifies stale-revision rollback, while the memory executor
+  handles every operation variant.
+- Backup certification previously accepted present-but-empty sections. The
+  shared scenario now provisions backend-owned resources and verifies their
+  logical collection, class, and object rows in the captured snapshot.
+- The reusable audit runner was portable, but its application fixture was
+  PostgreSQL-specific. Each adapter now owns its audit, rollback, fan-out,
+  observation, and revision-conflict evidence behind the common fixture trait.
+- Execution-scope forwarding did not by itself prove that a backend enforced
+  optimistic concurrency. The memory adapter now composes task-local scopes
+  and checks collection revision preconditions at the mutation boundary.
+
 The application fixture registry also provisions an administrator through each
 backend. Every registered backend is then exercised through `Services`, the
 readiness handler, and authenticated collection point and list routes. The

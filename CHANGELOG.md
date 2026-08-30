@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added an experimental process-local `memory` storage backend that implements
+  the complete selectable-backend contract independently of PostgreSQL. It is
+  intended for contract validation and disposable development runs; it is not
+  durable and must not be used for production data. The shared conformance,
+  service, transaction, readiness, import, backup, and HTTP compatibility
+  scenarios now run unchanged against both registered adapters.
 - The experimental public storage adapter SDK now has a closed six-crate
   crates.io graph, one lockstep `0.1.0` version, exact in-graph dependencies,
   Rust 1.88 MSRV and feature guarantees, explicit closed/non-exhaustive enum
