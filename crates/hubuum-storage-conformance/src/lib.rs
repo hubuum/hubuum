@@ -13,8 +13,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    StorageError, StorageErrorKind, StorageEventRetentionBatchId, StorageEventRetentionSummary,
-    StorageMutationOutcome, StorageObservation, StorageObserver, StorageRecordedEvent,
+    AuditDocument, StorageError, StorageErrorKind, StorageEventRetentionBatchId,
+    StorageEventRetentionSummary, StorageMutationOutcome, StorageObservation, StorageObserver,
+    StorageRecordedEvent,
 };
 
 /// Thread-safe application observer used by backend contract fixtures.
@@ -186,14 +187,20 @@ pub trait ApplicationCompatibilityFixture {
 pub struct CommittedMutationProbe {
     outcome: StorageMutationOutcome<()>,
     persisted_events: Vec<StorageRecordedEvent>,
+    expected_documents: Vec<AuditDocument>,
 }
 
 impl CommittedMutationProbe {
     #[must_use]
-    pub fn new(outcome: StorageMutationOutcome<()>, persisted_event: StorageRecordedEvent) -> Self {
+    pub fn new(
+        outcome: StorageMutationOutcome<()>,
+        persisted_event: StorageRecordedEvent,
+        expected_document: AuditDocument,
+    ) -> Self {
         Self {
             outcome,
             persisted_events: vec![persisted_event],
+            expected_documents: vec![expected_document],
         }
     }
 
@@ -203,10 +210,12 @@ impl CommittedMutationProbe {
     pub const fn with_events(
         outcome: StorageMutationOutcome<()>,
         persisted_events: Vec<StorageRecordedEvent>,
+        expected_documents: Vec<AuditDocument>,
     ) -> Self {
         Self {
             outcome,
             persisted_events,
+            expected_documents,
         }
     }
 }
@@ -510,6 +519,7 @@ pub enum ContractViolation {
     MissingAuditReceipt,
     AuditReceiptCountMismatch,
     ReceiptDoesNotMatchPersistedEvent,
+    AuditDocumentMismatch,
     NoopReturnedAuditReceipt,
     NoopAppendedAuditEvent,
     RollbackPersistedState,
@@ -558,6 +568,9 @@ impl fmt::Display for ContractViolation {
             }
             Self::ReceiptDoesNotMatchPersistedEvent => {
                 "audit receipt does not identify the persisted event"
+            }
+            Self::AuditDocumentMismatch => {
+                "persisted audit document does not match the canonical document"
             }
             Self::NoopReturnedAuditReceipt => "unchanged mutation returned an audit receipt",
             Self::NoopAppendedAuditEvent => "unchanged mutation appended an audit event",
@@ -796,13 +809,16 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
         .outcome
         .audits()
         .ok_or(ContractViolation::MissingAuditReceipt)?;
-    if receipts.len() != probe.persisted_events.len() {
+    if receipts.len() != probe.persisted_events.len()
+        || receipts.len() != probe.expected_documents.len()
+    {
         return Err(ContractViolation::AuditReceiptCountMismatch);
     }
     let mut persisted_events = probe
         .persisted_events
         .into_iter()
-        .map(StorageRecordedEvent::into_parts)
+        .zip(probe.expected_documents)
+        .map(|(event, document)| (event.into_parts(), document))
         .collect::<Vec<_>>();
     let mut receipt_sequences = HashSet::with_capacity(receipts.len());
     let mut receipt_event_ids = HashSet::with_capacity(receipts.len());
@@ -814,11 +830,12 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
         }
         let Some(event_index) = persisted_events
             .iter()
-            .position(|(event, _, _)| event.id() == receipt.sequence())
+            .position(|((event, _, _), _)| event.id() == receipt.sequence())
         else {
             return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
         };
-        let (event, before_revision, after_revision) = persisted_events.swap_remove(event_index);
+        let ((event, before_revision, after_revision), expected_document) =
+            persisted_events.swap_remove(event_index);
         if event.event_id() != receipt.event_id().as_uuid()
             || event.entity_type() != receipt.entity_type()
             || event.action() != receipt.action()
@@ -826,6 +843,9 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
             || after_revision != receipt.after_revision()
         {
             return Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent);
+        }
+        if event.audit_document() != expected_document {
+            return Err(ContractViolation::AuditDocumentMismatch);
         }
     }
     Ok(())
@@ -937,17 +957,42 @@ mod tests {
     #[test]
     fn committed_probe_rejects_duplicate_receipts_that_hide_a_persisted_event() {
         let first_event = recorded_event(1);
+        let second_event = recorded_event(2);
         let duplicated_receipt = first_event.clone().into_audit_receipt();
         let outcome = StorageMutationOutcome::committed_with_audits(
             (),
             StorageAuditReceipts::new(duplicated_receipt.clone(), vec![duplicated_receipt]),
         );
-        let probe =
-            CommittedMutationProbe::with_events(outcome, vec![first_event, recorded_event(2)]);
+        let expected_documents = vec![
+            first_event.clone().into_parts().0.audit_document(),
+            second_event.clone().into_parts().0.audit_document(),
+        ];
+        let probe = CommittedMutationProbe::with_events(
+            outcome,
+            vec![first_event, second_event],
+            expected_documents,
+        );
 
         assert!(matches!(
             verify_committed_mutation(probe),
             Err(ContractViolation::ReceiptDoesNotMatchPersistedEvent)
+        ));
+    }
+
+    #[test]
+    fn committed_probe_rejects_a_noncanonical_document() {
+        let event = recorded_event(1);
+        let receipt = event.clone().into_audit_receipt();
+        let outcome = StorageMutationOutcome::committed((), receipt);
+        let probe = CommittedMutationProbe::new(
+            outcome,
+            event,
+            AuditDocument::summary("different summary"),
+        );
+
+        assert!(matches!(
+            verify_committed_mutation(probe),
+            Err(ContractViolation::AuditDocumentMismatch)
         ));
     }
 

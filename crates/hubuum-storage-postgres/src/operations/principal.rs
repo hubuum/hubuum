@@ -1,7 +1,7 @@
 use diesel::{ExpressionMethods, QueryDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{BoundedJsonPatch, IdentityScopeId, JsonPatchErrorKind, PrincipalKind};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageMutationOutcome, StoragePrincipal, StoragePrincipalSettings,
     StoragePrincipalSettingsMutation,
@@ -166,18 +166,22 @@ pub async fn update_principal_settings(
                 .await?;
 
                 let entity_type = principal_entity_type(kind);
-                let event = NewEvent::new(
+                let document = AuditDocument::try_new(
+                    format!("Principal settings for '{name}' updated"),
+                    Some(json!({ "revision": before_revision, "settings": before })),
+                    Some(json!({ "revision": after_revision, "settings": after })),
+                    json!({}),
+                )?;
+                let event = NewEvent::from_document(
                     entity_type,
                     Action::Updated,
                     event_context.actor_kind(),
-                    format!("Principal settings for '{name}' updated"),
+                    document,
                 )
                 .map_err(|error| PostgresStorageError::database(error.to_string()))?
                 .with_context(event_context)
                 .with_entity_id(hubuum_events_core::EventEntityId::new(principal_id)?)
-                .with_entity_name(name)
-                .with_before(json!({ "revision": before_revision, "settings": before }))
-                .with_after(json!({ "revision": after_revision, "settings": after }));
+                .with_entity_name(name);
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
 
                 let settings = crate::validate_persisted(

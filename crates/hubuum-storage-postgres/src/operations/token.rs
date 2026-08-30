@@ -9,7 +9,7 @@ use diesel::sql_types::Timestamp;
 use diesel::{BoolExpressionMethods, Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, TokenId, TokenIssuancePolicy};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageAuditReceipts, StorageAuthenticationResourceScope,
@@ -461,9 +461,9 @@ pub async fn revoke_token(
                         after.id, after.principal_id
                     ),
                     None,
-                )?
-                .with_before(before.snapshot(scope.as_ref()))
-                .with_after(after.snapshot(scope.as_ref()));
+                    Some(before.snapshot(scope.as_ref())),
+                    Some(after.snapshot(scope.as_ref())),
+                )?;
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
                 Ok(StorageMutationOutcome::committed(1, audit))
             },
@@ -521,9 +521,9 @@ pub async fn revoke_token_by_hash(
                     after.id, after.principal_id
                 ),
                 None,
-            )?
-            .with_before(before.snapshot(scope.as_ref()))
-            .with_after(after.snapshot(scope.as_ref()));
+                Some(before.snapshot(scope.as_ref())),
+                Some(after.snapshot(scope.as_ref())),
+            )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(1, audit))
         })
@@ -590,9 +590,9 @@ pub async fn revoke_all_principal_tokens(
                         token.id, token.principal_id
                     ),
                     None,
-                )?
-                .with_before(before.snapshot(scope))
-                .with_after(token.snapshot(scope));
+                    Some(before.snapshot(scope)),
+                    Some(token.snapshot(scope)),
+                )?;
                 audits.push(append_event(connection, &event).await?.into_audit_receipt());
             }
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed_with_audits(
@@ -780,8 +780,9 @@ async fn create_token_row(
             token.id, token.principal_id
         ),
         renewed_from_token_id,
-    )?
-    .with_after(token.snapshot(scope.as_ref()));
+        None,
+        Some(token.snapshot(scope.as_ref())),
+    )?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok((token, audit))
 }
@@ -1152,6 +1153,8 @@ fn token_event(
     context: &EventContext,
     summary: String,
     renewed_from_token_id: Option<i32>,
+    before: Option<Value>,
+    after: Option<Value>,
 ) -> Result<NewEvent, PostgresStorageError> {
     let mut metadata = json!({
         "principal_id": token.principal_id,
@@ -1162,14 +1165,14 @@ fn token_event(
     if let Some(source_id) = renewed_from_token_id {
         metadata["renewed_from_token_id"] = json!(source_id);
     }
-    NewEvent::new(EntityType::Token, action, context.actor_kind(), summary)
+    let document = AuditDocument::try_new(summary, before, after, metadata)?;
+    NewEvent::from_document(EntityType::Token, action, context.actor_kind(), document)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
         .and_then(|event| {
             Ok(event
                 .with_context(context)
                 .with_entity_id(hubuum_events_core::EventEntityId::new(token.id)?)
-                .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-                .with_metadata(metadata))
+                .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string())))
         })
 }
 

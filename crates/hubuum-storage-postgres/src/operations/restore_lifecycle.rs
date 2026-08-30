@@ -8,7 +8,7 @@ use diesel::sql_types::{Jsonb, Timestamp};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
-use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
+use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
 use hubuum_storage_core::{
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
     StorageBackupStateSection, StorageBackupStateSections, StorageCallSite, StorageRestoreApply,
@@ -518,27 +518,32 @@ pub async fn apply_restore(
                 diesel::sql_query("SELECT set_config('hubuum.restore_events', 'off', true)")
                     .execute(connection)
                     .await?;
-                let provenance = NewEvent::new(
+                let document = AuditDocument::try_new(
+                    "System restore completed",
+                    None,
+                    None,
+                    serde_json::json!({
+                        "restore_job_id": job.id,
+                        "backup_sha256": job.sha256,
+                        "backup_version": backup_version,
+                        "backup_source_version": backup_source_version,
+                        "backup_created_at": backup_created_at,
+                        "includes_history": includes_history,
+                        "initiated_by": {
+                            "principal_id": job.requested_by,
+                            "identity_scope": job.requested_by_identity_scope,
+                            "name": job.requested_by_name,
+                        },
+                    }),
+                )?;
+                let provenance = NewEvent::from_document(
                     EntityType::Restore,
                     Action::Succeeded,
                     ActorKind::System,
-                    "System restore completed",
+                    document,
                 )
                 .map_err(|error| PostgresStorageError::internal(error.to_string()))?
-                .with_entity_name(job.sha256.clone())
-                .with_metadata(serde_json::json!({
-                    "restore_job_id": job.id,
-                    "backup_sha256": job.sha256,
-                    "backup_version": backup_version,
-                    "backup_source_version": backup_source_version,
-                    "backup_created_at": backup_created_at,
-                    "includes_history": includes_history,
-                    "initiated_by": {
-                        "principal_id": job.requested_by,
-                        "identity_scope": job.requested_by_identity_scope,
-                        "name": job.requested_by_name,
-                    },
-                }));
+                .with_entity_name(job.sha256.clone());
                 append_event(connection, &provenance).await?;
 
                 let finished_at = Utc::now().naive_utc();

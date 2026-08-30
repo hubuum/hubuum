@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageGroupCreate, StorageGroupListQuery, StorageGroupMember, StorageGroupUpdate,
@@ -378,13 +378,13 @@ pub async fn create_group(
     runtime
         .with_transaction(async move |connection| {
             let group = insert_local_group(connection, &name, &description).await?;
-            let event = group_event(
-                &group,
-                Action::Created,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Group '{}' created", group.groupname),
-            )?
-            .with_after(group.snapshot());
+                None,
+                Some(group.snapshot()),
+                json!({}),
+            )?;
+            let event = group_event(&group, Action::Created, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 group.into_storage()?,
@@ -416,14 +416,13 @@ pub async fn update_group(
             .set(UpdateGroupRow::from(&update))
             .get_result::<GroupRow>(connection)
             .await?;
-            let event = group_event(
-                &after,
-                Action::Updated,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Group '{}' updated", after.groupname),
-            )?
-            .with_before(before.snapshot())
-            .with_after(after.snapshot());
+                Some(before.snapshot()),
+                Some(after.snapshot()),
+                json!({}),
+            )?;
+            let event = group_event(&after, Action::Updated, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 after.into_storage()?,
@@ -450,13 +449,13 @@ pub async fn delete_group(
             )
             .execute(connection)
             .await?;
-            let event = group_event(
-                &group,
-                Action::Deleted,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Group '{}' deleted", group.groupname),
-            )?
-            .with_before(group.snapshot());
+                Some(group.snapshot()),
+                None,
+                json!({}),
+            )?;
+            let event = group_event(&group, Action::Deleted, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(deleted, audit))
         })
@@ -552,16 +551,16 @@ pub async fn add_group_member(
             let (membership, effective_membership_created) =
                 insert_manual_membership(connection, principal_id, group_id).await?;
             if effective_membership_created {
-                let event = membership_event(
-                    &membership,
-                    Action::Added,
-                    &context,
+                let document = AuditDocument::try_new(
                     format!(
                         "Principal {} added to group {}",
                         membership.principal_id, membership.group_id
                     ),
-                )?
-                .with_after(membership.snapshot());
+                    None,
+                    Some(membership.snapshot()),
+                    membership_metadata(&membership),
+                )?;
+                let event = membership_event(Action::Added, &context, document)?;
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
                 return Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                     membership.into_storage()?,
@@ -589,16 +588,16 @@ pub async fn remove_group_member(
             let removed =
                 remove_manual_membership_source(connection, principal_id, group_id).await?;
             if let Some(membership) = removed.as_ref() {
-                let event = membership_event(
-                    membership,
-                    Action::Removed,
-                    &context,
+                let document = AuditDocument::try_new(
                     format!(
                         "Principal {} removed from group {}",
                         membership.principal_id, membership.group_id
                     ),
-                )?
-                .with_before(membership.snapshot());
+                    Some(membership.snapshot()),
+                    None,
+                    membership_metadata(membership),
+                )?;
+                let event = membership_event(Action::Removed, &context, document)?;
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
                 return Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed((), audit));
             }
@@ -931,9 +930,9 @@ fn group_event(
     group: &GroupRow,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::Group, action, context.actor_kind(), summary)
+    NewEvent::from_document(EntityType::Group, action, context.actor_kind(), document)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
         .and_then(|event| {
             Ok(event
@@ -944,19 +943,25 @@ fn group_event(
 }
 
 fn membership_event(
-    membership: &PrincipalGroupRow,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::UserGroup, action, context.actor_kind(), summary)
-        .map_err(|error| PostgresStorageError::database(error.to_string()))
-        .map(|event| {
-            event.with_context(context).with_metadata(json!({
-                "principal_id": membership.principal_id,
-                "group_id": membership.group_id,
-            }))
-        })
+    NewEvent::from_document(
+        EntityType::UserGroup,
+        action,
+        context.actor_kind(),
+        document,
+    )
+    .map_err(|error| PostgresStorageError::database(error.to_string()))
+    .map(|event| event.with_context(context))
+}
+
+fn membership_metadata(membership: &PrincipalGroupRow) -> Value {
+    json!({
+        "principal_id": membership.principal_id,
+        "group_id": membership.group_id,
+    })
 }
 
 fn validate_positive_id(id: i32, field: &str) -> Result<(), PostgresStorageError> {

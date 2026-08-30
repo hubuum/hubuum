@@ -5,7 +5,7 @@ use diesel::sql_types::{BigInt, Bool, Integer, Timestamp};
 use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::MAX_TOKEN_RESOURCE_SCOPES;
-use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent};
+use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
 use hubuum_storage_core::{StorageAuthorizationPermission, StorageError};
 
 use crate::operations::event_record::append_events;
@@ -497,25 +497,29 @@ fn token_purge_event(
         "scope": scope,
         "revision": token.revision,
     });
-    NewEvent::new(
-        EntityType::Token,
-        Action::Purged,
-        ActorKind::System,
+    let document = AuditDocument::try_new(
         format!(
             "Token {} purged after retention for principal {}",
             token.id, token.principal_id
         ),
+        Some(snapshot),
+        None,
+        serde_json::json!({
+            "principal_id": token.principal_id,
+            "retention_basis": basis.as_str(),
+        }),
+    )?;
+    NewEvent::from_document(
+        EntityType::Token,
+        Action::Purged,
+        ActorKind::System,
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
     .and_then(|event| {
         Ok(event
             .with_entity_id(hubuum_events_core::EventEntityId::new(token.id)?)
-            .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-            .with_before(snapshot)
-            .with_metadata(serde_json::json!({
-                "principal_id": token.principal_id,
-                "retention_basis": basis.as_str(),
-            })))
+            .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string())))
     })
 }
 

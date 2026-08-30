@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::CollectionId;
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageCollection, StorageCollectionCreate, StorageCollectionUpdate, StorageMutationOutcome,
 };
@@ -47,16 +47,10 @@ impl CollectionRow {
         )
     }
 
-    fn snapshot(&self) -> serde_json::Value {
-        json!({
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "parent_collection_id": self.parent_collection_id,
-            "revision": self.revision,
-        })
+    fn audit_snapshot(&self) -> Result<serde_json::Value, PostgresStorageError> {
+        self.clone()
+            .into_storage()
+            .map(|collection| collection.audit_snapshot())
     }
 }
 
@@ -145,14 +139,13 @@ pub(crate) async fn create_collection_on(
         Some(connection),
     )
     .await?;
-    let event = collection_event(
-        &created,
-        Action::Created,
-        context,
+    let document = AuditDocument::try_new(
         format!("Collection '{}' created", created.name),
-    )?
-    .with_after(created.snapshot())
-    .with_metadata(json!({ "assignee_group_id": command.owner_group_id() }));
+        None,
+        Some(created.audit_snapshot()?),
+        json!({ "assignee_group_id": command.owner_group_id() }),
+    )?;
+    let event = collection_event(&created, Action::Created, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         created.into_storage()?,
@@ -207,14 +200,13 @@ pub(crate) async fn update_collection_on(
     .set(update)
     .get_result::<CollectionRow>(connection)
     .await?;
-    let event = collection_event(
-        &updated,
-        Action::Updated,
-        context,
+    let document = AuditDocument::try_new(
         format!("Collection '{}' updated", updated.name),
-    )?
-    .with_before(before.snapshot())
-    .with_after(updated.snapshot());
+        Some(before.audit_snapshot()?),
+        Some(updated.audit_snapshot()?),
+        json!({}),
+    )?;
+    let event = collection_event(&updated, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         updated.into_storage()?,
@@ -249,13 +241,13 @@ pub(crate) async fn delete_collection_on(
     )
     .execute(connection)
     .await?;
-    let event = collection_event(
-        &collection,
-        Action::Deleted,
-        context,
+    let document = AuditDocument::try_new(
         format!("Collection '{}' deleted", collection.name),
-    )?
-    .with_before(collection.snapshot());
+        Some(collection.audit_snapshot()?),
+        None,
+        json!({}),
+    )?;
+    let event = collection_event(&collection, Action::Deleted, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed((), audit))
 }
@@ -382,14 +374,13 @@ pub(crate) async fn move_collection_on(
         .await?;
     move_collection_closure_rows(connection, collection_id, new_parent_id).await?;
     let updated = load_collection(connection, collection_id).await?;
-    let event = collection_event(
-        &updated,
-        Action::Updated,
-        context,
+    let document = AuditDocument::try_new(
         format!("Collection '{}' moved", updated.name),
-    )?
-    .with_before(before.snapshot())
-    .with_after(updated.snapshot());
+        Some(before.audit_snapshot()?),
+        Some(updated.audit_snapshot()?),
+        json!({}),
+    )?;
+    let event = collection_event(&updated, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed(
         updated.into_storage()?,
@@ -553,13 +544,13 @@ fn collection_event(
     collection: &CollectionRow,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(
+    NewEvent::from_document(
         EntityType::Collection,
         action,
         context.actor_kind(),
-        summary,
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
     .and_then(|event| {

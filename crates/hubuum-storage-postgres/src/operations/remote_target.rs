@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageMutationOutcome, StoragePage, StorageRemoteTarget,
@@ -490,22 +490,27 @@ pub async fn record_remote_target_invocation(
         .with_transaction(
             async |connection| -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
                 let target = load_remote_target_row(connection, target_id).await?;
-                let event = NewEvent::new(
+                let document = AuditDocument::try_new(
+                    format!("Remote target '{}' invoked", target.name),
+                    None,
+                    None,
+                    json!({
+                        "task_id": task_id,
+                        "subject_type": subject_type.as_str(),
+                        "subject_id": subject_id,
+                    }),
+                )?;
+                let event = NewEvent::from_document(
                     EntityType::RemoteTarget,
                     Action::Invoked,
                     event_context.actor_kind(),
-                    format!("Remote target '{}' invoked", target.name),
+                    document,
                 )
                 .map_err(|error| PostgresStorageError::database(error.to_string()))?
                 .with_context(&event_context)
                 .with_entity_id(hubuum_events_core::EventEntityId::new(target.id)?)
                 .with_entity_name(&target.name)
-                .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?)
-                .with_metadata(json!({
-                    "task_id": task_id,
-                    "subject_type": subject_type.as_str(),
-                    "subject_id": subject_id,
-                }));
+                .with_collection_id(hubuum_domain::CollectionId::new(target.collection_id)?);
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
                 Ok(StorageMutationOutcome::committed((), audit))
             },
@@ -562,19 +567,23 @@ async fn append_remote_target_audit(
     before: Option<&RemoteTargetRow>,
     after: &RemoteTargetRow,
 ) -> Result<StorageAuditReceipt, PostgresStorageError> {
-    let event = NewEvent::new(
+    let document = AuditDocument::try_new(
+        format!("Remote target '{}' {}", after.name, action.as_str()),
+        before.map(RemoteTargetRow::audit_snapshot),
+        (action != Action::Deleted).then(|| after.audit_snapshot()),
+        json!({}),
+    )?;
+    let event = NewEvent::from_document(
         EntityType::RemoteTarget,
         action,
         context.actor_kind(),
-        format!("Remote target '{}' {}", after.name, action.as_str()),
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name)
-    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?)
-    .with_before_opt(before.map(RemoteTargetRow::audit_snapshot))
-    .with_after_opt((action != Action::Deleted).then(|| after.audit_snapshot()));
+    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?);
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 

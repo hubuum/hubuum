@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
+    use hubuum_events_core::AuditDocument;
     use rstest::rstest;
     use serde_json::json;
 
@@ -267,22 +268,26 @@ mod tests {
         } else {
             json!(related_collection.id)
         };
+        let document = AuditDocument::try_new(
+            "related collection audit test",
+            Some(json!({"secret": "source-before"})),
+            Some(json!({"secret": "source-after"})),
+            json!({
+                "related_collection_ids": [related_collection_id],
+            }),
+        )
+        .unwrap();
         let event = emit_test_event(
             context.pool.get_ref(),
-            &NewEvent::new(
+            &NewEvent::from_document(
                 EntityType::ClassRelation,
                 Action::Created,
                 ActorKind::System,
-                "related collection audit test",
+                document,
             )
             .unwrap()
             .with_collection_id(collection_id(source_collection.id))
-            .with_entity_id(event_entity_id(source_collection.id))
-            .with_before(json!({"secret": "source-before"}))
-            .with_after(json!({"secret": "source-after"}))
-            .with_metadata(json!({
-                "related_collection_ids": [related_collection_id],
-            })),
+            .with_entity_id(event_entity_id(source_collection.id)),
         )
         .await;
 

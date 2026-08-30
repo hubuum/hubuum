@@ -5,7 +5,7 @@ use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, validate_json_value};
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageError, StorageMutationOutcome, StorageObject, StorageObjectCreate,
     StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate, StorageResolvedClass,
@@ -185,13 +185,13 @@ pub(crate) async fn create_object_on(
         ObjectMaterializationInput::new(object.id, object.hubuum_class_id, &object.data),
     )
     .await?;
-    let event = object_event(
+    let document = object_audit_document(
         &object,
-        Action::Created,
-        context,
         format!("Object '{}' created", object.name),
-    )?
-    .with_after(object.snapshot());
+        None,
+        Some(object.snapshot()),
+    )?;
+    let event = object_event(&object, Action::Created, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     record_computed_evaluation(runtime, evaluation.as_ref());
     Ok(StorageMutationOutcome::committed(
@@ -287,14 +287,13 @@ pub(crate) async fn patch_object_data_on(
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
     )
     .await?;
-    let event = object_event(
+    let document = object_audit_document(
         &updated,
-        Action::Updated,
-        context,
         format!("Object '{}' updated", updated.name),
-    )?
-    .with_before(before.snapshot())
-    .with_after(updated.snapshot());
+        Some(before.snapshot()),
+        Some(updated.snapshot()),
+    )?;
+    let event = object_event(&updated, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     record_computed_evaluation(runtime, evaluation.as_ref());
     Ok(StorageMutationOutcome::committed(
@@ -330,13 +329,13 @@ pub(crate) async fn delete_object_on(
     )
     .execute(connection)
     .await?;
-    let event = object_event(
+    let document = object_audit_document(
         &before,
-        Action::Deleted,
-        context,
         format!("Object '{}' deleted", before.name),
-    )?
-    .with_before(before.snapshot());
+        Some(before.snapshot()),
+        None,
+    )?;
+    let event = object_event(&before, Action::Deleted, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok(StorageMutationOutcome::committed((), audit))
 }
@@ -601,14 +600,13 @@ async fn persist_object_update(
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
     )
     .await?;
-    let event = object_event(
+    let document = object_audit_document(
         &updated,
-        Action::Updated,
-        context,
         format!("Object '{}' updated", updated.name),
-    )?
-    .with_before(before.snapshot())
-    .with_after(updated.snapshot());
+        Some(before.snapshot()),
+        Some(updated.snapshot()),
+    )?;
+    let event = object_event(&updated, Action::Updated, context, document)?;
     let audit = append_event(connection, &event).await?.into_audit_receipt();
     Ok((
         StorageMutationOutcome::committed(updated, audit),
@@ -677,18 +675,32 @@ fn object_event(
     object: &ObjectRow,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::Object, action, context.actor_kind(), summary)
+    NewEvent::from_document(EntityType::Object, action, context.actor_kind(), document)
         .map_err(|error| PostgresStorageError::database(error.to_string()))
         .and_then(|event| {
             Ok(event
                 .with_context(context)
                 .with_entity_id(hubuum_events_core::EventEntityId::new(object.id)?)
                 .with_entity_name(&object.name)
-                .with_collection_id(hubuum_domain::CollectionId::new(object.collection_id)?)
-                .with_metadata(json!({ "class_id": object.hubuum_class_id })))
+                .with_collection_id(hubuum_domain::CollectionId::new(object.collection_id)?))
         })
+}
+
+fn object_audit_document(
+    object: &ObjectRow,
+    summary: String,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+) -> Result<AuditDocument, PostgresStorageError> {
+    AuditDocument::try_new(
+        summary,
+        before,
+        after,
+        json!({ "class_id": object.hubuum_class_id }),
+    )
+    .map_err(PostgresStorageError::from)
 }
 
 fn record_computed_evaluation(

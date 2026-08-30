@@ -12,7 +12,9 @@ use hubuum_computed_fields::{
     SEMANTICS_VERSION,
 };
 use hubuum_domain::{ClassId, PrincipalId, TaskId};
-use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
+use hubuum_events_core::{
+    Action, AuditDocument, EntityType, EventContext, MutationProvenance, NewEvent,
+};
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
     StorageClassComputationState, StorageComputationRebuildStatus, StorageComputationRevision,
@@ -448,8 +450,9 @@ pub async fn create_shared_computed_field(
                 Action::Created,
                 &context,
                 format!("Shared computed field '{}' created", definition.key()),
-            )?
-            .with_after(definition.snapshot());
+                None,
+                Some(definition.snapshot()),
+            )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>((definition, state, audit))
         })
@@ -508,9 +511,9 @@ pub async fn update_shared_computed_field(
                 Action::Updated,
                 &context,
                 format!("Shared computed field '{}' updated", definition.key()),
-            )?
-            .with_before(current.snapshot())
-            .with_after(definition.snapshot());
+                Some(current.snapshot()),
+                Some(definition.snapshot()),
+            )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>((definition, state, Some(audit)))
         })
@@ -563,8 +566,9 @@ pub async fn delete_shared_computed_field(
                 Action::Deleted,
                 &context,
                 format!("Shared computed field '{}' deleted", current.key()),
-            )?
-            .with_before(current.snapshot());
+                Some(current.snapshot()),
+                None,
+            )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>((state, audit))
         })
@@ -611,8 +615,10 @@ pub async fn create_personal_computed_field(
                 Action::Created,
                 &context,
                 format!("Personal computed field '{}' created", definition.key()),
+                None,
+                Some(definition.snapshot()),
             )?
-            .with_after(definition.snapshot());
+            ;
             let audit = append_event(connection, &event)
                 .await?
                 .into_audit_receipt();
@@ -659,9 +665,9 @@ pub async fn update_personal_computed_field(
                 Action::Updated,
                 &context,
                 format!("Personal computed field '{}' updated", definition.key()),
-            )?
-            .with_before(current.snapshot())
-            .with_after(definition.snapshot());
+                Some(current.snapshot()),
+                Some(definition.snapshot()),
+            )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>((definition, Some(audit)))
         })
@@ -707,8 +713,9 @@ pub async fn delete_personal_computed_field(
                 Action::Deleted,
                 &context,
                 format!("Personal computed field '{}' deleted", current.key()),
-            )?
-            .with_before(current.snapshot());
+                Some(current.snapshot()),
+                None,
+            )?;
             Ok::<_, PostgresStorageError>(
                 append_event(connection, &event).await?.into_audit_receipt(),
             )
@@ -1301,12 +1308,15 @@ fn computed_field_event(
     action: Action,
     context: &EventContext,
     summary: String,
+    before: Option<Value>,
+    after: Option<Value>,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(
+    let document = AuditDocument::try_new(summary, before, after, json!({ "class_id": class.id }))?;
+    NewEvent::from_document(
         EntityType::ComputedFieldDefinition,
         action,
         context.actor_kind(),
-        summary,
+        document,
     )
     .map_err(|error| PostgresStorageError::internal(error.to_string()))
     .and_then(|event| {
@@ -1314,8 +1324,7 @@ fn computed_field_event(
             .with_context(context)
             .with_entity_id(hubuum_events_core::EventEntityId::new(definition.id())?)
             .with_entity_name(definition.key())
-            .with_collection_id(hubuum_domain::CollectionId::new(class.collection_id)?)
-            .with_metadata(json!({ "class_id": class.id })))
+            .with_collection_id(hubuum_domain::CollectionId::new(class.collection_id)?))
     })
 }
 
@@ -1543,15 +1552,20 @@ fn task_event(
     summary: &str,
     provenance: &MutationProvenance,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(EntityType::Task, action, provenance.actor_kind(), summary)
+    let document = AuditDocument::try_new(
+        summary,
+        None,
+        None,
+        json!({
+            "task_id": task.id,
+            "task_kind": task.kind,
+        }),
+    )?;
+    NewEvent::from_document(EntityType::Task, action, provenance.actor_kind(), document)
         .map_err(|error| PostgresStorageError::internal(error.to_string()))
         .and_then(|event| {
             Ok(event
                 .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
-                .with_metadata(json!({
-                    "task_id": task.id,
-                    "task_kind": task.kind,
-                }))
                 .with_mutation_provenance(provenance))
         })
 }

@@ -321,16 +321,20 @@ mod tests {
 
     #[test]
     fn new_event_debug_redacts_payload_snapshots() {
-        let event = hubuum_events_core::NewEvent::new(
+        let document = hubuum_events_core::AuditDocument::try_new(
+            "created",
+            Some(serde_json::json!({"token": "before-secret"})),
+            Some(serde_json::json!({"token": "after-secret"})),
+            serde_json::json!({"token": "metadata-secret"}),
+        )
+        .unwrap();
+        let event = hubuum_events_core::NewEvent::from_document(
             EntityType::Collection,
             Action::Created,
             ActorKind::User,
-            "created",
+            document,
         )
-        .unwrap()
-        .with_before(serde_json::json!({"token": "before-secret"}))
-        .with_after(serde_json::json!({"token": "after-secret"}))
-        .with_metadata(serde_json::json!({"token": "metadata-secret"}));
+        .unwrap();
 
         let debug = format!("{event:?}");
 

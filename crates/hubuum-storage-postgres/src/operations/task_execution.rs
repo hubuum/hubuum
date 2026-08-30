@@ -10,7 +10,7 @@ use diesel::sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamp};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
-use hubuum_events_core::{Action, EntityType, MutationProvenance, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, MutationProvenance, NewEvent};
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
     StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken,
@@ -637,11 +637,12 @@ async fn append_task_lifecycle_event(
     if let Some(data) = data {
         metadata["data"] = data;
     }
-    let event = NewEvent::new(EntityType::Task, action, provenance.actor_kind(), message)
-        .map_err(|error| PostgresStorageError::internal(error.to_string()))?
-        .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
-        .with_metadata(metadata)
-        .with_mutation_provenance(provenance);
+    let document = AuditDocument::try_new(message, None, None, metadata)?;
+    let event =
+        NewEvent::from_document(EntityType::Task, action, provenance.actor_kind(), document)
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?
+            .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
+            .with_mutation_provenance(provenance);
     append_event(connection, &event).await
 }
 

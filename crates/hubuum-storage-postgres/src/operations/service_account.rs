@@ -5,7 +5,9 @@ use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ServiceAccountId, TaskId};
-use hubuum_events_core::{Action, EntityType, EventContext, MutationProvenance, NewEvent};
+use hubuum_events_core::{
+    Action, AuditDocument, EntityType, EventContext, MutationProvenance, NewEvent,
+};
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
     StorageMutationOutcome, StoragePage, StorageServiceAccount, StorageServiceAccountCreate,
@@ -323,18 +325,17 @@ async fn create_service_account_parts(
                 .get_result::<ServiceAccountRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
-            let event = service_account_event(
-                &account,
-                &name,
-                Action::Created,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Service account '{name}' created"),
-            )?
-            .with_after(account.snapshot(&name, revision))
-            .with_metadata(json!({
-                "owner_group_id": account.owner_group_id,
-                "created_by": created_by,
-            }));
+                None,
+                Some(account.snapshot(&name, revision)),
+                json!({
+                    "owner_group_id": account.owner_group_id,
+                    "created_by": created_by,
+                }),
+            )?;
+            let event =
+                service_account_event(&account, &name, Action::Created, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 account.into_storage()?,
@@ -378,16 +379,13 @@ pub async fn update_service_account(
             .await?;
             let name = principal_name(connection, service_account_id).await?;
             let after_revision = principal_revision(connection, service_account_id).await?;
-            let event = service_account_event(
-                &after,
-                &name,
-                Action::Updated,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Service account '{name}' updated"),
-            )?
-            .with_before(before.snapshot(&name, before_revision))
-            .with_after(after.snapshot(&name, after_revision))
-            .with_metadata(json!({ "owner_group_id": after.owner_group_id }));
+                Some(before.snapshot(&name, before_revision)),
+                Some(after.snapshot(&name, after_revision)),
+                json!({ "owner_group_id": after.owner_group_id }),
+            )?;
+            let event = service_account_event(&after, &name, Action::Updated, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
                 after.into_storage()?,
@@ -429,16 +427,14 @@ async fn disable_service_account_parts(
             .await?;
             let name = principal_name(connection, service_account_id).await?;
             let after_revision = principal_revision(connection, service_account_id).await?;
-            let event = service_account_event(
-                &disabled,
-                &name,
-                Action::Disabled,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Service account '{name}' disabled"),
-            )?
-            .with_before(before.snapshot(&name, before_revision))
-            .with_after(disabled.snapshot(&name, after_revision))
-            .with_metadata(json!({ "owner_group_id": disabled.owner_group_id }));
+                Some(before.snapshot(&name, before_revision)),
+                Some(disabled.snapshot(&name, after_revision)),
+                json!({ "owner_group_id": disabled.owner_group_id }),
+            )?;
+            let event =
+                service_account_event(&disabled, &name, Action::Disabled, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
 
             crate::operations::token::revoke_all_principal_tokens_on_connection(
@@ -482,15 +478,14 @@ pub async fn delete_service_account(
             let before_revision = lock_principal_revision(connection, service_account_id).await?;
             let account = load_service_account_row(connection, service_account_id).await?;
             let name = principal_name(connection, service_account_id).await?;
-            let event = service_account_event(
-                &account,
-                &name,
-                Action::Deleted,
-                &context,
+            let document = AuditDocument::try_new(
                 format!("Service account '{name}' deleted"),
-            )?
-            .with_before(account.snapshot(&name, before_revision))
-            .with_metadata(json!({ "owner_group_id": account.owner_group_id }));
+                Some(account.snapshot(&name, before_revision)),
+                None,
+                json!({ "owner_group_id": account.owner_group_id }),
+            )?;
+            let event =
+                service_account_event(&account, &name, Action::Deleted, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
             diesel::delete(
                 crate::schema::principals::table
@@ -552,15 +547,20 @@ async fn cancel_pending_tasks(
             }
             None => MutationProvenance::system_for_task(initiator_user_id, task_id),
         };
-        let event = NewEvent::new(
+        let document = AuditDocument::try_new(
+            DISABLED_TASK_SUMMARY,
+            None,
+            None,
+            json!({ "task_id": task_id, "task_kind": task_kind }),
+        )?;
+        let event = NewEvent::from_document(
             EntityType::Task,
             Action::Cancelled,
             provenance.actor_kind(),
-            DISABLED_TASK_SUMMARY,
+            document,
         )
         .map_err(|error| PostgresStorageError::database(error.to_string()))?
         .with_entity_id(hubuum_events_core::EventEntityId::new(task_id.id())?)
-        .with_metadata(json!({ "task_id": task_id, "task_kind": task_kind }))
         .with_mutation_provenance(&provenance);
         append_event(connection, &event).await?;
     }
@@ -692,13 +692,13 @@ fn service_account_event(
     name: &str,
     action: Action,
     context: &EventContext,
-    summary: String,
+    document: AuditDocument,
 ) -> Result<NewEvent, PostgresStorageError> {
-    NewEvent::new(
+    NewEvent::from_document(
         EntityType::ServiceAccount,
         action,
         context.actor_kind(),
-        summary,
+        document,
     )
     .map_err(|error| PostgresStorageError::database(error.to_string()))
     .and_then(|event| {

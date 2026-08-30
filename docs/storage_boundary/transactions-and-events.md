@@ -86,10 +86,12 @@ not pass an optional event context to individual transactional mutations.
 For every successful transactional mutation:
 
 1. The adapter performs the state mutation.
-2. The adapter appends the mutation's durable audit event using the inherited
+2. The adapter constructs the summary, snapshots, metadata, and schema version
+   through the backend-neutral `AuditDocument` API.
+3. The adapter appends the mutation's durable audit event using the inherited
    context.
-3. Both changes are part of the same native transaction.
-4. The backend publishes follow-on transactional notifications, if any, only
+4. Both changes are part of the same native transaction.
+5. The backend publishes follow-on transactional notifications, if any, only
    as part of that commit.
 
 If the callback returns `Err`, state, audit events, and transactional

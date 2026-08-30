@@ -121,6 +121,29 @@ callers retrieve those through `AuditEventStorage`.
 Returning a receipt is not permission to synthesize evidence after commit. It
 must be derived from the event persisted by the same atomic operation.
 
+### Portable audit documents
+
+Every adapter constructs the permission-scoped body of a new event with
+`AuditDocument` from `hubuum-events-core`, reexported by
+`hubuum-storage-core`. The document owns the summary, optional `before` and
+`after` object snapshots, metadata object, and schema version. Adapters add
+entity coordinates and provenance through `NewEvent`, but must not assemble
+those document fields in a native event row.
+
+`AuditDocument::try_new` and `AuditDocumentBuilder::try_build` reject non-object
+snapshots or metadata. Schema selection is also backend-neutral: documents
+without a numeric resource revision use version 1, while a snapshot containing
+a positive integer `revision` uses revision-aware version 2. An adapter cannot
+select or advance that version independently. A new document schema requires a
+new construction rule and matching conformance expectations before any native
+serialization changes.
+
+Entity snapshots are made from boundary projections when a canonical helper
+exists. Collection lifecycle events, for example, use
+`StorageCollection::audit_snapshot`; a native collection row is first
+validated into `StorageCollection` and never defines its own public audit
+shape. Persistence rows and backend serialization remain adapter-private.
+
 ### 3. State and Durable Side Effects Are Atomic
 
 The state mutation and canonical audit append share one backend-native commit
@@ -193,7 +216,8 @@ or retry against an authoritative revision.
 `verify_backend_audit_contract` runner. For each `StorageBackendKind::ALL`
 entry, it verifies:
 
-1. a committed receipt matches the durable event;
+1. a committed receipt matches the durable event and its exact canonical
+   `AuditDocument`;
 2. a no-op returns no receipt and appends no event;
 3. an injected failure persists neither state nor event;
 4. the committed event creates durable fan-out and reaches a recording sink;

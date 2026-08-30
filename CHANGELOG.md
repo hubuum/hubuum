@@ -18,6 +18,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (workspace storage API):** audit event bodies now use the
+  validated backend-neutral `AuditDocument` construction path. It owns summary,
+  snapshot, metadata, and schema-version semantics; `NewEvent::from_document`
+  replaces the removed payload mutation setters. Collection snapshots are
+  constructed from `StorageCollection`, and selectable-backend conformance now
+  compares the exact persisted document. Adapter authors must construct and
+  validate an `AuditDocument` before appending an event and keep native event
+  rows as private serialization details.
 - The workspace storage contract now exhaustively specifies every pageable,
   searchable, batched, and complete-collection method, including supported
   query keys, cursor/count/visibility behavior, ordering, multiplicity,

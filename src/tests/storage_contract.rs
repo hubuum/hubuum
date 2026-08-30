@@ -490,6 +490,11 @@ impl PostgresAuditContractFixture {
 #[async_trait]
 impl BackendAuditFixture for PostgresAuditContractFixture {
     async fn committed_mutation(&self) -> Result<CommittedMutationProbe, FixtureError> {
+        let before = self
+            .backend
+            .collection_store()
+            .get_collection(collection_id(self.collection_id))
+            .await?;
         let outcome = self
             .backend
             .collection_store()
@@ -502,6 +507,12 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
                 &EventContext::system(),
             )
             .await?;
+        let expected_document = hubuum_events_core::AuditDocument::try_new(
+            format!("Collection '{}' updated", outcome.value().name()),
+            Some(before.audit_snapshot()),
+            Some(outcome.value().audit_snapshot()),
+            serde_json::json!({}),
+        )?;
         let receipt = outcome
             .audits()
             .map(hubuum_storage_core::StorageAuditReceipts::first)
@@ -512,7 +523,11 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
             .into_iter()
             .find(|event| event.clone().into_parts().0.id() == receipt.sequence())
             .ok_or_else(|| std::io::Error::other("receipt event was not queryable"))?;
-        Ok(CommittedMutationProbe::new(outcome.map(drop), event))
+        Ok(CommittedMutationProbe::new(
+            outcome.map(drop),
+            event,
+            expected_document,
+        ))
     }
 
     async fn unchanged_mutation(&self) -> Result<UnchangedMutationProbe, FixtureError> {

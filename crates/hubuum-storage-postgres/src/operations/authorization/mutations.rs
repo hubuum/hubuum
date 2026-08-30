@@ -1,7 +1,7 @@
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, Insertable};
 use diesel_async::RunQueryDsl;
-use hubuum_events_core::{Action, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageAuthorizationGrant, StorageAuthorizationGrantDelete,
     StorageAuthorizationGrantMutation, StorageAuthorizationPermission, StorageMutationOutcome,
@@ -475,28 +475,15 @@ async fn append_permission_event(
     if let Some(replace_existing) = details.replace_existing {
         metadata["replace_existing"] = json!(replace_existing);
     }
-    let event = NewEvent::new(
-        EntityType::Permission,
-        details.action,
-        details.context.actor_kind(),
-        summary,
-    )
-    .map_err(|error| PostgresStorageError::database(error.to_string()))?
-    .with_context(details.context)
-    .with_entity_id(hubuum_events_core::EventEntityId::new(details.after.id)?)
-    .with_collection_id(hubuum_domain::CollectionId::new(
-        details.after.collection_id,
-    )?)
-    .with_metadata(metadata)
-    .with_before(match details.before {
+    let before = match details.before {
         Some(before) => permission_snapshot(before, details.before_revision),
         None => empty_permission_snapshot(
             details.after.collection_id,
             details.after.group_id,
             details.before_revision,
         ),
-    })
-    .with_after(if details.removes_grant {
+    };
+    let after = if details.removes_grant {
         empty_permission_snapshot(
             details.after.collection_id,
             details.after.group_id,
@@ -504,7 +491,20 @@ async fn append_permission_event(
         )
     } else {
         permission_snapshot(details.after, details.after_revision)
-    });
+    };
+    let document = AuditDocument::try_new(summary, Some(before), Some(after), metadata)?;
+    let event = NewEvent::from_document(
+        EntityType::Permission,
+        details.action,
+        details.context.actor_kind(),
+        document,
+    )
+    .map_err(|error| PostgresStorageError::database(error.to_string()))?
+    .with_context(details.context)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(details.after.id)?)
+    .with_collection_id(hubuum_domain::CollectionId::new(
+        details.after.collection_id,
+    )?);
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 

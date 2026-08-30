@@ -3,7 +3,7 @@ use std::fmt;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
-use hubuum_events_core::EventIdentifierError;
+use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
     StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
 };
@@ -192,6 +192,12 @@ impl From<PositiveIdError> for PostgresStorageError {
 impl From<EventIdentifierError> for PostgresStorageError {
     fn from(error: EventIdentifierError) -> Self {
         Self::database(format!("Invalid persisted event identifier: {error}"))
+    }
+}
+
+impl From<AuditDocumentError> for PostgresStorageError {
+    fn from(error: AuditDocumentError) -> Self {
+        Self::database(format!("Invalid audit document: {error}"))
     }
 }
 
