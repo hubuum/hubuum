@@ -248,9 +248,7 @@ fn production_container_base_images_are_pinned() {
 
 #[test]
 fn production_container_refreshes_runtime_packages() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dockerfile = fs::read_to_string(repository.join("Dockerfile"))
-        .expect("repository Dockerfile should be readable");
+    let dockerfile = read_repository_text("Dockerfile");
     let (_, runtime_stage) = dockerfile
         .rsplit_once("\nFROM ")
         .expect("production Dockerfile should contain a runtime stage");
