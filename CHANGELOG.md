@@ -350,6 +350,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Production container builds now upgrade packages from the pinned Alpine 3.24
+  repositories before installing runtime dependencies. This incorporates
+  OpenSSL 3.5.8-r0, which fixes CVE-2026-14456 in the 3.24.1 base image.
 - Mitigated RUSTSEC-2026-0258 by disabling Actix's optional HTTP/2 feature, so
   vulnerable `h2` 0.3 code is not compiled. HTTP/1.1, TLS, compression,
   cookies, and WebSockets remain enabled. Deployments requiring HTTP/2 must

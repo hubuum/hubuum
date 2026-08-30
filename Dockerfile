@@ -94,7 +94,8 @@ FROM docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0b
 ARG HUBUUM_UID="10001"
 ARG HUBUUM_GID="10001"
 
-RUN apk add --no-cache ca-certificates && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates && \
     addgroup -S -g "${HUBUUM_GID}" hubuum && \
     adduser -S -D -H -u "${HUBUUM_UID}" -G hubuum hubuum
 
