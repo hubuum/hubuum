@@ -20,7 +20,9 @@ use crate::models::{
     authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::permissions::{AppContext, PrincipalRef};
+use crate::permissions::{
+    AppContext, CompleteCollectionCandidateLimit, MAX_COMPLETE_COLLECTION_CANDIDATES, PrincipalRef,
+};
 use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
@@ -117,7 +119,11 @@ pub async fn get_remote_targets(
         let principal = PrincipalRef::load(&context, user).await?;
         context
             .permission_backend()
-            .collections_user_can(&principal, &[Permissions::ReadRemoteTarget])
+            .collections_user_can(
+                &principal,
+                &[Permissions::ReadRemoteTarget],
+                CompleteCollectionCandidateLimit::try_new(MAX_COMPLETE_COLLECTION_CANDIDATES)?,
+            )
             .await?
     } else {
         Vec::new()

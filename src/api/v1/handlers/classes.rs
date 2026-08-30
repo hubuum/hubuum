@@ -839,7 +839,7 @@ async fn read_resolved_class_permissions(
     } else {
         context
             .permission_backend()
-            .groups_with_permissions_on(target_collection_id, &class_permissions, &search_params)
+            .groups_with_permissions_on(target_collection_id, &class_permissions, &params)
             .await?
     };
 

@@ -7,6 +7,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (workspace storage API):** authorization candidate reads now
+  accept cursor-page query types and return `StorageCandidatePage<T>`, while
+  unified-search reads return bounded pages of
+  `StorageUnifiedSearchCandidate<T>` with adapter-owned rank cursors. Complete
+  adapter implementations must apply the requested look-ahead limit, report
+  `has_more`, preserve stable cursor order, and construct the rank cursor beside
+  every unified-search row.
+- Delegated collection lists, permission-grid group lists, and unified search
+  now authorize bounded storage pages before public paging and retain only a
+  response page plus look-ahead. Exact totals still scan every candidate page
+  without retaining the complete set, while skipped totals stop as soon as the
+  response can be finalized.
+- Complete collection enumeration for delegated event and remote-target
+  visibility now requires an explicit validated candidate ceiling and returns
+  service unavailable above the current 10,000-candidate maximum instead of
+  materializing an unbounded set.
+
 ## [0.0.10] - 2026-08-30
 
 ### Added

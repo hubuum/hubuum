@@ -8,18 +8,19 @@ use hubuum_domain::{ClassId, CollectionId, GroupId, ObjectId, PrincipalId, Resou
 use hubuum_query::FilterField;
 use hubuum_storage_core::{
     StorageAuthorizationClassResource, StorageAuthorizationCollection,
-    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionGrantListQuery,
-    StorageAuthorizationCollectionGroupsPageQuery, StorageAuthorizationCollectionGroupsQuery,
-    StorageAuthorizationCollectionVisibilityQuery, StorageAuthorizationCollectionsAccessQuery,
-    StorageAuthorizationCollectionsQuery, StorageAuthorizationEffectiveGroupGrant,
-    StorageAuthorizationGrant, StorageAuthorizationGrantKey, StorageAuthorizationGroup,
+    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionCandidateQuery,
+    StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionGroupsPageQuery,
+    StorageAuthorizationCollectionGroupsQuery, StorageAuthorizationCollectionVisibilityQuery,
+    StorageAuthorizationCollectionsAccessQuery, StorageAuthorizationCollectionsQuery,
+    StorageAuthorizationEffectiveGroupGrant, StorageAuthorizationGrant,
+    StorageAuthorizationGrantKey, StorageAuthorizationGroup,
     StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupCollectionQuery,
     StorageAuthorizationGroupGrant, StorageAuthorizationGroupMembershipQuery,
     StorageAuthorizationObjectResource, StorageAuthorizationPermission,
     StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
     StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
     StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
-    StorageAuthorizationResourceIds, StoragePage,
+    StorageAuthorizationResourceIds, StorageCandidatePage, StoragePage,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -298,16 +299,31 @@ async fn authorized_collection_ids_for_permission(
 
 pub async fn load_authorization_collection_candidates(
     runtime: &PostgresRuntime,
-) -> Result<Vec<StorageAuthorizationCollection>, PostgresStorageError> {
+    query: StorageAuthorizationCollectionCandidateQuery,
+) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, PostgresStorageError> {
+    let after_id = query.after_id().map(|id| id.id());
+    let page_limit = query.page_limit();
+    let query_limit = i64::try_from(page_limit.get().saturating_add(1)).map_err(|_| {
+        PostgresStorageError::invalid_input("Authorization collection candidate limit is too large")
+    })?;
     runtime
         .with_connection(async |connection| {
             use crate::schema::collections;
 
-            let rows = collections::table
+            let mut candidates = collections::table.into_boxed();
+            if let Some(after_id) = after_id {
+                candidates = candidates.filter(collections::id.gt(after_id));
+            }
+            let rows = candidates
                 .order_by(collections::id.asc())
+                .limit(query_limit)
                 .load::<CollectionRow>(connection)
                 .await?;
-            rows.into_iter().map(CollectionRow::into_storage).collect()
+            let rows = rows
+                .into_iter()
+                .map(CollectionRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_candidate_page(rows, page_limit)
         })
         .await
 }
@@ -315,24 +331,25 @@ pub async fn load_authorization_collection_candidates(
 pub async fn load_authorization_group_candidates(
     runtime: &PostgresRuntime,
     query: StorageAuthorizationGroupCandidateQuery,
-) -> Result<Vec<StorageAuthorizationGroup>, PostgresStorageError> {
-    let filters = query.filters().clone();
+) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, PostgresStorageError> {
+    let options = query.options().clone();
+    let page_limit = query.page_limit();
     runtime
         .with_connection(async |connection| {
             use crate::schema::groups::dsl::{created_at, groupname, groups, id, updated_at};
 
-            let mut query = groups.into_boxed();
-            for parameter in &filters {
+            let mut candidates = groups.into_boxed();
+            for parameter in options.filters() {
                 match parameter.field {
-                    FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
+                    FilterField::Id => crate::postgres_integer_filter!(candidates, parameter, id),
                     FilterField::Name | FilterField::Groupname => {
-                        crate::postgres_string_filter!(query, parameter, groupname)
+                        crate::postgres_string_filter!(candidates, parameter, groupname)
                     }
                     FilterField::CreatedAt => {
-                        crate::postgres_datetime_filter!(query, parameter, created_at)
+                        crate::postgres_datetime_filter!(candidates, parameter, created_at)
                     }
                     FilterField::UpdatedAt => {
-                        crate::postgres_datetime_filter!(query, parameter, updated_at)
+                        crate::postgres_datetime_filter!(candidates, parameter, updated_at)
                     }
                     FilterField::Permissions => {}
                     _ => {
@@ -343,8 +360,28 @@ pub async fn load_authorization_group_candidates(
                     }
                 }
             }
-            let rows = query.load::<GroupRow>(connection).await?;
-            rows.into_iter().map(GroupRow::into_storage).collect()
+            let fields = options
+                .sort()
+                .iter()
+                .map(|sort| group_cursor_field(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::apply_query_options_with_fields!(
+                candidates,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::Id,
+                    false,
+                    group_cursor_field(&FilterField::Id)?,
+                )
+            );
+            let rows = candidates
+                .load::<GroupRow>(connection)
+                .await?
+                .into_iter()
+                .map(GroupRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_candidate_page(rows, page_limit)
         })
         .await
 }

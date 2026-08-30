@@ -8,9 +8,27 @@ use crate::services::storage_boundary::{
     visibility,
 };
 use crate::storage::{
-    StorageContext, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery, UnifiedSearchStorage,
-    storage_handle,
+    StorageCandidatePageLimit, StorageContext, StorageUnifiedSearchCursor,
+    StorageUnifiedSearchQuery, UnifiedSearchStorage, storage_handle,
 };
+
+pub(crate) struct UnifiedSearchCandidatePage<T> {
+    pub(crate) items: Vec<UnifiedSearchCandidate<T>>,
+    pub(crate) has_more: bool,
+}
+
+pub(crate) struct UnifiedSearchCandidate<T> {
+    pub(crate) item: T,
+    pub(crate) cursor: UnifiedSearchCursorToken,
+}
+
+fn candidate_cursor(cursor: StorageUnifiedSearchCursor) -> UnifiedSearchCursorToken {
+    UnifiedSearchCursorToken {
+        rank: cursor.rank(),
+        name: cursor.normalized_name().to_string(),
+        id: cursor.id().id(),
+    }
+}
 
 fn cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Option<StorageUnifiedSearchCursor> {
     cursor.map(|cursor| {
@@ -30,9 +48,11 @@ fn query(
     cursor: Option<&UnifiedSearchCursorToken>,
     search_extended_document: bool,
 ) -> Result<StorageUnifiedSearchQuery, ApiError> {
+    let page_limit = StorageCandidatePageLimit::try_new(spec.limit_per_kind)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(StorageUnifiedSearchQuery::new(
         spec.query.clone(),
-        spec.limit_per_kind,
+        page_limit,
         visibility(principal_id, is_admin, scope)?,
     )
     .search_extended_document(search_extended_document)
@@ -45,8 +65,8 @@ pub async fn search_collections(
     is_admin: bool,
     scope: Option<&TokenScope>,
     spec: &UnifiedSearchSpec,
-) -> Result<Vec<Collection>, ApiError> {
-    storage_handle(backend)
+) -> Result<UnifiedSearchCandidatePage<Collection>, ApiError> {
+    let page = storage_handle(backend)
         .search_collections(query(
             principal_id,
             is_admin,
@@ -55,10 +75,21 @@ pub async fn search_collections(
             spec.collection_cursor.as_ref(),
             false,
         )?)
-        .await?
-        .into_iter()
-        .map(collection_from_storage)
-        .collect()
+        .await?;
+    let (items, has_more) = page.into_parts();
+    Ok(UnifiedSearchCandidatePage {
+        items: items
+            .into_iter()
+            .map(|candidate| {
+                let (item, cursor) = candidate.into_parts();
+                Ok(UnifiedSearchCandidate {
+                    item: collection_from_storage(item)?,
+                    cursor: candidate_cursor(cursor),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?,
+        has_more,
+    })
 }
 
 pub async fn search_classes(
@@ -67,8 +98,8 @@ pub async fn search_classes(
     is_admin: bool,
     scope: Option<&TokenScope>,
     spec: &UnifiedSearchSpec,
-) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-    storage_handle(backend)
+) -> Result<UnifiedSearchCandidatePage<HubuumClassExpanded>, ApiError> {
+    let page = storage_handle(backend)
         .search_classes(query(
             principal_id,
             is_admin,
@@ -77,10 +108,21 @@ pub async fn search_classes(
             spec.class_cursor.as_ref(),
             spec.search_class_schema,
         )?)
-        .await?
-        .into_iter()
-        .map(class_from_storage)
-        .collect()
+        .await?;
+    let (items, has_more) = page.into_parts();
+    Ok(UnifiedSearchCandidatePage {
+        items: items
+            .into_iter()
+            .map(|candidate| {
+                let (item, cursor) = candidate.into_parts();
+                Ok(UnifiedSearchCandidate {
+                    item: class_from_storage(item)?,
+                    cursor: candidate_cursor(cursor),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?,
+        has_more,
+    })
 }
 
 pub async fn search_objects(
@@ -89,8 +131,8 @@ pub async fn search_objects(
     is_admin: bool,
     scope: Option<&TokenScope>,
     spec: &UnifiedSearchSpec,
-) -> Result<Vec<HubuumObject>, ApiError> {
-    storage_handle(backend)
+) -> Result<UnifiedSearchCandidatePage<HubuumObject>, ApiError> {
+    let page = storage_handle(backend)
         .search_objects(query(
             principal_id,
             is_admin,
@@ -99,8 +141,19 @@ pub async fn search_objects(
             spec.object_cursor.as_ref(),
             spec.search_object_data,
         )?)
-        .await?
-        .into_iter()
-        .map(object_from_storage)
-        .collect()
+        .await?;
+    let (items, has_more) = page.into_parts();
+    Ok(UnifiedSearchCandidatePage {
+        items: items
+            .into_iter()
+            .map(|candidate| {
+                let (item, cursor) = candidate.into_parts();
+                Ok(UnifiedSearchCandidate {
+                    item: object_from_storage(item)?,
+                    cursor: candidate_cursor(cursor),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?,
+        has_more,
+    })
 }

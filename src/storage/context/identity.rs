@@ -867,14 +867,17 @@ impl AuthorizationDataStorage for StorageHandle {
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionCandidateQuery,
+    ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,
             "load_authorization_collection_candidates",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.load_authorization_collection_candidates().await
+                    backend
+                        .load_authorization_collection_candidates(query)
+                        .await
                 })
             },
         )
@@ -884,7 +887,7 @@ impl AuthorizationDataStorage for StorageHandle {
     async fn load_authorization_group_candidates(
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::AuthorizationData,

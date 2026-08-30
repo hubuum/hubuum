@@ -283,6 +283,22 @@ fn compare_cursor_values(
     Ordering::Equal
 }
 
+pub(crate) fn item_is_after_cursor<T>(
+    item: &T,
+    cursor: &str,
+    sorts: &[SortParam],
+) -> Result<bool, ApiError>
+where
+    T: CursorPaginated,
+{
+    let cursor_values = decode_cursor_values(cursor, sorts)?;
+    let item_values = sorts
+        .iter()
+        .map(|sort| item.cursor_value(&sort.field))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(compare_cursor_values(&item_values, &cursor_values, sorts) == Ordering::Greater)
+}
+
 pub fn pagination_headers(
     next_cursor: &Option<String>,
     total_count: i64,

@@ -23,6 +23,7 @@ use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
 const UNIFIED_SEARCH_CURSOR_VERSION: u8 = 1;
+const UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE: usize = 128;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Hash,
@@ -360,48 +361,11 @@ struct SearchPage<T> {
     next: Option<String>,
 }
 
-fn lower_string(value: &str) -> String {
-    value.to_lowercase()
-}
-
-fn contains_case_insensitive(value: &str, query_lower: &str) -> bool {
-    lower_string(value).contains(query_lower)
-}
-
-fn compute_rank(
-    name: &str,
-    description: &str,
-    query_lower: &str,
-    extra_match: bool,
-) -> Option<i32> {
-    let lowered_name = lower_string(name);
-    if lowered_name == query_lower {
-        Some(0)
-    } else if lowered_name.starts_with(query_lower) {
-        Some(1)
-    } else if lowered_name.contains(query_lower) {
-        Some(2)
-    } else if contains_case_insensitive(description, query_lower) {
-        Some(3)
-    } else if extra_match {
-        Some(4)
-    } else {
-        None
-    }
-}
-
-fn cursor_for_item(id: i32, name: &str, rank: i32) -> UnifiedSearchCursorToken {
-    UnifiedSearchCursorToken {
-        rank,
-        name: lower_string(name),
-        id,
-    }
-}
-
 fn paginate_scored<T>(
     mut scored: Vec<(UnifiedSearchCursorToken, T)>,
     cursor: Option<&UnifiedSearchCursorToken>,
     limit: usize,
+    storage_has_more: bool,
 ) -> Result<SearchPage<T>, ApiError> {
     scored.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -409,7 +373,7 @@ fn paginate_scored<T>(
         scored.retain(|(token, _)| token > cursor);
     }
 
-    let has_more = scored.len() > limit;
+    let has_more = storage_has_more || scored.len() > limit;
     if has_more {
         scored.truncate(limit);
     }
@@ -429,25 +393,6 @@ fn paginate_scored<T>(
     })
 }
 
-fn schema_matches(schema: Option<&serde_json::Value>, query_lower: &str) -> bool {
-    schema
-        .map(|schema| contains_case_insensitive(&schema.to_string(), query_lower))
-        .unwrap_or(false)
-}
-
-fn object_value_matches(value: &serde_json::Value, query_lower: &str) -> bool {
-    match value {
-        serde_json::Value::String(string) => contains_case_insensitive(string, query_lower),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .any(|nested| object_value_matches(nested, query_lower)),
-        serde_json::Value::Object(map) => map
-            .values()
-            .any(|nested| object_value_matches(nested, query_lower)),
-        _ => false,
-    }
-}
-
 async fn search_collections<C, S>(
     user: &S,
     backend: &C,
@@ -461,39 +406,58 @@ where
     C: StorageContext,
     S: AuthzSubject + ?Sized,
 {
-    let rows = if let Some((permission_backend, principal)) = authorization {
+    let (rows, storage_has_more) = if let Some((permission_backend, principal)) = authorization {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
-            Vec::new()
+            (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = usize::MAX;
-            let candidates = unified_search_service::search_collections(
-                backend,
-                user.principal_id(),
-                true,
-                None,
-                &candidate_spec,
-            )
-            .await?;
-            authorize_all_candidates(
-                permission_backend,
-                principal,
-                candidates,
-                scopes,
-                vec![Permissions::ReadCollection],
-                |collection| ResourceRef::collection(collection.id),
-            )
-            .await?
+            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
+            let mut authorized = Vec::new();
+            loop {
+                let page = unified_search_service::search_collections(
+                    backend,
+                    user.principal_id(),
+                    true,
+                    None,
+                    &candidate_spec,
+                )
+                .await?;
+                let next_candidate_cursor =
+                    page.items.last().map(|candidate| candidate.cursor.clone());
+                let page_has_more = page.has_more;
+                let allowed = authorize_all_candidates(
+                    permission_backend,
+                    principal,
+                    page.items,
+                    scopes,
+                    vec![Permissions::ReadCollection],
+                    |candidate| ResourceRef::collection(candidate.item.id),
+                )
+                .await?;
+                authorized.extend(allowed);
+                if authorized.len() > params.limit_per_kind || !page_has_more {
+                    break;
+                }
+                candidate_spec.collection_cursor =
+                    Some(next_candidate_cursor.ok_or_else(|| {
+                        ApiError::InternalServerError(
+                            "Collection search candidate page cannot advance its cursor"
+                                .to_string(),
+                        )
+                    })?);
+            }
+            (authorized, false)
         }
     } else {
-        unified_search_service::search_collections(
+        let page = unified_search_service::search_collections(
             backend,
             user.principal_id(),
             is_admin,
             scopes,
             search_spec,
         )
-        .await?
+        .await?;
+        (page.items, page.has_more)
     };
     if rows.is_empty() {
         return Ok(SearchPage {
@@ -502,28 +466,16 @@ where
         });
     }
 
-    let query_lower = lower_string(&params.query);
-
     let scored = rows
         .into_iter()
-        .filter_map(|collection| {
-            let rank = compute_rank(
-                &collection.name,
-                &collection.description,
-                &query_lower,
-                false,
-            )?;
-            Some((
-                cursor_for_item(collection.id, &collection.name, rank),
-                collection,
-            ))
-        })
+        .map(|candidate| (candidate.cursor, candidate.item))
         .collect();
 
     paginate_scored(
         scored,
         params.cursor_for(UnifiedSearchKind::Collection),
         params.limit_per_kind,
+        storage_has_more,
     )
 }
 
@@ -540,47 +492,64 @@ where
     C: StorageContext,
     S: AuthzSubject + ?Sized,
 {
-    let rows = if let Some((permission_backend, principal)) = authorization {
+    let (rows, storage_has_more) = if let Some((permission_backend, principal)) = authorization {
         if !scope_allows(scopes, &[Permissions::ReadClass]) {
-            Vec::new()
+            (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = usize::MAX;
-            let candidates = unified_search_service::search_classes(
-                backend,
-                user.principal_id(),
-                true,
-                None,
-                &candidate_spec,
-            )
-            .await?;
-            authorize_all_candidates(
-                permission_backend,
-                principal,
-                candidates,
-                scopes,
-                vec![Permissions::ReadClass],
-                |class| ResourceRef {
-                    kind: ResourceKind::Class,
-                    id: class.id,
-                    attrs: ResourceAttrs {
-                        collection_id: Some(class.collection.id),
-                        name: Some(class.name.clone()),
-                        ..Default::default()
+            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
+            let mut authorized = Vec::new();
+            loop {
+                let page = unified_search_service::search_classes(
+                    backend,
+                    user.principal_id(),
+                    true,
+                    None,
+                    &candidate_spec,
+                )
+                .await?;
+                let next_candidate_cursor =
+                    page.items.last().map(|candidate| candidate.cursor.clone());
+                let page_has_more = page.has_more;
+                let allowed = authorize_all_candidates(
+                    permission_backend,
+                    principal,
+                    page.items,
+                    scopes,
+                    vec![Permissions::ReadClass],
+                    |candidate| ResourceRef {
+                        kind: ResourceKind::Class,
+                        id: candidate.item.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(candidate.item.collection.id),
+                            name: Some(candidate.item.name.clone()),
+                            ..Default::default()
+                        },
                     },
-                },
-            )
-            .await?
+                )
+                .await?;
+                authorized.extend(allowed);
+                if authorized.len() > params.limit_per_kind || !page_has_more {
+                    break;
+                }
+                candidate_spec.class_cursor = Some(next_candidate_cursor.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Class search candidate page cannot advance its cursor".to_string(),
+                    )
+                })?);
+            }
+            (authorized, false)
         }
     } else {
-        unified_search_service::search_classes(
+        let page = unified_search_service::search_classes(
             backend,
             user.principal_id(),
             is_admin,
             scopes,
             search_spec,
         )
-        .await?
+        .await?;
+        (page.items, page.has_more)
     };
     if rows.is_empty() {
         return Ok(SearchPage {
@@ -589,22 +558,16 @@ where
         });
     }
 
-    let query_lower = lower_string(&params.query);
-
     let scored = rows
         .into_iter()
-        .filter_map(|class| {
-            let extra_match = params.search_class_schema
-                && schema_matches(class.json_schema.as_ref(), &query_lower);
-            let rank = compute_rank(&class.name, &class.description, &query_lower, extra_match)?;
-            Some((cursor_for_item(class.id, &class.name, rank), class))
-        })
+        .map(|candidate| (candidate.cursor, candidate.item))
         .collect::<Vec<_>>();
 
     let page = paginate_scored(
         scored,
         params.cursor_for(UnifiedSearchKind::Class),
         params.limit_per_kind,
+        storage_has_more,
     )?;
     Ok(SearchPage {
         items: page.items,
@@ -625,48 +588,65 @@ where
     C: StorageContext,
     S: AuthzSubject + ?Sized,
 {
-    let rows = if let Some((permission_backend, principal)) = authorization {
+    let (rows, storage_has_more) = if let Some((permission_backend, principal)) = authorization {
         if !scope_allows(scopes, &[Permissions::ReadObject]) {
-            Vec::new()
+            (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = usize::MAX;
-            let candidates = unified_search_service::search_objects(
-                backend,
-                user.principal_id(),
-                true,
-                None,
-                &candidate_spec,
-            )
-            .await?;
-            authorize_all_candidates(
-                permission_backend,
-                principal,
-                candidates,
-                scopes,
-                vec![Permissions::ReadObject],
-                |object| ResourceRef {
-                    kind: ResourceKind::Object,
-                    id: object.id,
-                    attrs: ResourceAttrs {
-                        collection_id: Some(object.collection_id),
-                        class_id: Some(object.hubuum_class_id),
-                        name: Some(object.name.clone()),
-                        ..Default::default()
+            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
+            let mut authorized = Vec::new();
+            loop {
+                let page = unified_search_service::search_objects(
+                    backend,
+                    user.principal_id(),
+                    true,
+                    None,
+                    &candidate_spec,
+                )
+                .await?;
+                let next_candidate_cursor =
+                    page.items.last().map(|candidate| candidate.cursor.clone());
+                let page_has_more = page.has_more;
+                let allowed = authorize_all_candidates(
+                    permission_backend,
+                    principal,
+                    page.items,
+                    scopes,
+                    vec![Permissions::ReadObject],
+                    |candidate| ResourceRef {
+                        kind: ResourceKind::Object,
+                        id: candidate.item.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(candidate.item.collection_id),
+                            class_id: Some(candidate.item.hubuum_class_id),
+                            name: Some(candidate.item.name.clone()),
+                            ..Default::default()
+                        },
                     },
-                },
-            )
-            .await?
+                )
+                .await?;
+                authorized.extend(allowed);
+                if authorized.len() > params.limit_per_kind || !page_has_more {
+                    break;
+                }
+                candidate_spec.object_cursor = Some(next_candidate_cursor.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Object search candidate page cannot advance its cursor".to_string(),
+                    )
+                })?);
+            }
+            (authorized, false)
         }
     } else {
-        unified_search_service::search_objects(
+        let page = unified_search_service::search_objects(
             backend,
             user.principal_id(),
             is_admin,
             scopes,
             search_spec,
         )
-        .await?
+        .await?;
+        (page.items, page.has_more)
     };
     if rows.is_empty() {
         return Ok(SearchPage {
@@ -675,22 +655,16 @@ where
         });
     }
 
-    let query_lower = lower_string(&params.query);
-
     let scored = rows
         .into_iter()
-        .filter_map(|object| {
-            let extra_match =
-                params.search_object_data && object_value_matches(&object.data, &query_lower);
-            let rank = compute_rank(&object.name, &object.description, &query_lower, extra_match)?;
-            Some((cursor_for_item(object.id, &object.name, rank), object))
-        })
+        .map(|candidate| (candidate.cursor, candidate.item))
         .collect::<Vec<_>>();
 
     paginate_scored(
         scored,
         params.cursor_for(UnifiedSearchKind::Object),
         params.limit_per_kind,
+        storage_has_more,
     )
 }
 

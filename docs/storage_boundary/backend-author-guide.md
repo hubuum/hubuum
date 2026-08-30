@@ -222,6 +222,13 @@ Read operations therefore receive one of these forms:
 - a narrow callback such as `ObjectAggregateAuthorizer` for bounded delegated
   decisions.
 
+External-policy candidate enumeration must use `StorageCandidatePageLimit` and
+`StorageCandidatePage<T>` (or an operation-specific page with the same bound).
+Return one stable cursor page, including only the requested number of rows and a
+`has_more` signal. For ranked search, return the adapter-owned cursor beside the
+row. Complete policy inputs are permitted only when the caller supplies a
+validated total bound and the operation rejects overflow.
+
 Do not import a concrete permission backend into a storage adapter. Do not
 silently choose local policy when the application configured an external
 backend.

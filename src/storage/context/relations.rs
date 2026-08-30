@@ -227,7 +227,8 @@ impl UnifiedSearchStorage for StorageHandle {
     async fn search_collections(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageCollection>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>, StorageError>
+    {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
@@ -242,7 +243,10 @@ impl UnifiedSearchStorage for StorageHandle {
     async fn search_classes(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageClassWithCollection>, StorageError> {
+    ) -> Result<
+        StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
+        StorageError,
+    > {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,
@@ -255,7 +259,8 @@ impl UnifiedSearchStorage for StorageHandle {
     async fn search_objects(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageObject>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, StorageError>
+    {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::UnifiedSearch,

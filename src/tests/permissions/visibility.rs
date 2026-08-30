@@ -6,7 +6,7 @@
 
 #![cfg(test)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use actix_web::test as actix_test;
 use async_trait::async_trait;
@@ -15,7 +15,9 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
+    ResourceRevision,
 };
+use crate::pagination::{finalize_page, paginate_in_memory, prepare_db_pagination};
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
@@ -25,7 +27,7 @@ use crate::permissions::types::{
 };
 use crate::permissions::visibility::{
     AuthorizationPage, AuthorizedObjectIds, authorize_all_candidates,
-    authorize_resource_permissions, paginate_authorized,
+    authorize_cursor_page_from_storage, authorize_resource_permissions, paginate_authorized,
 };
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
@@ -55,6 +57,116 @@ fn authorized_object_ids_intersection_preserves_sorted_unique_ids() {
     let right = AuthorizedObjectIds::new([2, 3, 4]).unwrap();
 
     assert_eq!(left.intersection(&right).as_slice(), &[2, 4]);
+}
+
+fn candidate_collection(id: i32) -> Collection {
+    Collection {
+        id,
+        name: format!("collection-{id:04}"),
+        description: String::new(),
+        created_at: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+        updated_at: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+        parent_collection_id: None,
+        revision: ResourceRevision::INITIAL,
+    }
+}
+
+fn allow_all_collection_reads(backend: &MockTreetopBackend) {
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadCollection,
+        resource_kind: ResourceKind::Collection,
+        resource_id: None,
+        attrs: ResourceAttrs::default(),
+    });
+}
+
+#[actix_test]
+async fn storage_backed_authorization_stops_after_one_bounded_candidate_page() {
+    let backend = MockTreetopBackend::new();
+    allow_all_collection_reads(&backend);
+    let principal = PrincipalRef::new(1, [7]);
+    let candidates = (1..=700).map(candidate_collection).collect::<Vec<_>>();
+    let fetch_sizes = Arc::new(Mutex::new(Vec::new()));
+    let query = QueryOptions::new(vec![], vec![], Some(3), None, false).unwrap();
+
+    let page = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |candidate_query| {
+            let candidates = candidates.clone();
+            let fetch_sizes = Arc::clone(&fetch_sizes);
+            async move {
+                let rows = paginate_in_memory(candidates, &candidate_query)?;
+                fetch_sizes.lock().unwrap().push(rows.len());
+                Ok(rows)
+            }
+        },
+        |collection| ResourceRef::collection(collection.id),
+    )
+    .await
+    .expect("bounded authorization should succeed");
+
+    assert_eq!(
+        page.rows.len(),
+        4,
+        "only the response look-ahead is retained"
+    );
+    assert_eq!(page.total_count, crate::pagination::SKIPPED_TOTAL_COUNT);
+    assert_eq!(*fetch_sizes.lock().unwrap(), vec![129]);
+}
+
+#[actix_test]
+async fn storage_backed_authorization_keeps_exact_total_global_after_a_cursor() {
+    let backend = MockTreetopBackend::new();
+    allow_all_collection_reads(&backend);
+    let principal = PrincipalRef::new(1, [7]);
+    let candidates = (1..=700).map(candidate_collection).collect::<Vec<_>>();
+    let first_query = QueryOptions::new(vec![], vec![], Some(3), None, true).unwrap();
+    let first_prepared = prepare_db_pagination::<Collection>(&first_query).unwrap();
+    let first_rows = paginate_in_memory(candidates.clone(), &first_prepared).unwrap();
+    let first_page = finalize_page(first_rows, &first_query).unwrap();
+    let mut second_query = first_query;
+    second_query.set_cursor(first_page.next_cursor).unwrap();
+    let fetch_sizes = Arc::new(Mutex::new(Vec::new()));
+
+    let page = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &second_query,
+        |candidate_query| {
+            let candidates = candidates.clone();
+            let fetch_sizes = Arc::clone(&fetch_sizes);
+            async move {
+                let rows = paginate_in_memory(candidates, &candidate_query)?;
+                fetch_sizes.lock().unwrap().push(rows.len());
+                Ok(rows)
+            }
+        },
+        |collection| ResourceRef::collection(collection.id),
+    )
+    .await
+    .expect("exact-count authorization should succeed");
+    let response = finalize_page(page.rows, &second_query).unwrap();
+
+    assert_eq!(page.total_count, 700);
+    assert_eq!(
+        response
+            .items
+            .iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>(),
+        vec![4, 5, 6]
+    );
+    assert_eq!(
+        *fetch_sizes.lock().unwrap(),
+        vec![129, 129, 129, 129, 129, 60]
+    );
 }
 
 #[actix_test]
@@ -226,9 +338,10 @@ impl PermissionBackend for ForceSlowPath {
         &self,
         principal: &PrincipalRef,
         permissions: &[Permissions],
+        candidate_limit: crate::permissions::CompleteCollectionCandidateLimit,
     ) -> Result<Vec<Collection>, ApiError> {
         self.inner
-            .collections_user_can(principal, permissions)
+            .collections_user_can(principal, permissions, candidate_limit)
             .await
     }
 

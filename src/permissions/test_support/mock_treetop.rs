@@ -11,9 +11,9 @@ use crate::models::{
     Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
     PermissionsList,
 };
-use crate::pagination::{known_count_or_skipped, paginate_in_memory};
+use crate::pagination::{known_count_or_skipped, paginate_in_memory, prepare_db_pagination};
 
-use super::super::backend::PermissionBackend;
+use super::super::backend::{CompleteCollectionCandidateLimit, PermissionBackend};
 use super::super::types::{
     PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
@@ -441,6 +441,7 @@ impl PermissionBackend for MockTreetopBackend {
         &self,
         _principal: &PrincipalRef,
         _permissions: &[Permissions],
+        _candidate_limit: CompleteCollectionCandidateLimit,
     ) -> Result<Vec<Collection>, ApiError> {
         Err(ApiError::NotImplemented(
             "MockTreetopBackend does not enumerate collections — exercise via the real Treetop in Phase 5.4".to_string(),
@@ -513,7 +514,8 @@ impl PermissionBackend for MockTreetopBackend {
         }
 
         let total_count = known_count_or_skipped(page, all_results.len() as i64);
-        let rows = paginate_in_memory(all_results, page)?;
+        let prepared_page = prepare_db_pagination::<GroupPermission>(page)?;
+        let rows = paginate_in_memory(all_results, &prepared_page)?;
 
         Ok((rows, total_count))
     }

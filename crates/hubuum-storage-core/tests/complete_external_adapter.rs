@@ -645,14 +645,15 @@ impl AuthorizationDataStorage for CompleteExternalAdapter {
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
+        query: StorageAuthorizationCollectionCandidateQuery,
+    ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError> {
         fixture_result()
     }
 
     async fn load_authorization_group_candidates(
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
         fixture_result()
     }
 
@@ -1259,21 +1260,26 @@ impl UnifiedSearchStorage for CompleteExternalAdapter {
     async fn search_collections(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageCollection>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>, StorageError>
+    {
         fixture_result()
     }
 
     async fn search_classes(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageClassWithCollection>, StorageError> {
+    ) -> Result<
+        StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
+        StorageError,
+    > {
         fixture_result()
     }
 
     async fn search_objects(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageObject>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, StorageError>
+    {
         fixture_result()
     }
 }

@@ -6,8 +6,8 @@ use actix_web::test as actix_test;
 
 use crate::errors::ApiError;
 use crate::models::search::parse_query_parameter;
-use crate::models::{CollectionID, GroupID, GroupPermission, Permissions};
-use crate::pagination::{finalize_page, prepare_db_pagination};
+use crate::models::{CollectionID, GroupID, Permissions};
+use crate::pagination::finalize_page;
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{
@@ -387,14 +387,14 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
         .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &page_limited)
         .await
         .unwrap();
+    let results = finalize_page(results, &page_limited).unwrap().items;
     assert_eq!(count, 2, "total count is 2 even though limit is 1");
     assert_eq!(results.len(), 1, "limit restricts returned rows");
     assert_eq!(results[0].group.id, 100);
 
     let first_request = parse_query_parameter("sort=groupname.desc&limit=1").unwrap();
-    let first_prepared = prepare_db_pagination::<GroupPermission>(&first_request).unwrap();
     let (first_rows, _) = backend
-        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &first_prepared)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &first_request)
         .await
         .unwrap();
     let first_page = finalize_page(first_rows, &first_request).unwrap();
@@ -402,9 +402,8 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
 
     let mut second_request = first_request;
     second_request.set_cursor(first_page.next_cursor).unwrap();
-    let second_prepared = prepare_db_pagination::<GroupPermission>(&second_request).unwrap();
     let (second_rows, _) = backend
-        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &second_prepared)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &second_request)
         .await
         .unwrap();
     let second_page = finalize_page(second_rows, &second_request).unwrap();

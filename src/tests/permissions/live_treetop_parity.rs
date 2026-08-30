@@ -260,7 +260,11 @@ async fn live_collection_reverse_query_reflects_external_policy() {
     let principal = PrincipalRef::new(TEST_USER_ID, [TEST_NORMAL_GROUP_ID]);
 
     let visible = backend
-        .collections_user_can(&principal, &[Permissions::ReadCollection])
+        .collections_user_can(
+            &principal,
+            &[Permissions::ReadCollection],
+            crate::permissions::CompleteCollectionCandidateLimit::try_new(100).unwrap(),
+        )
         .await
         .expect("collections_user_can failed");
 

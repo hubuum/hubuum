@@ -556,16 +556,20 @@ impl AuthorizationDataStorage for PostgresStorage {
 
     async fn load_authorization_collection_candidates(
         &self,
-    ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
-        crate::operations::authorization::load_authorization_collection_candidates(self.runtime())
-            .await
-            .map_err(StorageError::from)
+        query: StorageAuthorizationCollectionCandidateQuery,
+    ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError> {
+        crate::operations::authorization::load_authorization_collection_candidates(
+            self.runtime(),
+            query,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn load_authorization_group_candidates(
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
-    ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
+    ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
         crate::operations::authorization::load_authorization_group_candidates(self.runtime(), query)
             .await
             .map_err(StorageError::from)

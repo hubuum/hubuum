@@ -47,9 +47,10 @@ mod worker_notifications;
 
 pub use authorization::{
     AuthorizationDataStorage, StorageAuthorizationClassResource, StorageAuthorizationCollection,
-    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionGrantListQuery,
-    StorageAuthorizationCollectionsAccessQuery, StorageAuthorizationCollectionsQuery,
-    StorageAuthorizationGrant, StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
+    StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionCandidateQuery,
+    StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionsAccessQuery,
+    StorageAuthorizationCollectionsQuery, StorageAuthorizationGrant,
+    StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
     StorageAuthorizationGrantMutation, StorageAuthorizationGroup,
     StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupGrant,
     StorageAuthorizationGroupIdentity, StorageAuthorizationGroupMembershipQuery,
@@ -215,7 +216,10 @@ pub use operational::{
     StorageOperationalTaskStatusCounts, StorageOperationalTaskTerminalCounts,
     StorageReadinessSnapshot, TokenRetentionStorage,
 };
-pub use page::{StoragePage, StoragePageParts};
+pub use page::{
+    MAX_STORAGE_CANDIDATE_PAGE_SIZE, StorageCandidatePage, StorageCandidatePageLimit, StoragePage,
+    StoragePageParts,
+};
 pub use record::StorageRecordMetadata;
 pub use relation_lifecycle::{
     ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
@@ -283,8 +287,8 @@ pub use transaction::{
 };
 pub use unified_search::{
     StorageClassWithCollection, StorageClassWithCollectionBuilder, StorageCollection,
-    StorageObject, StorageResourceScope, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
-    StorageVisibility, UnifiedSearchStorage,
+    StorageObject, StorageResourceScope, StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor,
+    StorageUnifiedSearchQuery, StorageVisibility, UnifiedSearchStorage,
 };
 pub use validation::{StorageValidationError, StorageValidationErrorKind};
 pub use worker_notifications::{

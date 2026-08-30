@@ -6,7 +6,8 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId, Re
 use serde_json::Value;
 
 use crate::{
-    StorageAuthorizationPermission, StorageError, StorageRecordMetadata, StorageValidationError,
+    StorageAuthorizationPermission, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
+    StorageRecordMetadata, StorageValidationError,
 };
 
 /// Normalized collection, class, and object boundary for a scoped search.
@@ -191,22 +192,52 @@ impl fmt::Debug for StorageUnifiedSearchCursor {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageUnifiedSearchQuery {
     search_term: String,
-    limit: usize,
+    page_limit: StorageCandidatePageLimit,
     search_extended_document: bool,
     cursor: Option<StorageUnifiedSearchCursor>,
     visibility: StorageVisibility,
+}
+
+/// One unified-search row paired with the adapter-owned stable cursor that
+/// follows the database's exact ranking and normalization semantics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageUnifiedSearchCandidate<T> {
+    item: T,
+    cursor: StorageUnifiedSearchCursor,
+}
+
+impl<T> StorageUnifiedSearchCandidate<T> {
+    #[must_use]
+    pub const fn new(item: T, cursor: StorageUnifiedSearchCursor) -> Self {
+        Self { item, cursor }
+    }
+
+    #[must_use]
+    pub const fn item(&self) -> &T {
+        &self.item
+    }
+
+    #[must_use]
+    pub const fn cursor(&self) -> &StorageUnifiedSearchCursor {
+        &self.cursor
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (T, StorageUnifiedSearchCursor) {
+        (self.item, self.cursor)
+    }
 }
 
 impl StorageUnifiedSearchQuery {
     #[must_use]
     pub fn new(
         search_term: impl Into<String>,
-        limit: usize,
+        page_limit: StorageCandidatePageLimit,
         visibility: StorageVisibility,
     ) -> Self {
         Self {
             search_term: search_term.into(),
-            limit,
+            page_limit,
             search_extended_document: false,
             cursor: None,
             visibility,
@@ -231,8 +262,8 @@ impl StorageUnifiedSearchQuery {
     }
 
     #[must_use]
-    pub const fn limit(&self) -> usize {
-        self.limit
+    pub const fn page_limit(&self) -> StorageCandidatePageLimit {
+        self.page_limit
     }
 
     #[must_use]
@@ -256,7 +287,7 @@ impl fmt::Debug for StorageUnifiedSearchQuery {
         formatter
             .debug_struct("StorageUnifiedSearchQuery")
             .field("search_term", &"[redacted]")
-            .field("limit", &self.limit)
+            .field("page_limit", &self.page_limit)
             .field("search_extended_document", &self.search_extended_document)
             .field("cursor", &self.cursor)
             .field("visibility", &self.visibility)
@@ -639,17 +670,20 @@ pub trait UnifiedSearchStorage: Send + Sync {
     async fn search_collections(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageCollection>, StorageError>;
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>, StorageError>;
 
     async fn search_classes(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageClassWithCollection>, StorageError>;
+    ) -> Result<
+        StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
+        StorageError,
+    >;
 
     async fn search_objects(
         &self,
         query: StorageUnifiedSearchQuery,
-    ) -> Result<Vec<StorageObject>, StorageError>;
+    ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, StorageError>;
 }
 
 #[cfg(test)]
@@ -702,9 +736,16 @@ mod tests {
             None::<[StorageAuthorizationPermission; 0]>,
             None,
         );
-        let query = StorageUnifiedSearchQuery::new("secret asset", 10, visibility).cursor(Some(
-            StorageUnifiedSearchCursor::new(2, "secret asset", ResourceId::new(99).unwrap()),
-        ));
+        let query = StorageUnifiedSearchQuery::new(
+            "secret asset",
+            StorageCandidatePageLimit::try_new(10).unwrap(),
+            visibility,
+        )
+        .cursor(Some(StorageUnifiedSearchCursor::new(
+            2,
+            "secret asset",
+            ResourceId::new(99).unwrap(),
+        )));
 
         let debug = format!("{query:?}");
         assert!(!debug.contains("secret asset"));
