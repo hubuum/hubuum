@@ -105,14 +105,15 @@ hubuum-admin \
 ```
 
 The new admin binary also retains an explicit legacy bridge for deployments
-that must upgrade the schema before they can provision roles. When none of the
-three database-role flags or environment variables is configured,
-`hubuum-admin --migrate` applies migrations as the connected existing owner and
-prints a compatibility-mode warning. It does not transfer ownership or
-reconcile runtime grants. Keep restore confirmation blocked and privilege mode
-at `warn`, then complete the role-adoption procedure below before starting the
-restore executor, enabling strict mode, or unblocking web restore confirmation.
-Supplying any database-role name selects split-role migration and retains the
+that must upgrade the schema before they can provision roles.
+`hubuum-admin --migrate --legacy-single-role-migration` applies migrations as
+the connected existing owner and prints a compatibility-mode warning. It does
+not transfer ownership or reconcile runtime grants. The flag rejects all three
+database-role settings so the bridge cannot be confused with split-role
+migration. Keep restore confirmation blocked and privilege mode at `warn`, then
+complete the role-adoption procedure below before starting the restore
+executor, enabling strict mode, or unblocking web restore confirmation. Without
+the legacy flag, migration always reconciles the split roles, using the
 documented defaults for names not overridden.
 
 Set `HUBUUM_DATABASE_RUNTIME_ROLE=EXISTING_APPLICATION_ROLE` on the old and new
@@ -140,12 +141,15 @@ server versions during that rollout. Then use this order:
    stop all old API replicas; workers do not need the migration credential.
    Ordinary API traffic may otherwise continue while the existing login keeps
    compatibility runtime grants.
-3. Create the owner and migrator identities, apply the generated adoption SQL
-   through the existing owner connection, configure the migrator credential,
-   and run the migration with the same three role names:
+3. Create the owner and migrator identities, then apply the generated adoption
+   SQL through a bootstrap or provider-administrator connection that can manage
+   role membership and reassign objects owned by the existing application
+   login. The application login alone is usually not sufficiently privileged.
+   Configure the migrator credential and run the migration with the same three
+   role names:
 
    ```bash
-   psql "$EXISTING_OWNER_DATABASE_URL" --set ON_ERROR_STOP=1 \
+   psql "$ROLE_ADMIN_DATABASE_URL" --set ON_ERROR_STOP=1 \
      --file hubuum-database-role-adoption.sql
    export HUBUUM_MIGRATION_DATABASE_URL='postgres://hubuum_migrator:.../hubuum'
    export HUBUUM_DATABASE_OWNER_ROLE=hubuum_owner
@@ -169,13 +173,19 @@ server versions during that rollout. Then use this order:
    and revoke or disable the old login afterward.
 
 If role provisioning cannot precede schema migration, use the bridge only for
-step 3: with all three database-role settings absent, run
-`hubuum-admin --migrate --database-url "$EXISTING_OWNER_DATABASE_URL"`, confirm
-the compatibility warning, then provision the roles and apply the adoption SQL.
-Run `hubuum-admin --migrate` again with the migrator URL and all three role names
-set; this second invocation has no schema work but performs ownership and grant
-reconciliation. Do not proceed to step 4, enable strict privilege checks, or
-unpause confirmation until that reconciliation and its privilege report pass.
+step 3 with all three database-role settings absent:
+
+```bash
+hubuum-admin --migrate --legacy-single-role-migration \
+  --database-url "$EXISTING_OWNER_DATABASE_URL"
+```
+
+Confirm the compatibility warning, then provision the roles and apply the
+adoption SQL. Run `hubuum-admin --migrate` again with the migrator URL and all
+three role names set; this second invocation has no schema work but performs
+ownership and grant reconciliation. Do not proceed to step 4, enable strict
+privilege checks, or unpause confirmation until that reconciliation and its
+privilege report pass.
 
 The managed single-host updater automates this transition. It retains the
 existing volume's bootstrap password, creates and reconciles the three new

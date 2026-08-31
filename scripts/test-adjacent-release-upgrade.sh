@@ -465,7 +465,7 @@ probe_previous_api &
 probe_pid=$!
 migration_started=$SECONDS
 "${compose[@]}" run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin \
-  candidate-api --migrate > "$migration_log" 2>&1
+  candidate-api --migrate --legacy-single-role-migration > "$migration_log" 2>&1
 migration_seconds=$((SECONDS - migration_started))
 stop_probe
 analyze_probes

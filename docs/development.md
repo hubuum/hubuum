@@ -301,7 +301,8 @@ release-link overhead:
 ```bash
 export HUBUUM_BENCH_DATABASE_URL=postgres://postgres:postgres@localhost/hubuum_runtime
 cargo run --features embedded-migrations --bin hubuum-admin -- \
-  --migrate --database-url "$HUBUUM_BENCH_DATABASE_URL"
+  --migrate --legacy-single-role-migration \
+  --database-url "$HUBUUM_BENCH_DATABASE_URL"
 cargo build --features runtime-behavior-check --bin hubuum-server
 cargo run --profile dev --features runtime-behavior-check \
   --bin hubuum-runtime-behavior-check -- measure \

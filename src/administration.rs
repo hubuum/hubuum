@@ -97,6 +97,20 @@ struct AdminCli {
     #[arg(long, default_value_t = false)]
     migrate: bool,
 
+    /// Migrate an existing single-role database without reconciling split-role grants
+    #[cfg(feature = "embedded-migrations")]
+    #[arg(
+        long,
+        default_value_t = false,
+        requires = "migrate",
+        conflicts_with_all = [
+            "database_owner_role",
+            "database_migrator_role",
+            "database_runtime_role"
+        ]
+    )]
+    legacy_single_role_migration: bool,
+
     /// Print idempotent SQL for the configured owner, migrator, and runtime roles
     #[arg(long, default_value_t = false)]
     database_role_setup_sql: bool,
@@ -208,13 +222,11 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let admin_cli = AdminCli::parse();
     init_logging(&admin_cli.log_level);
 
-    let (database_roles, database_roles_configured) = resolve_database_roles(
+    let database_roles = resolve_database_roles(
         admin_cli.database_owner_role.as_deref(),
         admin_cli.database_migrator_role.as_deref(),
         admin_cli.database_runtime_role.as_deref(),
     )?;
-    #[cfg(not(feature = "embedded-migrations"))]
-    let _ = database_roles_configured;
 
     if admin_cli.database_role_setup_sql {
         print!("{}", storage_database_role_setup_sql(&database_roles)?);
@@ -272,7 +284,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
-        let migration_roles = database_roles_configured.then_some(&database_roles);
+        let migration_roles = (!admin_cli.legacy_single_role_migration).then_some(&database_roles);
         let applied =
             run_storage_migrations(&storage_settings, migration_roles).unwrap_or_else(|error| {
                 fatal_error(
@@ -280,10 +292,10 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                     EXIT_CODE_DATABASE_ERROR,
                 )
             });
-        if !database_roles_configured {
+        if admin_cli.legacy_single_role_migration {
             eprintln!(
-                "WARNING: no database role names were configured; migrations ran in legacy \
-                 single-role compatibility mode without privilege reconciliation. Complete the \
+                "WARNING: --legacy-single-role-migration was requested; migrations ran as the \
+                 connected existing owner without privilege reconciliation. Complete the \
                  database-role adoption procedure before enabling strict privilege checks or web \
                  restore confirmations."
             );
@@ -354,15 +366,13 @@ fn resolve_database_roles(
     owner: Option<&str>,
     migrator: Option<&str>,
     runtime: Option<&str>,
-) -> Result<(StorageDatabaseRoleNames, bool), ApiError> {
-    let configured = owner.is_some() || migrator.is_some() || runtime.is_some();
-    let roles = StorageDatabaseRoleNames::new(
+) -> Result<StorageDatabaseRoleNames, ApiError> {
+    StorageDatabaseRoleNames::new(
         owner.unwrap_or(DEFAULT_DATABASE_OWNER_ROLE),
         migrator.unwrap_or(DEFAULT_DATABASE_MIGRATOR_ROLE),
         runtime.unwrap_or(DEFAULT_DATABASE_RUNTIME_ROLE),
     )
-    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    Ok((roles, configured))
+    .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 
 fn print_database_privilege_report(
@@ -988,10 +998,9 @@ mod tests {
     }
 
     #[test]
-    fn absent_database_role_configuration_selects_legacy_migration_mode() {
-        let (roles, configured) = resolve_database_roles(None, None, None).unwrap();
+    fn absent_database_role_configuration_uses_documented_defaults() {
+        let roles = resolve_database_roles(None, None, None).unwrap();
 
-        assert!(!configured);
         assert_eq!(
             roles,
             StorageDatabaseRoleNames::new(
@@ -1004,11 +1013,41 @@ mod tests {
     }
 
     #[test]
-    fn any_database_role_configuration_selects_split_role_migration_mode() {
-        let (roles, configured) =
-            resolve_database_roles(None, None, Some("existing_hubuum_login")).unwrap();
+    fn database_role_configuration_overrides_individual_defaults() {
+        let roles = resolve_database_roles(None, None, Some("existing_hubuum_login")).unwrap();
 
-        assert!(configured);
         assert_eq!(roles.runtime(), "existing_hubuum_login");
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn legacy_single_role_migration_requires_migrate() {
+        let error =
+            match AdminCli::try_parse_from(["hubuum-admin", "--legacy-single-role-migration"]) {
+                Ok(_) => panic!("the compatibility bridge must require --migrate"),
+                Err(error) => error,
+            };
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn legacy_single_role_migration_rejects_split_role_names() {
+        let error = match AdminCli::try_parse_from([
+            "hubuum-admin",
+            "--migrate",
+            "--legacy-single-role-migration",
+            "--database-runtime-role",
+            "existing_hubuum_login",
+        ]) {
+            Ok(_) => panic!("legacy migration must not accept split-role configuration"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

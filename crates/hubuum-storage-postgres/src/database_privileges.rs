@@ -344,33 +344,35 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
     .unwrap();
     writeln!(
         sql,
-        "DO $grants$ DECLARE object RECORD; BEGIN\n  FOR object IN SELECT c.oid, c.relname, c.relkind FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{}' AND c.relkind IN ('r', 'p', 'S') LOOP\n    IF object.relkind = 'S' THEN\n      EXECUTE pg_catalog.format('ALTER SEQUENCE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('GRANT USAGE, SELECT ON SEQUENCE %I.%I TO %I', '{}', object.relname, '{}');\n    ELSE\n      EXECUTE pg_catalog.format('ALTER TABLE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM %I', '{}', object.relname, '{}');\n      IF object.relname = '{}' OR object.relname LIKE '%' || '{}' OR object.relname IN ({}) THEN\n        EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSIF object.relname = '{}' THEN\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n        EXECUTE pg_catalog.format('GRANT UPDATE ({}) ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSE\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      END IF;\n    END IF;\n  END LOOP;\nEND $grants$;",
-        manifest.schema,
-        manifest.schema,
-        names.owner().as_str(),
-        manifest.schema,
-        manifest.schema,
-        names.runtime().as_str(),
-        manifest.schema,
-        names.runtime().as_str(),
-        manifest.schema,
-        names.owner().as_str(),
-        manifest.schema,
-        manifest.schema,
-        names.runtime().as_str(),
-        manifest.migration_table,
-        manifest.history_table_suffix,
-        read_only_tables,
-        manifest.schema,
-        names.runtime().as_str(),
-        manifest.events_table,
-        manifest.schema,
-        names.runtime().as_str(),
-        update_columns,
-        manifest.schema,
-        names.runtime().as_str(),
-        manifest.schema,
-        names.runtime().as_str(),
+        "DO $grants$ DECLARE object RECORD; BEGIN
+  FOR object IN SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relkind IN ('r', 'p') LOOP
+    EXECUTE pg_catalog.format('ALTER TABLE %I.%I OWNER TO %I', '{schema}', object.relname, '{owner}');
+    EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM PUBLIC', '{schema}', object.relname);
+    EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM %I', '{schema}', object.relname, '{runtime}');
+    IF object.relname = '{migration_table}' OR object.relname LIKE '%' || '{history_suffix}' OR object.relname IN ({read_only_tables}) THEN
+      EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %I.%I TO %I', '{schema}', object.relname, '{runtime}');
+    ELSIF object.relname = '{events_table}' THEN
+      EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE %I.%I TO %I', '{schema}', object.relname, '{runtime}');
+      EXECUTE pg_catalog.format('GRANT UPDATE ({update_columns}) ON TABLE %I.%I TO %I', '{schema}', object.relname, '{runtime}');
+    ELSE
+      EXECUTE pg_catalog.format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO %I', '{schema}', object.relname, '{runtime}');
+    END IF;
+  END LOOP;
+  FOR object IN SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relkind = 'S' LOOP
+    EXECUTE pg_catalog.format('ALTER SEQUENCE %I.%I OWNER TO %I', '{schema}', object.relname, '{owner}');
+    EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM PUBLIC', '{schema}', object.relname);
+    EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM %I', '{schema}', object.relname, '{runtime}');
+    EXECUTE pg_catalog.format('GRANT USAGE, SELECT ON SEQUENCE %I.%I TO %I', '{schema}', object.relname, '{runtime}');
+  END LOOP;
+END $grants$;",
+        schema = manifest.schema,
+        owner = names.owner().as_str(),
+        runtime = names.runtime().as_str(),
+        migration_table = manifest.migration_table,
+        history_suffix = manifest.history_table_suffix,
+        read_only_tables = read_only_tables,
+        events_table = manifest.events_table,
+        update_columns = update_columns,
     )
     .unwrap();
     writeln!(

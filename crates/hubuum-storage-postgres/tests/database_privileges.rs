@@ -188,7 +188,7 @@ async fn split_role_reconciliation_adopts_existing_single_role_objects() {
         connection
             .transaction::<_, diesel::result::Error, _>(async |connection| {
                 diesel::sql_query(format!(
-                    "CREATE TABLE public.\"{table_name}\" (id integer PRIMARY KEY)"
+                    "CREATE TABLE public.\"{table_name}\" (id serial PRIMARY KEY)"
                 ))
                 .execute(&mut *connection)
                 .await?;

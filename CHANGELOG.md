@@ -48,9 +48,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   but must leave old synchronous web confirmation blocked; use the new one-shot
   administrator restore path until the executor-based release is restored. If
   role provisioning must follow schema migration, the new admin binary retains
-  a warned single-role migration bridge when no database-role names are
-  configured; operators must still complete role adoption before enabling
-  strict checks or web restore confirmation.
+  an explicit, warned `--legacy-single-role-migration` bridge that rejects
+  split-role settings; operators must still complete role adoption before
+  enabling strict checks or web restore confirmation. Adoption transfers table
+  ownership before attached sequences so existing serial-backed schemas can be
+  reconciled safely.
 - **Breaking (full restore):** `POST /api/v1/restores/{restore_id}/confirm` now
   returns `202 Accepted` after queuing the validated operation instead of
   completing the replacement synchronously. Deploy
