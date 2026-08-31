@@ -62,6 +62,10 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_RUNTIME_ROLE", Server),
     option!("HUBUUM_STORAGE_BACKEND", Database),
     option!("HUBUUM_DATABASE_URL", Database, sensitive),
+    option!("HUBUUM_DATABASE_PRIVILEGE_MODE", Database),
+    option!("HUBUUM_DATABASE_OWNER_ROLE", Database),
+    option!("HUBUUM_DATABASE_MIGRATOR_ROLE", Database),
+    option!("HUBUUM_DATABASE_RUNTIME_ROLE", Database),
     option!("HUBUUM_DB_POOL_SIZE", Database),
     option!("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS", Database),
     option!("HUBUUM_DB_STATEMENT_TIMEOUT_MS", Database),
@@ -176,6 +180,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
+    option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
+    option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
@@ -183,7 +189,6 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_SECRET_SOURCE", Operations),
     option!("HUBUUM_SECRET_FILE_ROOT", Operations, sensitive),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
-    option!("HUBUUM_SKIP_MIGRATIONS", Operations),
     option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
     option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),
     option!("HUBUUM_TREETOP_TEST_CONTAINER_NAME", Permissions),
@@ -211,6 +216,8 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/administration.rs",
     "src/logger.rs",
     "src/secrets.rs",
+    "src/test_support.rs",
+    "src/tests/temporal/mod.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
 ];

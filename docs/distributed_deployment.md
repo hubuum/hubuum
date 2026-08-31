@@ -44,16 +44,12 @@ to behave as before.
 
 ## One-Shot Migrations
 
-The `api` and `worker` container roles always skip migrations. Setting the
-following value as well makes that ownership explicit in deployment manifests:
-
-```env
-HUBUUM_SKIP_MIGRATIONS=true
-```
-
-Run exactly one migration job before rolling out the new application version.
-The production image contains `hubuum-admin` and embedded migrations; it does
-not require the Diesel CLI or `psql`.
+Every server container role checks schema readiness without applying
+migrations. Run exactly one migration job before rolling out the new
+application version. The production image contains `hubuum-admin` and embedded
+migrations; it does not require the Diesel CLI or `psql`. See
+[PostgreSQL Database Roles](database_roles.md) for initial provisioning and the
+complete least-privilege contract.
 
 ```yaml
 apiVersion: batch/v1
@@ -69,10 +65,10 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           command: ["/usr/local/bin/hubuum-admin", "--migrate"]
           env:
-            - name: HUBUUM_DATABASE_URL
+            - name: HUBUUM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: hubuum
+                  name: hubuum-migration-database
                   key: database-url
 ```
 
@@ -149,8 +145,13 @@ spec:
           env:
             - name: HUBUUM_RUNTIME_ROLE
               value: api
-            - name: HUBUUM_SKIP_MIGRATIONS
-              value: "true"
+            - name: HUBUUM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hubuum-runtime-database
+                  key: database-url
+            - name: HUBUUM_DATABASE_PRIVILEGE_MODE
+              value: strict
           ports:
             - name: http
               containerPort: 8080
@@ -190,11 +191,11 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 ```
 
-The migration Job must use the new application image and the same database
-credentials as the Deployments. If the chart creates those credentials, make
-them available before the hook runs or keep migration ownership in the release
-pipeline. A failed migration must stop the rollout while the old API replicas
-remain online.
+The migration Job must use the new application image and a distinct migrator
+credential that is not mounted into any Deployment. If the chart creates that
+credential, make it available before the hook runs or keep migration ownership
+in the release pipeline. A failed migration must stop the rollout while the old
+API replicas remain online.
 
 Every migration used in this sequence must be compatible with both the old and
 new API versions. Use expand/backfill/switch/contract changes across releases;

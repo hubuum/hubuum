@@ -25,8 +25,8 @@ use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::{with_connection, with_transaction};
 
 fn database_url() -> String {
-    std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must point to the isolated migrated test database")
+    std::env::var("HUBUUM_MIGRATION_DATABASE_URL")
+        .expect("HUBUUM_MIGRATION_DATABASE_URL must provide destructive restore authority")
 }
 
 #[tokio::test]

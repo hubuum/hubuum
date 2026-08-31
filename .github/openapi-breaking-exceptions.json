@@ -175,6 +175,17 @@
         "df58eb5e835d",
         "df42b18ec136"
       ]
+    },
+    {
+      "id": "v0.0.11-admin-only-destructive-restore",
+      "baseline": "v0.0.11",
+      "expires": "2027-08-31",
+      "reason": "A bearer-authenticated API process uses the non-owning runtime database role and must not cross the database privilege boundary to perform destructive full-system restore.",
+      "migration": "`hubuum-admin --restore`",
+      "changelog_entry": "POST /api/v1/restores/{restore_id}/confirm",
+      "fingerprints": [
+        "ca6ee7172865"
+      ]
     }
   ]
 }

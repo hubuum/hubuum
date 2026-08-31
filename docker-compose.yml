@@ -6,11 +6,34 @@ services:
     environment:
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_CLIENT_ALLOWLIST: "*"
-      HUBUUM_DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
+      HUBUUM_DATABASE_URL: postgres://hubuum_runtime:${POSTGRES_RUNTIME_PASSWORD:?Set POSTGRES_RUNTIME_PASSWORD in .env}@db/hubuum
+      HUBUUM_DATABASE_OWNER_ROLE: hubuum_owner
+      HUBUUM_DATABASE_MIGRATOR_ROLE: hubuum_migrator
+      HUBUUM_DATABASE_RUNTIME_ROLE: hubuum_runtime
+      HUBUUM_DATABASE_PRIVILEGE_MODE: strict
       HUBUUM_LOG_LEVEL: debug
       HUBUUM_DEFAULT_PAGE_LIMIT: ${HUBUUM_DEFAULT_PAGE_LIMIT:-100}
       HUBUUM_MAX_PAGE_LIMIT: ${HUBUUM_MAX_PAGE_LIMIT:-250}
-      DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  hubuum-migrate:
+    build: .
+    profiles: ["administration"]
+    entrypoint: /usr/local/bin/hubuum-admin
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: postgres://hubuum_migrator:${POSTGRES_MIGRATOR_PASSWORD:?Set POSTGRES_MIGRATOR_PASSWORD in .env}@db/hubuum
+      HUBUUM_DATABASE_OWNER_ROLE: hubuum_owner
+      HUBUUM_DATABASE_MIGRATOR_ROLE: hubuum_migrator
+      HUBUUM_DATABASE_RUNTIME_ROLE: hubuum_runtime
     depends_on:
       db:
         condition: service_healthy
@@ -29,14 +52,16 @@ services:
     ports:
       - "127.0.0.1:9998:5432"
     environment:
-      POSTGRES_USER: hubuum
+      POSTGRES_USER: hubuum_bootstrap
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?Set POSTGRES_MIGRATOR_PASSWORD in .env}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set POSTGRES_RUNTIME_PASSWORD in .env}
       POSTGRES_DB: hubuum
-      PGUSER: hubuum
+      PGUSER: hubuum_bootstrap
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U hubuum -d hubuum" ]
+      test: [ "CMD-SHELL", "pg_isready -U hubuum_bootstrap -d hubuum" ]
       interval: 5s
       timeout: 5s
       retries: 5

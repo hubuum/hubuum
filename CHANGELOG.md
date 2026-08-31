@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a generated PostgreSQL privilege manifest with distinct non-login
+  owner, one-shot migrator, and non-owning runtime roles; catalog-backed
+  warn/strict startup diagnostics; administrator SQL and JSON reporting; and
+  Compose, single-host, and distributed deployment workflows that keep the
+  migration credential out of long-lived application containers.
 - Added bounded online token hash key-ring rotation with versioned bearer
   tokens, active and previous verification keys, race-safe migration of legacy
   digests, strict stable-key startup enforcement, per-key retirement
@@ -26,6 +31,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (database deployment):** server container entrypoints no longer
+  apply migrations. Operators must provision the documented owner, migrator,
+  and runtime roles, set `HUBUUM_DATABASE_URL` to the runtime identity, and run
+  `hubuum-admin --migrate` as a one-shot workload with
+  `HUBUUM_MIGRATION_DATABASE_URL` before rolling the server. External
+  single-host installs must add `--migration-database-url` on upgrade.
+- **Breaking (full restore):** `POST /api/v1/restores/{restore_id}/confirm` now
+  returns `501 Not Implemented`; destructive restore requires
+  `hubuum-admin --restore` with the migration database credential. Existing
+  clients may continue staging and validating documents through the API, but
+  must move confirmation into a controlled administrative workload.
+- Temporal history and append-only audit-event triggers now reject forged
+  restore and purge session flags from the runtime role. Event retention uses
+  a bounded, allowlisted security-definer function tied to an existing durable
+  claim instead of granting the runtime role direct event deletion.
 - **Breaking (experimental `hubuum-storage-core` API):** token creation and
   renewal now receive typed `StorageTokenDigest` values, authentication and
   hash-based revocation accept bounded credential candidates, successful

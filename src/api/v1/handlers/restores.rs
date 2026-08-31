@@ -13,7 +13,7 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::restores::{
-    RestoreSettings, confirm_restore, resolve_identity_scope_name, restore_status, stage_restore,
+    RestoreSettings, resolve_identity_scope_name, restore_status, stage_restore,
 };
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
@@ -75,25 +75,22 @@ pub async fn create_restore_stage(
     params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     request_body = RestoreConfirmRequest,
     responses(
-        (status = 200, description = "Restore completed", body = RestoreStageResponse,
-            headers(("Cache-Control" = String, description = "Always no-store for restore metadata"))
-        ),
-        (status = 400, description = "Confirmation phrase is invalid", body = ApiErrorResponse),
+        (status = 501, description = "Destructive restore requires hubuum-admin and a migration credential", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Administrator or capability rejected", body = ApiErrorResponse),
-        (status = 409, description = "Stage state or SHA-256 mismatch", body = ApiErrorResponse),
-        (status = 410, description = "Restore stage expired", body = ApiErrorResponse)
+        (status = 403, description = "Administrator access required", body = ApiErrorResponse)
     )
 )]
 #[post("/{restore_id}/confirm")]
 pub async fn confirm_restore_stage(
-    context: AppContext,
+    _context: AppContext,
     _admin: AdminAccess,
-    restore_id: web::Path<RestoreJobID>,
-    confirmation: web::Json<RestoreConfirmRequest>,
-) -> Result<impl Responder, ApiError> {
-    let response = confirm_restore(&context, restore_id.into_inner(), &confirmation).await?;
-    Ok(ApiResponse::new_no_store(response, StatusCode::OK))
+    _restore_id: web::Path<RestoreJobID>,
+    _confirmation: web::Json<RestoreConfirmRequest>,
+) -> Result<HttpResponse, ApiError> {
+    Err(ApiError::NotImplemented(
+        "API-driven destructive restore is disabled; run hubuum-admin --restore with HUBUUM_MIGRATION_DATABASE_URL"
+            .to_string(),
+    ))
 }
 
 #[utoipa::path(

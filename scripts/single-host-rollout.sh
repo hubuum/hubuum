@@ -244,9 +244,17 @@ hubuum_reload_caddy_and_wait_for_upstreams() {
 }
 
 hubuum_run_migrations() {
+  if [[ "${DATABASE_MANAGED:-true}" == "true" ]]; then
+    echo "Reconciling managed database roles..."
+    "${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate \
+      --database-role-setup-sql | \
+      "${COMPOSE_CMD[@]}" exec -T postgres \
+        psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum
+    "${COMPOSE_CMD[@]}" run --rm --no-deps -T \
+      --entrypoint /usr/local/bin/hubuum-set-database-role-passwords postgres
+  fi
   echo "Running one-shot database migrations..."
-  "${COMPOSE_CMD[@]}" run --rm --no-deps -T \
-    --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+  "${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate --migrate
 }
 
 hubuum_drain_primary_workers_for_migrations() {
@@ -288,8 +296,9 @@ hubuum_restart_primary_after_failed_migration() {
 hubuum_start_stack() {
   echo "Starting the initial Hubuum stack..."
 
-  # Start the migration-owning primary first. Starting both API containers at
-  # once could make two fresh containers race to apply the same migrations.
+  hubuum_ensure_infrastructure
+  hubuum_run_migrations
+
   "${COMPOSE_CMD[@]}" up -d hubuum-api
   hubuum_wait_for_rollout_health hubuum-api
 

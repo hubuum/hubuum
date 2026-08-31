@@ -2,7 +2,11 @@
 mod tests {
     use actix_web::{http::StatusCode, test as actix_test};
     use chrono::{NaiveDate, NaiveDateTime};
+    use diesel::sql_types::Text;
     use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::test_support::{
+        integration_test_database_roles, integration_test_migration_pool,
+    };
     use rstest::rstest;
 
     use crate::models::search::{DataType, SearchOperator};
@@ -19,7 +23,7 @@ mod tests {
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{CollectionFixture, TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave};
-    use hubuum_storage_postgres::with_transaction;
+    use hubuum_storage_postgres::{PostgresPool, with_transaction};
 
     const STRING_OPERATORS: &[&str] = &[
         "equals",
@@ -122,11 +126,16 @@ mod tests {
     }
 
     async fn set_object_created_at(
-        context: &TestContext,
+        migration_pool: &PostgresPool,
+        owner_role: &str,
         object: &HubuumObject,
         created_at: NaiveDateTime,
     ) {
-        with_transaction(&context.pool, async |conn| {
+        with_transaction(migration_pool, async |conn| {
+            diesel::sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(owner_role)
+                .execute(conn)
+                .await?;
             diesel::sql_query("SELECT set_config('hubuum.restore_revisions', 'on', true)")
                 .execute(conn)
                 .await?;
@@ -488,6 +497,8 @@ mod tests {
         );
         let (collection, class, objects) =
             create_objects_fixture(&context, &label, &["dated-0", "dated-1", "dated-2"]).await;
+        let migration_pool = integration_test_migration_pool(1);
+        let database_roles = integration_test_database_roles();
 
         for (object, (year, month, day)) in
             objects
@@ -498,7 +509,13 @@ mod tests {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap();
-            set_object_created_at(&context, object, created_at).await;
+            set_object_created_at(
+                &migration_pool,
+                database_roles.owner().as_str(),
+                object,
+                created_at,
+            )
+            .await;
         }
 
         let resp = get_request(

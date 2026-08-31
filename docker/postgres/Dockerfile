@@ -1,1 +1,3 @@
 FROM docker.io/library/postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
+
+COPY docker/postgres/init-database-roles.sh /docker-entrypoint-initdb.d/20-hubuum-database-roles.sh

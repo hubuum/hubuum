@@ -14,7 +14,7 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
-if [[ "$*" == *" run "* && "$*" == *" hubuum-api --migrate" &&
+if [[ "$*" == *" run "* && "$*" == *" hubuum-migrate --migrate" &&
   "${FAKE_MIGRATION_FAIL:-false}" == "true" ]]; then
   exit 1
 fi
@@ -115,6 +115,7 @@ export FAKE_UNHEALTHY_SERVICES=""
 ENGINE_PATH="$FAKE_ENGINE"
 COMPOSE_CMD=("$FAKE_ENGINE" compose --env-file .env -f compose.yml)
 API_PORT=8080
+DATABASE_MANAGED="false"
 
 # shellcheck source=scripts/single-host-rollout.sh
 source "$REPOSITORY_ROOT/scripts/single-host-rollout.sh"
@@ -199,7 +200,7 @@ compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -220,7 +221,7 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -239,7 +240,7 @@ fi
 cat > "$TEST_ROOT/expected-migration-failure.log" <<EOF
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml start hubuum-api
 EOF
 assert_commands "$TEST_ROOT/expected-migration-failure.log"
@@ -265,7 +266,7 @@ rm -f "$TEST_ROOT/started-hubuum-api"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-recovery.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -288,7 +289,7 @@ cat > "$TEST_ROOT/expected-missing-infrastructure.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -309,6 +310,7 @@ rm -f "$TEST_ROOT/started-caddy"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
@@ -360,5 +362,16 @@ if reload_output="$(hubuum_reload_caddy 2>&1)"; then
 fi
 [[ "$reload_output" == *"ERROR: Caddy reload failed"* ]]
 [[ "$reload_output" == *'fake reload diagnostic'* ]]
+
+DATABASE_MANAGED="true"
+: > "$COMMAND_LOG"
+hubuum_run_migrations
+cat > "$TEST_ROOT/expected-managed-migration.log" <<EOF
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --database-role-setup-sql
+compose --env-file .env -f compose.yml exec -T postgres psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-set-database-role-passwords postgres
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+EOF
+assert_commands "$TEST_ROOT/expected-managed-migration.log"
 
 echo "Single-host rolling update test passed"

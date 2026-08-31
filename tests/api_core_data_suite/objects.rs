@@ -4,6 +4,9 @@ mod tests {
 
     use diesel::sql_types::{Bool, Integer, Text};
     use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::test_support::{
+        integration_test_database_roles, integration_test_migration_pool,
+    };
     use rstest::rstest;
 
     use crate::events::EventContext;
@@ -1172,8 +1175,14 @@ mod tests {
             .unwrap();
         }
 
-        let plan_rows = with_connection(&context.pool, async |conn| {
+        let migration_pool = integration_test_migration_pool(1);
+        let database_roles = integration_test_database_roles();
+        let plan_rows = with_connection(&migration_pool, async |conn| {
             conn.transaction::<_, diesel::result::Error, _>(async |conn| {
+                diesel::sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(database_roles.owner().as_str())
+                    .execute(conn)
+                    .await?;
                 let create_index_sql = format!(
                     "CREATE INDEX IF NOT EXISTS idx_test_json_ip_expression \
                  ON hubuumobject USING GIST ((try_inet(data #>> '{{network,address}}')) inet_ops) \

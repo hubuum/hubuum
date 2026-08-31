@@ -5,6 +5,9 @@ use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::test_support::{
+    database_role_tests_enabled, integration_test_database_roles, integration_test_migration_pool,
+};
 use hubuum_storage_postgres::with_connection;
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
@@ -127,11 +130,17 @@ async fn trigger_records_ops_and_actor() {
 /// should not silently shift base values into the wrong history fields.
 #[actix_rt::test]
 async fn trigger_inserts_history_by_column_name() {
-    let scope = TestScope::new();
-    let pool = scope.pool.clone();
+    let pool = integration_test_migration_pool(1);
 
     let row: ColumnOrderHistoryRow = with_connection(&pool, async |conn| {
         conn.transaction::<_, diesel::result::Error, _>(async |conn| {
+            if database_role_tests_enabled() {
+                let roles = integration_test_database_roles();
+                diesel::sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(roles.owner().as_str())
+                    .execute(conn)
+                    .await?;
+            }
             diesel::sql_query(
                 "CREATE TEMP TABLE temporal_column_order (
                     id int PRIMARY KEY,

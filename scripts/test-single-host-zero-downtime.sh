@@ -16,6 +16,7 @@ HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS="${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-
 HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS="${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-45}"
 HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS="${HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS:-7}"
 INSTALL_MODE="backend"
+DATABASE_MANAGED="false"
 
 docker image inspect "$HUBUUM_TEST_IMAGE" >/dev/null 2>&1 || {
   echo "ERROR: missing test image $HUBUUM_TEST_IMAGE" >&2
@@ -63,6 +64,7 @@ trap cleanup EXIT
 
 write_environment() {
   local database_url="$1"
+  local migration_database_url="${2:-$1}"
 
   cat > "$TEST_ROOT/.env" <<EOF
 HUBUUM_TEST_IMAGE=$HUBUUM_TEST_IMAGE
@@ -70,11 +72,14 @@ HUBUUM_OLD_TEST_IMAGE=$HUBUUM_OLD_TEST_IMAGE
 POSTGRES_TEST_IMAGE=$POSTGRES_TEST_IMAGE
 CADDY_TEST_IMAGE=$CADDY_TEST_IMAGE
 HUBUUM_ZERO_DOWNTIME_DATABASE_URL=$database_url
+HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL=$migration_database_url
 EOF
 }
 
-DATABASE_URL="postgres://hubuum:zero-downtime-test@postgres/hubuum?sslmode=disable"
-write_environment "$DATABASE_URL"
+BOOTSTRAP_DATABASE_URL="postgres://hubuum:zero-downtime-test@postgres/hubuum?sslmode=disable"
+RUNTIME_DATABASE_URL="postgres://hubuum_runtime:runtime-test@postgres/hubuum?sslmode=disable"
+MIGRATION_DATABASE_URL="postgres://hubuum_migrator:migrator-test@postgres/hubuum?sslmode=disable"
+write_environment "$BOOTSTRAP_DATABASE_URL"
 
 write_old_caddyfile() {
   cat > "$TEST_ROOT/Caddyfile" <<'EOF'
@@ -143,6 +148,13 @@ services:
       timeout: 2s
       retries: 30
 
+  hubuum-migrate:
+    image: ${HUBUUM_TEST_IMAGE}
+    profiles: ["administration"]
+    entrypoint: /usr/local/bin/hubuum-admin
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL}
+
   hubuum-api: &hubuum-api
     image: ${HUBUUM_TEST_IMAGE}
     stop_grace_period: 75s
@@ -157,6 +169,7 @@ services:
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_BIND_PORT: 8080
       HUBUUM_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_DATABASE_URL}
+      HUBUUM_DATABASE_PRIVILEGE_MODE: strict
       HUBUUM_CLIENT_ALLOWLIST: "*"
       HUBUUM_LOG_LEVEL: info
     depends_on:
@@ -388,6 +401,14 @@ expected_migration_version="$(find "$REPOSITORY_ROOT/crates/hubuum-storage-postg
 start_probes
 
 echo "Migrating the v0.0.1 database and rolling to the candidate image..."
+"${BASE_COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate \
+  --database-role-setup-sql | \
+  "${BASE_COMPOSE_CMD[@]}" exec -T postgres \
+    psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum
+"${BASE_COMPOSE_CMD[@]}" exec -T postgres \
+  psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum \
+  --command "ALTER ROLE hubuum_migrator PASSWORD 'migrator-test'; ALTER ROLE hubuum_runtime PASSWORD 'runtime-test'"
+write_environment "$RUNTIME_DATABASE_URL" "$MIGRATION_DATABASE_URL"
 write_candidate_caddyfile
 hubuum_rollout
 touch "$READY_PROBES_FILE"
@@ -419,9 +440,9 @@ initial_primary_id="$(service_id hubuum-api)"
 initial_standby_id="$(service_id hubuum-api-standby)"
 
 echo "Verifying that a failed migration leaves both API replicas untouched..."
-write_environment "postgres://hubuum:zero-downtime-test@127.0.0.1:1/hubuum"
+write_environment "$RUNTIME_DATABASE_URL" "postgres://hubuum_migrator:migrator-test@127.0.0.1:1/hubuum"
 expect_rollout_failure migration-failure
-write_environment "$DATABASE_URL"
+write_environment "$RUNTIME_DATABASE_URL" "$MIGRATION_DATABASE_URL"
 assert_same_id "primary API after migration failure" "$initial_primary_id" "$(service_id hubuum-api)"
 assert_same_id "standby API after migration failure" "$initial_standby_id" "$(service_id hubuum-api-standby)"
 

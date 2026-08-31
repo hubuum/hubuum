@@ -77,7 +77,6 @@ fn run_entrypoint(runtime_role: &str, arguments: &[&str]) -> Output {
         .args(arguments)
         .env("PATH", &commands)
         .env("HUBUUM_RUNTIME_ROLE", runtime_role)
-        .env_remove("HUBUUM_SKIP_MIGRATIONS")
         .output()
         .expect("entrypoint should run");
     fs::remove_dir_all(commands).expect("fake command directory should be removed");
@@ -180,12 +179,11 @@ fn production_container_has_a_healthcheck() {
 
 #[cfg(unix)]
 #[rstest]
-#[case("all", "worker", "admin:--database-ready")]
-#[case("worker", "all", "admin:--migrate")]
-fn entrypoint_cli_runtime_role_overrides_environment_for_migrations(
+#[case("all", "worker")]
+#[case("worker", "all")]
+fn entrypoint_uses_only_the_readiness_probe_before_starting_the_server(
     #[case] environment_role: &str,
     #[case] cli_role: &str,
-    #[case] expected_admin_command: &str,
 ) {
     let output = run_entrypoint(
         environment_role,
@@ -194,7 +192,8 @@ fn entrypoint_cli_runtime_role_overrides_environment_for_migrations(
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     assert!(output.status.success(), "entrypoint failed: {stdout}");
-    assert!(stdout.contains(expected_admin_command));
+    assert!(stdout.contains("admin:--database-ready"));
+    assert!(!stdout.contains("admin:--migrate"));
     assert!(stdout.contains(&format!(
         "server:--runtime-role {cli_role} --log-level debug"
     )));

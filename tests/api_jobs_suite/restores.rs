@@ -232,7 +232,7 @@ mod tests {
     #[case::existing_stage(true)]
     #[case::missing_stage(false)]
     #[actix_web::test]
-    async fn invalid_confirmation_capability_does_not_disclose_stage_existence(
+    async fn api_restore_confirmation_is_disabled_for_privilege_separation(
         #[future(awt)] test_context: TestContext,
         #[case] stage_exists: bool,
     ) {
@@ -263,14 +263,14 @@ mod tests {
             },
         )
         .await;
-        let response = assert_response_status(response, StatusCode::FORBIDDEN).await;
+        let response = assert_response_status(response, StatusCode::NOT_IMPLEMENTED).await;
         let body = test::read_body_json::<serde_json::Value, _>(response).await;
 
         assert_eq!(
             body,
             serde_json::json!({
-                "error": "Forbidden",
-                "message": "Restore capability is invalid"
+                "error": "Not Implemented",
+                "message": "API-driven destructive restore is disabled; run hubuum-admin --restore with HUBUUM_MIGRATION_DATABASE_URL"
             })
         );
 
@@ -374,7 +374,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn expired_confirmation_expires_the_validated_stage(
+    async fn disabled_api_confirmation_does_not_change_an_expired_stage(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
@@ -413,7 +413,7 @@ mod tests {
             },
         )
         .await;
-        assert_response_status(response, StatusCode::GONE).await;
+        assert_response_status(response, StatusCode::NOT_IMPLEMENTED).await;
 
         let (status, document) = with_connection(&context.pool, async |conn| {
             use crate::schema::restore_jobs::dsl::{document, id, restore_jobs, status};
@@ -426,8 +426,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            (status.as_str(), document.as_slice()),
-            (RestoreJobStatus::Expired.as_str(), b"".as_slice())
+            (status.as_str(), document.is_empty()),
+            (RestoreJobStatus::Validated.as_str(), false)
         );
 
         with_connection(&context.pool, async |conn| {

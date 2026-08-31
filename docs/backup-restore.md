@@ -93,7 +93,8 @@ capability or restore metadata.
 
 Staging and validation do not enter maintenance mode or lock application data.
 
-Confirm with the exact SHA-256, capability, and destructive phrase:
+API confirmation is intentionally disabled. A valid request to the confirmation
+endpoint returns `501 Not Implemented` and leaves the validated stage intact:
 
 ```http
 POST /api/v1/restores/{restore_id}/confirm
@@ -107,29 +108,11 @@ Content-Type: application/json
 }
 ```
 
-During confirmation, Hubuum first commits a global `draining` maintenance
-state. All instances reject ordinary API work, background workers stop starting
-work, and readiness returns `503`; liveness and capability-authenticated restore
-status remain available. Every runtime role, including API-only replicas,
-registers a heartbeat and participates in this drain barrier. After every live
-instance reports drained, the restore takes PostgreSQL `ACCESS EXCLUSIVE` locks
-on every replaced table and performs truncation plus all inserts in one database
-transaction. If draining, an insert, or a constraint check fails, Hubuum rolls
-back the replacement and returns to normal mode with the old application data
-intact.
-
-The restore coordinator waits for a 60-second confirmation grace period before
-treating a confirmed drain as interrupted. This keeps a live API or CLI
-confirmation authoritative through the bounded drain window while still
-allowing another replica to resume a restore after the confirming process exits.
-
-On success, Hubuum deletes all restore staging records and server-heartbeat
-records. The restored backup is the sole source of application data, with one
-intentional exception: Hubuum appends a `restore.succeeded` system audit event
-in the same transaction. Its metadata records the backup SHA-256 and the
-initiating administrator's immutable identity snapshot. This event is the
-logical-restore provenance marker; an administrator performing a physical
-database restore can, by definition, replace it as well.
+This boundary is deliberate: API and worker processes use the non-owning
+runtime database role, which cannot truncate application tables or suppress
+temporal and audit integrity controls. Run destructive restore through the
+admin CLI in a tightly controlled one-shot workload with the migrator
+credential instead.
 
 Inspect validation, draining, or failure status by sending the capability in a
 header:
@@ -140,10 +123,8 @@ X-Hubuum-Restore-Capability: <capability>
 ```
 
 Do not put the capability in a query string, where access logs could retain it.
-Stored stages can report `validated`, `confirmed`, `failed`, or `expired`.
-The successful confirmation response reports `succeeded` directly, but that
-status is never persisted. Subsequent status lookups return `404` because a
-successful restore removes all staging records.
+Without an administrative CLI restore, stored stages report `validated` or
+`expired`. A successful CLI restore removes all staging records.
 
 ## Admin CLI
 
@@ -161,14 +142,21 @@ History is included by default. Add `--backup-without-history` only to create a
 backup whose eventual restore resets terminal task, audit, delivery, and
 temporal history.
 
-Restore requires the same explicit destructive phrase as the API:
+Restore requires the explicit destructive phrase and the separate migration
+credential:
 
 ```text
 hubuum-admin \
-  --database-url "$HUBUUM_DATABASE_URL" \
+  --migration-database-url "$HUBUUM_MIGRATION_DATABASE_URL" \
   --restore backup.json \
   --restore-confirmation "REPLACE ALL HUBUUM DATA"
 ```
+
+The CLI coordinates maintenance and performs replacement in one database
+transaction. It appends the `restore.succeeded` provenance event on success and
+rolls back to the old application data if validation, insertion, or constraint
+checks fail. See [PostgreSQL Database Roles](database_roles.md) for credential
+handling and workload isolation.
 
 ## Configuration ownership
 

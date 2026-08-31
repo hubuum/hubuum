@@ -18410,34 +18410,6 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Restore completed",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Always no-store for restore metadata"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RestoreStageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Confirmation phrase is invalid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -18449,7 +18421,7 @@
             }
           },
           "403": {
-            "description": "Administrator or capability rejected",
+            "description": "Administrator access required",
             "content": {
               "application/json": {
                 "schema": {
@@ -18458,18 +18430,8 @@
               }
             }
           },
-          "409": {
-            "description": "Stage state or SHA-256 mismatch",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Restore stage expired",
+          "501": {
+            "description": "Destructive restore requires hubuum-admin and a migration credential",
             "content": {
               "application/json": {
                 "schema": {
@@ -20463,12 +20425,22 @@
           "url",
           "pool_size",
           "pool_acquire_timeout_ms",
-          "statement_timeout_ms"
+          "statement_timeout_ms",
+          "privilege_mode",
+          "owner_role",
+          "migrator_role",
+          "runtime_role"
         ],
         "properties": {
           "backend": {
             "type": "string",
             "description": "Complete storage backend selected by the application composition root."
+          },
+          "migrator_role": {
+            "type": "string"
+          },
+          "owner_role": {
+            "type": "string"
           },
           "pool_acquire_timeout_ms": {
             "type": "integer",
@@ -20479,6 +20451,12 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "privilege_mode": {
+            "type": "string"
+          },
+          "runtime_role": {
+            "type": "string"
           },
           "statement_timeout_ms": {
             "type": "integer",
