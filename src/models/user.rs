@@ -291,7 +291,7 @@ impl User {
         crate::services::identity::revoke_token_by_hash(
             backend,
             Some(self.id),
-            token_param.storage_hash(),
+            token_param.credentials()?.credentials,
             &EventContext::system(),
         )
         .await

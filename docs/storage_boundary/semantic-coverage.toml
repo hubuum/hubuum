@@ -140,9 +140,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TokenStorage]
 source = "crates/hubuum-storage-core/src/identity_tokens.rs"
-methods = ["list_retained_tokens", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
-effects = { point_read = ["get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], audited_mutation = ["create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+methods = ["list_retained_tokens", "token_key_usage", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
+effects = { point_read = ["get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], complete_read = ["token_key_usage"], audited_mutation = ["create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
 
 [traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"

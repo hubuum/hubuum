@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS tokens_token_hash_key_retirement_idx;

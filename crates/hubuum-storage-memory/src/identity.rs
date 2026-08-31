@@ -6,15 +6,28 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         attempt: StorageAuthenticationAttempt,
     ) -> Result<StorageAuthenticatedToken, StorageError> {
-        let (credential, observed_at, legacy_valid_after) = attempt.into_parts();
+        let (credentials, migration_target, observed_at, legacy_valid_after) = attempt.into_parts();
         let observation = StorageTokenObservation::try_new(observed_at, legacy_valid_after)
             .map_err(invalid_contract_value)?;
         let mut state = self.state.write().await;
-        let token_id = state
+        let matching = state
             .tokens
             .values()
-            .find(|record| record.token_hash == credential.lookup_value())
+            .filter(|record| {
+                credentials
+                    .iter()
+                    .any(|credential| record.matches_credential(credential))
+            })
             .map(|record| record.id)
+            .collect::<Vec<_>>();
+        if matching.len() > 1 {
+            return Err(StorageError::internal(
+                "multiple token rows matched one bearer credential",
+            ));
+        }
+        let token_id = matching
+            .first()
+            .copied()
             .ok_or_else(|| StorageError::authentication_required("Invalid bearer token"))?;
         let token = state
             .tokens
@@ -53,10 +66,28 @@ impl AuthenticationStorage for MemoryStorage {
             .clone()
             .map(StorageAuthenticationTokenScope::into_parts)
             .is_some_and(|parts| parts.1.is_some());
+        let migration_target = migration_target.filter(|_| {
+            token.token_format == StorageTokenFormat::Legacy && token.token_hash_key_id.is_none()
+        });
+        if migration_target.as_ref().is_some_and(|target| {
+            state.tokens.values().any(|candidate| {
+                candidate.id != token_id && target.matches_lookup_value(&candidate.token_hash)
+            })
+        }) {
+            return Err(StorageError::internal(
+                "legacy token migration target conflicts with another token row",
+            ));
+        }
         let record = state
             .tokens
             .get_mut(&token_id.id())
             .ok_or_else(|| StorageError::internal("authenticated token disappeared"))?;
+        let migration_outcome = if let Some(target) = migration_target {
+            record.migrate_legacy_digest(target);
+            StorageTokenMigrationOutcome::Migrated
+        } else {
+            StorageTokenMigrationOutcome::NotNeeded
+        };
         record.last_used_at = Some(observed_at);
         StorageAuthenticatedToken::builder(
             token.id,
@@ -70,6 +101,7 @@ impl AuthenticationStorage for MemoryStorage {
         .last_used_at(Some(observed_at))
         .permission_scoped(permission_scoped)
         .resource_scoped(resource_scoped)
+        .migration_outcome(migration_outcome)
         .try_build()
         .map_err(invalid_contract_value)
     }
@@ -1436,6 +1468,57 @@ impl TokenStorage for MemoryStorage {
         page(rows, &options)
     }
 
+    async fn token_key_usage(
+        &self,
+        observation: StorageTokenObservation,
+    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError> {
+        #[derive(Default)]
+        struct Usage {
+            active: i64,
+            revoked: i64,
+            expired: i64,
+            latest_validation: Option<DateTime<Utc>>,
+            earliest_expiry: Option<DateTime<Utc>>,
+            latest_expiry: Option<DateTime<Utc>>,
+        }
+
+        let state = self.state.read().await;
+        let mut usage = BTreeMap::<Option<StorageTokenHashKeyId>, Usage>::new();
+        for token in state.tokens.values() {
+            let metadata = token.metadata(observation)?;
+            let item = usage.entry(token.token_hash_key_id.clone()).or_default();
+            if metadata.revoked_at().is_some() {
+                item.revoked += 1;
+            } else if metadata.is_expired() {
+                item.expired += 1;
+            } else {
+                item.active += 1;
+            }
+            item.latest_validation = item.latest_validation.max(token.last_used_at);
+            item.earliest_expiry = match (item.earliest_expiry, token.expires_at) {
+                (Some(current), Some(candidate)) => Some(current.min(candidate)),
+                (None, candidate) => candidate,
+                (current, None) => current,
+            };
+            item.latest_expiry = item.latest_expiry.max(token.expires_at);
+        }
+        usage
+            .into_iter()
+            .map(|(key_id, usage)| {
+                StorageTokenKeyUsage::try_new(
+                    key_id,
+                    usage.active,
+                    usage.revoked,
+                    usage.expired,
+                    usage.latest_validation,
+                    usage.earliest_expiry,
+                    usage.latest_expiry,
+                )
+                .map_err(invalid_contract_value)
+            })
+            .collect()
+    }
+
     async fn create_token(
         &self,
         request: StorageTokenCreate,
@@ -1451,7 +1534,7 @@ impl TokenStorage for MemoryStorage {
         if state
             .tokens
             .values()
-            .any(|token| token.token_hash == request.token_hash())
+            .any(|token| request.digest().matches_lookup_value(&token.token_hash))
         {
             return Err(StorageError::conflict("Token credential already exists"));
         }
@@ -1472,10 +1555,15 @@ impl TokenStorage for MemoryStorage {
                 "Token expiry is outside the issuance policy",
             ));
         }
+        let (token_hash, token_format, token_hash_algorithm, token_hash_key_id) =
+            request.digest().clone().into_parts();
         let record = MemoryTokenRecord {
             id,
             principal_id: request.principal_id(),
-            token_hash: request.token_hash().to_string(),
+            token_hash,
+            token_format,
+            token_hash_algorithm,
+            token_hash_key_id,
             name: request.name().map(ToOwned::to_owned),
             description: request.description().map(ToOwned::to_owned),
             issued,
@@ -1504,8 +1592,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenRenew,
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
-        let (source_id, principal_id, token_hash, expires_at, policy, context) =
-            request.into_parts();
+        let (source_id, principal_id, digest, expires_at, policy, context) = request.into_parts();
         let source = self
             .state
             .read()
@@ -1524,7 +1611,7 @@ impl TokenStorage for MemoryStorage {
             )));
         }
         self.create_token(
-            StorageTokenCreate::new(principal_id, token_hash, policy, context)
+            StorageTokenCreate::new(principal_id, digest, policy, context)
                 .name(source.name)
                 .description(source.description)
                 .expires_at(expires_at)
@@ -1612,7 +1699,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenHashRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
-        let (principal_id, token_hash, context) = request.into_parts();
+        let (principal_id, credentials, context) = request.into_parts();
         let token_id = self
             .state
             .read()
@@ -1620,7 +1707,9 @@ impl TokenStorage for MemoryStorage {
             .tokens
             .values()
             .find(|token| {
-                token.token_hash == token_hash
+                credentials
+                    .iter()
+                    .any(|credential| token.matches_credential(credential))
                     && principal_id.is_none_or(|id| token.principal_id == id)
             })
             .map(|token| token.id);

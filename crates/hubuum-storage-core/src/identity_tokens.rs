@@ -6,14 +6,97 @@ use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::EventContext;
 
 use crate::{
-    StorageAuthenticationTokenScope, StorageError, StorageMutationOutcome, StoragePage,
-    StorageTokenListQuery, StorageTokenMetadata, StorageTokenObservation,
+    MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthenticationTokenScope,
+    StorageError, StorageMutationOutcome, StoragePage, StorageTokenDigest, StorageTokenListQuery,
+    StorageTokenMetadata, StorageTokenObservation, StorageValidationError,
 };
+
+/// Aggregate retirement evidence for one persisted token-hash key identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageTokenKeyUsage {
+    key_id: Option<crate::StorageTokenHashKeyId>,
+    active: i64,
+    revoked: i64,
+    expired: i64,
+    latest_validation: Option<DateTime<Utc>>,
+    earliest_expiry: Option<DateTime<Utc>>,
+    latest_expiry: Option<DateTime<Utc>>,
+}
+
+impl StorageTokenKeyUsage {
+    pub fn try_new(
+        key_id: Option<crate::StorageTokenHashKeyId>,
+        active: i64,
+        revoked: i64,
+        expired: i64,
+        latest_validation: Option<DateTime<Utc>>,
+        earliest_expiry: Option<DateTime<Utc>>,
+        latest_expiry: Option<DateTime<Utc>>,
+    ) -> Result<Self, StorageValidationError> {
+        if active < 0 || revoked < 0 || expired < 0 {
+            return Err(StorageValidationError::invalid(
+                "token key usage counts cannot be negative",
+            ));
+        }
+        if earliest_expiry
+            .zip(latest_expiry)
+            .is_some_and(|(earliest, latest)| earliest > latest)
+        {
+            return Err(StorageValidationError::invalid(
+                "token key usage expiry bounds are inverted",
+            ));
+        }
+        Ok(Self {
+            key_id,
+            active,
+            revoked,
+            expired,
+            latest_validation,
+            earliest_expiry,
+            latest_expiry,
+        })
+    }
+
+    #[must_use]
+    pub const fn key_id(&self) -> Option<&crate::StorageTokenHashKeyId> {
+        self.key_id.as_ref()
+    }
+
+    #[must_use]
+    pub const fn active(&self) -> i64 {
+        self.active
+    }
+
+    #[must_use]
+    pub const fn revoked(&self) -> i64 {
+        self.revoked
+    }
+
+    #[must_use]
+    pub const fn expired(&self) -> i64 {
+        self.expired
+    }
+
+    #[must_use]
+    pub const fn latest_validation(&self) -> Option<DateTime<Utc>> {
+        self.latest_validation
+    }
+
+    #[must_use]
+    pub const fn earliest_expiry(&self) -> Option<DateTime<Utc>> {
+        self.earliest_expiry
+    }
+
+    #[must_use]
+    pub const fn latest_expiry(&self) -> Option<DateTime<Utc>> {
+        self.latest_expiry
+    }
+}
 
 /// Named token-creation fields exposed to an adapter.
 pub struct StorageTokenCreateParts {
     principal_id: PrincipalId,
-    token_hash: String,
+    digest: StorageTokenDigest,
     name: Option<String>,
     description: Option<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -29,8 +112,8 @@ impl StorageTokenCreateParts {
     }
 
     #[must_use]
-    pub fn token_hash(&self) -> &str {
-        &self.token_hash
+    pub const fn digest(&self) -> &StorageTokenDigest {
+        &self.digest
     }
 
     #[must_use]
@@ -124,7 +207,7 @@ impl std::error::Error for StorageTokenIssuancePolicyError {}
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenCreate {
     principal_id: PrincipalId,
-    token_hash: String,
+    digest: StorageTokenDigest,
     name: Option<String>,
     description: Option<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -137,13 +220,13 @@ impl StorageTokenCreate {
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
-        token_hash: impl Into<String>,
+        digest: StorageTokenDigest,
         policy: StorageTokenIssuancePolicy,
         event_context: EventContext,
     ) -> Self {
         Self {
             principal_id,
-            token_hash: token_hash.into(),
+            digest,
             name: None,
             description: None,
             expires_at: None,
@@ -181,7 +264,7 @@ impl StorageTokenCreate {
     pub fn into_parts(self) -> StorageTokenCreateParts {
         StorageTokenCreateParts {
             principal_id: self.principal_id,
-            token_hash: self.token_hash,
+            digest: self.digest,
             name: self.name,
             description: self.description,
             expires_at: self.expires_at,
@@ -197,7 +280,7 @@ impl fmt::Debug for StorageTokenCreate {
         formatter
             .debug_struct("StorageTokenCreate")
             .field("principal_id", &"<redacted>")
-            .field("token_hash", &"<redacted>")
+            .field("digest", &self.digest)
             .field("has_name", &self.name.is_some())
             .field("has_description", &self.description.is_some())
             .field("has_expiry", &self.expires_at.is_some())
@@ -213,7 +296,7 @@ impl fmt::Debug for StorageTokenCreate {
 pub struct StorageTokenRenew {
     source_token_id: TokenId,
     principal_id: PrincipalId,
-    token_hash: String,
+    digest: StorageTokenDigest,
     expires_at: Option<DateTime<Utc>>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
@@ -224,7 +307,7 @@ impl StorageTokenRenew {
     pub fn new(
         source_token_id: TokenId,
         principal_id: PrincipalId,
-        token_hash: impl Into<String>,
+        digest: StorageTokenDigest,
         expires_at: Option<DateTime<Utc>>,
         policy: StorageTokenIssuancePolicy,
         event_context: EventContext,
@@ -232,7 +315,7 @@ impl StorageTokenRenew {
         Self {
             source_token_id,
             principal_id,
-            token_hash: token_hash.into(),
+            digest,
             expires_at,
             policy,
             event_context,
@@ -245,7 +328,7 @@ impl StorageTokenRenew {
     ) -> (
         TokenId,
         PrincipalId,
-        String,
+        StorageTokenDigest,
         Option<DateTime<Utc>>,
         StorageTokenIssuancePolicy,
         EventContext,
@@ -253,7 +336,7 @@ impl StorageTokenRenew {
         (
             self.source_token_id,
             self.principal_id,
-            self.token_hash,
+            self.digest,
             self.expires_at,
             self.policy,
             self.event_context,
@@ -267,7 +350,7 @@ impl fmt::Debug for StorageTokenRenew {
             .debug_struct("StorageTokenRenew")
             .field("source_token_id", &"<redacted>")
             .field("principal_id", &"<redacted>")
-            .field("token_hash", &"<redacted>")
+            .field("digest", &self.digest)
             .field("has_expiry", &self.expires_at.is_some())
             .field("event_context", &"<redacted>")
             .finish()
@@ -317,7 +400,7 @@ impl fmt::Debug for StorageTokenRevoke {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageTokenHashRevoke {
     principal_id: Option<PrincipalId>,
-    token_hash: String,
+    credentials: Vec<StorageAuthenticationCredential>,
     event_context: EventContext,
 }
 
@@ -325,19 +408,51 @@ impl StorageTokenHashRevoke {
     #[must_use]
     pub fn new(
         principal_id: Option<PrincipalId>,
-        token_hash: impl Into<String>,
+        lookup_value: impl Into<String>,
         event_context: EventContext,
     ) -> Self {
         Self {
             principal_id,
-            token_hash: token_hash.into(),
+            credentials: vec![StorageAuthenticationCredential::new(lookup_value)],
             event_context,
         }
     }
 
+    pub fn try_candidates(
+        principal_id: Option<PrincipalId>,
+        credentials: Vec<StorageAuthenticationCredential>,
+        event_context: EventContext,
+    ) -> Result<Self, StorageValidationError> {
+        if credentials.is_empty() || credentials.len() > MAX_TOKEN_HASH_KEYS {
+            return Err(StorageValidationError::invalid(
+                "token revocation requires a bounded, non-empty candidate set",
+            ));
+        }
+        if credentials.iter().enumerate().any(|(index, candidate)| {
+            credentials[index + 1..]
+                .iter()
+                .any(|other| candidate.digest() == other.digest())
+        }) {
+            return Err(StorageValidationError::invalid(
+                "token revocation candidates must be unique",
+            ));
+        }
+        Ok(Self {
+            principal_id,
+            credentials,
+            event_context,
+        })
+    }
+
     #[must_use]
-    pub fn into_parts(self) -> (Option<PrincipalId>, String, EventContext) {
-        (self.principal_id, self.token_hash, self.event_context)
+    pub fn into_parts(
+        self,
+    ) -> (
+        Option<PrincipalId>,
+        Vec<StorageAuthenticationCredential>,
+        EventContext,
+    ) {
+        (self.principal_id, self.credentials, self.event_context)
     }
 }
 
@@ -346,7 +461,7 @@ impl fmt::Debug for StorageTokenHashRevoke {
         formatter
             .debug_struct("StorageTokenHashRevoke")
             .field("has_principal", &self.principal_id.is_some())
-            .field("token_hash", &"<redacted>")
+            .field("credential_count", &self.credentials.len())
             .field("event_context", &"<redacted>")
             .finish()
     }
@@ -393,6 +508,12 @@ pub trait TokenStorage: Send + Sync {
         &self,
         query: StorageTokenListQuery,
     ) -> Result<StoragePage<StorageTokenMetadata>, StorageError>;
+
+    /// Aggregate persisted token usage by non-secret hash key identity.
+    async fn token_key_usage(
+        &self,
+        observation: StorageTokenObservation,
+    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError>;
 
     async fn create_token(
         &self,
@@ -442,7 +563,7 @@ mod tests {
     fn token_request_debug_output_redacts_hashes_and_ids() {
         let request = StorageTokenCreate::new(
             PrincipalId::new(42).unwrap(),
-            "sensitive-token-hash",
+            StorageTokenDigest::legacy_unidentified("sensitive-token-hash"),
             StorageTokenIssuancePolicy::try_new(24, 48).unwrap(),
             EventContext::system(),
         )

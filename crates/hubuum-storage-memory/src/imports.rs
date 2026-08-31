@@ -1,13 +1,37 @@
 use super::*;
 
-impl MemoryStorage {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(RwLock::new(MemoryState::new())),
-        }
+fn assert_import_revision(
+    condition: Option<StorageImportWriteCondition>,
+    current_revision: ResourceRevision,
+) -> Result<(), StorageError> {
+    let Some(expected) = condition.and_then(StorageImportWriteCondition::expected_revision) else {
+        return Ok(());
+    };
+    if expected == current_revision.get() {
+        return Ok(());
     }
+    Err(StorageError::precondition_failed(
+        format!(
+            "stale_revision: expected revision {expected}, observed {}",
+            current_revision.get()
+        ),
+        Some(current_revision),
+    ))
+}
 
+fn assert_import_create_condition(
+    condition: Option<StorageImportWriteCondition>,
+) -> Result<(), StorageError> {
+    if condition.is_some_and(StorageImportWriteCondition::requires_existing) {
+        return Err(StorageError::precondition_failed(
+            "conditional_import_target_missing",
+            None,
+        ));
+    }
+    Ok(())
+}
+
+impl MemoryStorage {
     async fn import_identity_scope_id(
         &self,
         reference: Option<&str>,

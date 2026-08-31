@@ -223,7 +223,7 @@ The backend-neutral contracts needed by an out-of-tree adapter form the
 experimental public six-crate
 [storage adapter SDK](storage_adapter_sdk.md).
 External-crate integration tests nevertheless implement all 44
-complete-backend traits and their 249 methods, compile every transaction port,
+complete-backend traits and their 250 methods, compile every transaction port,
 exercise representative typed query APIs, and name public construction paths
 for all current adapter-returned values without crate-private access. Backend
 registration remains explicit, exhaustive, and application-owned. Hubuum does

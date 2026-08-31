@@ -3094,6 +3094,7 @@ fn token_resources_are_owned_by_the_postgres_adapter() {
         "revoke_token_by_hash",
         "revoke_all_principal_tokens",
         "list_retained_tokens",
+        "token_key_usage",
     ] {
         let method_body = item_body(token_implementation, "fn", method);
         assert!(

@@ -5,41 +5,10 @@ use hubuum_domain::{
     TokenId, UserId,
 };
 
-use crate::{StorageAuthorizationPermission, StorageError, StorageValidationError};
-
-/// Opaque, redacted lookup material for one presented bearer credential.
-///
-/// The application authentication service derives this value from the raw
-/// bearer token. Adapters may compare it with their persisted credential
-/// representation, but neither the raw token nor a backend row crosses the
-/// storage boundary.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageAuthenticationCredential {
-    lookup_value: String,
-}
-
-impl std::fmt::Debug for StorageAuthenticationCredential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StorageAuthenticationCredential")
-            .field("lookup_value", &"<redacted>")
-            .finish()
-    }
-}
-
-impl StorageAuthenticationCredential {
-    #[must_use]
-    pub fn new(lookup_value: impl Into<String>) -> Self {
-        Self {
-            lookup_value: lookup_value.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn lookup_value(&self) -> &str {
-        &self.lookup_value
-    }
-}
+use crate::{
+    MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthorizationPermission,
+    StorageError, StorageTokenDigest, StorageTokenFormat, StorageValidationError,
+};
 
 /// Deterministic inputs for one bearer-credential validation.
 ///
@@ -48,7 +17,8 @@ impl StorageAuthenticationCredential {
 /// configuration and makes compatibility tests deterministic.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageAuthenticationAttempt {
-    credential: StorageAuthenticationCredential,
+    credentials: Vec<StorageAuthenticationCredential>,
+    migration_target: Option<StorageTokenDigest>,
     observed_at: DateTime<Utc>,
     legacy_valid_after: DateTime<Utc>,
 }
@@ -57,7 +27,8 @@ impl std::fmt::Debug for StorageAuthenticationAttempt {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("StorageAuthenticationAttempt")
-            .field("credential", &self.credential)
+            .field("credential_count", &self.credentials.len())
+            .field("has_migration_target", &self.migration_target.is_some())
             .field("observed_at", &"<redacted>")
             .field("legacy_valid_after", &"<redacted>")
             .finish()
@@ -70,13 +41,53 @@ impl StorageAuthenticationAttempt {
         observed_at: DateTime<Utc>,
         legacy_valid_after: DateTime<Utc>,
     ) -> Result<Self, StorageValidationError> {
+        Self::try_candidates(vec![credential], None, observed_at, legacy_valid_after)
+    }
+
+    pub fn try_candidates(
+        credentials: Vec<StorageAuthenticationCredential>,
+        migration_target: Option<StorageTokenDigest>,
+        observed_at: DateTime<Utc>,
+        legacy_valid_after: DateTime<Utc>,
+    ) -> Result<Self, StorageValidationError> {
         if legacy_valid_after > observed_at {
             return Err(StorageValidationError::invalid(
                 "legacy token validity cutoff cannot be after the observation time",
             ));
         }
+        if credentials.is_empty() || credentials.len() > MAX_TOKEN_HASH_KEYS {
+            return Err(StorageValidationError::invalid(
+                "authentication requires a bounded, non-empty token candidate set",
+            ));
+        }
+        if credentials.iter().enumerate().any(|(index, candidate)| {
+            credentials[index + 1..]
+                .iter()
+                .any(|other| candidate.digest() == other.digest())
+        }) {
+            return Err(StorageValidationError::invalid(
+                "authentication token candidates must be unique",
+            ));
+        }
+        if migration_target.as_ref().is_some_and(|target| {
+            target.format() != StorageTokenFormat::Legacy || target.key_id().is_none()
+        }) {
+            return Err(StorageValidationError::invalid(
+                "legacy token migration requires an identified legacy target digest",
+            ));
+        }
+        if migration_target.as_ref().is_some_and(|target| {
+            !credentials
+                .iter()
+                .any(|credential| credential.digest() == target)
+        }) {
+            return Err(StorageValidationError::invalid(
+                "legacy token migration target must be one of the lookup candidates",
+            ));
+        }
         Ok(Self {
-            credential,
+            credentials,
+            migration_target,
             observed_at,
             legacy_valid_after,
         })
@@ -86,11 +97,17 @@ impl StorageAuthenticationAttempt {
     pub fn into_parts(
         self,
     ) -> (
-        StorageAuthenticationCredential,
+        Vec<StorageAuthenticationCredential>,
+        Option<StorageTokenDigest>,
         DateTime<Utc>,
         DateTime<Utc>,
     ) {
-        (self.credential, self.observed_at, self.legacy_valid_after)
+        (
+            self.credentials,
+            self.migration_target,
+            self.observed_at,
+            self.legacy_valid_after,
+        )
     }
 }
 
@@ -112,6 +129,14 @@ pub struct StorageAuthenticatedToken {
     permission_scoped: bool,
     resource_scoped: bool,
     revision: ResourceRevision,
+    migration_outcome: StorageTokenMigrationOutcome,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageTokenMigrationOutcome {
+    NotNeeded,
+    Migrated,
+    Conflict,
 }
 
 impl std::fmt::Debug for StorageAuthenticatedToken {
@@ -137,6 +162,7 @@ impl std::fmt::Debug for StorageAuthenticatedToken {
             .field("permission_scoped", &self.permission_scoped)
             .field("resource_scoped", &self.resource_scoped)
             .field("revision", &"<redacted>")
+            .field("migration_outcome", &self.migration_outcome)
             .finish()
     }
 }
@@ -160,6 +186,7 @@ impl StorageAuthenticatedToken {
             permission_scoped: false,
             resource_scoped: false,
             revision,
+            migration_outcome: StorageTokenMigrationOutcome::NotNeeded,
         }
     }
 
@@ -217,6 +244,11 @@ impl StorageAuthenticatedToken {
     pub const fn revision(&self) -> ResourceRevision {
         self.revision
     }
+
+    #[must_use]
+    pub const fn migration_outcome(&self) -> StorageTokenMigrationOutcome {
+        self.migration_outcome
+    }
 }
 
 /// Builder for the hash-free token projection returned after successful
@@ -232,6 +264,7 @@ pub struct StorageAuthenticatedTokenBuilder {
     permission_scoped: bool,
     resource_scoped: bool,
     revision: ResourceRevision,
+    migration_outcome: StorageTokenMigrationOutcome,
 }
 
 impl StorageAuthenticatedTokenBuilder {
@@ -271,6 +304,12 @@ impl StorageAuthenticatedTokenBuilder {
         self
     }
 
+    #[must_use]
+    pub const fn migration_outcome(mut self, outcome: StorageTokenMigrationOutcome) -> Self {
+        self.migration_outcome = outcome;
+        self
+    }
+
     pub fn try_build(self) -> Result<StorageAuthenticatedToken, StorageValidationError> {
         if self.expires_at.is_some_and(|value| value < self.issued) {
             return Err(StorageValidationError::invalid(
@@ -293,6 +332,7 @@ impl StorageAuthenticatedTokenBuilder {
             permission_scoped: self.permission_scoped,
             resource_scoped: self.resource_scoped,
             revision: self.revision,
+            migration_outcome: self.migration_outcome,
         })
     }
 }
@@ -709,6 +749,60 @@ mod tests {
                 StorageAuthenticationCredential::new("lookup"),
                 observed_at,
                 valid_after,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn authentication_attempt_rejects_unbounded_or_duplicate_candidates() {
+        let observed_at = DateTime::<Utc>::default();
+        let credential = StorageAuthenticationCredential::new("lookup");
+
+        assert!(
+            StorageAuthenticationAttempt::try_candidates(
+                vec![credential.clone(); MAX_TOKEN_HASH_KEYS + 1],
+                None,
+                observed_at,
+                observed_at,
+            )
+            .is_err()
+        );
+        assert!(
+            StorageAuthenticationAttempt::try_candidates(
+                vec![credential.clone(), credential],
+                None,
+                observed_at,
+                observed_at,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn authentication_attempt_requires_migration_target_lookup_candidate() {
+        let observed_at = DateTime::<Utc>::default();
+        let candidate = StorageTokenDigest::try_new(
+            "candidate",
+            StorageTokenFormat::Legacy,
+            crate::StorageTokenHashAlgorithm::HmacSha256V1,
+            Some(crate::StorageTokenHashKeyId::try_new("active").unwrap()),
+        )
+        .unwrap();
+        let target = StorageTokenDigest::try_new(
+            "other",
+            StorageTokenFormat::Legacy,
+            crate::StorageTokenHashAlgorithm::HmacSha256V1,
+            Some(crate::StorageTokenHashKeyId::try_new("active").unwrap()),
+        )
+        .unwrap();
+
+        assert!(
+            StorageAuthenticationAttempt::try_candidates(
+                vec![StorageAuthenticationCredential::from_digest(candidate)],
+                Some(target),
+                observed_at,
+                observed_at,
             )
             .is_err()
         );

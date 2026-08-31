@@ -1,4 +1,6 @@
 use clap::Parser;
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -10,6 +12,7 @@ use crate::config::{
     DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
+    DEFAULT_TOKEN_LIFETIME_HOURS, token_hash_key_ring,
 };
 #[cfg(feature = "embedded-migrations")]
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
@@ -25,7 +28,8 @@ use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
 use crate::storage::run_storage_migrations;
 use crate::storage::{
-    OperationalStateStorage, StorageBackendKind, StorageHandle, StorageSettings, initialize_storage,
+    OperationalStateStorage, StorageBackendKind, StorageHandle, StorageSettings,
+    StorageTokenKeyUsage, StorageTokenObservation, TokenStorage, initialize_storage,
 };
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
@@ -71,6 +75,10 @@ struct AdminCli {
     #[arg(long, default_value_t = false)]
     database_ready: bool,
 
+    /// Print non-secret token hash key retirement evidence as JSON
+    #[arg(long, default_value_t = false)]
+    token_key_status: bool,
+
     /// Run all pending embedded database migrations
     #[cfg(feature = "embedded-migrations")]
     #[arg(long, default_value_t = false)]
@@ -96,6 +104,14 @@ struct AdminCli {
         default_value_t = DEFAULT_DB_STATEMENT_TIMEOUT_MS
     )]
     db_statement_timeout_ms: u64,
+
+    /// Legacy token lifetime used when classifying rows without explicit expiry
+    #[arg(
+        long,
+        env = "HUBUUM_TOKEN_LIFETIME_HOURS",
+        default_value_t = DEFAULT_TOKEN_LIFETIME_HOURS
+    )]
+    token_lifetime_hours: i64,
 
     /// MiniJinja recursion limit for export template validation
     #[arg(
@@ -183,11 +199,122 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         load_export_template_health(&storage).await?;
     } else if admin_cli.database_ready {
         storage_ready(&storage).await?;
+    } else if admin_cli.token_key_status {
+        print_token_key_status(&storage, admin_cli.token_lifetime_hours).await?;
     } else {
         println!("No command specified. Use --help for usage information.");
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+struct TokenKeyStatusReport {
+    ring_identity: String,
+    stable: bool,
+    require_stable: bool,
+    active_key_id: String,
+    previous_key_ids: Vec<String>,
+    usage: Vec<TokenKeyStatusRow>,
+}
+
+#[derive(Serialize)]
+struct TokenKeyStatusRow {
+    key_id: String,
+    configured_state: &'static str,
+    active: i64,
+    revoked: i64,
+    expired: i64,
+    latest_validation: Option<chrono::DateTime<chrono::Utc>>,
+    earliest_expiry: Option<chrono::DateTime<chrono::Utc>>,
+    latest_expiry: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn print_token_key_status(
+    storage: &StorageHandle,
+    token_lifetime_hours: i64,
+) -> Result<(), ApiError> {
+    let ring =
+        token_hash_key_ring().map_err(|error| ApiError::ValidationError(error.to_string()))?;
+    let observed_at = chrono::Utc::now();
+    let lifetime = chrono::Duration::try_hours(token_lifetime_hours).ok_or_else(|| {
+        ApiError::ValidationError("token lifetime is outside the supported range".to_string())
+    })?;
+    if lifetime <= chrono::Duration::zero() {
+        return Err(ApiError::ValidationError(
+            "token lifetime must be positive".to_string(),
+        ));
+    }
+    let observation = StorageTokenObservation::try_new(observed_at, observed_at - lifetime)
+        .map_err(|error| ApiError::ValidationError(error.to_string()))?;
+    let mut stored = storage
+        .token_key_usage(observation)
+        .await?
+        .into_iter()
+        .map(|usage| (usage.key_id().map(ToString::to_string), usage))
+        .collect::<BTreeMap<_, _>>();
+    let mut usage = Vec::new();
+    usage.push(status_row(
+        ring.active_key_id().to_string(),
+        "active",
+        stored.remove(&Some(ring.active_key_id().to_string())),
+    ));
+    let previous_key_ids = ring
+        .previous_key_ids()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    for key_id in &previous_key_ids {
+        usage.push(status_row(
+            key_id.clone(),
+            "previous",
+            stored.remove(&Some(key_id.clone())),
+        ));
+    }
+    if let Some(legacy) = stored.remove(&None) {
+        usage.push(status_row(
+            "legacy-unidentified".to_string(),
+            "legacy",
+            Some(legacy),
+        ));
+    }
+    for (key_id, unconfigured) in stored {
+        usage.push(status_row(
+            key_id.unwrap_or_else(|| "legacy-unidentified".to_string()),
+            "unconfigured",
+            Some(unconfigured),
+        ));
+    }
+    let report = TokenKeyStatusReport {
+        ring_identity: ring.identity().to_string(),
+        stable: ring.is_stable(),
+        require_stable: ring.requires_stable_key(),
+        active_key_id: ring.active_key_id().to_string(),
+        previous_key_ids,
+        usage,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn status_row(
+    key_id: String,
+    configured_state: &'static str,
+    usage: Option<StorageTokenKeyUsage>,
+) -> TokenKeyStatusRow {
+    TokenKeyStatusRow {
+        key_id,
+        configured_state,
+        active: usage.as_ref().map_or(0, StorageTokenKeyUsage::active),
+        revoked: usage.as_ref().map_or(0, StorageTokenKeyUsage::revoked),
+        expired: usage.as_ref().map_or(0, StorageTokenKeyUsage::expired),
+        latest_validation: usage
+            .as_ref()
+            .and_then(StorageTokenKeyUsage::latest_validation),
+        earliest_expiry: usage
+            .as_ref()
+            .and_then(StorageTokenKeyUsage::earliest_expiry),
+        latest_expiry: usage.as_ref().and_then(StorageTokenKeyUsage::latest_expiry),
+    }
 }
 
 async fn backup_database(

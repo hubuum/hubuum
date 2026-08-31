@@ -221,6 +221,9 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX` | `hubuum:login-rate-limit` | Shared limiter key namespace |
 | `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS` | `1000` | Shared backend I/O timeout |
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
+| `HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID` | *(legacy single-key mode)* | Active key ID for newly issued tokens |
+| `HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS` | *(empty)* | Comma-separated previous verification key IDs (maximum seven) |
+| `HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY` | `false` | Fail startup when stable token key material is unavailable |
 | `HUBUUM_SECRET_SOURCE` | `environment` | Process-wide secret source: `environment` or `file` |
 | `HUBUUM_SECRET_FILE_ROOT` | *(empty)* | Mounted secret root required by the `file` source |
 
@@ -239,7 +242,12 @@ also exposes this limit as `authentication.max_token_lifetime_hours`.
 
 **Login rate-limit note**: These settings throttle failed logins across layered scopes with exponential backoff. For the full model, client-IP resolution behind proxies, and the admin endpoints for inspecting and releasing throttled scopes, see [login_rate_limiting.md](login_rate_limiting.md).
 
-**Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart. All API replicas must use the same stable value.
+**Token hash key note**: If neither the compatible
+`HUBUUM_TOKEN_HASH_KEY` nor a key ring is configured, Hubuum generates an
+ephemeral key on startup and logs a warning. Tokens issued before restart will
+be invalid after restart. All API replicas must use the same ring. See
+[Secret Sources](secret_sources.md#token-key-ring-rotation) for the staged
+multi-replica procedure.
 
 For runtime roles, one-shot migrations, task recovery, database connection
 budgeting, and shared limiter behavior, see

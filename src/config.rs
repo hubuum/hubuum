@@ -26,7 +26,10 @@ mod token_hash;
 pub use client_network::{ClientAllowlist, ClientNetworkParseError, TrustedProxies};
 pub use defaults::*;
 pub use tls_backend::TlsBackend;
-pub use token_hash::{token_hash_key_bytes, token_hash_key_is_ephemeral};
+pub use token_hash::{
+    TokenHashKeyConfigError, TokenHashKeyRing, token_hash_key_bytes, token_hash_key_is_ephemeral,
+    token_hash_key_ring,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

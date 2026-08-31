@@ -410,6 +410,15 @@ impl TokenStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
+    async fn token_key_usage(
+        &self,
+        observation: StorageTokenObservation,
+    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError> {
+        crate::operations::token::token_key_usage(self.runtime(), observation)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn create_token(
         &self,
         request: StorageTokenCreate,

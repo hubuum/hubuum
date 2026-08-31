@@ -564,6 +564,19 @@ snapshot = "one native read"
 invalid_error = "InvalidInput"
 unsupported_error = "InvalidInput"
 
+[collection_profiles.token_key_usage]
+shape = "complete"
+ordering = "unidentified legacy rows first, then key id ascending"
+duplicate_inputs = "not applicable: one lifecycle observation"
+missing_inputs = "an empty token store yields an empty collection"
+multiplicity = "one aggregate row per distinct optional persisted key id"
+completeness = "all stored token rows classified once as active, revoked, or expired"
+bounds = "bounded by distinct persisted key identifiers; every identifier is at most 32 characters"
+visibility = "administrator aggregate only; token and principal identities are not returned"
+snapshot = "counts, validation timestamp, and expiry bounds share one native read snapshot"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
 [methods."CollectionStorage::list_collection_children"]
 effect = "complete_read"
 carrier = "CollectionId"
@@ -618,6 +631,11 @@ profile = "token"
 effect = "batch_read"
 carrier = "Vec<TokenId> + StorageTokenObservation"
 profile = "ordered_input_strict"
+
+[methods."TokenStorage::token_key_usage"]
+effect = "complete_read"
+carrier = "StorageTokenObservation"
+profile = "token_key_usage"
 
 [methods."AuthorizationDataStorage::list_authorization_classes"]
 effect = "batch_read"

@@ -128,14 +128,15 @@ pub(crate) use hubuum_storage_core::{
     StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
     StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
-    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUnifiedSearchCandidate,
-    StorageUnifiedSearchCursor, StorageUnifiedSearchQuery, StorageUser, StorageUserAnonymize,
-    StorageUserCreate, StorageUserDelete, StorageUserDetails, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility,
-    TaskExecutionStorage, TaskQueueStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
-    WorkerNotificationProvider,
+    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenDigest, StorageTokenFormat,
+    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenHashRevoke,
+    StorageTokenIssuancePolicy, StorageTokenKeyUsage, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
+    StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
+    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
+    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
+    StorageVisibility, TaskExecutionStorage, TaskQueueStorage, TokenStorage, UnifiedSearchStorage,
+    UserStorage, WorkerNotificationProvider,
 };
 pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupHistorySection, StorageBackupOutput,
@@ -145,8 +146,8 @@ pub(crate) use hubuum_storage_core::{
 };
 pub use hubuum_storage_core::{
     ExecutionStorage, StorageAuthenticatedToken, StorageCallSite, StorageExecutionScope,
-    StorageRevisionPrecondition, StorageRevisionTarget, StorageTransaction,
-    StorageTransactionFuture, TransactionStorage, TransactionalClassRelations,
+    StorageRevisionPrecondition, StorageRevisionTarget, StorageTokenMigrationOutcome,
+    StorageTransaction, StorageTransactionFuture, TransactionStorage, TransactionalClassRelations,
     TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,
     TransactionalObjects, execute_event_retention_batch,
 };

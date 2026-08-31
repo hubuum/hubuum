@@ -11,10 +11,14 @@ use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::*;
 use hubuum_events_core::*;
 use hubuum_query::*;
-use hubuum_storage_core::StorageValidationError;
 use hubuum_storage_core::capabilities::{
     backend::*, common::*, events::*, identity::*, operational::*, queries::*, resources::*,
     workflows::*,
+};
+use hubuum_storage_core::{
+    StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,
+    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenMigrationOutcome,
+    StorageValidationError,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -41,6 +45,9 @@ struct MemoryTokenRecord {
     id: TokenId,
     principal_id: PrincipalId,
     token_hash: String,
+    token_format: StorageTokenFormat,
+    token_hash_algorithm: StorageTokenHashAlgorithm,
+    token_hash_key_id: Option<StorageTokenHashKeyId>,
     name: Option<String>,
     description: Option<String>,
     issued: DateTime<Utc>,
@@ -264,6 +271,33 @@ impl MemoryTaskRecord {
 }
 
 impl MemoryTokenRecord {
+    fn matches_credential(&self, credential: &StorageAuthenticationCredential) -> bool {
+        let digest = credential.digest();
+        if !digest.matches_lookup_value(&self.token_hash)
+            || self.token_format != digest.format()
+            || self.token_hash_algorithm != digest.algorithm()
+        {
+            return false;
+        }
+        match self.token_format {
+            StorageTokenFormat::Version1 => self.token_hash_key_id.as_ref() == digest.key_id(),
+            StorageTokenFormat::Legacy => {
+                self.token_hash_key_id.is_none()
+                    || digest.key_id().is_none()
+                    || self.token_hash_key_id.as_ref() == digest.key_id()
+            }
+        }
+    }
+
+    fn migrate_legacy_digest(&mut self, target: StorageTokenDigest) {
+        let (token_hash, token_format, token_hash_algorithm, token_hash_key_id) =
+            target.into_parts();
+        self.token_hash = token_hash;
+        self.token_format = token_format;
+        self.token_hash_algorithm = token_hash_algorithm;
+        self.token_hash_key_id = token_hash_key_id;
+    }
+
     fn metadata(
         &self,
         observation: StorageTokenObservation,
@@ -272,7 +306,7 @@ impl MemoryTokenRecord {
         let expired = self
             .expires_at
             .is_some_and(|expires_at| expires_at <= observed_at)
-            || (self.expires_at.is_none() && self.issued < legacy_valid_after);
+            || (self.expires_at.is_none() && self.issued <= legacy_valid_after);
         StorageTokenMetadata::builder(self.id, self.principal_id, self.issued, self.revision)
             .name(self.name.clone())
             .description(self.description.clone())
@@ -351,155 +385,6 @@ struct MemoryState {
 }
 
 impl MemoryState {
-    fn new() -> Self {
-        let now = Utc::now();
-        let metadata = StorageRecordMetadata::try_new(
-            ResourceId::new(ROOT_COLLECTION_ID).expect("root resource id is valid"),
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .expect("root collection metadata is valid");
-        let root = StorageCollection::try_new(metadata, "root", "Root collection", None)
-            .expect("root collection is valid");
-        let local_scope_id = IdentityScopeId::new(1).expect("local identity scope id is valid");
-        let local_scope = StorageIdentityScope::try_new(
-            local_scope_id,
-            LOCAL_IDENTITY_SCOPE,
-            LOCAL_PROVIDER_KIND,
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .expect("local identity scope is valid");
-        let admin_principal_id = PrincipalId::new(1).expect("admin principal id is valid");
-        let admin_metadata = StorageRecordMetadata::try_new(
-            ResourceId::new(admin_principal_id.id()).expect("admin resource id is valid"),
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .expect("admin principal metadata is valid");
-        let admin_principal = StoragePrincipal::builder(
-            admin_metadata,
-            PrincipalKind::Human,
-            "admin",
-            local_scope_id,
-        )
-        .try_build()
-        .expect("admin principal is valid");
-        let admin_user = StorageUser::try_new(
-            UserId::new(admin_principal_id.id()).expect("admin user id is valid"),
-            Some("memory-adapter-placeholder-password-hash".to_string()),
-            Some("Administrator".to_string()),
-            None,
-            now,
-            now,
-            None,
-        )
-        .expect("admin user is valid");
-        let admin_group_id = GroupId::new(1).expect("admin group id is valid");
-        let admin_group_metadata = StorageRecordMetadata::try_new(
-            ResourceId::new(admin_group_id.id()).expect("admin group resource id is valid"),
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .expect("admin group metadata is valid");
-        let admin_group = StorageIdentityGroup::builder(
-            admin_group_metadata,
-            "admin",
-            "Administrators",
-            local_scope_id,
-            LOCAL_PROVIDER_KIND,
-        )
-        .try_build()
-        .expect("admin group is valid");
-        let admin_membership = StoragePrincipalGroup::try_new(
-            admin_principal_id,
-            admin_group_id,
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .expect("admin group membership is valid");
-        Self {
-            next_collection_id: ROOT_COLLECTION_ID + 1,
-            next_class_id: 1,
-            next_object_id: 1,
-            next_class_relation_id: 1,
-            next_object_relation_id: 1,
-            next_event_sequence: 1,
-            next_identity_scope_id: 2,
-            next_principal_id: 2,
-            next_group_id: 2,
-            next_token_id: 1,
-            next_task_id: 1,
-            next_task_event_sequence: 1,
-            next_import_result_id: 1,
-            next_computed_field_id: 1,
-            next_export_template_id: 1,
-            next_remote_target_id: 1,
-            next_authorization_grant_id: 1,
-            next_event_sink_id: 1,
-            next_event_subscription_id: 1,
-            next_event_delivery_id: 1,
-            next_history_id: 1,
-            next_restore_job_id: 1,
-            fanout_event_cursor: 0,
-            collections: BTreeMap::from([(ROOT_COLLECTION_ID, root)]),
-            classes: BTreeMap::new(),
-            objects: BTreeMap::new(),
-            class_relations: BTreeMap::new(),
-            object_relations: BTreeMap::new(),
-            identity_scopes: BTreeMap::from([(local_scope_id.id(), local_scope)]),
-            principals: BTreeMap::from([(admin_principal_id.id(), admin_principal)]),
-            users: BTreeMap::from([(
-                admin_principal_id.id(),
-                MemoryUserRecord {
-                    user: admin_user,
-                    identity_scope_id: local_scope_id,
-                    name: "admin".to_string(),
-                    provider_managed: false,
-                    external_subject: None,
-                    last_sync_attempted_at: None,
-                    last_sync_success_at: None,
-                },
-            )]),
-            groups: BTreeMap::from([(admin_group_id.id(), admin_group)]),
-            memberships: BTreeMap::from([(
-                (admin_principal_id.id(), admin_group_id.id()),
-                admin_membership,
-            )]),
-            external_memberships: BTreeSet::new(),
-            tokens: BTreeMap::new(),
-            service_accounts: BTreeMap::new(),
-            tasks: BTreeMap::new(),
-            task_events: BTreeMap::new(),
-            import_task_results: BTreeMap::new(),
-            export_outputs: BTreeMap::new(),
-            backup_outputs: BTreeMap::new(),
-            export_templates: BTreeMap::new(),
-            remote_targets: BTreeMap::new(),
-            computed_fields: BTreeMap::new(),
-            computation_states: BTreeMap::new(),
-            computed_rebuild_tasks: BTreeMap::new(),
-            authorization_grants: BTreeMap::new(),
-            event_sinks: BTreeMap::new(),
-            event_subscriptions: BTreeMap::new(),
-            event_deliveries: BTreeMap::new(),
-            event_delivery_claims: BTreeMap::new(),
-            event_retention_batches: BTreeMap::new(),
-            history: Vec::new(),
-            restore_jobs: BTreeMap::new(),
-            maintenance_state: MaintenanceState::Normal,
-            maintenance_restore_job_id: None,
-            maintenance_generation: 0,
-            restore_instances: BTreeMap::new(),
-            events: Vec::new(),
-        }
-    }
-
     fn append_event_record(
         &mut self,
         request: MemoryEventAppend<'_>,
@@ -734,43 +619,14 @@ pub struct MemoryStorage {
     state: Arc<RwLock<MemoryState>>,
 }
 
-fn ordered_ids<T: Ord>(first: T, second: T) -> (T, T) {
-    if first < second {
-        (first, second)
-    } else {
-        (second, first)
+impl MemoryStorage {
+    /// Creates an empty in-memory adapter with Hubuum's required bootstrap records.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(MemoryState::new())),
+        }
     }
-}
-
-fn assert_import_revision(
-    condition: Option<StorageImportWriteCondition>,
-    current_revision: ResourceRevision,
-) -> Result<(), StorageError> {
-    let Some(expected) = condition.and_then(StorageImportWriteCondition::expected_revision) else {
-        return Ok(());
-    };
-    if expected == current_revision.get() {
-        return Ok(());
-    }
-    Err(StorageError::precondition_failed(
-        format!(
-            "stale_revision: expected revision {expected}, observed {}",
-            current_revision.get()
-        ),
-        Some(current_revision),
-    ))
-}
-
-fn assert_import_create_condition(
-    condition: Option<StorageImportWriteCondition>,
-) -> Result<(), StorageError> {
-    if condition.is_some_and(StorageImportWriteCondition::requires_existing) {
-        return Err(StorageError::precondition_failed(
-            "conditional_import_target_missing",
-            None,
-        ));
-    }
-    Ok(())
 }
 
 impl Default for MemoryStorage {
@@ -779,584 +635,15 @@ impl Default for MemoryStorage {
     }
 }
 
-fn invalid_contract_value(error: StorageValidationError) -> StorageError {
-    StorageError::internal(error.to_string())
-}
+mod support;
+use support::*;
 
-fn page<T>(mut rows: Vec<T>, options: &QueryOptions) -> Result<StoragePage<T>, StorageError> {
-    let total = options
-        .include_total()
-        .then(|| i64::try_from(rows.len()).unwrap_or(i64::MAX));
-    if let Some(limit) = options.limit() {
-        rows.truncate(limit);
-    }
-    StoragePage::try_new(rows, total).map_err(invalid_contract_value)
-}
-
-fn string_filter_matches(actual: &str, operator: &SearchOperator, expected: &str) -> bool {
-    let (operator, negated) = operator.op_and_neg();
-    let actual_lower = actual.to_lowercase();
-    let expected_lower = expected.to_lowercase();
-    let matched = match operator {
-        Operator::Equals => actual == expected,
-        Operator::IEquals => actual_lower == expected_lower,
-        Operator::Contains => actual.contains(expected),
-        Operator::IContains => actual_lower.contains(&expected_lower),
-        Operator::StartsWith => actual.starts_with(expected),
-        Operator::IStartsWith => actual_lower.starts_with(&expected_lower),
-        Operator::EndsWith => actual.ends_with(expected),
-        Operator::IEndsWith => actual_lower.ends_with(&expected_lower),
-        Operator::In => expected.split(',').any(|value| actual == value.trim()),
-        _ => true,
-    };
-    matched != negated
-}
-
-fn resource_filters_match(options: &QueryOptions, id: i32, name: &str, description: &str) -> bool {
-    options.filters().as_slice().iter().all(|filter| {
-        let actual = match filter.field {
-            FilterField::Id => id.to_string(),
-            FilterField::Name => name.to_string(),
-            FilterField::Description => description.to_string(),
-            _ => return true,
-        };
-        string_filter_matches(&actual, &filter.operator, &filter.value)
-    })
-}
-
-fn authorization_collection(
-    collection: &StorageCollection,
-) -> Result<StorageAuthorizationCollection, StorageError> {
-    StorageAuthorizationCollection::try_new(
-        collection.id(),
-        collection.name(),
-        collection.description(),
-        collection.created_at(),
-        collection.updated_at(),
-        collection.parent_collection_id(),
-        collection.revision(),
-    )
-    .map_err(invalid_contract_value)
-}
-
-fn authorization_group(
-    group: &StorageIdentityGroup,
-) -> Result<StorageAuthorizationGroup, StorageError> {
-    let identity = StorageAuthorizationGroupIdentity::new(
-        group.id(),
-        group.name(),
-        group.identity_scope_id(),
-        group.managed_by(),
-        group.external_key().map(ToOwned::to_owned),
-    );
-    let profile = StorageAuthorizationGroupProfile::try_new(
-        group.description(),
-        group.created_at(),
-        group.updated_at(),
-        group.revision(),
-    )
-    .map_err(invalid_contract_value)?;
-    let sync = StorageAuthorizationGroupSyncState::try_new(
-        group.last_sync_attempted_at(),
-        group.last_sync_success_at(),
-    )
-    .map_err(invalid_contract_value)?;
-    Ok(StorageAuthorizationGroup::new(identity, profile, sync))
-}
-
-fn principal_group_ids(state: &MemoryState, principal_id: PrincipalId) -> Vec<GroupId> {
-    state
-        .memberships
-        .keys()
-        .filter(|(candidate_principal_id, _)| *candidate_principal_id == principal_id.id())
-        .map(|(_, group_id)| GroupId::new(*group_id).expect("stored group ids are positive"))
-        .collect()
-}
-
-fn permissions_include(
-    available: &[StorageAuthorizationPermission],
-    required: &[StorageAuthorizationPermission],
-) -> bool {
-    required
-        .iter()
-        .all(|permission| available.contains(permission))
-}
-
-fn principal_has_collection_permissions(
-    state: &MemoryState,
-    principal_id: PrincipalId,
-    collection_id: CollectionId,
-    permissions: &[StorageAuthorizationPermission],
-) -> bool {
-    let group_ids = principal_group_ids(state, principal_id);
-    group_ids.iter().any(|group_id| {
-        state
-            .authorization_grants
-            .get(&(collection_id.id(), group_id.id()))
-            .is_some_and(|grant| permissions_include(grant.permissions(), permissions))
-    })
-}
-
-fn authorization_group_grant(
-    state: &MemoryState,
-    grant: &StorageAuthorizationGrant,
-) -> Result<StorageAuthorizationGroupGrant, StorageError> {
-    let group = state
-        .groups
-        .get(&grant.group_id().id())
-        .ok_or_else(|| StorageError::internal("authorization grant group is missing"))?;
-    StorageAuthorizationGroupGrant::try_new(authorization_group(group)?, grant.clone())
-        .map_err(invalid_contract_value)
-}
-
-fn authorization_policy_row(
-    state: &MemoryState,
-    grant: &StorageAuthorizationGrant,
-) -> Result<StorageAuthorizationPolicySnapshotRow, StorageError> {
-    let group = state
-        .groups
-        .get(&grant.group_id().id())
-        .ok_or_else(|| StorageError::internal("authorization grant group is missing"))?;
-    let collection = state
-        .collections
-        .get(&grant.collection_id().id())
-        .ok_or_else(|| StorageError::internal("authorization grant collection is missing"))?;
-    StorageAuthorizationPolicySnapshotRow::try_new(
-        grant.clone(),
-        authorization_group(group)?,
-        authorization_collection(collection)?,
-    )
-    .map_err(invalid_contract_value)
-}
-
-fn authorization_effective_group_grant(
-    state: &MemoryState,
-    grant: &StorageAuthorizationGrant,
-) -> Result<StorageAuthorizationEffectiveGroupGrant, StorageError> {
-    let collection = state
-        .collections
-        .get(&grant.collection_id().id())
-        .ok_or_else(|| StorageError::internal("authorization grant collection is missing"))?;
-    let group = state
-        .groups
-        .get(&grant.group_id().id())
-        .ok_or_else(|| StorageError::internal("authorization grant group is missing"))?;
-    let collection = authorization_collection(collection)?;
-    Ok(StorageAuthorizationEffectiveGroupGrant::new(
-        collection.clone(),
-        collection,
-        0,
-        false,
-        authorization_group(group)?,
-        grant.clone(),
-    ))
-}
-
-fn rebuild_event_delivery(
-    delivery: &StorageEventDelivery,
-    status: EventDeliveryStatus,
-    attempts: i32,
-    next_attempt_at: DateTime<Utc>,
-    last_error: Option<String>,
-    locked_until: Option<DateTime<Utc>>,
-) -> Result<StorageEventDelivery, StorageError> {
-    StorageEventDelivery::builder(
-        delivery.id(),
-        delivery.event_id(),
-        delivery.subscription_id(),
-        status,
-        next_attempt_at,
-        delivery.created_at(),
-        Utc::now(),
-    )
-    .attempts(attempts)
-    .last_error(last_error)
-    .locked_until(locked_until)
-    .try_build()
-    .map_err(invalid_contract_value)
-}
-
-fn event_status_counts(
-    deliveries: impl IntoIterator<Item = EventDeliveryStatus>,
-) -> Result<StorageEventDeliveryStatusSnapshot, StorageError> {
-    let mut total = 0_i64;
-    let mut pending = 0_i64;
-    let mut in_flight = 0_i64;
-    let mut succeeded = 0_i64;
-    let mut failed = 0_i64;
-    let mut dead = 0_i64;
-    for status in deliveries {
-        total += 1;
-        match status {
-            EventDeliveryStatus::Pending => pending += 1,
-            EventDeliveryStatus::InFlight => in_flight += 1,
-            EventDeliveryStatus::Succeeded => succeeded += 1,
-            EventDeliveryStatus::Failed => failed += 1,
-            EventDeliveryStatus::Dead => dead += 1,
-        }
-    }
-    StorageEventDeliveryStatusSnapshot::try_new(
-        total, pending, in_flight, succeeded, failed, dead, failed,
-    )
-    .map_err(invalid_contract_value)
-}
-
-fn history_scope_allows(
-    scope: &StorageHistoryCollectionScope,
-    collection_id: CollectionId,
-) -> bool {
-    match scope {
-        StorageHistoryCollectionScope::All => true,
-        StorageHistoryCollectionScope::Visible(ids) => ids.contains(&collection_id),
-    }
-}
-
-fn history_valid_to(state: &MemoryState, entry: &MemoryHistoryEntry) -> Option<DateTime<Utc>> {
-    let variant = std::mem::discriminant(&entry.value);
-    state
-        .history
-        .iter()
-        .filter(|candidate| {
-            candidate.id != entry.id
-                && candidate.value.entity_id() == entry.value.entity_id()
-                && std::mem::discriminant(&candidate.value) == variant
-                && (candidate.valid_from > entry.valid_from
-                    || (candidate.valid_from == entry.valid_from
-                        && candidate.id.id() > entry.id.id()))
-        })
-        .min_by_key(|candidate| (candidate.valid_from, candidate.id.id()))
-        .map(|candidate| candidate.valid_from)
-}
-
-fn transition_restore_record(
-    record: &MemoryRestoreRecord,
-    status: StorageRestoreJobStatus,
-    error: Option<String>,
-    confirmed_at: Option<DateTime<Utc>>,
-    finished_at: Option<DateTime<Utc>>,
-    erase_document: bool,
-) -> Result<MemoryRestoreRecord, StorageError> {
-    let (summary, mut document, capability_hash) = record.job.clone().into_parts();
-    let (id, _, initiator, artifact, _, timestamps) = summary.into_parts();
-    let timestamp_parts = timestamps.into_parts();
-    let timestamps = StorageRestoreTimestamps::try_new(
-        timestamp_parts.expires_at(),
-        confirmed_at,
-        finished_at,
-        timestamp_parts.created_at(),
-        Utc::now(),
-    )
-    .map_err(invalid_contract_value)?;
-    let summary =
-        StorageRestoreJobSummary::try_new(id, status, initiator, artifact, error, timestamps)
-            .map_err(invalid_contract_value)?;
-    if erase_document {
-        document.clear();
-    }
-    let job = StorageRestoreJob::try_new(summary, document, capability_hash)
-        .map_err(invalid_contract_value)?;
-    Ok(MemoryRestoreRecord {
-        job,
-        validation_summary: record.validation_summary.clone(),
-    })
-}
-
-fn class_with_collection(
-    state: &MemoryState,
-    class: &StorageClass,
-) -> Result<StorageClassWithCollection, StorageError> {
-    let collection = state
-        .collections
-        .get(&class.collection_id().id())
-        .cloned()
-        .ok_or_else(|| StorageError::internal("class collection is missing"))?;
-    let metadata = StorageRecordMetadata::try_new(
-        ResourceId::new(class.id().id()).expect("class id is positive"),
-        class.created_at(),
-        class.updated_at(),
-        class.revision(),
-    )
-    .map_err(invalid_contract_value)?;
-    Ok(
-        StorageClassWithCollection::builder(
-            metadata,
-            class.name(),
-            collection,
-            class.description(),
-        )
-        .json_schema(class.json_schema().cloned())
-        .validate_schema(class.validates_schema())
-        .build(),
-    )
-}
-
-fn search_rank(name: &str, description: &str, extended: Option<&str>, term: &str) -> Option<i32> {
-    let name = name.to_lowercase();
-    let description = description.to_lowercase();
-    let extended = extended.map(str::to_lowercase);
-    let term = term.to_lowercase();
-    if name == term {
-        Some(3)
-    } else if name.starts_with(&term) {
-        Some(2)
-    } else if name.contains(&term)
-        || description.contains(&term)
-        || extended.as_ref().is_some_and(|value| value.contains(&term))
-    {
-        Some(1)
-    } else {
-        None
-    }
-}
-
-fn graph_class(class: &StorageClass) -> Result<StorageGraphClass, StorageError> {
-    let metadata = StorageRecordMetadata::try_new(
-        ResourceId::new(class.id().id()).expect("class id is positive"),
-        class.created_at(),
-        class.updated_at(),
-        class.revision(),
-    )
-    .map_err(invalid_contract_value)?;
-    Ok(StorageGraphClass::new(
-        StorageGraphResource::new(
-            metadata,
-            class.name().to_string(),
-            class.collection_id(),
-            class.description().to_string(),
-        ),
-        class.json_schema().cloned(),
-        class.validates_schema(),
-    ))
-}
-
-fn graph_object(object: &StorageObject) -> Result<StorageGraphObject, StorageError> {
-    let metadata = StorageRecordMetadata::try_new(
-        ResourceId::new(object.id().id()).expect("object id is positive"),
-        object.created_at(),
-        object.updated_at(),
-        object.revision(),
-    )
-    .map_err(invalid_contract_value)?;
-    Ok(StorageGraphObject::new(
-        StorageGraphResource::new(
-            metadata,
-            object.name().to_string(),
-            object.collection_id(),
-            object.description().to_string(),
-        ),
-        object.class_id(),
-        object.data().clone(),
-    ))
-}
-
-fn ready_computation_state(
-    class_id: ClassId,
-    revision: i64,
-    created_at: DateTime<Utc>,
-) -> Result<StorageClassComputationState, StorageError> {
-    StorageClassComputationState::builder(
-        class_id,
-        StorageComputationRevision::try_new(revision).map_err(invalid_contract_value)?,
-        StorageComputationRebuildStatus::Ready,
-        created_at,
-        Utc::now(),
-    )
-    .try_build()
-    .map_err(invalid_contract_value)
-}
-
-fn updated_computed_field(
-    current: &StorageComputedFieldDefinition,
-    patch: &StorageComputedFieldDefinitionPatch,
-    actor_id: PrincipalId,
-) -> Result<StorageComputedFieldDefinition, StorageError> {
-    let metadata = current.metadata();
-    let metadata = StorageRecordMetadata::try_new(
-        metadata.id(),
-        metadata.created_at(),
-        Utc::now(),
-        metadata
-            .revision()
-            .checked_advance()
-            .map_err(|error| StorageError::internal(error.to_string()))?,
-    )
-    .map_err(invalid_contract_value)?;
-    let input = StorageComputedFieldDefinitionInput::new(
-        patch.key().unwrap_or(current.key()).to_string(),
-        patch.label().unwrap_or(current.label()).to_string(),
-        patch
-            .operation()
-            .cloned()
-            .unwrap_or_else(|| current.operation().clone()),
-        patch
-            .result_type()
-            .unwrap_or(current.result_type())
-            .to_string(),
-    )
-    .with_description(
-        patch
-            .description()
-            .unwrap_or(current.description())
-            .to_string(),
-    )
-    .with_enabled(patch.enabled().unwrap_or(current.enabled()));
-    Ok(StorageComputedFieldDefinition::new(
-        metadata,
-        current.class_id(),
-        current.visibility(),
-        StorageComputedFieldDefinitionContent::new(input, current.semantics_version()),
-        StorageComputedFieldProvenance::new(current.created_by(), Some(actor_id)),
-    ))
-}
-
-fn evaluate_computed_definition(
-    definition: &StorageComputedFieldDefinition,
-    object: &StorageObject,
-) -> serde_json::Value {
-    definition
-        .operation()
-        .get("paths")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .find_map(|path| object.data().pointer(path).cloned())
-        .unwrap_or(serde_json::Value::Null)
-}
-
-fn computed_scope(
-    state: &MemoryState,
-    object: &StorageObject,
-    visibility: StorageComputedFieldVisibility,
-) -> StorageComputedScope {
-    let values = state
-        .computed_fields
-        .values()
-        .filter(|definition| {
-            definition.class_id() == object.class_id()
-                && definition.visibility() == visibility
-                && definition.enabled()
-        })
-        .map(|definition| {
-            (
-                definition.key().to_string(),
-                evaluate_computed_definition(definition, object),
-            )
-        })
-        .collect();
-    StorageComputedScope::new(values, BTreeMap::new())
-}
-
-fn computed_object(
-    state: &MemoryState,
-    object: StorageObject,
-    personal_owner_id: Option<PrincipalId>,
-) -> Result<StorageComputedObject, StorageError> {
-    let revision = state
-        .computation_states
-        .get(&object.class_id().id())
-        .map_or(0, |value| value.evaluation_revision().get());
-    let shared = StorageSharedComputedScope::new(
-        StorageComputationRevision::try_new(revision).map_err(invalid_contract_value)?,
-        false,
-        computed_scope(state, &object, StorageComputedFieldVisibility::Shared),
-    );
-    let personal = personal_owner_id.map(|owner_id| {
-        computed_scope(
-            state,
-            &object,
-            StorageComputedFieldVisibility::Personal { owner_id },
-        )
-    });
-    Ok(StorageComputedObject::new(object, shared, personal))
-}
-
-fn export_output_summary(
-    output: &StorageExportOutput,
-) -> Result<StorageExportOutputSummary, StorageError> {
-    StorageExportOutputSummary::try_new(
-        output.task_id(),
-        output.template_name().map(ToOwned::to_owned),
-        output.content_type(),
-        output.warning_count(),
-        output.truncated(),
-        output.output_expires_at(),
-        output.durations(),
-    )
-    .map_err(invalid_contract_value)
-}
-
-fn backup_output_summary(
-    output: &StorageBackupOutput,
-) -> Result<StorageBackupOutputSummary, StorageError> {
-    StorageBackupOutputSummary::try_new(
-        output.task_id(),
-        output.byte_size(),
-        output.sha256(),
-        output.output_expires_at(),
-    )
-    .map_err(invalid_contract_value)
-}
-
-fn invalid_task_lease() -> StorageError {
-    StorageError::conflict("Task lease is no longer valid")
-}
-
-fn advanced_principal(
-    current: &StoragePrincipal,
-    name: impl Into<String>,
-    settings: serde_json::Value,
-    updated_at: DateTime<Utc>,
-) -> Result<StoragePrincipal, StorageError> {
-    let revision = current
-        .revision()
-        .checked_advance()
-        .map_err(|error| StorageError::internal(error.to_string()))?;
-    let metadata = StorageRecordMetadata::try_new(
-        ResourceId::new(current.id().id()).expect("principal id is positive"),
-        current.created_at(),
-        updated_at,
-        revision,
-    )
-    .map_err(invalid_contract_value)?;
-    StoragePrincipal::builder(metadata, current.kind(), name, current.identity_scope_id())
-        .provider_managed(current.provider_managed())
-        .settings(settings)
-        .external_subject(current.external_subject().map(ToOwned::to_owned))
-        .last_sync_attempted_at(current.last_sync_attempted_at())
-        .last_sync_success_at(current.last_sync_success_at())
-        .try_build()
-        .map_err(invalid_contract_value)
-}
-
-fn token_state_matches(metadata: &StorageTokenMetadata, state: StorageTokenListState) -> bool {
-    match state {
-        StorageTokenListState::Active => metadata.is_active(),
-        StorageTokenListState::Expired => metadata.is_expired(),
-        StorageTokenListState::Revoked => metadata.revoked_at().is_some(),
-        StorageTokenListState::All => true,
-    }
-}
-
-fn empty_event_fanout_snapshot() -> Result<StorageEventFanoutSnapshot, StorageError> {
-    StorageEventFanoutSnapshot::try_new(0, 0, 0, None).map_err(invalid_contract_value)
-}
-
-fn empty_event_queue_snapshot() -> Result<StorageEventQueueSnapshot, StorageError> {
-    StorageEventQueueSnapshot::try_new(
-        StorageEventDeliveryStatusSnapshot::try_new(0, 0, 0, 0, 0, 0, 0)
-            .map_err(invalid_contract_value)?,
-        0,
-        None,
-    )
-    .map_err(invalid_contract_value)
-}
-
-mod adapter;
 mod events;
 mod execution;
 mod identity;
+mod imports;
 mod operational;
 mod queries;
 mod resources;
+mod state;
 mod workflows;

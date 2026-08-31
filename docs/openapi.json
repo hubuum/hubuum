@@ -19436,11 +19436,19 @@
           "token_retention_purge_interval_seconds",
           "token_retention_purge_batch_size",
           "stable_token_hash_key_configured",
+          "token_hash_key_mode",
+          "active_token_hash_key_id",
+          "previous_token_hash_key_ids",
+          "token_hash_key_ring_identity",
+          "require_stable_token_hash_key",
           "admin_groupname",
           "provider_config_path",
           "login_rate_limit"
         ],
         "properties": {
+          "active_token_hash_key_id": {
+            "type": "string"
+          },
           "admin_groupname": {
             "type": "string"
           },
@@ -19457,11 +19465,26 @@
             "type": "integer",
             "format": "int64"
           },
+          "previous_token_hash_key_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "provider_config_path": {
             "$ref": "#/components/schemas/SecretStatus"
           },
+          "require_stable_token_hash_key": {
+            "type": "boolean"
+          },
           "stable_token_hash_key_configured": {
             "type": "boolean"
+          },
+          "token_hash_key_mode": {
+            "type": "string"
+          },
+          "token_hash_key_ring_identity": {
+            "type": "string"
           },
           "token_lifetime_hours": {
             "type": "integer",

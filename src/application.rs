@@ -21,8 +21,9 @@ use crate::config::get_config;
 #[cfg(not(test))]
 use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
-use crate::config::token_hash_key_is_ephemeral;
-use crate::config::{AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath};
+use crate::config::{
+    AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath, token_hash_key_ring,
+};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
     EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
@@ -93,7 +94,13 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
 
-    if token_hash_key_is_ephemeral() {
+    let token_hash_key_ring = token_hash_key_ring().unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Failed to configure token hash keys: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        )
+    });
+    if !token_hash_key_ring.is_stable() {
         warn!(
             message = "The token hash key is unavailable; using an ephemeral in-memory key. Existing tokens will be invalid after restart.",
             recommendation = "Configure a stable token key through the selected Hubuum secret source to preserve token validity across restarts"
@@ -108,6 +115,17 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             );
         }
         observability::metrics::runtime_identity(config.runtime_role);
+        observability::metrics::token_hash_key_ring(
+            if token_hash_key_ring.is_stable() {
+                "stable"
+            } else {
+                "ephemeral"
+            },
+            token_hash_key_ring.active_key_id().as_str(),
+            token_hash_key_ring.identity(),
+            1,
+            u64::try_from(token_hash_key_ring.previous_key_ids().count()).unwrap_or(u64::MAX),
+        );
     }
     if config.storage_backend == StorageBackendKind::Postgres {
         config.database_url = crate::secrets::resolve_database_url(&config.database_url)

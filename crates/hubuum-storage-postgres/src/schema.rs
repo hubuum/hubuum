@@ -751,6 +751,10 @@ diesel::table! {
         permission_scoped -> Bool,
         resource_scoped -> Bool,
         revision -> Int8,
+        token_format -> Int2,
+        token_hash_algorithm -> Int2,
+        #[max_length = 32]
+        token_hash_key_id -> Nullable<Varchar>,
     }
 }
 

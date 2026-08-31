@@ -130,12 +130,14 @@ use crate::storage::{
     StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
     StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
-    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenDigest, StorageTokenFormat,
+    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUnifiedSearchQuery,
-    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserListQuery,
-    StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, TokenStorage, UnifiedSearchStorage, UserStorage,
+    StorageTokenMigrationOutcome, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
+    StorageUnifiedSearchQuery, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate, StorageVisibility,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
+    UnifiedSearchStorage, UserStorage,
 };
 use crate::traits::CanSave;
 use hubuum_storage_postgres::PostgresPool;
@@ -285,7 +287,7 @@ async fn create_backend_user(backend: &StorageHandle, name: &str) -> BackendUser
     backend
         .create_token(StorageTokenCreate::new(
             principal_id,
-            &token_hash,
+            StorageTokenDigest::legacy_unidentified(&token_hash),
             StorageTokenIssuancePolicy::try_new(24, 24)
                 .expect("backend-local token policy should be valid"),
             EventContext::system(),
@@ -2459,6 +2461,306 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_migrates_legacy_token_digests_safely() {
+    let _permit = postgres_permit().await;
+    let active_key_id = StorageTokenHashKeyId::try_new("active").unwrap();
+    let previous_key_id = StorageTokenHashKeyId::try_new("previous").unwrap();
+
+    for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("token_rotation_user")).await;
+        let old_hash = prefix("legacy_previous_digest");
+        let active_hash = prefix("legacy_active_digest");
+        backend
+            .create_token(StorageTokenCreate::new(
+                user.principal_id,
+                StorageTokenDigest::legacy_unidentified(&old_hash),
+                StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .expect("certified backend should create a legacy token row")
+            .into_value();
+
+        let observed_at = chrono::Utc::now();
+        let candidate = |hash: &str, key_id: StorageTokenHashKeyId| {
+            StorageAuthenticationCredential::from_digest(
+                StorageTokenDigest::try_new(
+                    hash,
+                    StorageTokenFormat::Legacy,
+                    StorageTokenHashAlgorithm::HmacSha256V1,
+                    Some(key_id),
+                )
+                .unwrap(),
+            )
+        };
+        let migration_target = StorageTokenDigest::try_new(
+            &active_hash,
+            StorageTokenFormat::Legacy,
+            StorageTokenHashAlgorithm::HmacSha256V1,
+            Some(active_key_id.clone()),
+        )
+        .unwrap();
+        let migrated = backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_candidates(
+                    vec![
+                        candidate(&active_hash, active_key_id.clone()),
+                        candidate(&old_hash, previous_key_id.clone()),
+                    ],
+                    Some(migration_target),
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect("certified backend should validate and migrate a legacy digest");
+        assert_eq!(
+            migrated.migration_outcome(),
+            StorageTokenMigrationOutcome::Migrated
+        );
+
+        backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_new(
+                    candidate(&active_hash, active_key_id.clone()),
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect("the migrated active-key digest should authenticate");
+        backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_new(
+                    candidate(&old_hash, previous_key_id.clone()),
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect_err("the retired legacy digest should no longer authenticate");
+
+        let usage = backend
+            .token_key_usage(
+                StorageTokenObservation::try_new(
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect("certified backend should report token key retirement evidence");
+        assert!(
+            usage
+                .iter()
+                .any(|item| { item.key_id() == Some(&active_key_id) && item.active() >= 1 })
+        );
+
+        delete_backend_user(&backend, user).await;
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_prevents_versioned_key_fallback() {
+    let _permit = postgres_permit().await;
+    let active_key_id = StorageTokenHashKeyId::try_new("active").unwrap();
+    let previous_key_id = StorageTokenHashKeyId::try_new("previous").unwrap();
+
+    for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("versioned_token_key_user")).await;
+        let versioned_hash = prefix("versioned_previous_digest");
+        backend
+            .create_token(StorageTokenCreate::new(
+                user.principal_id,
+                StorageTokenDigest::try_new(
+                    &versioned_hash,
+                    StorageTokenFormat::Version1,
+                    StorageTokenHashAlgorithm::HmacSha256V1,
+                    Some(previous_key_id.clone()),
+                )
+                .unwrap(),
+                StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .expect("certified backend should create a versioned token row")
+            .into_value();
+        let observed_at = chrono::Utc::now();
+        let credential = |key_id| {
+            StorageAuthenticationCredential::from_digest(
+                StorageTokenDigest::try_new(
+                    &versioned_hash,
+                    StorageTokenFormat::Version1,
+                    StorageTokenHashAlgorithm::HmacSha256V1,
+                    Some(key_id),
+                )
+                .unwrap(),
+            )
+        };
+
+        backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_new(
+                    credential(active_key_id.clone()),
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect_err("versioned credentials must not fall back to another key ID");
+        backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_new(
+                    credential(previous_key_id.clone()),
+                    observed_at,
+                    observed_at - chrono::Duration::days(1),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect("versioned credentials should use exactly their selected key ID");
+
+        delete_backend_user(&backend, user).await;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum InactiveLegacyTokenState {
+    Revoked,
+    Expired,
+}
+
+async fn assert_inactive_legacy_token_is_not_migrated(
+    backend: &StorageHandle,
+    state: InactiveLegacyTokenState,
+) {
+    let (fixture_name, active_key_name, old_hash_name, active_hash_name) = match state {
+        InactiveLegacyTokenState::Revoked => (
+            "revoked_token_rotation_user",
+            "revoked-target",
+            "revoked_legacy_digest",
+            "revoked_active_digest",
+        ),
+        InactiveLegacyTokenState::Expired => (
+            "expired_token_rotation_user",
+            "expired-target",
+            "expired_legacy_digest",
+            "expired_active_digest",
+        ),
+    };
+    let user = create_backend_user(backend, &prefix(fixture_name)).await;
+    let active_key_id = StorageTokenHashKeyId::try_new(active_key_name).unwrap();
+    let previous_key_id = StorageTokenHashKeyId::try_new("inactive-previous").unwrap();
+    let old_hash = prefix(old_hash_name);
+    let active_hash = prefix(active_hash_name);
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(1);
+    let create = StorageTokenCreate::new(
+        user.principal_id,
+        StorageTokenDigest::legacy_unidentified(&old_hash),
+        StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+        EventContext::system(),
+    );
+    let create = match state {
+        InactiveLegacyTokenState::Revoked => create,
+        InactiveLegacyTokenState::Expired => create.expires_at(Some(expires_at)),
+    };
+    let token = backend
+        .create_token(create)
+        .await
+        .expect("certified backend should create an inactive-token fixture")
+        .into_value();
+    if matches!(state, InactiveLegacyTokenState::Revoked) {
+        backend
+            .revoke_token(StorageTokenRevoke::new(
+                token.id(),
+                user.principal_id,
+                EventContext::system(),
+            ))
+            .await
+            .expect("certified backend should revoke the migration fixture")
+            .into_value();
+    }
+    let observed_at = match state {
+        InactiveLegacyTokenState::Revoked => chrono::Utc::now(),
+        InactiveLegacyTokenState::Expired => expires_at + chrono::Duration::seconds(1),
+    };
+    let candidate = |hash: &str, key_id: StorageTokenHashKeyId| {
+        StorageAuthenticationCredential::from_digest(
+            StorageTokenDigest::try_new(
+                hash,
+                StorageTokenFormat::Legacy,
+                StorageTokenHashAlgorithm::HmacSha256V1,
+                Some(key_id),
+            )
+            .unwrap(),
+        )
+    };
+    let migration_target = StorageTokenDigest::try_new(
+        &active_hash,
+        StorageTokenFormat::Legacy,
+        StorageTokenHashAlgorithm::HmacSha256V1,
+        Some(active_key_id.clone()),
+    )
+    .unwrap();
+
+    backend
+        .authenticate_bearer_token(
+            StorageAuthenticationAttempt::try_candidates(
+                vec![
+                    candidate(&active_hash, active_key_id.clone()),
+                    candidate(&old_hash, previous_key_id),
+                ],
+                Some(migration_target),
+                observed_at,
+                observed_at - chrono::Duration::days(1),
+            )
+            .unwrap(),
+        )
+        .await
+        .expect_err("inactive legacy credentials must not authenticate or migrate");
+
+    let usage = backend
+        .token_key_usage(
+            StorageTokenObservation::try_new(observed_at, observed_at - chrono::Duration::days(1))
+                .unwrap(),
+        )
+        .await
+        .expect("certified backend should report inactive token key usage");
+    assert!(
+        usage
+            .iter()
+            .all(|item| item.key_id() != Some(&active_key_id)),
+        "an inactive token must retain its pre-migration key identity"
+    );
+
+    delete_backend_user(backend, user).await;
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_does_not_migrate_revoked_tokens() {
+    let _permit = postgres_permit().await;
+
+    for backend in available_backends() {
+        assert_inactive_legacy_token_is_not_migrated(&backend, InactiveLegacyTokenState::Revoked)
+            .await;
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_does_not_migrate_expired_tokens() {
+    let _permit = postgres_permit().await;
+
+    for backend in available_backends() {
+        assert_inactive_legacy_token_is_not_migrated(&backend, InactiveLegacyTokenState::Expired)
+            .await;
+    }
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_complete_identity_operations() {
     let _permit = postgres_permit().await;
 
@@ -2650,7 +2952,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         let first_token = backend
             .create_token(StorageTokenCreate::new(
                 contract_principal_id,
-                &first_hash,
+                StorageTokenDigest::legacy_unidentified(&first_hash),
                 token_policy,
                 event_context.clone(),
             ))
@@ -2678,7 +2980,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .renew_token(StorageTokenRenew::new(
                 first_token_id,
                 contract_principal_id,
-                &second_hash,
+                StorageTokenDigest::legacy_unidentified(&second_hash),
                 None,
                 token_policy,
                 event_context.clone(),
@@ -2715,7 +3017,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         backend
             .create_token(StorageTokenCreate::new(
                 contract_principal_id,
-                third_hash,
+                StorageTokenDigest::legacy_unidentified(third_hash),
                 token_policy,
                 event_context.clone(),
             ))

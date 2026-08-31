@@ -16,6 +16,7 @@ mod security;
 mod storage;
 mod task;
 mod timer;
+mod token;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -63,6 +64,7 @@ pub use self::task::{
     task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
     task_worker_config, task_worker_iteration,
 };
+pub(crate) use self::token::{token_authentication, token_hash_key_ring};
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
@@ -109,6 +111,10 @@ struct Metrics {
     secret_source_info: Gauge<u64>,
     secret_resolution_duration: Histogram<f64>,
     secret_resolutions: Counter<u64>,
+    token_hash_key_info: Gauge<u64>,
+    token_hash_keys: Gauge<u64>,
+    token_authentications: Counter<u64>,
+    token_hash_stored: Gauge<i64>,
     task_worker_iterations: Counter<u64>,
     task_claims: Counter<u64>,
     task_lease_recoveries: Counter<u64>,

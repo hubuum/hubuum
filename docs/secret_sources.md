@@ -11,7 +11,8 @@ The default source is `environment`. Existing deployments remain compatible:
 | Consumer | Environment mapping |
 | --- | --- |
 | PostgreSQL | `HUBUUM_DATABASE_URL` |
-| Token hashing | `HUBUUM_TOKEN_HASH_KEY` |
+| Token hashing (compatible single key) | `HUBUUM_TOKEN_HASH_KEY` |
+| Token key-ring ID `primary` | `HUBUUM_TOKEN_HASH_KEY_PRIMARY` |
 | Event sink alias `NAME` | `HUBUUM_EVENT_SINK_SECRET_NAME` |
 | Remote-target alias `NAME` | `HUBUUM_REMOTE_SECRET_NAME` |
 | LDAP alias `NAME` | `HUBUUM_LDAP_SECRET_NAME` |
@@ -48,7 +49,9 @@ The root has a fixed, application-owned layout:
 ├── remote/
 │   └── <alias>
 └── token/
-    └── key
+    ├── key
+    ├── primary
+    └── previous
 ```
 
 The file provider accepts binary values up to 1 MiB, opens ordinary files
@@ -77,11 +80,10 @@ and Valkey sink connection pools key clients by the resolved URI, so a rotated
 credential creates a new client and old idle clients leave through the existing
 bounded LRU policy.
 
-The PostgreSQL URL and token-hash key are startup secrets. Rotate them by
-updating every replica's source and restarting the replicas according to the
-database or token-key migration procedure. Hubuum does not claim live rotation
-for an established database pool or for token hashing. Token key-ring rotation
-is tracked separately from this source abstraction.
+The PostgreSQL URL and token-hash keys are startup secrets. Updating their
+source does not change an established process; restart replicas according to
+the database or token key-ring procedure. The ring makes rolling process
+restarts safe, but does not hot-reload key material inside a process.
 
 The login rate-limit Valkey URL, Treetop URL, TLS private-key passphrase, and
 other certificate paths continue to use their existing configuration adapters
@@ -97,3 +99,71 @@ values. Prometheus exports `hubuum_secret_source_info`,
 `hubuum_secret_resolutions_total`, and
 `hubuum_secret_resolution_duration_seconds` with bounded provider, consumer,
 and outcome labels. Secret values and alias names are never labels.
+
+## Token Key-Ring Rotation
+
+Hubuum accepts one active issuance key and at most seven previous verification
+keys. Key IDs contain 1-32 lowercase ASCII letters, numbers, or interior
+hyphens. Every key must contain at least 32 bytes. Startup rejects missing keys,
+duplicate IDs or material, malformed IDs, short or empty material, and rings
+larger than the bound. Error messages and logs never include key material.
+
+The compatible configuration remains:
+
+```text
+HUBUUM_TOKEN_HASH_KEY=<stable-secret>
+```
+
+It is represented internally as the stable key ID `legacy`. Set
+`HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true` in production to make a missing
+stable key a startup error instead of creating an ephemeral process-local key.
+
+For an environment-backed ring, key ID `old` maps to
+`HUBUUM_TOKEN_HASH_KEY_OLD`; for a file-backed ring it maps to `token/old`
+below `HUBUUM_SECRET_FILE_ROOT`. IDs are non-secret configuration:
+
+```text
+HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID=old
+HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS=new
+HUBUUM_TOKEN_HASH_KEY_OLD=<old-secret>
+HUBUUM_TOKEN_HASH_KEY_NEW=<new-secret>
+HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true
+```
+
+Use this staged multi-replica procedure:
+
+1. Upgrade every replica while retaining the compatible
+   `HUBUUM_TOKEN_HASH_KEY=<old-secret>` setting. During a rolling software
+   upgrade, keep that setting even if ring variables are also staged, because
+   a pre-key-ring binary only reads the compatible setting.
+2. Generate the new independent key. Deploy `old` as active and `new` as a
+   previous key to every replica. Do not advance until every replica's running
+   configuration reports the same ring identity. The compatible old-key
+   variable may be removed after no pre-key-ring binaries remain.
+3. Deploy `new` as active and `old` as previous. During this configuration
+   rollout, replicas still using the old-active ring can verify new tokens
+   because step 2 taught them `new`, and new-active replicas can verify old
+   tokens through `old`.
+4. Wait for the previous-key active count to reach zero. Check
+   `hubuum-admin --token-key-status` for active, revoked, and expired counts,
+   latest validation, and expiry bounds. The runtime configuration exposes
+   active and previous IDs plus a deterministic redacted ring identity.
+   Prometheus exposes the active ID and redacted identity through
+   `hubuum_token_hash_key_info`, plus `hubuum_token_hash_stored` with bounded
+   key-state and lifecycle labels.
+5. Remove `old` from the previous list and remove its secret, then restart all
+   replicas. Confirm the final ring identity is consistent.
+
+New bearer values have the opaque form `hbt1.<key-id>.<secret>`. Verification
+uses only the embedded key ID; an unknown or malformed versioned token never
+falls back across the ring. Unversioned legacy tokens are checked against the
+bounded ring in one storage operation and, after a valid active authentication,
+their unidentified stored digest is migrated atomically to the active key.
+Revoked and expired tokens are never migrated. A versioned token issued under
+a previous key keeps that key ID and ages out through expiry or revocation;
+changing its stored digest would contradict the no-fallback format contract.
+
+To roll back step 3, redeploy `old` as active with `new` previous while both
+secrets are still retained. Tokens issued during the attempted rotation remain
+valid. Never replace the material behind an existing ID in place: that creates
+the same mixed-replica failure as the former single-key configuration.

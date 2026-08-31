@@ -6,7 +6,7 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::{AppConfig, ClientAllowlist, token_hash_key_is_ephemeral};
+use super::{AppConfig, ClientAllowlist, token_hash_key_ring};
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunningConfig {
@@ -191,6 +191,11 @@ pub struct AuthenticationConfig {
     #[schema(minimum = 10)]
     pub token_retention_purge_batch_size: usize,
     pub stable_token_hash_key_configured: bool,
+    pub token_hash_key_mode: String,
+    pub active_token_hash_key_id: String,
+    pub previous_token_hash_key_ids: Vec<String>,
+    pub token_hash_key_ring_identity: String,
+    pub require_stable_token_hash_key: bool,
     pub admin_groupname: String,
     pub admin_identity_scope: Option<String>,
     pub provider_config_path: SecretStatus,
@@ -278,6 +283,8 @@ impl RunningConfig {
         let (secret_provider, secret_file_root_configured) =
             crate::secrets::running_source_configuration();
         let secret_cache_policy = hubuum_secrets::CachePolicy::default();
+        let token_hash_keys = token_hash_key_ring()
+            .expect("token hash key-ring configuration must be validated before serving config");
 
         Self {
             server: ServerConfig {
@@ -386,7 +393,19 @@ impl RunningConfig {
                 token_retention_purge_interval_seconds: config
                     .token_retention_purge_interval_seconds,
                 token_retention_purge_batch_size: config.token_retention_purge_batch_size,
-                stable_token_hash_key_configured: !token_hash_key_is_ephemeral(),
+                stable_token_hash_key_configured: token_hash_keys.is_stable(),
+                token_hash_key_mode: if token_hash_keys.is_stable() {
+                    "stable".to_string()
+                } else {
+                    "ephemeral".to_string()
+                },
+                active_token_hash_key_id: token_hash_keys.active_key_id().to_string(),
+                previous_token_hash_key_ids: token_hash_keys
+                    .previous_key_ids()
+                    .map(ToString::to_string)
+                    .collect(),
+                token_hash_key_ring_identity: token_hash_keys.identity().to_string(),
+                require_stable_token_hash_key: token_hash_keys.requires_stable_key(),
                 admin_groupname: config.admin_groupname.clone(),
                 admin_identity_scope: config.admin_identity_scope.clone(),
                 provider_config_path: SecretStatus {
