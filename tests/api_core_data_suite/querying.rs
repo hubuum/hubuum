@@ -5,7 +5,8 @@ mod tests {
     use diesel::sql_types::Text;
     use hubuum_storage_postgres::diesel_async_prelude::*;
     use hubuum_storage_postgres::test_support::{
-        integration_test_database_roles, integration_test_migration_pool,
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool,
     };
     use rstest::rstest;
 
@@ -127,15 +128,17 @@ mod tests {
 
     async fn set_object_created_at(
         migration_pool: &PostgresPool,
-        owner_role: &str,
+        owner_role: Option<&str>,
         object: &HubuumObject,
         created_at: NaiveDateTime,
     ) {
         with_transaction(migration_pool, async |conn| {
-            diesel::sql_query("SELECT set_config('role', $1, true)")
-                .bind::<Text, _>(owner_role)
-                .execute(conn)
-                .await?;
+            if let Some(owner_role) = owner_role {
+                diesel::sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(owner_role)
+                    .execute(conn)
+                    .await?;
+            }
             diesel::sql_query("SELECT set_config('hubuum.restore_revisions', 'on', true)")
                 .execute(conn)
                 .await?;
@@ -498,7 +501,12 @@ mod tests {
         let (collection, class, objects) =
             create_objects_fixture(&context, &label, &["dated-0", "dated-1", "dated-2"]).await;
         let migration_pool = integration_test_migration_pool(1);
-        let database_roles = integration_test_database_roles();
+        let owner_role = database_role_tests_enabled().then(|| {
+            integration_test_database_roles()
+                .owner()
+                .as_str()
+                .to_owned()
+        });
 
         for (object, (year, month, day)) in
             objects
@@ -509,13 +517,7 @@ mod tests {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap();
-            set_object_created_at(
-                &migration_pool,
-                database_roles.owner().as_str(),
-                object,
-                created_at,
-            )
-            .await;
+            set_object_created_at(&migration_pool, owner_role.as_deref(), object, created_at).await;
         }
 
         let resp = get_request(
