@@ -22,6 +22,7 @@ struct DatabasePrivilegeManifest {
     schema: String,
     migration_table: String,
     history_table_suffix: String,
+    read_only_tables: Vec<String>,
     events_table: String,
     event_update_columns: Vec<String>,
     runtime_functions: Vec<String>,
@@ -310,6 +311,12 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
         .map(|function| format!("'{function}'"))
         .collect::<Vec<_>>()
         .join(", ");
+    let read_only_tables = manifest
+        .read_only_tables
+        .iter()
+        .map(|table| format!("'{}'", table.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut sql = String::new();
     writeln!(
         sql,
@@ -337,7 +344,7 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
     .unwrap();
     writeln!(
         sql,
-        "DO $grants$ DECLARE object RECORD; BEGIN\n  FOR object IN SELECT c.oid, c.relname, c.relkind FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{}' AND c.relkind IN ('r', 'p', 'S') LOOP\n    IF object.relkind = 'S' THEN\n      EXECUTE pg_catalog.format('ALTER SEQUENCE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('GRANT USAGE, SELECT ON SEQUENCE %I.%I TO %I', '{}', object.relname, '{}');\n    ELSE\n      EXECUTE pg_catalog.format('ALTER TABLE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM %I', '{}', object.relname, '{}');\n      IF object.relname = '{}' OR object.relname LIKE '%' || '{}' THEN\n        EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSIF object.relname = '{}' THEN\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n        EXECUTE pg_catalog.format('GRANT UPDATE ({}) ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSE\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      END IF;\n    END IF;\n  END LOOP;\nEND $grants$;",
+        "DO $grants$ DECLARE object RECORD; BEGIN\n  FOR object IN SELECT c.oid, c.relname, c.relkind FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{}' AND c.relkind IN ('r', 'p', 'S') LOOP\n    IF object.relkind = 'S' THEN\n      EXECUTE pg_catalog.format('ALTER SEQUENCE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON SEQUENCE %I.%I FROM %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('GRANT USAGE, SELECT ON SEQUENCE %I.%I TO %I', '{}', object.relname, '{}');\n    ELSE\n      EXECUTE pg_catalog.format('ALTER TABLE %I.%I OWNER TO %I', '{}', object.relname, '{}');\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM PUBLIC', '{}', object.relname);\n      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE %I.%I FROM %I', '{}', object.relname, '{}');\n      IF object.relname = '{}' OR object.relname LIKE '%' || '{}' OR object.relname IN ({}) THEN\n        EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSIF object.relname = '{}' THEN\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n        EXECUTE pg_catalog.format('GRANT UPDATE ({}) ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      ELSE\n        EXECUTE pg_catalog.format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO %I', '{}', object.relname, '{}');\n      END IF;\n    END IF;\n  END LOOP;\nEND $grants$;",
         manifest.schema,
         manifest.schema,
         names.owner().as_str(),
@@ -353,6 +360,7 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
         names.runtime().as_str(),
         manifest.migration_table,
         manifest.history_table_suffix,
+        read_only_tables,
         manifest.schema,
         names.runtime().as_str(),
         manifest.events_table,
@@ -589,6 +597,22 @@ pub async fn inspect_database_privileges(
                     ));
                 }
             }
+            "table" if manifest.read_only_tables.contains(&object.object_name) => {
+                if !object.can_select {
+                    missing.push(DatabasePrivilegeFinding::new(
+                        "missing_read_only_table_read",
+                        &object.object_name,
+                        "runtime status APIs require SELECT",
+                    ));
+                }
+                if object.can_insert || object.can_update || object.can_delete {
+                    dangerous.push(DatabasePrivilegeFinding::new(
+                        "read_only_table_write",
+                        &object.object_name,
+                        "runtime role can modify an integrity-bearing receipt",
+                    ));
+                }
+            }
             "table" if object.object_name == manifest.events_table => {
                 if !object.can_select || !object.can_insert {
                     missing.push(DatabasePrivilegeFinding::new(
@@ -718,6 +742,7 @@ mod tests {
             "GRANT UPDATE (\"dispatched_at\", \"fanout_locked_until\", \"fanout_claim_token\")"
         ));
         assert!(sql.contains("LIKE '%' || '_history'"));
+        assert!(sql.contains("object.relname IN ('restore_success_receipts')"));
         assert!(sql.contains("REVOKE ALL ON SCHEMA \"public\" FROM \"hubuum_runtime\""));
         assert!(!sql.to_ascii_lowercase().contains(" password '"));
     }

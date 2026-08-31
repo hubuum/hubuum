@@ -3,7 +3,7 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Jsonb, Timestamp};
+use diesel::sql_types::{BigInt, Jsonb, Timestamp};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
@@ -158,6 +158,24 @@ struct RestoreJobStatusRow {
 }
 
 #[derive(Queryable, Selectable)]
+#[diesel(table_name = crate::schema::restore_success_receipts)]
+struct RestoreSuccessReceiptRow {
+    id: i64,
+    requested_by: Option<i32>,
+    requested_by_identity_scope: String,
+    requested_by_name: String,
+    byte_size: i64,
+    sha256: String,
+    capability_hash: String,
+    validation_summary: serde_json::Value,
+    expires_at: NaiveDateTime,
+    confirmed_at: NaiveDateTime,
+    finished_at: NaiveDateTime,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+#[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
 struct RestoreApplyRow {
     id: i64,
@@ -276,6 +294,30 @@ fn status_to_storage(
     )
 }
 
+fn success_receipt_to_storage(
+    row: RestoreSuccessReceiptRow,
+) -> Result<StorageRestoreStatus, PostgresStorageError> {
+    let summary = summary_from_parts(RestoreSummaryParts {
+        id: row.id,
+        status: StorageRestoreJobStatus::Succeeded.as_str().to_owned(),
+        requested_by: row.requested_by,
+        requested_by_identity_scope: row.requested_by_identity_scope,
+        requested_by_name: row.requested_by_name,
+        byte_size: row.byte_size,
+        sha256: row.sha256,
+        error: None,
+        expires_at: row.expires_at,
+        confirmed_at: Some(row.confirmed_at),
+        finished_at: Some(row.finished_at),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })?;
+    crate::validate_persisted(
+        "restore status",
+        StorageRestoreStatus::try_new(summary, row.capability_hash, row.validation_summary),
+    )
+}
+
 fn instance_to_storage(
     instance: ServerInstanceRow,
 ) -> Result<StorageRestoreInstance, PostgresStorageError> {
@@ -362,11 +404,25 @@ pub async fn get_restore_status(
                 .await
                 .optional()
         })
+        .await?;
+    if let Some(row) = row {
+        return status_to_storage(row);
+    }
+
+    let receipt = runtime
+        .with_connection(async |connection| {
+            crate::schema::restore_success_receipts::table
+                .filter(crate::schema::restore_success_receipts::id.eq(job_id))
+                .select(RestoreSuccessReceiptRow::as_select())
+                .first::<RestoreSuccessReceiptRow>(connection)
+                .await
+                .optional()
+        })
         .await?
         .ok_or_else(|| {
             PostgresStorageError::not_found(format!("Restore stage {job_id} was not found"))
         })?;
-    status_to_storage(row)
+    success_receipt_to_storage(receipt)
 }
 
 /// Expire a still-valid staged restore and erase its document.
@@ -714,17 +770,22 @@ async fn finish_restore(
     .bind::<Timestamp, _>(finished_at)
     .execute(connection)
     .await?;
-    diesel::sql_query("DELETE FROM restore_jobs WHERE id <> $1")
-        .bind::<diesel::sql_types::BigInt, _>(job_id)
+    diesel::sql_query("DELETE FROM restore_success_receipts")
         .execute(connection)
         .await?;
     let completed = diesel::sql_query(
-        "UPDATE restore_jobs \
-         SET status='succeeded', document=''::bytea, error=NULL, \
-             finished_at=$2, updated_at=$2 \
-         WHERE id=$1 AND status='confirmed'",
+        "INSERT INTO restore_success_receipts (\
+             id, requested_by, requested_by_identity_scope, requested_by_name, \
+             byte_size, sha256, capability_hash, validation_summary, expires_at, \
+             confirmed_at, finished_at, created_at, updated_at\
+         ) \
+         SELECT id, requested_by, requested_by_identity_scope, requested_by_name, \
+                byte_size, sha256, capability_hash, validation_summary, expires_at, \
+                confirmed_at, $2, created_at, $2 \
+         FROM restore_jobs \
+         WHERE id=$1 AND status='confirmed' AND confirmed_at IS NOT NULL",
     )
-    .bind::<diesel::sql_types::BigInt, _>(job_id)
+    .bind::<BigInt, _>(job_id)
     .bind::<Timestamp, _>(finished_at)
     .execute(connection)
     .await?;
@@ -733,6 +794,9 @@ async fn finish_restore(
             "Confirmed restore receipt changed concurrently",
         ));
     }
+    diesel::sql_query("DELETE FROM restore_jobs")
+        .execute(connection)
+        .await?;
     diesel::sql_query("DELETE FROM server_instances")
         .execute(connection)
         .await?;
@@ -986,7 +1050,7 @@ mod tests {
     use diesel::prelude::{ExpressionMethods, QueryDsl};
     use rstest::rstest;
 
-    use super::{RestoreJobStatusRow, validate_restore_identifier};
+    use super::{RestoreJobStatusRow, RestoreSuccessReceiptRow, validate_restore_identifier};
 
     #[test]
     fn restore_status_projection_excludes_document() {
@@ -997,6 +1061,17 @@ mod tests {
 
         assert!(!sql.contains("\"restore_jobs\".\"document\""));
         assert!(sql.contains("\"restore_jobs\".\"capability_hash\""));
+    }
+
+    #[test]
+    fn successful_restore_projection_is_document_free() {
+        let query = crate::schema::restore_success_receipts::table
+            .filter(crate::schema::restore_success_receipts::id.eq(42_i64))
+            .select(RestoreSuccessReceiptRow::as_select());
+        let sql = diesel::debug_query::<diesel::pg::Pg, _>(&query).to_string();
+
+        assert!(!sql.contains("document"));
+        assert!(sql.contains("\"restore_success_receipts\".\"capability_hash\""));
     }
 
     #[rstest]

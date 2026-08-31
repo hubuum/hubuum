@@ -16,7 +16,7 @@ use hubuum::restores::{
 };
 use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
-    restore_jobs, system_maintenance, tasks,
+    restore_jobs, restore_success_receipts, system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
@@ -179,16 +179,16 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         .expect("reconcile interrupted restore");
 
     let (
-        restore_job_exists,
+        success_receipt_exists,
         marker_exists,
         historical_task,
         historical_task_event,
         class_history_provenance,
         restore_event,
     ) = with_connection(&pool, async |conn| {
-        let restore_job = restore_jobs::table
-            .filter(restore_jobs::id.eq(staged.id))
-            .select(restore_jobs::id)
+        let success_receipt = restore_success_receipts::table
+            .filter(restore_success_receipts::id.eq(staged.id))
+            .select(restore_success_receipts::id)
             .first::<i64>(conn)
             .await
             .optional()?;
@@ -230,7 +230,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .await
             .optional()?;
         Ok::<_, diesel::result::Error>((
-            restore_job,
+            success_receipt,
             marker,
             history,
             historical_task_event,
@@ -242,7 +242,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .expect("restored data lookup");
     assert_eq!(
         (
-            restore_job_exists,
+            success_receipt_exists,
             marker_exists,
             historical_task,
             restore_event.as_ref().map(|event| event.0.as_str()),
@@ -346,8 +346,16 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     })
     .await
     .expect("remaining restore jobs");
+    let success_receipts = with_connection(&pool, async |conn| {
+        restore_success_receipts::table
+            .count()
+            .get_result::<i64>(conn)
+            .await
+    })
+    .await
+    .expect("successful restore receipts");
     assert_eq!(
-        (completed.status, remaining_restore_jobs),
-        (RestoreJobStatus::Succeeded, 1)
+        (completed.status, remaining_restore_jobs, success_receipts),
+        (RestoreJobStatus::Succeeded, 0, 1)
     );
 }

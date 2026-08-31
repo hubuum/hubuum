@@ -28,7 +28,7 @@ object from silently being omitted from a handwritten grant list.
 
 Runtime access is intentionally narrower for integrity-bearing objects:
 
-- migration and `*_history` tables are read-only;
+- migration, `*_history`, and successful-restore receipt tables are read-only;
 - audit events allow `SELECT`, `INSERT`, and updates only to the delivery claim
   columns listed in the manifest;
 - application security-invoker functions are executable because PostgreSQL
@@ -93,14 +93,15 @@ ownership and grants runtime DML in one transaction, so existing API and worker
 connections keep the access they need after the commit while losing DDL and
 direct integrity-table mutation authority:
 
+Generate the adoption SQL now, but do not apply it until the confirmation route
+has been paused in step 2:
+
 ```bash
 hubuum-admin \
   --database-owner-role hubuum_owner \
   --database-migrator-role hubuum_migrator \
   --database-runtime-role EXISTING_APPLICATION_ROLE \
   --database-role-setup-sql > hubuum-database-role-adoption.sql
-psql "$EXISTING_OWNER_DATABASE_URL" --set ON_ERROR_STOP=1 \
-  --file hubuum-database-role-adoption.sql
 ```
 
 The new admin binary also retains an explicit legacy bridge for deployments
@@ -139,7 +140,20 @@ server versions during that rollout. Then use this order:
    stop all old API replicas; workers do not need the migration credential.
    Ordinary API traffic may otherwise continue while the existing login keeps
    compatibility runtime grants.
-3. Create the separate migrator credential and run `hubuum-admin --migrate`.
+3. Create the owner and migrator identities, apply the generated adoption SQL
+   through the existing owner connection, configure the migrator credential,
+   and run the migration with the same three role names:
+
+   ```bash
+   psql "$EXISTING_OWNER_DATABASE_URL" --set ON_ERROR_STOP=1 \
+     --file hubuum-database-role-adoption.sql
+   export HUBUUM_MIGRATION_DATABASE_URL='postgres://hubuum_migrator:.../hubuum'
+   export HUBUUM_DATABASE_OWNER_ROLE=hubuum_owner
+   export HUBUUM_DATABASE_MIGRATOR_ROLE=hubuum_migrator
+   export HUBUUM_DATABASE_RUNTIME_ROLE=EXISTING_APPLICATION_ROLE
+   hubuum-admin --migrate
+   ```
+
    The database-role migration refuses to run while maintenance is draining or
    a confirmed restore exists; it serializes this check with restore
    confirmation and preserves validated stages.
@@ -153,6 +167,15 @@ server versions during that rollout. Then use this order:
 6. In a later credential-rotation rollout, replace the compatibility login
    with `hubuum_runtime`. Keep both runtime grants only for that bounded overlap
    and revoke or disable the old login afterward.
+
+If role provisioning cannot precede schema migration, use the bridge only for
+step 3: with all three database-role settings absent, run
+`hubuum-admin --migrate --database-url "$EXISTING_OWNER_DATABASE_URL"`, confirm
+the compatibility warning, then provision the roles and apply the adoption SQL.
+Run `hubuum-admin --migrate` again with the migrator URL and all three role names
+set; this second invocation has no schema work but performs ownership and grant
+reconciliation. Do not proceed to step 4, enable strict privilege checks, or
+unpause confirmation until that reconciliation and its privilege report pass.
 
 The managed single-host updater automates this transition. It retains the
 existing volume's bootstrap password, creates and reconciles the three new
@@ -175,8 +198,8 @@ ordinary service with that compatibility runtime login, but its synchronous
 web-restore implementation no longer has destructive database authority. Keep
 confirmation blocked during that rollback and use the new one-shot
 `hubuum-admin --restore` path for disaster recovery. Database migration rollback
-removes any `succeeded` polling receipt before restoring the older status
-constraint; it does not re-grant broad ownership to the runtime login.
+drops the additive successful-restore receipt table; it does not re-grant broad
+ownership to the runtime login.
 
 ## Runtime Diagnostics
 

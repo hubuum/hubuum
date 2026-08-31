@@ -2,6 +2,9 @@
   "schema": "public",
   "migration_table": "__diesel_schema_migrations",
   "history_table_suffix": "_history",
+  "read_only_tables": [
+    "restore_success_receipts"
+  ],
   "events_table": "events",
   "event_update_columns": [
     "dispatched_at",

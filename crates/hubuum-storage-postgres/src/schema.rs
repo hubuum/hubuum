@@ -645,6 +645,26 @@ diesel::table! {
 }
 
 diesel::table! {
+    restore_success_receipts (id) {
+        id -> Int8,
+        requested_by -> Nullable<Int4>,
+        requested_by_identity_scope -> Varchar,
+        requested_by_name -> Varchar,
+        byte_size -> Int8,
+        #[max_length = 64]
+        sha256 -> Varchar,
+        #[max_length = 64]
+        capability_hash -> Varchar,
+        validation_summary -> Jsonb,
+        expires_at -> Timestamp,
+        confirmed_at -> Timestamp,
+        finished_at -> Timestamp,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     server_instances (instance_id) {
         instance_id -> Uuid,
         maintenance_generation -> Int8,
@@ -855,6 +875,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     remote_targets,
     remote_targets_history,
     restore_jobs,
+    restore_success_receipts,
     server_instances,
     service_accounts,
     system_maintenance,

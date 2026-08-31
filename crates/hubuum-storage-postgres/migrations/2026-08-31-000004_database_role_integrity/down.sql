@@ -1,10 +1,6 @@
 DROP FUNCTION IF EXISTS hubuum_complete_event_retention_purge(uuid);
 
-DELETE FROM restore_jobs WHERE status = 'succeeded';
-ALTER TABLE restore_jobs DROP CONSTRAINT restore_jobs_status_check;
-ALTER TABLE restore_jobs
-    ADD CONSTRAINT restore_jobs_status_check
-    CHECK (status IN ('validated', 'confirmed', 'failed', 'expired'));
+DROP TABLE IF EXISTS restore_success_receipts;
 
 -- Downgrades restore the previous invoker security mode. Function bodies are
 -- intentionally retained because the next older migration owns their exact

@@ -100,6 +100,9 @@ async fn runtime_cannot_change_application_schema(#[case] statement: &str) {
 #[case(
     "INSERT INTO public.__diesel_schema_migrations(version, run_on) VALUES ('99999999999999', now())"
 )]
+#[case(
+    "INSERT INTO public.restore_success_receipts(id, requested_by_identity_scope, requested_by_name, byte_size, sha256, capability_hash, validation_summary, expires_at, confirmed_at, finished_at, created_at, updated_at) VALUES (999999, 'local', 'forged', 0, repeat('0', 64), repeat('0', 64), '{}'::jsonb, now(), now(), now(), now(), now())"
+)]
 #[tokio::test]
 async fn runtime_cannot_rewrite_integrity_records(#[case] statement: &str) {
     require_database_role_fixture!();

@@ -27,11 +27,24 @@ END;
 $migration_preflight$;
 
 -- Successful asynchronous restores retain a document-free receipt so the web
--- client can poll the terminal result with its one-time capability.
-ALTER TABLE restore_jobs DROP CONSTRAINT restore_jobs_status_check;
-ALTER TABLE restore_jobs
-    ADD CONSTRAINT restore_jobs_status_check
-    CHECK (status IN ('validated', 'confirmed', 'succeeded', 'failed', 'expired'));
+-- client can poll the terminal result with its one-time capability. Keep this
+-- additive: old binaries retain their original restore_jobs status contract
+-- during a rolling upgrade and simply ignore the receipt table.
+CREATE TABLE restore_success_receipts (
+    id BIGINT PRIMARY KEY,
+    requested_by INT NULL,
+    requested_by_identity_scope VARCHAR NOT NULL,
+    requested_by_name VARCHAR NOT NULL,
+    byte_size BIGINT NOT NULL CHECK (byte_size >= 0),
+    sha256 VARCHAR(64) NOT NULL CHECK (length(sha256) = 64),
+    capability_hash VARCHAR(64) NOT NULL CHECK (length(capability_hash) = 64),
+    validation_summary JSONB NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    confirmed_at TIMESTAMP NOT NULL,
+    finished_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
 
 -- Make temporal history writes possible without granting the runtime role
 -- direct mutation authority. The trusted restore bypass is available only to
