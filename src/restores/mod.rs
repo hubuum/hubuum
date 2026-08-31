@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, SEMANTICS_VERSION};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -14,10 +15,10 @@ use crate::lifecycle::spawn_background_worker;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::retention::FutureRetention;
 use crate::models::{
-    BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
-    ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState,
-    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobStatus,
-    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
+    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL,
+    COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinitionRequest, ComputedResultType,
+    MaintenanceState, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID,
+    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
@@ -40,6 +41,91 @@ const MISSING_RESTORE_CAPABILITY_HASH: &str =
 // coordinators retains their original grace period. The dedicated executor
 // does not wait for this threshold.
 const RESTORE_RECONCILIATION_GRACE_SECONDS: i64 = 60;
+const BACKUP_VERIFICATION_REPORT_VERSION: i32 = 1;
+const MAX_BACKUP_SOURCE_VERSION_BYTES: usize = 128;
+
+/// Sanitized, versioned evidence produced by offline backup verification.
+#[derive(Clone, Debug, Serialize)]
+pub struct BackupVerificationReport {
+    report_version: i32,
+    result: &'static str,
+    mode: &'static str,
+    verified_at: DateTime<Utc>,
+    verifier_version: &'static str,
+    backup_version: i32,
+    source_version: String,
+    created_at: DateTime<Utc>,
+    sha256: String,
+    byte_size: u64,
+    includes_history: bool,
+    total_items: i64,
+    canonical_state_sha256: String,
+    section_counts: BTreeMap<String, i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restore_test: Option<BackupRestoreTestReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BackupRestoreTestReport {
+    target_version: &'static str,
+    migrations_applied: usize,
+    restore_duration_ms: u64,
+    storage_ready: bool,
+    state_matches_source: bool,
+    history_matches_source: bool,
+    target_cleanup: &'static str,
+}
+
+impl BackupVerificationReport {
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    #[must_use]
+    pub const fn byte_size(&self) -> u64 {
+        self.byte_size
+    }
+
+    #[must_use]
+    pub const fn total_items(&self) -> i64 {
+        self.total_items
+    }
+
+    #[must_use]
+    pub fn source_version(&self) -> &str {
+        &self.source_version
+    }
+
+    #[must_use]
+    pub const fn backup_version(&self) -> i32 {
+        self.backup_version
+    }
+
+    #[must_use]
+    pub const fn includes_history(&self) -> bool {
+        self.includes_history
+    }
+
+    pub fn record_isolated_restore(
+        &mut self,
+        migrations_applied: usize,
+        restore_duration: StdDuration,
+        target_cleanup: &'static str,
+    ) {
+        self.mode = "isolated_restore";
+        self.verified_at = Utc::now();
+        self.restore_test = Some(BackupRestoreTestReport {
+            target_version: env!("CARGO_PKG_VERSION"),
+            migrations_applied,
+            restore_duration_ms: u64::try_from(restore_duration.as_millis()).unwrap_or(u64::MAX),
+            storage_ready: true,
+            state_matches_source: true,
+            history_matches_source: true,
+            target_cleanup,
+        });
+    }
+}
 
 struct RestoreJobSummaryData {
     id: i64,
@@ -200,6 +286,485 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn backup_section_counts(document: &BackupDocument) -> Result<BTreeMap<String, i64>, ApiError> {
+    let mut counts = BTreeMap::new();
+    for (section, rows) in &document.state.sections {
+        counts.insert(
+            section.as_str().to_string(),
+            i64::try_from(rows.len()).map_err(|_| {
+                ApiError::PayloadTooLarge(format!(
+                    "Full backup section '{section}' exceeds the supported row-count range"
+                ))
+            })?,
+        );
+    }
+    if let Some(history) = &document.history {
+        for (section, rows) in &history.sections {
+            counts.insert(
+                format!("history.{}", section.as_str()),
+                i64::try_from(rows.len()).map_err(|_| {
+                    ApiError::PayloadTooLarge(format!(
+                        "Full backup history section '{section}' exceeds the supported row-count range"
+                    ))
+                })?,
+            );
+        }
+    }
+    Ok(counts)
+}
+
+fn validate_backup_manifest(document: &BackupDocument) -> Result<BTreeMap<String, i64>, ApiError> {
+    let counts = backup_section_counts(document)?;
+    if document.manifest.item_counts != counts {
+        let mismatched_section = counts
+            .keys()
+            .chain(document.manifest.item_counts.keys())
+            .find(|section| counts.get(*section) != document.manifest.item_counts.get(*section))
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        return Err(ApiError::BadRequest(format!(
+            "Full backup manifest count for section '{mismatched_section}' does not match the document"
+        )));
+    }
+    let exclusions = BACKUP_MANIFEST_EXCLUSIONS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    if document.manifest.exclusions != exclusions {
+        return Err(ApiError::BadRequest(
+            "Full backup manifest exclusions do not match backup version 5".to_string(),
+        ));
+    }
+    Ok(counts)
+}
+
+fn validate_backup_metadata(document: &BackupDocument) -> Result<(), ApiError> {
+    if document.source_version.trim().is_empty()
+        || document.source_version.len() > MAX_BACKUP_SOURCE_VERSION_BYTES
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Full backup source_version must contain between 1 and {MAX_BACKUP_SOURCE_VERSION_BYTES} bytes"
+        )));
+    }
+    if document.created_at > Utc::now() + Duration::minutes(5) {
+        return Err(ApiError::BadRequest(
+            "Full backup creation timestamp is unreasonably far in the future".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_row_timestamps(section: &str, rows: &[StorageBackupRow]) -> Result<(), ApiError> {
+    for row in rows {
+        for (field, value) in row.fields() {
+            if !(field.ends_with("_at")
+                || matches!(field.as_str(), "issued" | "valid_from" | "valid_to"))
+                || value.is_null()
+            {
+                continue;
+            }
+            let timestamp = value.as_str().ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Full backup section '{section}' contains a non-string timestamp in '{field}'"
+                ))
+            })?;
+            DateTime::parse_from_rfc3339(timestamp).map_err(|_| {
+                ApiError::BadRequest(format!(
+                    "Full backup section '{section}' contains an invalid RFC 3339 timestamp in '{field}'"
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_backup_timestamps(document: &BackupDocument) -> Result<(), ApiError> {
+    for (section, rows) in &document.state.sections {
+        validate_row_timestamps(section.as_str(), rows)?;
+    }
+    if let Some(history) = &document.history {
+        for (section, rows) in &history.sections {
+            validate_row_timestamps(&format!("history.{}", section.as_str()), rows)?;
+        }
+    }
+    Ok(())
+}
+
+fn required_positive_id(
+    section: &str,
+    row: &StorageBackupRow,
+    field: &str,
+) -> Result<i64, ApiError> {
+    row.get(field)
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Full backup section '{section}' contains an invalid {field}"
+            ))
+        })
+}
+
+fn optional_positive_id(
+    section: &str,
+    row: &StorageBackupRow,
+    field: &str,
+) -> Result<Option<i64>, ApiError> {
+    match row.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => required_positive_id(section, row, field).map(Some),
+    }
+}
+
+fn section_ids(
+    document: &BackupDocument,
+    section: StorageBackupStateSection,
+) -> Result<HashSet<i64>, ApiError> {
+    let rows = required_state_section(document, section)?;
+    let ids = rows
+        .iter()
+        .map(|row| required_positive_id(section.as_str(), row, "id"))
+        .collect::<Result<HashSet<_>, _>>()?;
+    if ids.len() != rows.len() {
+        return Err(ApiError::BadRequest(format!(
+            "Full backup section '{section}' contains duplicate identifiers"
+        )));
+    }
+    Ok(ids)
+}
+
+fn require_reference(
+    section: &str,
+    field: &str,
+    value: i64,
+    targets: &HashSet<i64>,
+) -> Result<(), ApiError> {
+    if targets.contains(&value) {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "Full backup section '{section}' contains a {field} that does not reference a retained row"
+        )))
+    }
+}
+
+fn validate_required_reference(
+    section: &str,
+    row: &StorageBackupRow,
+    field: &str,
+    targets: &HashSet<i64>,
+) -> Result<i64, ApiError> {
+    let value = required_positive_id(section, row, field)?;
+    require_reference(section, field, value, targets)?;
+    Ok(value)
+}
+
+fn validate_optional_reference(
+    section: &str,
+    row: &StorageBackupRow,
+    field: &str,
+    targets: &HashSet<i64>,
+) -> Result<Option<i64>, ApiError> {
+    let value = optional_positive_id(section, row, field)?;
+    if let Some(value) = value {
+        require_reference(section, field, value, targets)?;
+    }
+    Ok(value)
+}
+
+fn validate_backup_state_references(document: &BackupDocument) -> Result<(), ApiError> {
+    let identity_scopes = section_ids(document, StorageBackupStateSection::IdentityScopes)?;
+    let groups = section_ids(document, StorageBackupStateSection::Groups)?;
+    let principals = section_ids(document, StorageBackupStateSection::Principals)?;
+    let collections = section_ids(document, StorageBackupStateSection::Collections)?;
+    let classes = section_ids(document, StorageBackupStateSection::Classes)?;
+    let class_relations = section_ids(document, StorageBackupStateSection::ClassRelations)?;
+    let objects = section_ids(document, StorageBackupStateSection::Objects)?;
+    let sinks = section_ids(document, StorageBackupStateSection::EventSinks)?;
+
+    for row in required_state_section(document, StorageBackupStateSection::Groups)? {
+        validate_required_reference("groups", row, "identity_scope_id", &identity_scopes)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::Principals)? {
+        validate_required_reference("principals", row, "identity_scope_id", &identity_scopes)?;
+    }
+    for section in [
+        StorageBackupStateSection::Users,
+        StorageBackupStateSection::ServiceAccounts,
+    ] {
+        for row in required_state_section(document, section)? {
+            validate_required_reference(section.as_str(), row, "id", &principals)?;
+        }
+    }
+    for row in required_state_section(document, StorageBackupStateSection::ServiceAccounts)? {
+        validate_required_reference("service_accounts", row, "owner_group_id", &groups)?;
+        validate_optional_reference("service_accounts", row, "created_by", &principals)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::GroupMemberships)? {
+        validate_required_reference("group_memberships", row, "principal_id", &principals)?;
+        validate_required_reference("group_memberships", row, "group_id", &groups)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::GroupMembershipSources)?
+    {
+        validate_required_reference("group_membership_sources", row, "principal_id", &principals)?;
+        validate_required_reference("group_membership_sources", row, "group_id", &groups)?;
+        validate_required_reference(
+            "group_membership_sources",
+            row,
+            "source_scope_id",
+            &identity_scopes,
+        )?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::Collections)? {
+        validate_optional_reference("collections", row, "parent_collection_id", &collections)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::CollectionAuthorization)?
+    {
+        validate_required_reference(
+            "collection_authorization",
+            row,
+            "collection_id",
+            &collections,
+        )?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::CollectionHierarchy)? {
+        validate_required_reference(
+            "collection_hierarchy",
+            row,
+            "ancestor_collection_id",
+            &collections,
+        )?;
+        validate_required_reference(
+            "collection_hierarchy",
+            row,
+            "descendant_collection_id",
+            &collections,
+        )?;
+    }
+    for row in required_state_section(
+        document,
+        StorageBackupStateSection::CollectionPermissionGrants,
+    )? {
+        validate_required_reference(
+            "collection_permission_grants",
+            row,
+            "collection_id",
+            &collections,
+        )?;
+        validate_required_reference("collection_permission_grants", row, "group_id", &groups)?;
+    }
+
+    let class_collections = required_state_section(document, StorageBackupStateSection::Classes)?
+        .iter()
+        .map(|row| {
+            let id = required_positive_id("classes", row, "id")?;
+            let collection_id =
+                validate_required_reference("classes", row, "collection_id", &collections)?;
+            Ok((id, collection_id))
+        })
+        .collect::<Result<HashMap<_, _>, ApiError>>()?;
+    for row in required_state_section(
+        document,
+        StorageBackupStateSection::ComputedFieldDefinitions,
+    )? {
+        validate_required_reference("computed_field_definitions", row, "class_id", &classes)?;
+        validate_optional_reference(
+            "computed_field_definitions",
+            row,
+            "owner_principal_id",
+            &principals,
+        )?;
+        validate_optional_reference("computed_field_definitions", row, "created_by", &principals)?;
+        validate_optional_reference("computed_field_definitions", row, "updated_by", &principals)?;
+    }
+
+    let relation_classes =
+        required_state_section(document, StorageBackupStateSection::ClassRelations)?
+            .iter()
+            .map(|row| {
+                let id = required_positive_id("class_relations", row, "id")?;
+                let from =
+                    validate_required_reference("class_relations", row, "from_class_id", &classes)?;
+                let to =
+                    validate_required_reference("class_relations", row, "to_class_id", &classes)?;
+                Ok((id, (from, to)))
+            })
+            .collect::<Result<HashMap<_, _>, ApiError>>()?;
+
+    let object_classes = required_state_section(document, StorageBackupStateSection::Objects)?
+        .iter()
+        .map(|row| {
+            let id = required_positive_id("objects", row, "id")?;
+            let class_id = validate_required_reference("objects", row, "class_id", &classes)?;
+            let collection_id =
+                validate_required_reference("objects", row, "collection_id", &collections)?;
+            if class_collections.get(&class_id) != Some(&collection_id) {
+                return Err(ApiError::BadRequest(
+                    "Full backup object collection does not match its class collection".to_string(),
+                ));
+            }
+            Ok((id, class_id))
+        })
+        .collect::<Result<HashMap<_, _>, ApiError>>()?;
+
+    for row in required_state_section(document, StorageBackupStateSection::ObjectRelations)? {
+        let from_object =
+            validate_required_reference("object_relations", row, "from_object_id", &objects)?;
+        let to_object =
+            validate_required_reference("object_relations", row, "to_object_id", &objects)?;
+        let relation_id = validate_required_reference(
+            "object_relations",
+            row,
+            "class_relation_id",
+            &class_relations,
+        )?;
+        let endpoints = (
+            object_classes.get(&from_object).copied(),
+            object_classes.get(&to_object).copied(),
+        );
+        let expected = relation_classes.get(&relation_id).copied();
+        if expected.is_none_or(|expected| {
+            endpoints != (Some(expected.0), Some(expected.1))
+                && endpoints != (Some(expected.1), Some(expected.0))
+        }) {
+            return Err(ApiError::BadRequest(
+                "Full backup object relation endpoints do not match its class relation".to_string(),
+            ));
+        }
+    }
+
+    for row in required_state_section(document, StorageBackupStateSection::ExportTemplates)? {
+        validate_required_reference("export_templates", row, "collection_id", &collections)?;
+        validate_optional_reference("export_templates", row, "class_id", &classes)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::RemoteTargets)? {
+        validate_required_reference("remote_targets", row, "collection_id", &collections)?;
+        validate_optional_reference("remote_targets", row, "class_id", &classes)?;
+    }
+    for row in required_state_section(document, StorageBackupStateSection::EventSubscriptions)? {
+        validate_required_reference("event_subscriptions", row, "collection_id", &collections)?;
+        validate_required_reference("event_subscriptions", row, "sink_id", &sinks)?;
+    }
+    Ok(())
+}
+
+/// Validate backup bytes without connecting to or mutating a database.
+pub fn verify_backup_document(
+    document_bytes: &[u8],
+    max_document_bytes: usize,
+) -> Result<BackupVerificationReport, ApiError> {
+    if document_bytes.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Backup document must not be empty".to_string(),
+        ));
+    }
+    if document_bytes.len() > max_document_bytes {
+        return Err(ApiError::PayloadTooLarge(format!(
+            "Backup document is {} bytes, exceeding the configured {} byte limit",
+            document_bytes.len(),
+            max_document_bytes
+        )));
+    }
+    let document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
+        ApiError::BadRequest(format!("Backup document is not valid backup JSON: {error}"))
+    })?;
+    let summary = validation_summary(&document)?;
+    let section_counts = backup_section_counts(&document)?;
+    Ok(BackupVerificationReport {
+        report_version: BACKUP_VERIFICATION_REPORT_VERSION,
+        result: "passed",
+        mode: "format_only",
+        verified_at: Utc::now(),
+        verifier_version: env!("CARGO_PKG_VERSION"),
+        backup_version: summary.backup_version,
+        source_version: summary.source_version,
+        created_at: document.created_at,
+        sha256: sha256(document_bytes),
+        byte_size: u64::try_from(document_bytes.len()).unwrap_or(u64::MAX),
+        includes_history: summary.includes_history,
+        total_items: summary.total_items,
+        canonical_state_sha256: sha256(&serde_json::to_vec(&document.state)?),
+        section_counts,
+        restore_test: None,
+    })
+}
+
+/// Compare a post-restore logical snapshot with the source artifact. The
+/// destructive restore deliberately appends exactly one provenance event; all
+/// authoritative state and every other requested history section must remain
+/// byte-for-byte equivalent at the logical storage boundary.
+#[cfg(feature = "embedded-migrations")]
+pub(crate) fn verify_restored_backup_matches(
+    source: &BackupDocument,
+    restored: &BackupDocument,
+) -> Result<(), ApiError> {
+    if source.state != restored.state {
+        return Err(ApiError::InternalServerError(
+            "Restored logical state does not match the verified backup".to_string(),
+        ));
+    }
+    match (&source.history, &restored.history) {
+        (None, None) => Ok(()),
+        (Some(source_history), Some(restored_history)) => {
+            for section in StorageBackupHistorySection::ALL {
+                let source_rows = source_history.sections.get(section).ok_or_else(|| {
+                    ApiError::InternalServerError(format!(
+                        "Verified backup comparison is missing history section '{section}'"
+                    ))
+                })?;
+                let restored_rows = restored_history.sections.get(section).ok_or_else(|| {
+                    ApiError::InternalServerError(format!(
+                        "Restored snapshot comparison is missing history section '{section}'"
+                    ))
+                })?;
+                if *section == StorageBackupHistorySection::AuditEvents {
+                    verify_restore_provenance_delta(source_rows, restored_rows)?;
+                } else if source_rows != restored_rows {
+                    return Err(ApiError::InternalServerError(format!(
+                        "Restored history section '{section}' does not match the verified backup"
+                    )));
+                }
+            }
+            Ok(())
+        }
+        _ => Err(ApiError::InternalServerError(
+            "Restored history inclusion does not match the verified backup".to_string(),
+        )),
+    }
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn verify_restore_provenance_delta(
+    source_rows: &[StorageBackupRow],
+    restored_rows: &[StorageBackupRow],
+) -> Result<(), ApiError> {
+    if restored_rows.len() != source_rows.len().saturating_add(1)
+        || source_rows
+            .iter()
+            .any(|source_row| !restored_rows.contains(source_row))
+    {
+        return Err(ApiError::InternalServerError(
+            "Restored audit history differs by more than its provenance event".to_string(),
+        ));
+    }
+    let added = restored_rows
+        .iter()
+        .find(|row| !source_rows.contains(row))
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Restored audit history is missing its provenance event".to_string(),
+            )
+        })?;
+    if added.get("entity_type").and_then(Value::as_str) != Some("restore")
+        || added.get("action").and_then(Value::as_str) != Some("succeeded")
+    {
+        return Err(ApiError::InternalServerError(
+            "Restored audit history contains an unexpected additional event".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn capability_matches(capability_hash: &str, capability: &str) -> bool {
     let supplied = sha256(capability.as_bytes());
     let expected = capability_hash.as_bytes();
@@ -227,6 +792,7 @@ fn invalid_restore_capability() -> ApiError {
 
 fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
+    validate_backup_metadata(document)?;
     StorageBackupSnapshot::try_new(
         document.state.sections.clone(),
         document
@@ -235,27 +801,20 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
             .map(|history| history.sections.clone()),
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
+    let item_counts = validate_backup_manifest(document)?;
+    validate_backup_timestamps(document)?;
     validate_required_seed_rows(document)?;
+    validate_backup_state_references(document)?;
     validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
     validate_computed_field_definitions(document)?;
-    let total_items = document
-        .state
-        .sections
-        .values()
-        .map(|rows| rows.len() as i64)
-        .sum::<i64>()
-        + document
-            .history
-            .as_ref()
-            .map(|history| {
-                history
-                    .sections
-                    .values()
-                    .map(|rows| rows.len() as i64)
-                    .sum::<i64>()
-            })
-            .unwrap_or(0);
+    let total_items = item_counts.values().try_fold(0_i64, |total, count| {
+        total.checked_add(*count).ok_or_else(|| {
+            ApiError::PayloadTooLarge(
+                "Full backup total row count exceeds the supported range".to_string(),
+            )
+        })
+    })?;
     Ok(RestoreValidationSummary {
         backup_version: document.backup_version,
         source_version: document.source_version.clone(),
@@ -1210,11 +1769,13 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
 
+    #[cfg(feature = "embedded-migrations")]
+    use super::verify_restored_backup_matches;
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
         RestoreSettings, confirmation_is_stale, restore_capability_matches,
         restore_error_for_storage, sha256, validate_computed_field_definitions,
-        validate_event_revisions,
+        validate_event_revisions, verify_backup_document,
     };
     use crate::errors::ApiError;
     use crate::models::{
@@ -1282,6 +1843,224 @@ mod tests {
             }),
             manifest: BackupManifest::default(),
         }
+    }
+
+    fn minimally_valid_document() -> BackupDocument {
+        let mut sections = StorageBackupStateSection::ALL
+            .iter()
+            .copied()
+            .map(|section| (section, Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        sections
+            .get_mut(&StorageBackupStateSection::IdentityScopes)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 1,
+                    "name": "local",
+                    "provider_kind": "local",
+                    "created_at": "2026-07-16T00:00:00Z",
+                    "updated_at": "2026-07-16T00:00:00Z",
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
+        sections
+            .get_mut(&StorageBackupStateSection::Collections)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 1,
+                    "name": "root",
+                    "parent_collection_id": null,
+                    "created_at": "2026-07-16T00:00:00Z",
+                    "updated_at": "2026-07-16T00:00:00Z",
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
+        sections
+            .get_mut(&StorageBackupStateSection::CollectionAuthorization)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "collection_id": 1,
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
+        sections
+            .get_mut(&StorageBackupStateSection::CollectionHierarchy)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "ancestor_collection_id": 1,
+                    "descendant_collection_id": 1,
+                    "depth": 0
+                }))
+                .unwrap(),
+            );
+        let state = BackupState { sections };
+        let manifest = BackupManifest::from_sections(&state, None);
+        BackupDocument {
+            backup_version: CURRENT_BACKUP_VERSION,
+            created_at: backup_instant(),
+            source_version: "0.0.11".to_string(),
+            state,
+            history: None,
+            manifest,
+        }
+    }
+
+    #[test]
+    fn offline_backup_verification_returns_only_sanitized_artifact_evidence() {
+        let mut document = minimally_valid_document();
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Collections)
+            .unwrap()[0] = StorageBackupRow::try_from_value(json!({
+            "id": 1,
+            "name": "verification-canary",
+            "parent_collection_id": null,
+            "created_at": "2026-07-16T00:00:00Z",
+            "updated_at": "2026-07-16T00:00:00Z",
+            "revision": 1
+        }))
+        .unwrap();
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        let report = verify_backup_document(&bytes, bytes.len()).unwrap();
+        let report = serde_json::to_string(&report).unwrap();
+
+        assert!(report.contains("\"result\":\"passed\""));
+        assert!(report.contains("\"mode\":\"format_only\""));
+        assert!(!report.contains("verification-canary"));
+    }
+
+    #[test]
+    fn offline_backup_verification_rejects_manifest_count_drift() {
+        let mut document = minimally_valid_document();
+        document
+            .manifest
+            .item_counts
+            .insert("collections".to_string(), 99);
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
+
+        assert!(error.to_string().contains("manifest count"));
+        assert!(error.to_string().contains("collections"));
+    }
+
+    #[test]
+    fn offline_backup_verification_rejects_future_versions() {
+        let mut document = minimally_valid_document();
+        document.backup_version = CURRENT_BACKUP_VERSION + 1;
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
+
+        assert!(error.to_string().contains("Unsupported backup version"));
+    }
+
+    #[test]
+    fn offline_backup_verification_rejects_dangling_references() {
+        let mut document = minimally_valid_document();
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Groups)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 2,
+                    "identity_scope_id": 999,
+                    "revision": 1
+                }))
+                .unwrap(),
+            );
+        document.manifest = BackupManifest::from_sections(&document.state, None);
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not reference a retained row")
+        );
+    }
+
+    #[test]
+    fn offline_backup_verification_rejects_invalid_row_timestamps() {
+        let mut document = minimally_valid_document();
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Collections)
+            .unwrap()[0] = StorageBackupRow::try_from_value(json!({
+            "id": 1,
+            "name": "root",
+            "parent_collection_id": null,
+            "created_at": "not-a-timestamp",
+            "updated_at": "2026-07-16T00:00:00Z",
+            "revision": 1
+        }))
+        .unwrap();
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
+
+        assert!(error.to_string().contains("invalid RFC 3339 timestamp"));
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn restored_backup_comparison_accepts_only_the_provenance_event() {
+        let mut source = minimally_valid_document();
+        source.history = Some(BackupHistory {
+            sections: StorageBackupHistorySection::ALL
+                .iter()
+                .copied()
+                .map(|section| (section, Vec::new()))
+                .collect(),
+        });
+        let mut restored = source.clone();
+        restored
+            .history
+            .as_mut()
+            .unwrap()
+            .sections
+            .get_mut(&StorageBackupHistorySection::AuditEvents)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 1,
+                    "entity_type": "restore",
+                    "action": "succeeded"
+                }))
+                .unwrap(),
+            );
+
+        assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn restored_backup_comparison_rejects_state_drift() {
+        let source = minimally_valid_document();
+        let mut restored = source.clone();
+        restored
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Collections)
+            .unwrap()
+            .clear();
+
+        let error = verify_restored_backup_matches(&source, &restored).unwrap_err();
+
+        assert!(error.to_string().contains("logical state"));
     }
 
     #[rstest]

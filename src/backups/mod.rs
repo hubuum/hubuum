@@ -1,6 +1,4 @@
 use crate::models::token_scope::TokenScope;
-use std::collections::BTreeMap;
-
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
@@ -67,29 +65,7 @@ impl BackupSettings {
 }
 
 fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> BackupManifest {
-    let mut item_counts = BTreeMap::new();
-    for (name, rows) in &state.sections {
-        item_counts.insert(name.as_str().to_string(), rows.len() as i64);
-    }
-    if let Some(history) = history {
-        for (name, rows) in &history.sections {
-            item_counts.insert(format!("history.{}", name.as_str()), rows.len() as i64);
-        }
-    }
-    BackupManifest {
-        item_counts,
-        exclusions: vec![
-            "backup_task_outputs (backup artifacts never recursively contain prior backups)"
-                .to_string(),
-            "authentication tokens and token scopes (credentials must be reissued after restore)"
-                .to_string(),
-            "class reachability cache (rebuilt by database triggers during restore)".to_string(),
-            "computed-field class state and materialized object cache (rebuilt after restore)"
-                .to_string(),
-            "active tasks and non-terminal event deliveries".to_string(),
-            "restore control-plane tables and server instance heartbeats".to_string(),
-        ],
-    }
+    BackupManifest::from_sections(state, history)
 }
 
 pub async fn create_backup_document(

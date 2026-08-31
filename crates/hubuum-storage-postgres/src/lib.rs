@@ -88,7 +88,10 @@ pub(crate) use filters::{
     postgres_is_null_filter, postgres_revision_filter, postgres_string_filter,
 };
 #[cfg(feature = "embedded-migrations")]
-pub use migrations::{run_embedded_migrations, run_embedded_migrations_as};
+pub use migrations::{
+    prepare_disposable_restore_database, reset_disposable_restore_database,
+    run_embedded_migrations, run_embedded_migrations_as,
+};
 #[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 #[doc(hidden)]
 pub use operations::computed_materialization::source_data_sha256;

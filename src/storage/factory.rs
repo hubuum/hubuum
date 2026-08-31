@@ -287,6 +287,20 @@ impl StorageSettings {
             acquire_timeout_ms: None,
         }
     }
+
+    pub(crate) fn same_database_endpoint(&self, other: &Self) -> bool {
+        match (&self.adapter, &other.adapter) {
+            (StorageAdapterSettings::Postgres(left), StorageAdapterSettings::Postgres(right)) => {
+                let left = left.endpoint();
+                let right = right.endpoint();
+                left.host() == right.host()
+                    && left.port() == right.port()
+                    && left.database() == right.database()
+            }
+            (StorageAdapterSettings::Memory, StorageAdapterSettings::Memory) => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Debug for StorageSettings {
@@ -494,6 +508,34 @@ pub(crate) fn run_storage_migrations(
     }
 }
 
+#[cfg(feature = "embedded-migrations")]
+pub(crate) fn prepare_disposable_restore_database(
+    settings: &StorageSettings,
+) -> Result<usize, StorageError> {
+    match &settings.adapter {
+        StorageAdapterSettings::Postgres(settings) => {
+            hubuum_storage_postgres::prepare_disposable_restore_database(settings.connection_url())
+        }
+        StorageAdapterSettings::Memory => Err(StorageError::invalid_input(
+            "Isolated restore verification requires the PostgreSQL storage backend",
+        )),
+    }
+}
+
+#[cfg(feature = "embedded-migrations")]
+pub(crate) fn reset_disposable_restore_database(
+    settings: &StorageSettings,
+) -> Result<(), StorageError> {
+    match &settings.adapter {
+        StorageAdapterSettings::Postgres(settings) => {
+            hubuum_storage_postgres::reset_disposable_restore_database(settings.connection_url())
+        }
+        StorageAdapterSettings::Memory => Err(StorageError::invalid_input(
+            "Isolated restore verification requires the PostgreSQL storage backend",
+        )),
+    }
+}
+
 pub(crate) fn storage_database_role_setup_sql(
     roles: &StorageDatabaseRoleNames,
 ) -> Result<String, StorageError> {
@@ -528,7 +570,45 @@ pub(crate) async fn inspect_storage_database_privileges(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
+
+    fn postgres_settings(url: &str) -> StorageSettings {
+        StorageSettings::postgres(url)
+            .max_connections(1)
+            .statement_timeout_ms(500)
+            .acquire_timeout_ms(1_000)
+            .build()
+            .expect("settings should be valid")
+    }
+
+    #[rstest]
+    #[case::different_credentials(
+        "postgres://runtime:one@database.example:5432/hubuum?sslmode=require",
+        "postgres://restore:two@database.example:5432/hubuum?sslmode=disable",
+        true
+    )]
+    #[case::different_database(
+        "postgres://runtime:one@database.example:5432/hubuum",
+        "postgres://runtime:one@database.example:5432/hubuum_restore",
+        false
+    )]
+    #[case::different_port(
+        "postgres://runtime:one@database.example:5432/hubuum",
+        "postgres://runtime:one@database.example:5433/hubuum",
+        false
+    )]
+    fn database_endpoint_comparison_ignores_credentials_only(
+        #[case] left: &str,
+        #[case] right: &str,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(
+            postgres_settings(left).same_database_endpoint(&postgres_settings(right)),
+            expected
+        );
+    }
 
     #[test]
     fn settings_debug_redacts_the_connection_url() {

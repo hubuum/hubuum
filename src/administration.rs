@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -18,17 +18,22 @@ use crate::config::{
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::logger;
+#[cfg(feature = "embedded-migrations")]
+use crate::models::BackupDocument;
 use crate::models::{
     BackupRequest, ExportContentType, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest,
     RestoreInitiator, RestoreJobID, RestoreStageRequest,
 };
+#[cfg(feature = "embedded-migrations")]
+use crate::restores::verify_restored_backup_matches;
 use crate::restores::{
-    RestoreSettings, confirm_restore, execute_confirmed_restore, restore_status, stage_restore,
+    BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
+    restore_status, stage_restore, verify_backup_document,
 };
 use crate::services::identity as identity_service;
 use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
-use crate::storage::run_storage_migrations;
+use crate::storage::reset_disposable_restore_database;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
     StorageDatabaseRole, StorageDatabaseRoleNames, StorageHandle, StorageSettings,
@@ -36,6 +41,8 @@ use crate::storage::{
     inspect_storage_database_privileges, storage_database_role_grants_sql,
     storage_database_role_setup_sql,
 };
+#[cfg(feature = "embedded-migrations")]
+use crate::storage::{prepare_disposable_restore_database, run_storage_migrations};
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
 use crate::utilities::is_valid_log_level;
@@ -59,6 +66,22 @@ struct AdminCli {
     /// Omit audit, task, delivery, and temporal history from --backup
     #[arg(long, default_value_t = false, requires = "backup")]
     backup_without_history: bool,
+
+    /// Verify a backup document without connecting to a database
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with_all = ["backup", "restore", "restore_executor"]
+    )]
+    verify_backup: Option<PathBuf>,
+
+    /// Restore a verified backup into this newly created empty disposable database
+    #[arg(long, value_name = "URL", requires = "verify_backup")]
+    restore_test_database_url: Option<String>,
+
+    /// Leave the restored disposable database intact for manual inspection
+    #[arg(long, default_value_t = false, requires = "restore_test_database_url")]
+    keep_restore_test_database: bool,
 
     /// Destructively replace all application data from this backup document
     #[arg(long, value_name = "PATH", conflicts_with = "backup")]
@@ -221,6 +244,21 @@ enum DatabasePrivilegeRole {
 pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let admin_cli = AdminCli::parse();
     init_logging(&admin_cli.log_level);
+
+    if let Some(path) = admin_cli.verify_backup.as_deref() {
+        verify_backup_file(BackupVerificationOptions {
+            path,
+            restore_test_database_url: admin_cli.restore_test_database_url.as_deref(),
+            configured_database_url: admin_cli.database_url.as_deref(),
+            configured_migration_database_url: admin_cli.migration_database_url.as_deref(),
+            storage_backend: admin_cli.storage_backend,
+            statement_timeout_ms: admin_cli.db_statement_timeout_ms,
+            keep_restore_test_database: admin_cli.keep_restore_test_database,
+            json: admin_cli.json,
+        })
+        .await?;
+        return Ok(());
+    }
 
     let database_roles = resolve_database_roles(
         admin_cli.database_owner_role.as_deref(),
@@ -545,6 +583,221 @@ async fn backup_database(
     Ok(())
 }
 
+fn read_backup_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, ApiError> {
+    let file = File::open(path).map_err(|error| {
+        ApiError::BadRequest(format!(
+            "Failed to open backup document '{}': {error}",
+            path.display()
+        ))
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        ApiError::BadRequest(format!(
+            "Failed to inspect backup document '{}': {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(ApiError::BadRequest(format!(
+            "Backup document '{}' must be an ordinary file",
+            path.display()
+        )));
+    }
+    if metadata.len() > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
+        return Err(ApiError::PayloadTooLarge(format!(
+            "Backup document is {} bytes, exceeding the configured {} byte limit",
+            metadata.len(),
+            max_bytes
+        )));
+    }
+    let read_limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX - 1)
+        .saturating_add(1);
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(metadata.len())
+            .unwrap_or(max_bytes)
+            .min(max_bytes),
+    );
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Failed to read backup document '{}': {error}",
+                path.display()
+            ))
+        })?;
+    if bytes.len() > max_bytes {
+        return Err(ApiError::PayloadTooLarge(format!(
+            "Backup document exceeds the configured {max_bytes} byte limit"
+        )));
+    }
+    Ok(bytes)
+}
+
+fn admin_storage_settings(
+    database_url: impl Into<String>,
+    statement_timeout_ms: u64,
+) -> Result<StorageSettings, ApiError> {
+    StorageSettings::postgres(database_url)
+        .max_connections(1)
+        .statement_timeout_ms(statement_timeout_ms)
+        .acquire_timeout_ms(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS)
+        .build()
+        .map_err(Into::into)
+}
+
+fn reject_configured_database_target(
+    target: &StorageSettings,
+    configured_url: Option<&str>,
+    statement_timeout_ms: u64,
+) -> Result<(), ApiError> {
+    let Some(configured_url) = configured_url.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    let configured = admin_storage_settings(configured_url, statement_timeout_ms)?;
+    if target.same_database_endpoint(&configured) {
+        return Err(ApiError::BadRequest(
+            "Refused restore verification because the disposable target matches a configured Hubuum database"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+struct BackupVerificationOptions<'a> {
+    path: &'a Path,
+    restore_test_database_url: Option<&'a str>,
+    configured_database_url: Option<&'a str>,
+    configured_migration_database_url: Option<&'a str>,
+    storage_backend: StorageBackendKind,
+    statement_timeout_ms: u64,
+    keep_restore_test_database: bool,
+    json: bool,
+}
+
+async fn verify_backup_file(
+    options: BackupVerificationOptions<'_>,
+) -> Result<BackupVerificationReport, ApiError> {
+    let bytes = read_backup_file(options.path, DEFAULT_RESTORE_MAX_UPLOAD_BYTES)?;
+    let report = verify_backup_document(&bytes, DEFAULT_RESTORE_MAX_UPLOAD_BYTES)?;
+    let report = if let Some(database_url) = options.restore_test_database_url {
+        if !matches!(options.storage_backend, StorageBackendKind::Postgres) {
+            return Err(ApiError::BadRequest(
+                "Isolated restore verification requires the PostgreSQL storage backend".to_string(),
+            ));
+        }
+        let target = admin_storage_settings(database_url, options.statement_timeout_ms)?;
+        reject_configured_database_target(
+            &target,
+            options.configured_database_url,
+            options.statement_timeout_ms,
+        )?;
+        reject_configured_database_target(
+            &target,
+            options.configured_migration_database_url,
+            options.statement_timeout_ms,
+        )?;
+        verify_backup_restore(report, bytes, target, options.keep_restore_test_database).await?
+    } else {
+        report
+    };
+    if options.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if options.restore_test_database_url.is_some() {
+        println!(
+            "Backup verification passed, including restore into an isolated disposable database."
+        );
+        if options.keep_restore_test_database {
+            println!("The caller remains responsible for deleting the disposable database.");
+        } else {
+            println!("The disposable database schema was reset after verification.");
+        }
+        print_backup_verification_summary(&report);
+    } else {
+        println!("Backup verification passed (format only; no restore was attempted).");
+        print_backup_verification_summary(&report);
+    }
+    Ok(report)
+}
+
+#[cfg(feature = "embedded-migrations")]
+async fn verify_backup_restore(
+    mut report: BackupVerificationReport,
+    bytes: Vec<u8>,
+    target: StorageSettings,
+    keep_restore_test_database: bool,
+) -> Result<BackupVerificationReport, ApiError> {
+    let migrations_applied = prepare_disposable_restore_database(&target)?;
+    let verification = async {
+        let storage = initialize_storage(&target)?;
+        let source: BackupDocument = serde_json::from_slice(&bytes)?;
+        let started_at = std::time::Instant::now();
+        restore_database_bytes(&storage, bytes).await?;
+        let restore_duration = started_at.elapsed();
+        let readiness = storage.get_readiness_snapshot().await?;
+        if !readiness.storage_is_ready() {
+            return Err(ApiError::ServiceUnavailable(
+                "Restored disposable database did not pass storage readiness".to_string(),
+            ));
+        }
+        let restored = create_backup_document(
+            &storage,
+            &BackupRequest {
+                include_history: source.history.is_some(),
+            },
+        )
+        .await?;
+        verify_restored_backup_matches(&source, &restored)?;
+        Ok::<_, ApiError>(restore_duration)
+    }
+    .await;
+    let target_cleanup = if keep_restore_test_database {
+        "caller_managed"
+    } else {
+        if let Err(cleanup_error) = reset_disposable_restore_database(&target) {
+            if verification.is_err() {
+                return Err(ApiError::InternalServerError(
+                    "Restore verification failed and the disposable database could not be reset; delete it explicitly"
+                        .to_string(),
+                ));
+            }
+            return Err(cleanup_error.into());
+        }
+        "schema_reset"
+    };
+    let restore_duration = verification?;
+    report.record_isolated_restore(migrations_applied, restore_duration, target_cleanup);
+    Ok(report)
+}
+
+#[cfg(not(feature = "embedded-migrations"))]
+async fn verify_backup_restore(
+    _report: BackupVerificationReport,
+    _bytes: Vec<u8>,
+    _target: StorageSettings,
+    _keep_restore_test_database: bool,
+) -> Result<BackupVerificationReport, ApiError> {
+    Err(ApiError::NotImplemented(
+        "This hubuum-admin build does not include embedded migrations required for isolated restore verification"
+            .to_string(),
+    ))
+}
+
+fn print_backup_verification_summary(report: &BackupVerificationReport) {
+    println!("Backup version: {}", report.backup_version());
+    println!("Source version: {}", report.source_version());
+    println!("SHA-256: {}", report.sha256());
+    println!("Bytes: {}", report.byte_size());
+    println!("Logical rows: {}", report.total_items());
+    println!(
+        "History: {}",
+        if report.includes_history() {
+            "included"
+        } else {
+            "excluded"
+        }
+    );
+}
+
 fn write_backup_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let (temporary_path, mut file) = create_backup_temporary_file(path)?;
     let write_result = file.write_all(bytes).and_then(|_| file.sync_all());
@@ -750,12 +1003,20 @@ async fn restore_database(
     if confirmation != Some(RESTORE_CONFIRMATION_PHRASE) {
         return Err(destructive_confirmation_error());
     }
-    let bytes = std::fs::read(path).map_err(|error| {
-        ApiError::BadRequest(format!(
-            "Failed to read restore document '{}': {error}",
-            path.display()
-        ))
-    })?;
+    let bytes = read_backup_file(path, usize::MAX)?;
+    let restored = restore_database_bytes(storage, bytes).await?;
+    println!(
+        "Restore {} completed with status '{}'.",
+        restored.id,
+        restored.status.as_str()
+    );
+    Ok(())
+}
+
+async fn restore_database_bytes(
+    storage: &StorageHandle,
+    bytes: Vec<u8>,
+) -> Result<crate::models::RestoreStageResponse, ApiError> {
     let settings = RestoreSettings::new(
         DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
         DEFAULT_RESTORE_MAX_UPLOAD_BYTES.max(bytes.len()),
@@ -784,12 +1045,7 @@ async fn restore_database(
         )));
     }
     let restored = restore_status(storage, RestoreJobID::new(confirmed.id)?, &capability).await?;
-    println!(
-        "Restore {} completed with status '{}'.",
-        restored.id,
-        restored.status.as_str()
-    );
-    Ok(())
+    Ok(restored)
 }
 
 async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {

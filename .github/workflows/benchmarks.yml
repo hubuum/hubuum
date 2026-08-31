@@ -173,7 +173,8 @@ jobs:
         run: |
           git checkout --detach "$BASE_SHA"
           cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
-            --migrate --database-url "$BASE_DATABASE_URL"
+            --migrate --legacy-single-role-migration \
+            --database-url "$BASE_DATABASE_URL"
           cargo build --locked --features runtime-behavior-check --bin hubuum-server
           cargo run --profile dev --locked --features runtime-behavior-check \
             --bin hubuum-runtime-behavior-check -- measure \

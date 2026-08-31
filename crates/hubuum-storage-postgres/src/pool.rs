@@ -254,7 +254,7 @@ fn parse_postgres_endpoint(database_url: &str) -> Result<PostgresEndpoint, Postg
     Ok(PostgresEndpoint {
         username: parsed.username.unwrap_or_default().to_string(),
         host: host.to_string(),
-        port: 5432,
+        port: parsed.port.unwrap_or(5432),
         database: parsed.path.trim_start_matches('/').to_string(),
     })
 }
@@ -437,10 +437,11 @@ mod tests {
 
     #[test]
     fn endpoint_metadata_excludes_credentials() {
-        let settings = settings("postgres://admin:secret@db.example.com/hubuum").unwrap();
+        let settings = settings("postgres://admin:secret@db.example.com:55432/hubuum").unwrap();
 
         assert_eq!(settings.endpoint().username(), "admin");
         assert_eq!(settings.endpoint().host(), "db.example.com");
+        assert_eq!(settings.endpoint().port(), 55432);
         assert_eq!(settings.endpoint().database(), "hubuum");
         assert!(!format!("{:?}", settings.endpoint()).contains("secret"));
     }

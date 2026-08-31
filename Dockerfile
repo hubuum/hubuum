@@ -104,7 +104,7 @@ RUN apk upgrade --no-cache && \
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh
 
 EXPOSE 8080
 

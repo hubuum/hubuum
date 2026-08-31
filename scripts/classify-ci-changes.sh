@@ -96,6 +96,10 @@ for path in "$@"; do
       benchmarks=true
       runtime_benchmark=true
       ;;
+    .github/workflows/restore-drill.yml)
+      code=true
+      container=true
+      ;;
     .github/workflows/ci.yml)
       code=true
       openapi=true

@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added `hubuum-admin --verify-backup` for bounded offline validation and an
+  opt-in isolated PostgreSQL restore drill with empty-target and production-
+  endpoint safeguards, sanitized JSON evidence, readiness checks, and explicit
+  cleanup ownership. Release and scheduled CI now restore current, adjacent-
+  release, and history-free artifacts and smoke-test the restored API, worker,
+  authentication recovery, history, token exclusion, and computed rebuilding.
+  Existing installations on v0.0.9 or older must first upgrade to v0.0.10 or
+  v0.0.11 and create a version 5 backup; version 4-or-older artifacts are not
+  converted in place.
 - Added a generated PostgreSQL privilege manifest with distinct non-login
   owner, dedicated migrator, and non-owning runtime roles; catalog-backed
   warn/strict startup diagnostics; administrator SQL and JSON reporting; and
@@ -86,6 +95,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Kubernetes projected-secret symlinks. LDAP, event, and remote integrations
   observe rotation after cache refresh; PostgreSQL pools and token hashing
   explicitly require restart rather than claiming unsafe live rotation.
+
+### Fixed
+
+- Production container builds now normalize `/entrypoint.sh` to mode `0755`
+  so the non-root runtime user can read it even when the source checkout uses
+  restrictive group-oriented permissions.
+- PostgreSQL endpoint diagnostics and disposable-restore target comparisons now
+  preserve explicit non-default ports instead of reporting and comparing every
+  endpoint as port 5432.
 
 ## [0.0.11] - 2026-08-30
 

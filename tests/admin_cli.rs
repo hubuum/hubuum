@@ -61,6 +61,7 @@ fn admin_help_exposes_reset_password() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--reset-password"));
     assert!(stdout.contains("--backup"));
+    assert!(stdout.contains("--verify-backup"));
     assert!(stdout.contains("--restore"));
     assert!(stdout.contains("--restore-executor"));
     #[cfg(feature = "embedded-migrations")]
@@ -107,6 +108,38 @@ fn backup_files_are_owner_only_and_atomically_replaced() {
     );
     let original_inode = std::fs::metadata(&path).unwrap().ino();
 
+    let verification = Command::new(admin_binary())
+        .env_remove("HUBUUM_DATABASE_URL")
+        .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
+        .args([
+            "--verify-backup",
+            path.to_str().expect("UTF-8 backup path"),
+            "--json",
+        ])
+        .output()
+        .expect("hubuum-admin --verify-backup should run without a database");
+    assert_command_succeeded(&verification);
+    let report: serde_json::Value = serde_json::from_slice(&verification.stdout).unwrap();
+    assert_eq!(report["result"], "passed");
+    assert_eq!(report["mode"], "format_only");
+    assert_eq!(report["backup_version"], 5);
+    assert!(report["total_items"].as_i64().unwrap() > 0);
+
+    let unsafe_restore_test = admin_command(&database_url)
+        .args([
+            "--verify-backup",
+            path.to_str().expect("UTF-8 backup path"),
+            "--restore-test-database-url",
+            &database_url,
+        ])
+        .output()
+        .expect("hubuum-admin should reject the configured database as a restore-test target");
+    assert!(!unsafe_restore_test.status.success());
+    assert!(
+        String::from_utf8_lossy(&unsafe_restore_test.stderr)
+            .contains("target matches a configured Hubuum database")
+    );
+
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     let output = admin_command(&database_url)
         .args(["--backup", path.to_str().expect("UTF-8 backup path")])
@@ -117,6 +150,30 @@ fn backup_files_are_owner_only_and_atomically_replaced() {
     assert_eq!(replaced_metadata.permissions().mode() & 0o777, 0o600);
     assert_ne!(replaced_metadata.ino(), original_inode);
 
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn backup_verification_rejects_malformed_input_before_database_configuration() {
+    let path = std::env::temp_dir().join(format!("{}.json", unique_name("invalid_backup")));
+    std::fs::write(
+        &path,
+        br#"{"backup_version":5,"secret":"verification-canary"}"#,
+    )
+    .unwrap();
+
+    let output = Command::new(admin_binary())
+        .env_remove("HUBUUM_DATABASE_URL")
+        .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
+        .args(["--verify-backup", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("hubuum-admin --verify-backup should reject malformed input");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not valid backup JSON"));
+    assert!(!stderr.contains("verification-canary"));
+    assert!(!stderr.contains("must be set"));
     std::fs::remove_file(path).unwrap();
 }
 
