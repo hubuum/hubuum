@@ -181,7 +181,7 @@
       "baseline": "v0.0.11",
       "expires": "2027-08-31",
       "reason": "API confirmation now queues a restore for an isolated migrator-backed executor instead of holding the request open across the destructive transaction.",
-      "migration": "Deploy `hubuum-admin --restore-executor`, accept HTTP 202 from confirmation, and poll the existing capability-authenticated status endpoint to a terminal state.",
+      "migration": "`hubuum-admin --restore-executor`",
       "changelog_entry": "POST /api/v1/restores/{restore_id}/confirm",
       "fingerprints": [
         "ca6ee7172865"

@@ -28397,7 +28397,7 @@
               "string",
               "null"
             ],
-            "description": "Returned only when a stage is created. It is stored only as a hash and\nmust be supplied to confirm or inspect the restore while its staging\nrecord exists. A successful restore deletes every staging record."
+            "description": "Returned only when a stage is created. It is stored only as a hash and\nmust be supplied to confirm or inspect the restore while its staging\nrecord exists. Success retains only a document-free terminal receipt."
           },
           "sha256": {
             "type": "string"
