@@ -40,6 +40,10 @@ use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
 use crate::utilities::is_valid_log_level;
 
+const DEFAULT_DATABASE_OWNER_ROLE: &str = "hubuum_owner";
+const DEFAULT_DATABASE_MIGRATOR_ROLE: &str = "hubuum_migrator";
+const DEFAULT_DATABASE_RUNTIME_ROLE: &str = "hubuum_runtime";
+
 #[derive(Parser)]
 #[command(
     author = "Terje Kvernes <terje@kvernes.no>",
@@ -140,28 +144,16 @@ struct AdminCli {
     migration_database_url: Option<String>,
 
     /// Non-login role that owns Hubuum database objects
-    #[arg(
-        long,
-        env = "HUBUUM_DATABASE_OWNER_ROLE",
-        default_value = "hubuum_owner"
-    )]
-    database_owner_role: String,
+    #[arg(long, env = "HUBUUM_DATABASE_OWNER_ROLE")]
+    database_owner_role: Option<String>,
 
     /// Login/workload role used only by migrations and destructive restore
-    #[arg(
-        long,
-        env = "HUBUUM_DATABASE_MIGRATOR_ROLE",
-        default_value = "hubuum_migrator"
-    )]
-    database_migrator_role: String,
+    #[arg(long, env = "HUBUUM_DATABASE_MIGRATOR_ROLE")]
+    database_migrator_role: Option<String>,
 
     /// Non-owning login role used by API and worker processes
-    #[arg(
-        long,
-        env = "HUBUUM_DATABASE_RUNTIME_ROLE",
-        default_value = "hubuum_runtime"
-    )]
-    database_runtime_role: String,
+    #[arg(long, env = "HUBUUM_DATABASE_RUNTIME_ROLE")]
+    database_runtime_role: Option<String>,
 
     /// Pool-global storage query timeout in milliseconds (0 disables it)
     #[arg(
@@ -216,12 +208,13 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let admin_cli = AdminCli::parse();
     init_logging(&admin_cli.log_level);
 
-    let database_roles = StorageDatabaseRoleNames::new(
-        admin_cli.database_owner_role.clone(),
-        admin_cli.database_migrator_role.clone(),
-        admin_cli.database_runtime_role.clone(),
-    )
-    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let (database_roles, database_roles_configured) = resolve_database_roles(
+        admin_cli.database_owner_role.as_deref(),
+        admin_cli.database_migrator_role.as_deref(),
+        admin_cli.database_runtime_role.as_deref(),
+    )?;
+    #[cfg(not(feature = "embedded-migrations"))]
+    let _ = database_roles_configured;
 
     if admin_cli.database_role_setup_sql {
         print!("{}", storage_database_role_setup_sql(&database_roles)?);
@@ -279,13 +272,22 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
-        let applied = run_storage_migrations(&storage_settings, Some(&database_roles))
-            .unwrap_or_else(|error| {
+        let migration_roles = database_roles_configured.then_some(&database_roles);
+        let applied =
+            run_storage_migrations(&storage_settings, migration_roles).unwrap_or_else(|error| {
                 fatal_error(
                     &format!("Failed to run storage migrations: {error}"),
                     EXIT_CODE_DATABASE_ERROR,
                 )
             });
+        if !database_roles_configured {
+            eprintln!(
+                "WARNING: no database role names were configured; migrations ran in legacy \
+                 single-role compatibility mode without privilege reconciliation. Complete the \
+                 database-role adoption procedure before enabling strict privilege checks or web \
+                 restore confirmations."
+            );
+        }
         println!("Applied {applied} storage migration(s).");
         return Ok(());
     }
@@ -346,6 +348,21 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     Ok(())
+}
+
+fn resolve_database_roles(
+    owner: Option<&str>,
+    migrator: Option<&str>,
+    runtime: Option<&str>,
+) -> Result<(StorageDatabaseRoleNames, bool), ApiError> {
+    let configured = owner.is_some() || migrator.is_some() || runtime.is_some();
+    let roles = StorageDatabaseRoleNames::new(
+        owner.unwrap_or(DEFAULT_DATABASE_OWNER_ROLE),
+        migrator.unwrap_or(DEFAULT_DATABASE_MIGRATOR_ROLE),
+        runtime.unwrap_or(DEFAULT_DATABASE_RUNTIME_ROLE),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok((roles, configured))
 }
 
 fn print_database_privilege_report(
@@ -950,7 +967,11 @@ fn init_logging(log_level: &str) {
 mod tests {
     use clap::Parser;
 
-    use super::{AdminCli, StorageBackendKind};
+    use super::{
+        AdminCli, DEFAULT_DATABASE_MIGRATOR_ROLE, DEFAULT_DATABASE_OWNER_ROLE,
+        DEFAULT_DATABASE_RUNTIME_ROLE, StorageBackendKind, StorageDatabaseRoleNames,
+        resolve_database_roles,
+    };
 
     #[test]
     fn storage_backend_selection_defaults_only_for_an_empty_value() {
@@ -964,5 +985,30 @@ mod tests {
 
         assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn absent_database_role_configuration_selects_legacy_migration_mode() {
+        let (roles, configured) = resolve_database_roles(None, None, None).unwrap();
+
+        assert!(!configured);
+        assert_eq!(
+            roles,
+            StorageDatabaseRoleNames::new(
+                DEFAULT_DATABASE_OWNER_ROLE,
+                DEFAULT_DATABASE_MIGRATOR_ROLE,
+                DEFAULT_DATABASE_RUNTIME_ROLE,
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn any_database_role_configuration_selects_split_role_migration_mode() {
+        let (roles, configured) =
+            resolve_database_roles(None, None, Some("existing_hubuum_login")).unwrap();
+
+        assert!(configured);
+        assert_eq!(roles.runtime(), "existing_hubuum_login");
     }
 }

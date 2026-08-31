@@ -103,6 +103,17 @@ psql "$EXISTING_OWNER_DATABASE_URL" --set ON_ERROR_STOP=1 \
   --file hubuum-database-role-adoption.sql
 ```
 
+The new admin binary also retains an explicit legacy bridge for deployments
+that must upgrade the schema before they can provision roles. When none of the
+three database-role flags or environment variables is configured,
+`hubuum-admin --migrate` applies migrations as the connected existing owner and
+prints a compatibility-mode warning. It does not transfer ownership or
+reconcile runtime grants. Keep restore confirmation blocked and privilege mode
+at `warn`, then complete the role-adoption procedure below before starting the
+restore executor, enabling strict mode, or unblocking web restore confirmation.
+Supplying any database-role name selects split-role migration and retains the
+documented defaults for names not overridden.
+
 Set `HUBUUM_DATABASE_RUNTIME_ROLE=EXISTING_APPLICATION_ROLE` on the old and new
 server versions during that rollout. Then use this order:
 
