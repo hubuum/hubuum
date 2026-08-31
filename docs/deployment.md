@@ -209,8 +209,9 @@ sudo ./scripts/install-single-host.sh \
 ```
 
 The runtime and migration identities must be provisioned before installation.
-The migration URL is injected only into a transient administration container;
-API containers receive only the runtime URL. See
+The migration URL is injected only into the transient migration container and
+the isolated restore executor; API and worker containers receive only the
+runtime URL. See
 [PostgreSQL Database Roles](database_roles.md) for the required grants,
 managed-service workflow, and upgrade diagnostics.
 

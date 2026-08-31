@@ -208,6 +208,7 @@ refresh_deployment_files
 
 [[ -f "$INSTALL_DIR/single-host-rollout.sh" ]] || die "configuration refresh did not install single-host-rollout.sh"
 grep -q '^  hubuum-api-standby:' "$INSTALL_DIR/compose.yml" || die "refreshed compose.yml does not support rolling updates"
+grep -q '^  hubuum-restore-executor:' "$INSTALL_DIR/compose.yml" || die "refreshed compose.yml does not provide the isolated restore executor"
 if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
   AUTH_CONFIG_HOST_PATH="$(read_env_value HUBUUM_AUTH_CONFIG_HOST_PATH || true)"
   [[ -n "$AUTH_CONFIG_HOST_PATH" ]] || die "HUBUUM_AUTH_CONFIG_HOST_PATH is missing from $ENV_FILE"

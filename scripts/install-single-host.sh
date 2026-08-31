@@ -846,6 +846,44 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
 EOF
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+  hubuum-restore-executor:
+EOF
+
+if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    build:
+      context: ./src/hubuum
+    image: local/hubuum-api:single-host
+EOF
+else
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    image: ${BACKEND_IMAGE}
+EOF
+fi
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    container_name: hubuum-restore-executor
+    restart: unless-stopped
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: ["--restore-executor"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL}
+      HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
+      HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
+      HUBUUM_DATABASE_RUNTIME_ROLE: ${HUBUUM_DATABASE_RUNTIME_ROLE}
+    networks:
+      - hubuum_net
+
+EOF
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
   hubuum-api: &hubuum-api
 EOF
 

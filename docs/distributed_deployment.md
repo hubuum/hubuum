@@ -101,6 +101,57 @@ migration required by the binary. API `/readyz` performs the same schema check.
 This prevents a missed or incomplete migration job from making a replica appear
 ready, while keeping migration ownership in the one-shot job.
 
+For the database-role migration, first verify maintenance is `normal` and block
+`POST /api/v1/restores/*/confirm` at the ingress. The migration shares the
+restore advisory lock and refuses to run if a confirmed restore is draining;
+validated stages are preserved. After the Job succeeds, deploy and verify the
+restore executor before rolling API and worker replicas or unblocking that
+route. Existing single-role databases should follow the complete adoption and
+rollback sequence in
+[PostgreSQL Database Roles](database_roles.md).
+
+## Isolated Restore Executor
+
+API confirmation queues a restore but never performs privileged SQL. Run one
+long-lived executor replica from the same image:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubuum-restore-executor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubuum-restore-executor
+  template:
+    metadata:
+      labels:
+        app: hubuum-restore-executor
+    spec:
+      containers:
+        - name: restore-executor
+          image: ghcr.io/hubuum/hubuum-server:VERSION
+          command: ["/usr/local/bin/hubuum-admin", "--restore-executor"]
+          env:
+            - name: HUBUUM_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hubuum-migration-database
+                  key: database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+```
+
+Do not add a Service or mount the migration secret into API or worker pods.
+The executor polls database control state, revalidates the staged document, and
+uses the migrator role only for the closed, transaction-protected restore
+operation.
+
 ## Kubernetes And Helm HTTP Availability
 
 This repository does not currently publish a Helm chart. Direct Kubernetes

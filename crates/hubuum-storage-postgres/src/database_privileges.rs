@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn manifest_declares_privileged_restore_and_builtin_capabilities() {
         let (restore, capabilities) = database_privilege_capabilities();
-        assert_eq!(restore, "migrator_only");
+        assert_eq!(restore, "isolated_migrator_executor");
         assert!(capabilities.iter().any(|value| value == "listen_notify"));
         assert_eq!(
             MANIFEST.runtime_function_policy,

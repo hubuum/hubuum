@@ -930,6 +930,8 @@ jobs:
         run: |
           docker run --rm --entrypoint hubuum-admin "$IMAGE" --help \
             | grep --quiet -- "--migrate"
+          docker run --rm --entrypoint hubuum-admin "$IMAGE" --help \
+            | grep --quiet -- "--restore-executor"
           docker run --rm --entrypoint hubuum-admin "$IMAGE" \
             --database-role-setup-sql \
             | docker run --rm --interactive --network host \

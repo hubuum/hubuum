@@ -13,7 +13,7 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::restores::{
-    RestoreSettings, resolve_identity_scope_name, restore_status, stage_restore,
+    RestoreSettings, confirm_restore, resolve_identity_scope_name, restore_status, stage_restore,
 };
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
@@ -75,22 +75,27 @@ pub async fn create_restore_stage(
     params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     request_body = RestoreConfirmRequest,
     responses(
-        (status = 501, description = "Destructive restore requires hubuum-admin and a migration credential", body = ApiErrorResponse),
+        (status = 202, description = "Restore confirmed and queued for the isolated executor", body = RestoreStageResponse,
+            headers(("Cache-Control" = String, description = "Always no-store for restore metadata"))
+        ),
+        (status = 400, description = "Invalid confirmation", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Administrator access required", body = ApiErrorResponse)
+        (status = 403, description = "Administrator access required or restore capability rejected", body = ApiErrorResponse),
+        (status = 409, description = "Restore stage cannot be confirmed", body = ApiErrorResponse),
+        (status = 410, description = "Restore stage expired", body = ApiErrorResponse)
     )
 )]
 #[post("/{restore_id}/confirm")]
 pub async fn confirm_restore_stage(
-    _context: AppContext,
+    context: AppContext,
     _admin: AdminAccess,
-    _restore_id: web::Path<RestoreJobID>,
-    _confirmation: web::Json<RestoreConfirmRequest>,
+    restore_id: web::Path<RestoreJobID>,
+    confirmation: web::Json<RestoreConfirmRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    Err(ApiError::NotImplemented(
-        "API-driven destructive restore is disabled; run hubuum-admin --restore with HUBUUM_MIGRATION_DATABASE_URL"
-            .to_string(),
-    ))
+    let response = confirm_restore(&context, restore_id.into_inner(), &confirmation).await?;
+    Ok(HttpResponse::Accepted()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(response))
 }
 
 #[utoipa::path(

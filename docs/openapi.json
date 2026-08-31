@@ -18410,6 +18410,34 @@
           "required": true
         },
         "responses": {
+          "202": {
+            "description": "Restore confirmed and queued for the isolated executor",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always no-store for restore metadata"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreStageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid confirmation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -18421,7 +18449,7 @@
             }
           },
           "403": {
-            "description": "Administrator access required",
+            "description": "Administrator access required or restore capability rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -18430,8 +18458,18 @@
               }
             }
           },
-          "501": {
-            "description": "Destructive restore requires hubuum-admin and a migration credential",
+          "409": {
+            "description": "Restore stage cannot be confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Restore stage expired",
             "content": {
               "application/json": {
                 "schema": {

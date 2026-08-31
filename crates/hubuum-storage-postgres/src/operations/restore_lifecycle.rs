@@ -1,7 +1,6 @@
 //! PostgreSQL-owned restore staging and coordinator lifecycle.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::NullableExpressionMethods;
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{Jsonb, Timestamp};
@@ -406,6 +405,10 @@ pub async fn start_restore_draining(
             diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
                 .execute(connection)
                 .await?;
+            let confirmation_time = diesel::select(sql::<Timestamp>(DATABASE_UTC_NOW_SQL))
+                .get_result::<NaiveDateTime>(connection)
+                .await?;
+            preserve_explicit_timestamps(connection).await?;
             let confirmation_time = diesel::update(
                 crate::schema::restore_jobs::table
                     .filter(crate::schema::restore_jobs::id.eq(job_id))
@@ -416,9 +419,9 @@ pub async fn start_restore_draining(
             )
             .set((
                 crate::schema::restore_jobs::status.eq(StorageRestoreJobStatus::Confirmed.as_str()),
-                crate::schema::restore_jobs::confirmed_at
-                    .eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL).nullable()),
+                crate::schema::restore_jobs::confirmed_at.eq(Some(confirmation_time)),
                 crate::schema::restore_jobs::error.eq::<Option<String>>(None),
+                crate::schema::restore_jobs::updated_at.eq(confirmation_time),
             ))
             .returning(crate::schema::restore_jobs::confirmed_at)
             .get_result::<Option<NaiveDateTime>>(connection)
@@ -547,7 +550,7 @@ pub async fn apply_restore(
                 append_event(connection, &provenance).await?;
 
                 let finished_at = Utc::now().naive_utc();
-                finish_restore(connection, finished_at).await?;
+                finish_restore(connection, job.id, finished_at).await?;
                 crate::validate_persisted(
                     "restore completion",
                     StorageRestoreCompletion::try_new(started_at.and_utc(), finished_at.and_utc()),
@@ -695,8 +698,13 @@ fn validate_restore_identifier(
 
 async fn finish_restore(
     connection: &mut PostgresConnection,
+    job_id: i64,
     finished_at: NaiveDateTime,
 ) -> Result<(), PostgresStorageError> {
+    // The shared updated-at trigger uses transaction-start time. Preserve the
+    // explicit completion clock so the terminal receipt cannot appear to have
+    // finished after its own updated_at value.
+    preserve_explicit_timestamps(connection).await?;
     diesel::sql_query(
         "UPDATE system_maintenance \
          SET generation=0, state='normal', restore_job_id=NULL, \
@@ -706,13 +714,38 @@ async fn finish_restore(
     .bind::<Timestamp, _>(finished_at)
     .execute(connection)
     .await?;
-    diesel::sql_query("DELETE FROM restore_jobs")
+    diesel::sql_query("DELETE FROM restore_jobs WHERE id <> $1")
+        .bind::<diesel::sql_types::BigInt, _>(job_id)
         .execute(connection)
         .await?;
+    let completed = diesel::sql_query(
+        "UPDATE restore_jobs \
+         SET status='succeeded', document=''::bytea, error=NULL, \
+             finished_at=$2, updated_at=$2 \
+         WHERE id=$1 AND status='confirmed'",
+    )
+    .bind::<diesel::sql_types::BigInt, _>(job_id)
+    .bind::<Timestamp, _>(finished_at)
+    .execute(connection)
+    .await?;
+    if completed != 1 {
+        return Err(PostgresStorageError::conflict(
+            "Confirmed restore receipt changed concurrently",
+        ));
+    }
     diesel::sql_query("DELETE FROM server_instances")
         .execute(connection)
         .await?;
     diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+async fn preserve_explicit_timestamps(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    diesel::sql_query("SELECT set_config('hubuum.preserve_imported_timestamps', 'on', true)")
         .execute(connection)
         .await?;
     Ok(())

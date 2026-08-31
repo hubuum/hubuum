@@ -1,3 +1,38 @@
+-- Role adoption must never strand a restore between the committed draining
+-- transition and its destructive transaction. Validated stages are preserved
+-- and remain confirmable after the upgrade.
+DO $migration_preflight$
+DECLARE
+    maintenance_state text;
+    active_restore_job_id bigint;
+BEGIN
+    -- Serialize the preflight with both confirmation and destructive restore.
+    -- This closes the boundary between observing normal maintenance and
+    -- committing the role changes during a rolling upgrade.
+    PERFORM pg_advisory_xact_lock(4850188191125217);
+    SELECT state, restore_job_id
+      INTO maintenance_state, active_restore_job_id
+      FROM system_maintenance
+     WHERE id = 1
+     FOR UPDATE;
+    IF maintenance_state IS DISTINCT FROM 'normal'
+       OR active_restore_job_id IS NOT NULL
+       OR EXISTS (SELECT 1 FROM restore_jobs WHERE status = 'confirmed')
+    THEN
+        RAISE EXCEPTION
+            'database-role migration requires normal maintenance with no confirmed restore'
+            USING HINT = 'Allow the existing restore to finish or explicitly recover it before retrying the migration.';
+    END IF;
+END;
+$migration_preflight$;
+
+-- Successful asynchronous restores retain a document-free receipt so the web
+-- client can poll the terminal result with its one-time capability.
+ALTER TABLE restore_jobs DROP CONSTRAINT restore_jobs_status_check;
+ALTER TABLE restore_jobs
+    ADD CONSTRAINT restore_jobs_status_check
+    CHECK (status IN ('validated', 'confirmed', 'succeeded', 'failed', 'expired'));
+
 -- Make temporal history writes possible without granting the runtime role
 -- direct mutation authority. The trusted restore bypass is available only to
 -- a session whose login role is a member of this function's owning role.

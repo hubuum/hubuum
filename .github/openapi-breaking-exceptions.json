@@ -177,11 +177,11 @@
       ]
     },
     {
-      "id": "v0.0.11-admin-only-destructive-restore",
+      "id": "v0.0.11-asynchronous-destructive-restore",
       "baseline": "v0.0.11",
       "expires": "2027-08-31",
-      "reason": "A bearer-authenticated API process uses the non-owning runtime database role and must not cross the database privilege boundary to perform destructive full-system restore.",
-      "migration": "`hubuum-admin --restore`",
+      "reason": "API confirmation now queues a restore for an isolated migrator-backed executor instead of holding the request open across the destructive transaction.",
+      "migration": "Deploy `hubuum-admin --restore-executor`, accept HTTP 202 from confirmation, and poll the existing capability-authenticated status endpoint to a terminal state.",
       "changelog_entry": "POST /api/v1/restores/{restore_id}/confirm",
       "fingerprints": [
         "ca6ee7172865"

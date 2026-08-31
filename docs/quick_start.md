@@ -75,9 +75,9 @@ examples.
 | -------- | ------- | ----------- |
 | `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | Runtime-role PostgreSQL connection URL |
-| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Migrator-role URL accepted by `hubuum-admin --migrate` and destructive restore; never configure this on a server process |
+| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Migrator-role URL accepted by `hubuum-admin --migrate`, `--restore`, and `--restore-executor`; never configure this on an API or worker process |
 | `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role |
-| `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | One-shot migration and restore role |
+| `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role |
 | `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role |
 | `HUBUUM_DATABASE_PRIVILEGE_MODE` | `warn` | Runtime privilege audit behavior: `warn` or startup-failing `strict` |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |

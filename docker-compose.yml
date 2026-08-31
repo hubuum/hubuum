@@ -45,6 +45,27 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  hubuum-restore-executor:
+    build: .
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: ["--restore-executor"]
+    restart: unless-stopped
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: postgres://hubuum_migrator:${POSTGRES_MIGRATOR_PASSWORD:?Set POSTGRES_MIGRATOR_PASSWORD in .env}@db/hubuum
+      HUBUUM_DATABASE_OWNER_ROLE: hubuum_owner
+      HUBUUM_DATABASE_MIGRATOR_ROLE: hubuum_migrator
+      HUBUUM_DATABASE_RUNTIME_ROLE: hubuum_runtime
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   db:
     build:
       context: .

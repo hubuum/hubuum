@@ -93,8 +93,8 @@ capability or restore metadata.
 
 Staging and validation do not enter maintenance mode or lock application data.
 
-API confirmation is intentionally disabled. A valid request to the confirmation
-endpoint returns `501 Not Implemented` and leaves the validated stage intact:
+Confirm the validated stage with the administrator token, one-time capability,
+exact SHA-256, and destructive phrase:
 
 ```http
 POST /api/v1/restores/{restore_id}/confirm
@@ -108,11 +108,11 @@ Content-Type: application/json
 }
 ```
 
-This boundary is deliberate: API and worker processes use the non-owning
-runtime database role, which cannot truncate application tables or suppress
-temporal and audit integrity controls. Run destructive restore through the
-admin CLI in a tightly controlled one-shot workload with the migrator
-credential instead.
+The endpoint commits draining maintenance and returns `202 Accepted` with
+status `confirmed`. It does not perform privileged SQL. A separately deployed
+`hubuum-admin --restore-executor` process, holding only the migration database
+URL, re-loads and revalidates the staged bytes, waits for API and worker
+instances to drain, and applies the replacement transaction.
 
 Inspect validation, draining, or failure status by sending the capability in a
 header:
@@ -123,8 +123,18 @@ X-Hubuum-Restore-Capability: <capability>
 ```
 
 Do not put the capability in a query string, where access logs could retain it.
-Without an administrative CLI restore, stored stages report `validated` or
-`expired`. A successful CLI restore removes all staging records.
+Continue polling after confirmation. The status changes from `confirmed` to
+`succeeded` or `failed`; successful and failed terminal rows contain no backup
+document. A successful restore keeps its document-free receipt and capability
+hash so the client whose administrator token was replaced can observe the
+result. A later successful restore removes older receipts.
+
+Deploy exactly one executor replica in ordinary operation. It exposes no HTTP
+listener and accepts no request-provided SQL, identifier, or file path. Multiple
+replicas are protected by the same database advisory lock, but a single replica
+avoids redundant conflict logs. See
+[PostgreSQL Database Roles](database_roles.md) for deployment isolation, threat
+model, and the existing single-role migration order.
 
 ## Admin CLI
 
@@ -152,11 +162,12 @@ hubuum-admin \
   --restore-confirmation "REPLACE ALL HUBUUM DATA"
 ```
 
-The CLI coordinates maintenance and performs replacement in one database
-transaction. It appends the `restore.succeeded` provenance event on success and
-rolls back to the old application data if validation, insertion, or constraint
-checks fail. See [PostgreSQL Database Roles](database_roles.md) for credential
-handling and workload isolation.
+The CLI stages and confirms the document, then runs one executor iteration in
+the same process. It appends the `restore.succeeded` provenance event on
+success and rolls back to the old application data if validation, insertion,
+or constraint checks fail. See
+[PostgreSQL Database Roles](database_roles.md) for credential handling and
+workload isolation.
 
 ## Configuration ownership
 

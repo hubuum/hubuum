@@ -11,8 +11,8 @@ use hubuum::models::{
     RestoreJobStatus, RestoreStageRequest, TaskStatus,
 };
 use hubuum::restores::{
-    RestoreSettings, confirm_restore, get_maintenance_state, reconcile_interrupted_restore,
-    stage_restore,
+    RestoreSettings, confirm_restore, execute_confirmed_restore, get_maintenance_state,
+    reconcile_interrupted_restore, restore_status, stage_restore,
 };
 use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
@@ -29,9 +29,19 @@ fn database_url() -> String {
         .expect("HUBUUM_MIGRATION_DATABASE_URL must provide destructive restore authority")
 }
 
+fn runtime_database_url() -> String {
+    std::env::var("HUBUUM_DATABASE_URL")
+        .expect("HUBUUM_DATABASE_URL must provide runtime restore-coordination authority")
+}
+
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let runtime_pool = postgres_test_pool_with_timeout(
+        &runtime_database_url(),
+        2,
+        DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    );
     let root_collection_id = with_connection(&pool, async |conn| {
         collections::table
             .filter(collections::parent_collection_id.is_null())
@@ -242,7 +252,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
                 .and_then(serde_json::Value::as_str),
         ),
         (
-            None,
+            Some(staged.id),
             None,
             Some((historical_task_id, None, Some(provenance_initiator_id))),
             Some("system"),
@@ -299,23 +309,38 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let initiator = RestoreInitiator::new(None, "test", "restore-confirmation")
         .expect("restore confirmation initiator");
     let request = RestoreStageRequest::new(initiator, document).expect("restore request");
-    let confirmed_stage = stage_restore(&pool, &settings, request)
+    let confirmed_stage = stage_restore(&runtime_pool, &settings, request)
         .await
         .expect("stage confirmation-path restore");
-    let completed = confirm_restore(
-        &pool,
+    let capability = confirmed_stage
+        .restore_capability
+        .clone()
+        .expect("restore capability");
+    let confirmed = confirm_restore(
+        &runtime_pool,
         RestoreJobID::new(confirmed_stage.id).expect("positive staged restore id"),
         &RestoreConfirmRequest {
-            restore_capability: confirmed_stage
-                .restore_capability
-                .clone()
-                .expect("restore capability"),
+            restore_capability: capability.clone(),
             sha256: confirmed_stage.sha256,
             confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
         },
     )
     .await
-    .expect("confirm restore");
+    .expect("queue restore through runtime storage");
+    assert_eq!(confirmed.status, RestoreJobStatus::Confirmed);
+
+    assert!(
+        execute_confirmed_restore(&pool)
+            .await
+            .expect("apply restore through migration storage")
+    );
+    let completed = restore_status(
+        &runtime_pool,
+        RestoreJobID::new(confirmed_stage.id).expect("positive staged restore id"),
+        &capability,
+    )
+    .await
+    .expect("poll completed restore through runtime storage");
     let remaining_restore_jobs = with_connection(&pool, async |conn| {
         restore_jobs::table.count().get_result::<i64>(conn).await
     })
@@ -323,6 +348,6 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .expect("remaining restore jobs");
     assert_eq!(
         (completed.status, remaining_restore_jobs),
-        (RestoreJobStatus::Succeeded, 0)
+        (RestoreJobStatus::Succeeded, 1)
     );
 }

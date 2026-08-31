@@ -332,7 +332,7 @@ pub struct RestoreStageResponse {
     pub validation: RestoreValidationSummary,
     /// Returned only when a stage is created. It is stored only as a hash and
     /// must be supplied to confirm or inspect the restore while its staging
-    /// record exists. A successful restore deletes every staging record.
+    /// record exists. Success retains only a document-free terminal receipt.
     pub restore_capability: Option<String>,
 }
 

@@ -12,7 +12,7 @@
     "hubuum_complete_event_retention_purge"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
-  "restore": "migrator_only",
+  "restore": "isolated_migrator_executor",
   "built_in_capabilities": [
     "advisory_locks",
     "listen_notify",

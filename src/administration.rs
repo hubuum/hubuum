@@ -22,7 +22,9 @@ use crate::models::{
     BackupRequest, ExportContentType, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest,
     RestoreInitiator, RestoreJobID, RestoreStageRequest,
 };
-use crate::restores::{RestoreSettings, confirm_restore, stage_restore};
+use crate::restores::{
+    RestoreSettings, confirm_restore, execute_confirmed_restore, restore_status, stage_restore,
+};
 use crate::services::identity as identity_service;
 use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
@@ -61,6 +63,10 @@ struct AdminCli {
     /// Exact destructive confirmation phrase required with --restore
     #[arg(long, value_name = "PHRASE", requires = "restore")]
     restore_confirmation: Option<String>,
+
+    /// Run the isolated long-lived executor for confirmed web restores
+    #[arg(long, default_value_t = false)]
+    restore_executor: bool,
 
     /// Reset the password for the specified username
     #[arg(long)]
@@ -129,7 +135,7 @@ struct AdminCli {
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
     database_url: Option<String>,
 
-    /// One-shot migration and destructive-restore database URL
+    /// Privileged migration and restore-executor database URL
     #[arg(long, env = "HUBUUM_MIGRATION_DATABASE_URL")]
     migration_database_url: Option<String>,
 
@@ -238,8 +244,11 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let migration_requested = admin_cli.migrate;
     #[cfg(not(feature = "embedded-migrations"))]
     let migration_requested = false;
-    let privileged_database_operation = migration_requested || admin_cli.restore.is_some();
-    let database_url = if privileged_database_operation {
+    let privileged_database_operation =
+        migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
+    let database_url = if admin_cli.restore_executor {
+        admin_cli.migration_database_url
+    } else if privileged_database_operation {
         admin_cli.migration_database_url.or(admin_cli.database_url)
     } else {
         admin_cli.database_url
@@ -247,7 +256,9 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let storage_settings = match admin_cli.storage_backend {
         StorageBackendKind::Postgres => {
             let database_url = database_url.unwrap_or_else(|| {
-                let variable = if privileged_database_operation {
+                let variable = if admin_cli.restore_executor {
+                    "HUBUUM_MIGRATION_DATABASE_URL"
+                } else if privileged_database_operation {
                     "HUBUUM_MIGRATION_DATABASE_URL (or the compatibility fallback HUBUUM_DATABASE_URL)"
                 } else {
                     "HUBUUM_DATABASE_URL"
@@ -304,7 +315,14 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     let storage = initialize_storage(&storage_settings)?;
 
-    if let Some(path) = admin_cli.backup {
+    if admin_cli.restore_executor {
+        if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
+            return Err(ApiError::BadRequest(
+                "The restore executor requires the PostgreSQL storage backend".to_string(),
+            ));
+        }
+        run_restore_executor(&storage).await?;
+    } else if let Some(path) = admin_cli.backup {
         backup_database(&storage, &path, !admin_cli.backup_without_history).await?;
     } else if let Some(path) = admin_cli.restore {
         restore_database(&storage, &path, admin_cli.restore_confirmation.as_deref()).await?;
@@ -719,25 +737,76 @@ async fn restore_database(
     let initiator = RestoreInitiator::new(None, "system", "hubuum-admin")?;
     let request = RestoreStageRequest::new(initiator, bytes)?;
     let staged = stage_restore(storage, &settings, request).await?;
-    let capability = staged.restore_capability.ok_or_else(|| {
+    let capability = staged.restore_capability.clone().ok_or_else(|| {
         ApiError::InternalServerError("Restore stage did not return a capability".to_string())
     })?;
-    let restored = confirm_restore(
+    let confirmed = confirm_restore(
         storage,
         RestoreJobID::new(staged.id)?,
         &RestoreConfirmRequest {
-            restore_capability: capability,
+            restore_capability: capability.clone(),
             sha256: staged.sha256,
             confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
         },
     )
     .await?;
+    if !execute_confirmed_restore(storage).await? {
+        return Err(ApiError::Conflict(format!(
+            "Restore {} was confirmed but no longer owns draining maintenance",
+            confirmed.id
+        )));
+    }
+    let restored = restore_status(storage, RestoreJobID::new(confirmed.id)?, &capability).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
         restored.status.as_str()
     );
     Ok(())
+}
+
+async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {
+    println!("Restore executor is ready for confirmed web restores.");
+    loop {
+        match execute_confirmed_restore(storage).await {
+            Ok(true) => tracing::info!(message = "Confirmed restore completed"),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(message = "Restore executor iteration failed", error = %error)
+            }
+        }
+        tokio::select! {
+            result = wait_for_restore_executor_shutdown() => {
+                result?;
+                println!("Restore executor stopped.");
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_restore_executor_shutdown() -> Result<(), ApiError> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to install restore executor signal handler: {error}"
+        ))
+    })?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result.map_err(|error| {
+            ApiError::InternalServerError(format!("Restore executor signal error: {error}"))
+        }),
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_restore_executor_shutdown() -> Result<(), ApiError> {
+    tokio::signal::ctrl_c().await.map_err(|error| {
+        ApiError::InternalServerError(format!("Restore executor signal error: {error}"))
+    })
 }
 
 fn destructive_confirmation_error() -> ApiError {

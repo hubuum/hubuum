@@ -299,6 +299,8 @@ hubuum_start_stack() {
   hubuum_ensure_infrastructure
   hubuum_run_migrations
 
+  "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate hubuum-restore-executor
+
   "${COMPOSE_CMD[@]}" up -d hubuum-api
   hubuum_wait_for_rollout_health hubuum-api
 
@@ -348,6 +350,7 @@ hubuum_rollout() {
     fi
     return 1
   fi
+  "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate hubuum-restore-executor
   if [[ "$primary_workers_drained" == "true" ]]; then
     hubuum_roll_service hubuum-api
     api_primary_recovered="true"

@@ -201,6 +201,7 @@ compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -222,6 +223,7 @@ cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -267,6 +269,7 @@ rm -f "$TEST_ROOT/started-hubuum-api"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-recovery.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -290,6 +293,7 @@ compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -311,6 +315,7 @@ rm -f "$TEST_ROOT/started-caddy"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy

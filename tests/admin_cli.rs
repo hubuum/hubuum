@@ -62,6 +62,7 @@ fn admin_help_exposes_reset_password() {
     assert!(stdout.contains("--reset-password"));
     assert!(stdout.contains("--backup"));
     assert!(stdout.contains("--restore"));
+    assert!(stdout.contains("--restore-executor"));
     assert!(stdout.contains("--database-role-setup-sql"));
     assert!(stdout.contains("--database-role-grants-sql"));
     assert!(stdout.contains("--check-database-privileges"));

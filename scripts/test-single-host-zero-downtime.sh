@@ -155,6 +155,13 @@ services:
     environment:
       HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL}
 
+  hubuum-restore-executor:
+    image: ${HUBUUM_TEST_IMAGE}
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: ["--restore-executor"]
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL}
+
   hubuum-api: &hubuum-api
     image: ${HUBUUM_TEST_IMAGE}
     stop_grace_period: 75s

@@ -534,7 +534,9 @@ impl StorageRestoreJob {
     ) -> Result<Self, StorageValidationError> {
         if matches!(
             summary.status,
-            StorageRestoreJobStatus::Failed | StorageRestoreJobStatus::Expired
+            StorageRestoreJobStatus::Succeeded
+                | StorageRestoreJobStatus::Failed
+                | StorageRestoreJobStatus::Expired
         ) {
             if !document.is_empty() {
                 return Err(StorageValidationError::invalid(
@@ -947,7 +949,8 @@ pub trait RestoreStorage: Send + Sync {
     /// The backend must re-check that the job owns draining maintenance, apply
     /// the snapshot in one rollback-safe transaction, reset backend-owned
     /// derived state and identifiers, write success provenance, return to
-    /// normal operation, and erase restore/coordinator staging records.
+    /// normal operation, erase coordinator staging records, and retain a
+    /// document-free terminal receipt for capability-authenticated polling.
     async fn apply_restore(
         &self,
         request: StorageRestoreApply,
