@@ -73,15 +73,24 @@ impl SinkResolver for DefaultSinkResolver {
     }
 }
 
+async fn sink_secret(
+    sink: &StorageEventDeliverySink,
+) -> Result<Option<hubuum_secrets::ResolvedSecret>, SinkError> {
+    match sink.secret_ref() {
+        Some(alias) => crate::secrets::resolve_event_sink_secret(alias)
+            .await
+            .map(Some)
+            .map_err(SinkError::from),
+        None => Ok(None),
+    }
+}
+
 fn sink_delivery<'a>(
     subscription: &'a StorageEventDeliverySubscription,
     sink: &'a StorageEventDeliverySink,
+    secret: Option<&'a hubuum_secrets::SecretValue>,
 ) -> SinkDelivery<'a> {
-    SinkDelivery::new(
-        sink.configuration(),
-        subscription.routing(),
-        sink.secret_ref(),
-    )
+    SinkDelivery::new(sink.configuration(), subscription.routing(), secret)
 }
 
 fn webhook_settings() -> WebhookSinkSettings {
@@ -113,8 +122,16 @@ impl Sink for hubuum_event_sink_webhook::WebhookSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            self.deliver(envelope, sink_delivery(subscription, sink))
-                .await
+            let secret = sink_secret(sink).await?;
+            self.deliver(
+                envelope,
+                sink_delivery(
+                    subscription,
+                    sink,
+                    secret.as_ref().map(|value| value.value()),
+                ),
+            )
+            .await
         }
         .boxed()
     }
@@ -129,8 +146,16 @@ impl Sink for hubuum_event_sink_amqp::AmqpSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            self.deliver(envelope, sink_delivery(subscription, sink))
-                .await
+            let secret = sink_secret(sink).await?;
+            self.deliver(
+                envelope,
+                sink_delivery(
+                    subscription,
+                    sink,
+                    secret.as_ref().map(|value| value.value()),
+                ),
+            )
+            .await
         }
         .boxed()
     }
@@ -145,8 +170,16 @@ impl Sink for hubuum_event_sink_email::EmailSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            self.deliver(envelope, sink_delivery(subscription, sink))
-                .await
+            let secret = sink_secret(sink).await?;
+            self.deliver(
+                envelope,
+                sink_delivery(
+                    subscription,
+                    sink,
+                    secret.as_ref().map(|value| value.value()),
+                ),
+            )
+            .await
         }
         .boxed()
     }
@@ -161,8 +194,16 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            self.deliver(envelope, sink_delivery(subscription, sink))
-                .await
+            let secret = sink_secret(sink).await?;
+            self.deliver(
+                envelope,
+                sink_delivery(
+                    subscription,
+                    sink,
+                    secret.as_ref().map(|value| value.value()),
+                ),
+            )
+            .await
         }
         .boxed()
     }
@@ -268,7 +309,8 @@ mod tests {
         let routing = serde_json::json!({
             "url": "https://user:routing-secret@example.invalid/events"
         });
-        let delivery = SinkDelivery::new(&config, &routing, Some("secret-reference"));
+        let secret = hubuum_secrets::SecretValue::new(b"secret-reference".to_vec()).unwrap();
+        let delivery = SinkDelivery::new(&config, &routing, Some(&secret));
 
         let debug = format!("{delivery:?}");
         assert_eq!(debug, "SinkDelivery { .. }");

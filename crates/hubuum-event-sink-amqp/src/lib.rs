@@ -4,7 +4,7 @@ use std::sync::Arc;
 use hubuum_event_sinks_common::{
     DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
     parse_sink_config, reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme,
-    resolve_event_sink_secret_uri, serialize_envelope_to_vec,
+    resolve_secret_uri, serialize_envelope_to_vec,
 };
 use lapin::options::{BasicPublishOptions, ConfirmSelectOptions, ExchangeDeclareOptions};
 use lapin::types::FieldTable;
@@ -54,7 +54,7 @@ impl AmqpSink {
         delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "AMQP")?;
+        let uri = resolve_secret_uri(&config.uri, delivery.secret(), "AMQP")?;
         require_tls_uri_scheme(&uri, "AMQP", &["amqps"])?;
         let channel = self.channel(&uri).await?;
 
@@ -190,6 +190,8 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_event_sinks_common::SecretValue;
+
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -251,9 +253,9 @@ mod tests {
     fn delivery<'a>(
         config: &'a serde_json::Value,
         routing: &'a serde_json::Value,
-        secret_ref: Option<&'a str>,
+        secret: Option<&'a SecretValue>,
     ) -> SinkDelivery<'a> {
-        SinkDelivery::new(config, routing, secret_ref)
+        SinkDelivery::new(config, routing, secret)
     }
 
     #[test]
@@ -296,12 +298,9 @@ mod tests {
 
     #[test]
     fn secret_ref_requires_uri_placeholder() {
-        let error = resolve_event_sink_secret_uri(
-            "amqps://publisher@example/%2f",
-            Some("rabbitmq"),
-            "AMQP",
-        )
-        .unwrap_err();
+        let secret = SecretValue::new(b"unused".to_vec()).unwrap();
+        let error =
+            resolve_secret_uri("amqps://publisher@example/%2f", Some(&secret), "AMQP").unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid AMQP config: uri must include {secret} when secret_ref is set"
@@ -311,8 +310,7 @@ mod tests {
     #[test]
     fn secret_placeholder_requires_secret_ref() {
         let error =
-            resolve_event_sink_secret_uri("amqps://publisher:{secret}@example/%2f", None, "AMQP")
-                .unwrap_err();
+            resolve_secret_uri("amqps://publisher:{secret}@example/%2f", None, "AMQP").unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid AMQP config: uri includes {secret} without secret_ref"
@@ -335,14 +333,11 @@ mod tests {
 
     #[test]
     fn secret_ref_replaces_placeholder_with_encoded_secret() {
-        let secret_ref = "amqp_sink_unit_test";
-        unsafe {
-            std::env::set_var("HUBUUM_EVENT_SINK_SECRET_AMQP_SINK_UNIT_TEST", "p@ss/w:rd");
-        }
+        let secret = SecretValue::new(b"p@ss/w:rd".to_vec()).unwrap();
 
-        let uri = resolve_event_sink_secret_uri(
+        let uri = resolve_secret_uri(
             "amqps://publisher:{secret}@rabbitmq.example/%2f",
-            Some(secret_ref),
+            Some(&secret),
             "AMQP",
         )
         .unwrap();
@@ -351,10 +346,6 @@ mod tests {
             uri,
             "amqps://publisher:p%40ss%2Fw%3Ard@rabbitmq.example/%2f"
         );
-
-        unsafe {
-            std::env::remove_var("HUBUUM_EVENT_SINK_SECRET_AMQP_SINK_UNIT_TEST");
-        }
     }
 
     #[test]

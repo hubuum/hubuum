@@ -11,6 +11,7 @@ mod process;
 mod registry;
 mod remote_call;
 mod scrape;
+mod secret;
 mod security;
 mod storage;
 mod task;
@@ -54,6 +55,7 @@ pub use self::login::{login_attempt, login_lockout};
 pub use self::registry::{init, runtime_identity};
 pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
+pub(crate) use self::secret::{secret_resolution_finished, secret_source_identity};
 pub use self::security::{client_allowlist_rejected, revision_condition};
 pub use self::storage::{storage_backend_identity, storage_operation_finished};
 pub use self::task::{
@@ -104,6 +106,9 @@ struct Metrics {
     storage_backend_info: Gauge<u64>,
     storage_operation_duration: Histogram<f64>,
     storage_operation_errors: Counter<u64>,
+    secret_source_info: Gauge<u64>,
+    secret_resolution_duration: Histogram<f64>,
+    secret_resolutions: Counter<u64>,
     task_worker_iterations: Counter<u64>,
     task_claims: Counter<u64>,
     task_lease_recoveries: Counter<u64>,

@@ -18,6 +18,7 @@ pub struct RunningConfig {
     pub backups: BackupConfig,
     pub restores: RestoreConfig,
     pub remote_calls: RemoteCallConfig,
+    pub secrets: SecretSourceConfig,
     pub authentication: AuthenticationConfig,
     pub permissions: PermissionConfig,
     pub pagination: PaginationConfig,
@@ -59,6 +60,20 @@ pub struct ClientAuthenticationConfig {
 pub struct SecretStatus {
     /// Whether a value is configured. The value itself is never returned.
     pub configured: bool,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct SecretSourceConfig {
+    /// Selected process-wide provider. Values are `environment`, `file`, or
+    /// `invalid` when startup configuration cannot be parsed.
+    pub provider: String,
+    /// Whether a mounted-secret root was configured. The path is never returned.
+    pub file_root_configured: bool,
+    pub cache_capacity_per_consumer: usize,
+    pub cache_total_bytes_per_consumer: usize,
+    pub cache_ttl_seconds: u64,
+    pub stale_values_allowed: bool,
+    pub projected_symlinks_confined_to_root: bool,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -260,6 +275,9 @@ impl RunningConfig {
                 network_count: networks.len(),
             },
         };
+        let (secret_provider, secret_file_root_configured) =
+            crate::secrets::running_source_configuration();
+        let secret_cache_policy = hubuum_secrets::CachePolicy::default();
 
         Self {
             server: ServerConfig {
@@ -350,6 +368,15 @@ impl RunningConfig {
                 timeout_ms: config.remote_call_timeout_ms,
                 max_response_bytes: config.remote_call_max_response_bytes,
                 allow_private_targets: config.remote_call_allow_private_targets,
+            },
+            secrets: SecretSourceConfig {
+                provider: secret_provider.to_string(),
+                file_root_configured: secret_file_root_configured,
+                cache_capacity_per_consumer: secret_cache_policy.capacity().get(),
+                cache_total_bytes_per_consumer: secret_cache_policy.total_byte_limit().get(),
+                cache_ttl_seconds: secret_cache_policy.ttl().as_secs(),
+                stale_values_allowed: false,
+                projected_symlinks_confined_to_root: true,
             },
             authentication: AuthenticationConfig {
                 token_lifetime_hours: config.token_lifetime_hours,
@@ -449,6 +476,8 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
+        assert!(json.contains("\"secrets\":{\"provider\":\"environment\""));
+        assert!(json.contains("\"stale_values_allowed\":false"));
         assert!(!json.contains("contract_version"));
         assert!(!json.contains("capabilities"));
         assert!(!debug.contains("secret-password"));

@@ -5,13 +5,14 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 
+use hubuum_secrets::SecretError;
+pub use hubuum_secrets::SecretValue;
+use percent_encoding::{NON_ALPHANUMERIC, percent_encode};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::sync::{Mutex, OnceCell};
 
-pub use hubuum_events_core::{
-    EventEnvelope, EventSinkSecretError, resolve_event_sink_secret, resolve_event_sink_secret_uri,
-};
+pub use hubuum_events_core::EventEnvelope;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SinkError {
@@ -34,8 +35,8 @@ impl fmt::Display for SinkError {
 
 impl std::error::Error for SinkError {}
 
-impl From<EventSinkSecretError> for SinkError {
-    fn from(error: EventSinkSecretError) -> Self {
+impl From<SecretError> for SinkError {
+    fn from(error: SecretError) -> Self {
         Self::new(error.to_string())
     }
 }
@@ -84,7 +85,7 @@ pub fn ensure_payload_within_limit(
 pub struct SinkDelivery<'a> {
     config: &'a Value,
     routing: &'a Value,
-    secret_ref: Option<&'a str>,
+    secret: Option<&'a SecretValue>,
 }
 
 impl fmt::Debug for SinkDelivery<'_> {
@@ -94,11 +95,11 @@ impl fmt::Debug for SinkDelivery<'_> {
 }
 
 impl<'a> SinkDelivery<'a> {
-    pub fn new(config: &'a Value, routing: &'a Value, secret_ref: Option<&'a str>) -> Self {
+    pub fn new(config: &'a Value, routing: &'a Value, secret: Option<&'a SecretValue>) -> Self {
         Self {
             config,
             routing,
-            secret_ref,
+            secret,
         }
     }
 
@@ -110,8 +111,29 @@ impl<'a> SinkDelivery<'a> {
         self.routing
     }
 
-    pub fn secret_ref(&self) -> Option<&'a str> {
-        self.secret_ref
+    pub fn secret(&self) -> Option<&'a SecretValue> {
+        self.secret
+    }
+}
+
+pub fn resolve_secret_uri(
+    uri: &str,
+    secret: Option<&SecretValue>,
+    sink_label: &str,
+) -> Result<String, SinkError> {
+    let contains_secret_placeholder = uri.contains("{secret}");
+    match secret {
+        Some(_) if !contains_secret_placeholder => Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri must include {{secret}} when secret_ref is set"
+        ))),
+        Some(secret) => {
+            let encoded = percent_encode(secret.expose(), NON_ALPHANUMERIC).to_string();
+            Ok(uri.replace("{secret}", &encoded))
+        }
+        None if contains_secret_placeholder => Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri includes {{secret}} without secret_ref"
+        ))),
+        None => Ok(uri.to_string()),
     }
 }
 

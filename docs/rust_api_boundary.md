@@ -88,6 +88,7 @@ manifest.
 | `hubuum-events-core` | Experimental public |
 | `hubuum-outbound-http` | Workspace-internal |
 | `hubuum-query` | Experimental public |
+| `hubuum-secrets` | Workspace-internal |
 | `hubuum-storage-core` | Experimental public |
 | `hubuum-storage-conformance` | Experimental public |
 | `hubuum-storage-postgres` | Workspace-internal |

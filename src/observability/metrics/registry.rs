@@ -29,6 +29,7 @@ const HTTP_REQUEST_DURATION: &str = "hubuum_http_request_duration";
 const DB_CONNECTION_ACQUIRE_DURATION: &str = "hubuum_db_connection_acquire_duration";
 const DB_OPERATION_DURATION: &str = "hubuum_db_operation_duration";
 const STORAGE_OPERATION_DURATION: &str = "hubuum_storage_operation_duration";
+const SECRET_RESOLUTION_DURATION: &str = "hubuum_secret_resolution_duration";
 const REMOTE_CALL_DURATION: &str = "hubuum_remote_call_duration";
 const TASK_QUEUE_WAIT_DURATION: &str = "hubuum_task_queue_wait_duration";
 const TASK_EXECUTION_DURATION: &str = "hubuum_task_execution_duration";
@@ -42,7 +43,8 @@ fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
         HTTP_REQUEST_DURATION
         | DB_CONNECTION_ACQUIRE_DURATION
         | DB_OPERATION_DURATION
-        | STORAGE_OPERATION_DURATION => LATENCY_BUCKETS_SECONDS,
+        | STORAGE_OPERATION_DURATION
+        | SECRET_RESOLUTION_DURATION => LATENCY_BUCKETS_SECONDS,
         REMOTE_CALL_DURATION => OUTBOUND_BUCKETS_SECONDS,
         TASK_QUEUE_WAIT_DURATION
         | TASK_EXECUTION_DURATION
@@ -195,6 +197,19 @@ pub fn init() -> Result<(), ApiError> {
         storage_operation_errors: meter
             .u64_counter("hubuum_storage_operation_errors")
             .with_description("Backend-neutral logical storage operation failures")
+            .build(),
+        secret_source_info: meter
+            .u64_gauge("hubuum_secret_source_info")
+            .with_description("Selected secret provider")
+            .build(),
+        secret_resolution_duration: duration_histogram(
+            &meter,
+            SECRET_RESOLUTION_DURATION,
+            "Secret resolution duration by bounded provider and consumer",
+        ),
+        secret_resolutions: meter
+            .u64_counter("hubuum_secret_resolutions")
+            .with_description("Secret resolution outcomes by bounded provider and consumer")
             .build(),
         task_worker_iterations: meter
             .u64_counter("hubuum_task_worker_iterations")

@@ -3,7 +3,6 @@ use std::{fmt, time::Duration};
 use hubuum_event_sinks_common::{
     EventEnvelope, SinkDelivery, SinkError, ensure_payload_within_limit, parse_sink_config,
     parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
-    resolve_event_sink_secret,
 };
 use hubuum_outbound_http::{OutboundHeaders, OutboundMethod, OutboundRequest};
 use serde::Deserialize;
@@ -131,7 +130,7 @@ async fn deliver_webhook(
 
     let config: WebhookConfig = parse_sink_config(&delivery, "webhook")?;
 
-    let mut headers = webhook_headers(&config, delivery.secret_ref())?;
+    let mut headers = webhook_headers(&config, delivery.secret())?;
     headers
         .insert("content-type", "application/json")
         .map_err(sink_error)?;
@@ -177,7 +176,7 @@ async fn deliver_webhook(
 
 fn webhook_headers(
     config: &WebhookConfig,
-    secret_ref: Option<&str>,
+    secret: Option<&hubuum_secrets::SecretValue>,
 ) -> Result<OutboundHeaders, SinkError> {
     let mut headers = OutboundHeaders::new();
     if let Some(config_headers) = &config.headers {
@@ -191,8 +190,8 @@ fn webhook_headers(
         }
     }
 
-    if let Some(secret_ref) = secret_ref {
-        let secret = resolve_event_sink_secret(secret_ref)?;
+    if let Some(secret) = secret {
+        let secret = secret.expose_utf8()?;
         headers
             .insert("authorization", &format!("Bearer {secret}"))
             .map_err(|_| SinkError::new("Resolved webhook secret is not a valid header"))?;
@@ -422,19 +421,14 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_sink_posts_event_payload_with_idempotency_header_and_secret() {
-        unsafe {
-            std::env::set_var(
-                "HUBUUM_EVENT_SINK_SECRET_WEBHOOK_TEST_TOKEN",
-                "expected-token",
-            );
-        }
+        let secret = hubuum_secrets::SecretValue::new(b"expected-token".to_vec()).unwrap();
         let (port, request_rx) = spawn_https_server("202 Accepted").await;
         let envelope = envelope();
         let (config, routing) = delivery(format!("https://localhost:{port}/events"));
         WebhookSink::new(settings())
             .deliver(
                 &envelope,
-                SinkDelivery::new(&config, &routing, Some("webhook_test_token")),
+                SinkDelivery::new(&config, &routing, Some(&secret)),
             )
             .await
             .unwrap();
@@ -454,18 +448,13 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_sink_treats_non_success_status_as_delivery_error() {
-        unsafe {
-            std::env::set_var(
-                "HUBUUM_EVENT_SINK_SECRET_WEBHOOK_TEST_TOKEN",
-                "expected-token",
-            );
-        }
+        let secret = hubuum_secrets::SecretValue::new(b"expected-token".to_vec()).unwrap();
         let (port, request_rx) = spawn_https_server("500 Internal Server Error").await;
         let (config, routing) = delivery(format!("https://localhost:{port}/events"));
         let error = WebhookSink::new(settings())
             .deliver(
                 &envelope(),
-                SinkDelivery::new(&config, &routing, Some("webhook_test_token")),
+                SinkDelivery::new(&config, &routing, Some(&secret)),
             )
             .await
             .unwrap_err();

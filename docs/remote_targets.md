@@ -10,7 +10,7 @@ The first version is manual invocation only:
 - execution is queued through the generic task system as `remote_call`
 - outbound methods are `get`, `post`, `patch`, and `delete`
 - rendered outbound URLs must use `https://`
-- auth secrets are referenced by name and resolved from server environment variables at execution time
+- auth secrets are referenced by name and resolved through the selected server secret source at execution time
 
 Endpoints:
 
@@ -106,16 +106,17 @@ For `get` and `delete`, Hubuum omits the outbound request body unless `body_temp
 
 ## Auth configuration
 
-Secrets are never stored in target rows. Targets store a secret reference name, and the worker
-resolves the value from an environment variable:
+Secrets are never stored in target rows. Targets store a validated alias, and
+the worker resolves it through the selected [secret source](secret_sources.md).
+The default environment source maps aliases as follows:
 
 ```text
 HUBUUM_REMOTE_SECRET_<UPPERCASE_SECRET_NAME>
 ```
 
 The reference name is configuration metadata, not a secret value. Users with `ReadRemoteTarget` can
-see which reference name a target uses, but only the worker reads the corresponding environment
-variable value.
+see which reference name a target uses, but only the worker receives the
+resolved value.
 
 For example, this target auth config:
 
@@ -360,7 +361,7 @@ The worker:
 2. re-checks subject read permission and target execution permission for the submitting user
 3. renders URL, headers, and body
 4. validates the rendered URL and screens the destination address (see Outbound safety)
-5. resolves auth secrets from environment variables
+5. resolves auth secrets through the selected secret source
 6. performs the outbound HTTP request
 7. stores a sanitized result row
 8. finalizes the task

@@ -72,6 +72,7 @@ mod tests {
                 url: "ldap://ldap.example.org".to_string(),
                 bind_dn: None,
                 bind_password: None,
+                bind_password_ref: None,
                 connect_timeout_seconds: 5,
                 operation_timeout_seconds: 10,
                 user_base_dn: "ou=people,dc=example,dc=org".to_string(),

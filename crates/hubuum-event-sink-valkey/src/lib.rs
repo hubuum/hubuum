@@ -4,7 +4,7 @@ use std::time::Duration;
 use hubuum_event_sinks_common::{
     DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
     parse_sink_config, parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
-    require_tls_uri_scheme, resolve_event_sink_secret_uri, serialize_envelope_to_string,
+    require_tls_uri_scheme, resolve_secret_uri, serialize_envelope_to_string,
 };
 use redis::Client;
 use serde::Deserialize;
@@ -81,7 +81,7 @@ impl ValkeySink {
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
         let routing = parse_routing(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "Valkey")?;
+        let uri = resolve_secret_uri(&config.uri, delivery.secret(), "Valkey")?;
         require_tls_uri_scheme(&uri, "Valkey", &["rediss"])?;
         let client = self.client(&uri).await?;
         let entry = stream_entry(envelope, routing, config)?;
@@ -216,6 +216,8 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_event_sinks_common::SecretValue;
+
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -290,9 +292,9 @@ mod tests {
     fn delivery<'a>(
         config: &'a serde_json::Value,
         routing: &'a serde_json::Value,
-        secret_ref: Option<&'a str>,
+        secret: Option<&'a SecretValue>,
     ) -> SinkDelivery<'a> {
-        SinkDelivery::new(config, routing, secret_ref)
+        SinkDelivery::new(config, routing, secret)
     }
 
     #[test]
@@ -390,25 +392,15 @@ mod tests {
 
     #[test]
     fn secret_ref_replaces_uri_placeholder_with_encoded_secret() {
-        let secret_ref = "valkey_sink_unit_test";
-        unsafe {
-            std::env::set_var(
-                "HUBUUM_EVENT_SINK_SECRET_VALKEY_SINK_UNIT_TEST",
-                "p@ss/w:rd",
-            );
-        }
+        let secret = SecretValue::new(b"p@ss/w:rd".to_vec()).unwrap();
 
-        let uri = resolve_event_sink_secret_uri(
+        let uri = resolve_secret_uri(
             "redis://default:{secret}@valkey.example/0",
-            Some(secret_ref),
+            Some(&secret),
             "Valkey",
         )
         .unwrap();
 
         assert_eq!(uri, "redis://default:p%40ss%2Fw%3Ard@valkey.example/0");
-
-        unsafe {
-            std::env::remove_var("HUBUUM_EVENT_SINK_SECRET_VALKEY_SINK_UNIT_TEST");
-        }
     }
 }

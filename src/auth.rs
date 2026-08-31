@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 #[cfg(feature = "integration-test-support")]
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
-use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
+use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapSecretSource};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
@@ -116,6 +116,18 @@ impl ConfiguredLdapScope {
 
 struct AuthProviderRegistry {
     providers: HashMap<String, RegisteredAuthProvider>,
+}
+
+struct ApplicationLdapSecretSource;
+
+#[async_trait::async_trait]
+impl LdapSecretSource for ApplicationLdapSecretSource {
+    async fn resolve(
+        &self,
+        alias: &str,
+    ) -> Result<hubuum_secrets::ResolvedSecret, hubuum_secrets::SecretError> {
+        crate::secrets::resolve_ldap_secret(alias).await
+    }
 }
 
 type AuthProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;
@@ -326,7 +338,11 @@ impl LdapAuthProvider {
     ) -> Result<(), ApiError> {
         let refresh_policy = configured.refresh_policy()?;
         let scope = configured.ldap.scope.clone();
-        let provider = LdapIdentityProvider::new(configured.ldap).map_err(provider_config_error)?;
+        let provider = LdapIdentityProvider::with_secret_source(
+            configured.ldap,
+            Arc::new(ApplicationLdapSecretSource),
+        )
+        .map_err(provider_config_error)?;
         registry.register(RegisteredAuthProvider {
             name: scope.clone(),
             kind: LDAP_PROVIDER_KIND.to_string(),
@@ -783,6 +799,7 @@ mod tests {
                 url: "ldap://ldap.example.org".to_string(),
                 bind_dn: None,
                 bind_password: None,
+                bind_password_ref: None,
                 connect_timeout_seconds: 5,
                 operation_timeout_seconds: 10,
                 user_base_dn: "ou=people,dc=example,dc=org".to_string(),
@@ -913,6 +930,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(registry.provider_names(), vec!["local", "alpha", "zeta"]);
+    }
+
+    #[test]
+    fn registry_accepts_referenced_ldap_bind_password_without_resolving_it_at_startup() {
+        let mut configured = ldap_scope("directory");
+        configured.ldap.bind_dn = Some("cn=service,dc=example,dc=org".to_string());
+        configured.ldap.bind_password_ref = Some("directory_bind".to_string());
+
+        let registry = AuthProviderRegistry::from_config(AuthProvidersConfig {
+            ldap: vec![configured],
+        })
+        .unwrap();
+
+        assert_eq!(registry.provider_names(), vec!["local", "directory"]);
     }
 
     #[test]

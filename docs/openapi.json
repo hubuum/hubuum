@@ -28435,6 +28435,7 @@
           "backups",
           "restores",
           "remote_calls",
+          "secrets",
           "authentication",
           "permissions",
           "pagination",
@@ -28471,11 +28472,55 @@
           "restores": {
             "$ref": "#/components/schemas/RestoreConfig"
           },
+          "secrets": {
+            "$ref": "#/components/schemas/SecretSourceConfig"
+          },
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
           },
           "tasks": {
             "$ref": "#/components/schemas/TaskConfig"
+          }
+        }
+      },
+      "SecretSourceConfig": {
+        "type": "object",
+        "required": [
+          "provider",
+          "file_root_configured",
+          "cache_capacity_per_consumer",
+          "cache_total_bytes_per_consumer",
+          "cache_ttl_seconds",
+          "stale_values_allowed",
+          "projected_symlinks_confined_to_root"
+        ],
+        "properties": {
+          "cache_capacity_per_consumer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cache_total_bytes_per_consumer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cache_ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "file_root_configured": {
+            "type": "boolean",
+            "description": "Whether a mounted-secret root was configured. The path is never returned."
+          },
+          "projected_symlinks_confined_to_root": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Selected process-wide provider. Values are `environment`, `file`, or\n`invalid` when startup configuration cannot be parsed."
+          },
+          "stale_values_allowed": {
+            "type": "boolean"
           }
         }
       },

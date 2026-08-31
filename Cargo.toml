@@ -31,6 +31,7 @@ members = [
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
+    "crates/hubuum-secrets",
     "crates/hubuum-storage-core",
     "crates/hubuum-storage-conformance",
     "crates/hubuum-storage-memory",
@@ -91,6 +92,7 @@ hubuum-templates = { path = "crates/hubuum-templates" }
 hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
+hubuum-secrets = { path = "crates/hubuum-secrets" }
 hubuum-storage-core = { path = "crates/hubuum-storage-core" }
 hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
@@ -114,7 +116,6 @@ utoipa-swagger-ui = { version = "9", features = [
 ], optional = true }
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
-percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 prometheus = "0.14"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
@@ -132,6 +133,7 @@ criterion = "0.8.2"
 gungraun = "0.19.4"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
+percent-encoding = "2"
 regex = "1"
 rstest = "0.26"
 tokio-rustls = "0.26"

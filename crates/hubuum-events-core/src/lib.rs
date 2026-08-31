@@ -16,7 +16,6 @@ use std::fmt;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 pub use hubuum_domain::{CollectionId, PrincipalId, TaskId};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "schema")]
 use utoipa::ToSchema;
@@ -1154,70 +1153,6 @@ fn ensure_unique_uuid(field: &'static str, values: &[Uuid]) -> Result<(), EventF
     }
     Ok(())
 }
-
-pub fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, EventSinkSecretError> {
-    let key = format!(
-        "HUBUUM_EVENT_SINK_SECRET_{}",
-        secret_ref.to_ascii_uppercase()
-    );
-    std::env::var(&key).map_err(|_| EventSinkSecretError::MissingSecret {
-        secret_ref: secret_ref.to_string(),
-    })
-}
-
-pub fn resolve_event_sink_secret_uri(
-    uri: &str,
-    secret_ref: Option<&str>,
-    sink_label: &str,
-) -> Result<String, EventSinkSecretError> {
-    let contains_secret_placeholder = uri.contains("{secret}");
-    match secret_ref {
-        Some(secret_ref) => {
-            if !contains_secret_placeholder {
-                return Err(EventSinkSecretError::MissingSecretPlaceholder {
-                    sink_label: sink_label.to_string(),
-                });
-            }
-            let secret = resolve_event_sink_secret(secret_ref)?;
-            let encoded = utf8_percent_encode(&secret, NON_ALPHANUMERIC).to_string();
-            Ok(uri.replace("{secret}", &encoded))
-        }
-        None if contains_secret_placeholder => {
-            Err(EventSinkSecretError::UnexpectedSecretPlaceholder {
-                sink_label: sink_label.to_string(),
-            })
-        }
-        None => Ok(uri.to_string()),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EventSinkSecretError {
-    MissingSecret { secret_ref: String },
-    MissingSecretPlaceholder { sink_label: String },
-    UnexpectedSecretPlaceholder { sink_label: String },
-}
-
-impl fmt::Display for EventSinkSecretError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingSecret { secret_ref } => write!(
-                f,
-                "Event sink secret reference '{secret_ref}' is not configured"
-            ),
-            Self::MissingSecretPlaceholder { sink_label } => write!(
-                f,
-                "Invalid {sink_label} config: uri must include {{secret}} when secret_ref is set"
-            ),
-            Self::UnexpectedSecretPlaceholder { sink_label } => write!(
-                f,
-                "Invalid {sink_label} config: uri includes {{secret}} without secret_ref"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for EventSinkSecretError {}
 
 /// Validates that `action` is legal for `entity_type`.
 pub fn is_valid_pair(entity_type: EntityType, action: Action) -> bool {
