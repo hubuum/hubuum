@@ -1,0 +1,82 @@
+name: Scheduled backup recovery drill
+
+on:
+  schedule:
+    - cron: "41 04 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: scheduled-backup-recovery
+  cancel-in-progress: false
+
+jobs:
+  backup-recovery:
+    name: Backup recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build candidate production image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          tags: hubuum-server:restore-drill
+          build-args: |
+            CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Resolve adjacent stable release
+        id: adjacent_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HUBUUM_COMPATIBILITY_REPORT: backup-recovery-report/release-metadata.json
+        run: bash scripts/resolve-adjacent-release.sh
+      - name: Run isolated backup recovery drill
+        env:
+          HUBUUM_TEST_IMAGE: hubuum-server:restore-drill
+          HUBUUM_PREVIOUS_IMAGE: ${{ steps.adjacent_release.outputs.previous_image }}
+          HUBUUM_PREVIOUS_RELEASE_TAG: ${{ steps.adjacent_release.outputs.previous_tag }}
+          HUBUUM_COMPATIBILITY_REPORT_DIR: backup-recovery-report
+        run: bash scripts/test-adjacent-release-upgrade.sh
+      - name: Summarize backup recovery
+        if: always() && hashFiles('backup-recovery-report/report.json') != ''
+        run: |
+          {
+            echo "### Backup recovery drill"
+            echo ""
+            echo "| Artifact | Result | Restore ms | Logical rows |"
+            echo "| --- | --- | ---: | ---: |"
+            jq --raw-output '
+              .backup_recovery
+              | to_entries[]
+              | select(.key != "restored_application_smoke")
+              | "| \(.key) | \(.value.result // "not-run") | \(.value.restore_test.restore_duration_ms // "-") | \(.value.total_items // "-") |"
+            ' backup-recovery-report/report.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scheduled-backup-recovery-${{ github.run_id }}
+          path: backup-recovery-report
+          if-no-files-found: error
+          retention-days: 90

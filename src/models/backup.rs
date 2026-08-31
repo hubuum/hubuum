@@ -13,6 +13,14 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use super::principal::Principal;
 
 pub const CURRENT_BACKUP_VERSION: i32 = 5;
+pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
+    "backup_task_outputs (backup artifacts never recursively contain prior backups)",
+    "authentication tokens and token scopes (credentials must be reissued after restore)",
+    "class reachability cache (rebuilt by database triggers during restore)",
+    "computed-field class state and materialized object cache (rebuilt after restore)",
+    "active tasks and non-terminal event deliveries",
+    "restore control-plane tables and server instance heartbeats",
+];
 
 /// Immutable identity snapshot recorded with a restore stage and its provenance event.
 pub struct RestoreInitiator {
@@ -110,6 +118,28 @@ pub struct BackupManifest {
     #[schema(value_type = Object)]
     pub item_counts: BTreeMap<String, i64>,
     pub exclusions: Vec<String>,
+}
+
+impl BackupManifest {
+    #[must_use]
+    pub fn from_sections(state: &BackupState, history: Option<&BackupHistory>) -> Self {
+        let mut item_counts = BTreeMap::new();
+        for (name, rows) in &state.sections {
+            item_counts.insert(name.as_str().to_string(), rows.len() as i64);
+        }
+        if let Some(history) = history {
+            for (name, rows) in &history.sections {
+                item_counts.insert(format!("history.{}", name.as_str()), rows.len() as i64);
+            }
+        }
+        Self {
+            item_counts,
+            exclusions: BACKUP_MANIFEST_EXCLUSIONS
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        }
+    }
 }
 
 /// Privileged, restore-only logical snapshots. Backup version 5 identifies

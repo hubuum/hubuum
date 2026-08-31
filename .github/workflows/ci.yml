@@ -1022,6 +1022,17 @@ jobs:
             echo "| Migration seconds | $(jq --raw-output '.migration.seconds' compatibility-report/report.json) |"
             echo "| Maximum API latency | $(jq --raw-output '.migration.max_api_latency_seconds' compatibility-report/report.json) s |"
             echo "| Maximum observed outage | $(jq --raw-output '.migration.max_observed_api_outage_seconds' compatibility-report/report.json) s |"
+            echo ""
+            echo "### Backup recovery"
+            echo ""
+            echo "| Artifact | Result | Generate ms | Restore ms | Logical rows |"
+            echo "| --- | --- | ---: | ---: | ---: |"
+            jq --raw-output '
+              .backup_recovery
+              | to_entries[]
+              | select(.key != "restored_application_smoke")
+              | "| \(.key) | \(.value.result // "not-run") | \(.value.generation_duration_ms // "-") | \(.value.restore_test.restore_duration_ms // "-") | \(.value.total_items // "-") |"
+            ' compatibility-report/report.json
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload adjacent-release compatibility report
         if: always()

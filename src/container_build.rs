@@ -155,6 +155,12 @@ fn production_container_runs_as_non_root() {
             .any(|line| line.trim() == "USER hubuum:hubuum"),
         "production Dockerfile must select the dedicated hubuum user"
     );
+    assert!(
+        dockerfile
+            .lines()
+            .any(|line| line.trim() == "RUN chmod 0755 /entrypoint.sh"),
+        "production entrypoint must be readable by the dedicated hubuum user"
+    );
 }
 
 #[test]

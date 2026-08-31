@@ -251,6 +251,12 @@ assert_flag "$compatibility_output" code true
 assert_flag "$compatibility_output" container true
 assert_flag "$compatibility_output" artifacts false
 
+restore_drill_output="$(bash "$classifier" .github/workflows/restore-drill.yml)"
+assert_flag "$restore_drill_output" code true
+assert_flag "$restore_drill_output" container true
+assert_flag "$restore_drill_output" artifacts false
+assert_flag "$restore_drill_output" benchmarks false
+
 unknown_output="$(bash "$classifier" future-build-input.conf)"
 assert_flag "$unknown_output" code true
 assert_flag "$unknown_output" container true

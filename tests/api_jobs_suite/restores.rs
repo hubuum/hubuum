@@ -104,6 +104,7 @@ mod tests {
                 }))
                 .unwrap(),
             );
+        document.manifest = BackupManifest::from_sections(&document.state, None);
         document
     }
 

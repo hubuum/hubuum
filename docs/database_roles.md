@@ -119,7 +119,10 @@ documented defaults for names not overridden.
 Set `HUBUUM_DATABASE_RUNTIME_ROLE=EXISTING_APPLICATION_ROLE` on the old and new
 server versions during that rollout. Then use this order:
 
-1. Verify the backup and inspect the restore control plane:
+1. Create and rehearse a version 5 backup with the candidate verifier and an
+   empty disposable database, following the
+   [existing deployment upgrade path](backup-restore.md#existing-deployment-upgrade-path).
+   Then inspect the production restore control plane:
 
    ```sql
    SELECT state, restore_job_id,

@@ -25,12 +25,14 @@ pub use execution::{
     with_mutation_provenance, with_revision_precondition, with_storage_call_site,
     with_storage_call_site_send, with_storage_execution_scope, with_storage_execution_scope_send,
 };
-#[cfg(feature = "embedded-migrations")]
-pub(crate) use factory::run_storage_migrations;
 pub(crate) use factory::{
     StorageDatabasePrivilegeReport, StorageDatabaseRole, StorageDatabaseRoleNames, StorageSettings,
     initialize_storage, inspect_storage_database_privileges, storage_database_role_grants_sql,
     storage_database_role_setup_sql,
+};
+#[cfg(feature = "embedded-migrations")]
+pub(crate) use factory::{
+    prepare_disposable_restore_database, reset_disposable_restore_database, run_storage_migrations,
 };
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, CatalogStorage,

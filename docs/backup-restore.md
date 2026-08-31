@@ -152,6 +152,85 @@ History is included by default. Add `--backup-without-history` only to create a
 backup whose eventual restore resets terminal task, audit, delivery, and
 temporal history.
 
+Verify the artifact without a database connection before moving or archiving
+it:
+
+```text
+hubuum-admin --verify-backup backup.json --json
+```
+
+This bounded, non-destructive check verifies the document version, SHA-256,
+manifest counts and exclusions, required sections and seed rows, timestamp and
+revision invariants, logical references, computed-field definitions, and JSON
+Schema. Its versioned report contains only artifact metadata, counts, timings,
+and results; it never includes backup rows, database URLs, tokens, or
+credentials. A format-only success proves that the bytes are internally valid,
+not that PostgreSQL can restore them.
+
+For a real recovery rehearsal, create a new empty disposable PostgreSQL
+database and let the candidate binary migrate, restore, and check it:
+
+```text
+createdb --maintenance-db="$POSTGRES_ADMIN_URL" hubuum_restore_drill
+hubuum-admin \
+  --verify-backup backup.json \
+  --restore-test-database-url \
+    'postgres://hubuum_restore_drill:.../hubuum_restore_drill' \
+  --json
+dropdb --maintenance-db="$POSTGRES_ADMIN_URL" hubuum_restore_drill
+```
+
+The restore-test login must be able to migrate and replace data in that one
+database. The command refuses PostgreSQL maintenance databases, a database
+containing any user object, and a target matching either configured Hubuum
+database URL even when the usernames differ. It uses the production restore
+validation and transaction path, checks storage readiness, and takes a second
+logical snapshot. Authoritative state and retained history must match the
+source, apart from the one documented `restore.succeeded` provenance event.
+The JSON report includes the canonical state digest and comparison results. By
+default the command resets the disposable database's `public` schema after
+both successful and failed verification. The database itself remains the
+caller's responsibility and should be dropped afterward.
+
+Add `--keep-restore-test-database` when the restored API and worker must be
+started for application-level smoke tests. That option deliberately leaves the
+restored schema intact; delete the database after inspection. Password hashes,
+tokens, and token scopes are excluded from backups, so reset an administrator
+password and issue a new token before exercising authenticated endpoints.
+
+## Existing deployment upgrade path
+
+Treat a restorable backup as an upgrade prerequisite, especially when adopting
+the split database roles described in
+[PostgreSQL Database Roles](database_roles.md). Use this sequence:
+
+1. While the existing release is healthy, stop new backup, restore, and import
+   operations and create a version 5 backup with history. Keep the old release,
+   its database credential, and this artifact until the upgrade is accepted.
+2. Run the candidate `hubuum-admin --verify-backup` against those exact bytes.
+   If the installed release is v0.0.9 or older, first upgrade normally to
+   v0.0.10 or v0.0.11, create a version 5 backup there, and only then continue;
+   converting a version 4-or-older document in place is not supported.
+3. Restore the artifact into a newly created empty disposable database using
+   `--restore-test-database-url` and
+   `--keep-restore-test-database`. Start the candidate API and worker against
+   only that database, reset an administrator password, and verify login,
+   representative reads, background work, audit history, and computed-field
+   rebuilding. Then delete the disposable database.
+4. Confirm production maintenance is `normal` and no confirmed restore is in
+   flight. Follow the single-role adoption procedure, run the one-shot schema
+   migration, start the isolated restore executor, and roll runtime-only API
+   and worker processes.
+5. Keep restore confirmation blocked until the executor and runtime privilege
+   report pass. Retain the pre-upgrade deployment and backup through the
+   observation window. Application rollback after role adoption uses the
+   compatibility runtime login; web restore stays blocked and the candidate
+   one-shot admin restore remains the recovery path.
+
+This is an application migration path, not an automatic database downgrade.
+Older application releases are only certified against the adjacent migrated
+schema as documented in [Releasing Hubuum](releasing.md).
+
 Restore requires the explicit destructive phrase and the separate migration
 credential:
 

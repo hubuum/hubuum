@@ -13,6 +13,9 @@ This repository uses the CI workflow in
   immediately preceding stable release.
 - The candidate must pass the adjacent stable release upgrade and application
   rollback harness against an immutable release-image digest.
+- The candidate must restore current, adjacent-release, and history-free backup
+  artifacts into isolated databases and pass restored API and worker smoke
+  checks.
 - Every Rust package must retain an explicit support classification; internal
   packages cannot be published, and any supported package must pass rustdoc,
   clean packaging, and semantic compatibility checks.
@@ -59,8 +62,9 @@ Once the tag is pushed, the CI workflow will:
 - verify the tagged commit already passed CI on `main`
 - regenerate OpenAPI and compare it with the immediately preceding stable tag
 - resolve the latest stable release, migrate its representative data under live
-  API probes, exercise a mixed-version interval, and restore its application
-  image against the migrated database before publishing
+  API probes, exercise a mixed-version interval, restore its application image
+  against the migrated database, and prove the candidate can recover both
+  adjacent-release and current backup artifacts before publishing
 - verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
 - validate Rust API classifications and any supported crate compatibility
 - publish GitHub release archives and SHA-256 checksums for Linux x86_64, Linux ARM64,
@@ -159,10 +163,23 @@ restarts the `N-1` API against the migrated schema. That last step is an
 application rollback only. Hubuum does not automatically downgrade the
 database, and releases older than `N-1` are outside this compatibility promise.
 
-Backup, restore, and import document formats may change at a release boundary.
-Quiesce those operations while versions overlap and use the document format
-accepted by the application version that will process it. A successful API
-rollback does not make a newer backup or import document readable by `N-1`.
+The harness also creates an `N-1` backup with history, an `N-1` history-free
+backup, and an `N` backup. The candidate restores each into a separately
+created empty database, records bounded sanitized evidence, and starts its API
+and worker against the retained `N-1` restore. Smoke checks cover authentication
+recovery, representative resource and history reads, excluded bearer tokens,
+and computed-field rebuilding. A scheduled workflow repeats the same drill so
+recoverability is checked between release events rather than inferred from
+backup creation alone.
+
+Backup, restore, and import document formats may still change at a release
+boundary. Quiesce those operations while versions overlap and use the document
+format accepted by the application version that will process it. CI guarantees
+candidate restore compatibility only for the immediately adjacent stable
+release. A successful API rollback does not make a newer backup or import
+document readable by `N-1`; follow the
+[existing deployment upgrade path](backup-restore.md#existing-deployment-upgrade-path)
+when an older installation must cross a format boundary.
 
 ## Native archives
 
