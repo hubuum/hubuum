@@ -476,6 +476,11 @@ Backend:
 - `HUBUUM_BIND_PORT`: internal backend API listen port. Default: `8080`.
 - `HUBUUM_LOG_LEVEL=info`
 - `HUBUUM_TOKEN_HASH_KEY`: generated stable token hash key.
+- `HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true`: prevents accidental ephemeral
+  startup. The generated installation remains in compatible single-key mode;
+  convert it with the staged procedure in
+  [Secret Sources](secret_sources.md#token-key-ring-rotation) when rotation is
+  required.
 - `HUBUUM_CLIENT_ALLOWLIST`: defaults to the container bridge subnet.
 - `HUBUUM_TRUST_IP_HEADERS=false`
 - `HUBUUM_TOKEN_LIFETIME_HOURS=24`

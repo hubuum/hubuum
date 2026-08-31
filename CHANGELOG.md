@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added bounded online token hash key-ring rotation with versioned bearer
+  tokens, active and previous verification keys, race-safe migration of legacy
+  digests, strict stable-key startup enforcement, per-key retirement
+  diagnostics through `hubuum-admin --token-key-status`, redacted runtime ring
+  identity, and low-cardinality authentication and stored-token metrics.
 - Added a common typed secret-source layer with non-printing binary values,
   validated aliases and versions, async environment and confined mounted-file
   providers, entry- and byte-bounded single-flight caching, atomic provider
@@ -21,6 +26,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (experimental `hubuum-storage-core` API):** token creation and
+  renewal now receive typed `StorageTokenDigest` values, authentication and
+  hash-based revocation accept bounded credential candidates, successful
+  authentication reports migration outcome, and every complete adapter must
+  implement `TokenStorage::token_key_usage`. Third-party adapter authors must
+  persist token format, hash algorithm, and optional key ID metadata and add
+  the new aggregate diagnostic before upgrading.
+- Newly issued bearer values use the opaque `hbt1.<key-id>.<secret>` format.
+  Existing unversioned tokens and the single `HUBUUM_TOKEN_HASH_KEY`
+  configuration remain compatible; clients that already treat bearer values
+  as opaque require no change.
 - **Breaking (experimental `hubuum-events-core` API):** removed
   `resolve_event_sink_secret`, `resolve_event_sink_secret_uri`, and
   `EventSinkSecretError`, which read process environment directly from the

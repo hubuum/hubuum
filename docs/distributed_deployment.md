@@ -214,9 +214,10 @@ All replicas must use the same values for settings that define cluster-wide
 identity or behavior. In particular:
 
 - `HUBUUM_DATABASE_URL` must point to the same PostgreSQL database.
-- `HUBUUM_TOKEN_HASH_KEY` must be one stable shared secret. Tokens are stored in
-  PostgreSQL, but replicas cannot verify the same token hash with different
-  keys.
+- The token hash key ring (active ID, ordered previous IDs, and every key's
+  material) must be equivalent on all replicas except during the documented
+  staged rotation boundary. Compare the redacted ring identity in runtime
+  configuration before advancing a rollout.
 - Authentication-provider configuration and referenced credentials must be
   equivalent on every API and worker replica.
 - Task lease and event lock durations should be consistent across worker
@@ -231,6 +232,10 @@ running-configuration endpoint. Secret fields report only whether they are
 configured. Its database section also reports the selected complete storage
 backend and effective pool settings. Every replica in one deployment must
 report the same backend and compatible settings.
+
+Use the [token key-ring rotation procedure](secret_sources.md#token-key-ring-rotation)
+for multi-replica changes. Changing a single key in place is not a safe online
+rotation.
 
 ## Shared Login Throttling
 

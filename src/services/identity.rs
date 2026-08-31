@@ -436,7 +436,7 @@ pub async fn create_token(
     let raw = crate::utilities::auth::generate_token();
     let storage_request = StorageTokenCreate::new(
         principal_id_to_storage(parts.principal_id.id()),
-        raw.storage_hash(),
+        raw.storage_digest()?,
         token_policy(issuance_policy),
         event_context.clone(),
     )
@@ -471,7 +471,7 @@ pub async fn renew_token(
         hubuum_domain::TokenId::new(source_token_id)
             .expect("validated source token id must be positive"),
         principal_id_to_storage(principal_id),
-        raw.storage_hash(),
+        raw.storage_digest()?,
         expires_at.map(|timestamp| timestamp.and_utc()),
         token_policy(issuance_policy),
         event_context.clone(),
@@ -546,15 +546,17 @@ pub async fn revoke_token(
 pub async fn revoke_token_by_hash(
     context: &impl StorageContext,
     principal_id: Option<i32>,
-    token_hash: String,
+    credentials: Vec<crate::storage::StorageAuthenticationCredential>,
     event_context: &EventContext,
 ) -> Result<usize, ApiError> {
+    let request = StorageTokenHashRevoke::try_candidates(
+        principal_id.map(principal_id_to_storage),
+        credentials,
+        event_context.clone(),
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
     Ok(storage_handle(context)
-        .revoke_token_by_hash(StorageTokenHashRevoke::new(
-            principal_id.map(principal_id_to_storage),
-            token_hash,
-            event_context.clone(),
-        ))
+        .revoke_token_by_hash(request)
         .await?
         .into_value())
 }

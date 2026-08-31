@@ -146,7 +146,11 @@ pub fn generate_token() -> Token {
     let mut hasher = Sha512::new();
     hasher.update(raw);
     let result = hasher.finalize();
-    Token(result.iter().map(|byte| format!("{byte:02x}")).collect())
+    let secret = result
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Token::issued(secret).expect("token hash key-ring configuration must be valid at startup")
 }
 
 #[cfg(test)]

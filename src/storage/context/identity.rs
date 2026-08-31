@@ -629,6 +629,19 @@ impl TokenStorage for StorageHandle {
         .await
     }
 
+    async fn token_key_usage(
+        &self,
+        observation: StorageTokenObservation,
+    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Token,
+            "token_key_usage",
+            async { dispatch_backend!(self, |backend| backend.token_key_usage(observation).await) },
+        )
+        .await
+    }
+
     async fn create_token(
         &self,
         request: StorageTokenCreate,

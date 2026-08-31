@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;
 
-use crate::config::{get_config, token_hash_key_bytes};
+use crate::config::{TokenHashKeyRing, get_config, token_hash_key_ring};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
@@ -15,7 +15,10 @@ use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
     TokenScope, TokenScopeDetails,
 };
-use crate::storage::{StorageAuthenticatedToken, StorageContext};
+use crate::storage::{
+    StorageAuthenticatedToken, StorageAuthenticationCredential, StorageContext, StorageTokenDigest,
+    StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+};
 use crate::traits::{CursorPaginated, CursorValue};
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
@@ -332,6 +335,13 @@ impl FromStr for TokenListState {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Token(pub String);
 
+pub(crate) struct TokenCredentialPlan {
+    pub credentials: Vec<StorageAuthenticationCredential>,
+    pub migration_target: Option<StorageTokenDigest>,
+    pub format: StorageTokenFormat,
+    pub key_state: &'static str,
+}
+
 /// A newly persisted bearer token paired with its authoritative expiry.
 #[derive(Clone)]
 pub struct IssuedToken {
@@ -403,7 +413,7 @@ impl Token {
         crate::services::identity::revoke_token_by_hash(
             backend,
             None,
-            self.storage_hash(),
+            self.credentials()?.credentials,
             &EventContext::system(),
         )
         .await?;
@@ -411,18 +421,166 @@ impl Token {
     }
 
     pub fn storage_hash(&self) -> String {
-        Self::storage_hash_from_raw(&self.0)
+        self.storage_digest()
+            .expect("issued and legacy token values must be hashable")
+            .lookup_value()
+            .to_string()
     }
 
     pub fn storage_hash_from_raw(raw_token: &str) -> String {
-        type HmacSha256 = Hmac<Sha256>;
-
-        let mut mac =
-            HmacSha256::new_from_slice(token_hash_key_bytes()).expect("invalid HMAC key length");
-        mac.update(raw_token.as_bytes());
-        let digest = mac.finalize().into_bytes();
-        digest.iter().map(|b| format!("{b:02x}")).collect()
+        let ring = token_hash_key_ring()
+            .expect("token hash key-ring configuration must be validated at startup");
+        Self::storage_hash_from_raw_with_ring(raw_token, ring)
     }
+
+    fn storage_hash_from_raw_with_ring(raw_token: &str, ring: &TokenHashKeyRing) -> String {
+        let key = raw_token
+            .strip_prefix("hbt1.")
+            .and_then(|value| value.split_once('.'))
+            .and_then(|(key_id, _)| StorageTokenHashKeyId::try_new(key_id).ok())
+            .and_then(|key_id| ring.key_bytes(&key_id))
+            .unwrap_or_else(|| ring.active_key_bytes());
+        hash_with_key(raw_token, key)
+    }
+
+    pub(crate) fn issued(secret: impl AsRef<str>) -> Result<Self, ApiError> {
+        let ring = token_hash_key_ring()
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        Self::issued_with_ring(secret, ring)
+    }
+
+    fn issued_with_ring(
+        secret: impl AsRef<str>,
+        ring: &TokenHashKeyRing,
+    ) -> Result<Self, ApiError> {
+        let secret = secret.as_ref();
+        if !is_valid_token_secret(secret) {
+            return Err(ApiError::InternalServerError(
+                "generated token secret has an invalid representation".to_string(),
+            ));
+        }
+        Ok(Self(format!("hbt1.{}.{}", ring.active_key_id(), secret)))
+    }
+
+    pub(crate) fn storage_digest(&self) -> Result<StorageTokenDigest, ApiError> {
+        let plan = self.credentials()?;
+        plan.credentials
+            .into_iter()
+            .next()
+            .map(|credential| credential.digest().clone())
+            .ok_or_else(|| ApiError::InternalServerError("token digest plan was empty".to_string()))
+    }
+
+    pub(crate) fn credentials(&self) -> Result<TokenCredentialPlan, ApiError> {
+        let ring = token_hash_key_ring()
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        self.credentials_with_ring(ring)
+    }
+
+    fn credentials_with_ring(
+        &self,
+        ring: &TokenHashKeyRing,
+    ) -> Result<TokenCredentialPlan, ApiError> {
+        if self.0.starts_with("hbt") {
+            let mut parts = self.0.split('.');
+            let version = parts.next();
+            let key_id = parts.next();
+            let secret = parts.next();
+            if version != Some("hbt1")
+                || parts.next().is_some()
+                || secret.is_none_or(|value| !is_valid_token_secret(value))
+            {
+                return Err(invalid_bearer_token());
+            }
+            let key_id = StorageTokenHashKeyId::try_new(key_id.unwrap_or_default())
+                .map_err(|_| invalid_bearer_token())?;
+            let key = ring.key_bytes(&key_id).ok_or_else(invalid_bearer_token)?;
+            let digest =
+                digest_with_key(&self.0, key, StorageTokenFormat::Version1, key_id.clone())?;
+            let key_state = if &key_id == ring.active_key_id() {
+                "active"
+            } else {
+                "previous"
+            };
+            return Ok(TokenCredentialPlan {
+                credentials: vec![StorageAuthenticationCredential::from_digest(digest)],
+                migration_target: None,
+                format: StorageTokenFormat::Version1,
+                key_state,
+            });
+        }
+
+        let credentials = ring
+            .keys()
+            .map(|(key_id, key)| {
+                digest_with_key(&self.0, key, StorageTokenFormat::Legacy, key_id.clone())
+                    .map(StorageAuthenticationCredential::from_digest)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let migration_target = credentials
+            .first()
+            .map(|credential| credential.digest().clone());
+        Ok(TokenCredentialPlan {
+            credentials,
+            migration_target,
+            format: StorageTokenFormat::Legacy,
+            key_state: "legacy",
+        })
+    }
+
+    #[cfg(test)]
+    fn storage_digest_with_ring(
+        &self,
+        ring: &TokenHashKeyRing,
+    ) -> Result<StorageTokenDigest, ApiError> {
+        self.credentials_with_ring(ring)?
+            .credentials
+            .into_iter()
+            .next()
+            .map(|credential| credential.digest().clone())
+            .ok_or_else(|| ApiError::InternalServerError("token digest plan was empty".to_string()))
+    }
+}
+
+fn is_valid_token_secret(value: &str) -> bool {
+    value.len() == 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn digest_with_key(
+    raw_token: &str,
+    key: &[u8],
+    format: StorageTokenFormat,
+    key_id: StorageTokenHashKeyId,
+) -> Result<StorageTokenDigest, ApiError> {
+    StorageTokenDigest::try_new(
+        hash_with_key(raw_token, key),
+        format,
+        StorageTokenHashAlgorithm::HmacSha256V1,
+        Some(key_id),
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
+}
+
+fn hash_with_key(raw_token: &str, key: &[u8]) -> String {
+    type HmacSha256 = Hmac<Sha256>;
+
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any length");
+    mac.update(raw_token.as_bytes());
+    let digest = mac.finalize().into_bytes();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn invalid_bearer_token() -> ApiError {
+    ApiError::Unauthorized("Invalid token".to_string())
 }
 
 /// Soft-revoke a token by id, scoped to the owning principal. Filtering on BOTH
@@ -594,6 +752,31 @@ impl CursorPaginated for PrincipalToken {
 mod tests {
     use super::*;
 
+    fn rotation_ring(active: &str, previous: &[&str]) -> TokenHashKeyRing {
+        let material = |id: &str| match id {
+            "old" => vec![1; 32],
+            "new" => vec![2; 32],
+            _ => panic!("unexpected rotation-test key ID"),
+        };
+        let entries = std::iter::once(active)
+            .chain(previous.iter().copied())
+            .map(|id| (StorageTokenHashKeyId::try_new(id).unwrap(), material(id)))
+            .collect();
+        TokenHashKeyRing::try_new(entries, true, true).unwrap()
+    }
+
+    fn token_verifies(
+        token: &Token,
+        persisted: &StorageTokenDigest,
+        verifier: &TokenHashKeyRing,
+    ) -> bool {
+        token.credentials_with_ring(verifier).is_ok_and(|plan| {
+            plan.credentials
+                .iter()
+                .any(|candidate| candidate.digest() == persisted)
+        })
+    }
+
     #[test]
     fn principal_token_debug_redacts_stored_digest() {
         let token_digest = "keyed-token-digest";
@@ -618,5 +801,107 @@ mod tests {
 
         assert!(output.contains(REDACTED_DEBUG_VALUE));
         assert!(!output.contains(token_digest));
+    }
+
+    #[test]
+    fn newly_issued_tokens_carry_the_active_key_id() {
+        let token = Token::issued("a".repeat(128)).unwrap();
+        let ring = token_hash_key_ring().unwrap();
+
+        assert!(
+            token
+                .0
+                .starts_with(&format!("hbt1.{}.", ring.active_key_id()))
+        );
+        let plan = token.credentials().unwrap();
+        assert_eq!(plan.format, StorageTokenFormat::Version1);
+        assert_eq!(plan.credentials.len(), 1);
+        assert!(plan.migration_target.is_none());
+    }
+
+    #[test]
+    fn token_issuance_rejects_an_invalid_generated_secret() {
+        let ring = rotation_ring("old", &[]);
+
+        assert!(Token::issued_with_ring("not-hex", &ring).is_err());
+    }
+
+    #[test]
+    fn malformed_versioned_tokens_do_not_fall_back_to_legacy_hashing() {
+        let token = Token("hbt2.legacy.not-a-version-one-secret".to_string());
+
+        assert!(matches!(
+            token.credentials(),
+            Err(ApiError::Unauthorized(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_tokens_generate_one_bounded_candidate_per_configured_key() {
+        let token = Token("legacy-bearer-value".to_string());
+        let ring = token_hash_key_ring().unwrap();
+        let plan = token.credentials().unwrap();
+
+        assert_eq!(plan.format, StorageTokenFormat::Legacy);
+        assert_eq!(plan.credentials.len(), ring.key_ids().count());
+        assert!(plan.migration_target.is_some());
+    }
+
+    #[test]
+    fn supported_replica_ring_combinations_validate_each_others_tokens() {
+        let old_only = rotation_ring("old", &[]);
+        let old_with_future = rotation_ring("old", &["new"]);
+        let new_with_old = rotation_ring("new", &["old"]);
+        let new_only = rotation_ring("new", &[]);
+
+        let old_token = Token::issued_with_ring("a".repeat(128), &old_only).unwrap();
+        let old_digest = old_token.storage_digest_with_ring(&old_only).unwrap();
+        assert!(token_verifies(&old_token, &old_digest, &old_only));
+        assert!(token_verifies(&old_token, &old_digest, &old_with_future));
+        assert!(token_verifies(&old_token, &old_digest, &new_with_old));
+
+        let staged_token = Token::issued_with_ring("b".repeat(128), &old_with_future).unwrap();
+        let staged_digest = staged_token
+            .storage_digest_with_ring(&old_with_future)
+            .unwrap();
+        assert!(token_verifies(&staged_token, &staged_digest, &old_only));
+        assert!(token_verifies(
+            &staged_token,
+            &staged_digest,
+            &old_with_future
+        ));
+        assert!(token_verifies(&staged_token, &staged_digest, &new_with_old));
+
+        let switched_token = Token::issued_with_ring("c".repeat(128), &new_with_old).unwrap();
+        let switched_digest = switched_token
+            .storage_digest_with_ring(&new_with_old)
+            .unwrap();
+        assert!(token_verifies(
+            &switched_token,
+            &switched_digest,
+            &old_with_future
+        ));
+        assert!(token_verifies(
+            &switched_token,
+            &switched_digest,
+            &new_with_old
+        ));
+        assert!(token_verifies(&switched_token, &switched_digest, &new_only));
+
+        let retired_token = Token::issued_with_ring("d".repeat(128), &new_only).unwrap();
+        let retired_digest = retired_token.storage_digest_with_ring(&new_only).unwrap();
+        assert!(token_verifies(
+            &retired_token,
+            &retired_digest,
+            &new_with_old
+        ));
+        assert!(token_verifies(&retired_token, &retired_digest, &new_only));
+
+        assert!(!token_verifies(
+            &switched_token,
+            &switched_digest,
+            &old_only
+        ));
+        assert!(!token_verifies(&old_token, &old_digest, &new_only));
     }
 }

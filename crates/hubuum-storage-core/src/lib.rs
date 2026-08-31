@@ -40,6 +40,7 @@ mod restore;
 mod task_execution;
 mod task_queue;
 mod telemetry;
+mod token_credentials;
 mod transaction;
 mod unified_search;
 mod validation;
@@ -131,10 +132,10 @@ pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;
 pub use identity::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder,
-    StorageAuthenticationAttempt, StorageAuthenticationCredential, StorageAuthenticationHuman,
-    StorageAuthenticationIdentity, StorageAuthenticationPrincipal,
-    StorageAuthenticationResourceScope, StorageAuthenticationTokenScope,
-    StorageAuthenticationTokenScopeQuery,
+    StorageAuthenticationAttempt, StorageAuthenticationHuman, StorageAuthenticationIdentity,
+    StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
+    StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery,
+    StorageTokenMigrationOutcome,
 };
 pub use identity_operations::{
     ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
@@ -157,7 +158,7 @@ pub use identity_resources::{
 pub use identity_tokens::{
     StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
     StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenIssuancePolicyError,
-    StorageTokenRenew, StorageTokenRevoke, TokenStorage,
+    StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke, TokenStorage,
 };
 pub use identity_users::{
     StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
@@ -281,6 +282,10 @@ pub use task_queue::{
     StorageTaskStatus, TaskQueueStorage,
 };
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
+pub use token_credentials::{
+    MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,
+    StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+};
 pub use transaction::{
     StorageTransaction, StorageTransactionFuture, TransactionStorage, TransactionalClassRelations,
     TransactionalClasses, TransactionalCollections, TransactionalObjectRelations,

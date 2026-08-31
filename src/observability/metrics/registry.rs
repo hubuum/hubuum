@@ -211,6 +211,22 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_secret_resolutions")
             .with_description("Secret resolution outcomes by bounded provider and consumer")
             .build(),
+        token_hash_key_info: meter
+            .u64_gauge("hubuum_token_hash_key_info")
+            .with_description("Configured token hash key-ring mode")
+            .build(),
+        token_hash_keys: meter
+            .u64_gauge("hubuum_token_hash_keys")
+            .with_description("Configured token hash keys by bounded lifecycle state")
+            .build(),
+        token_authentications: meter
+            .u64_counter("hubuum_token_authentications")
+            .with_description("Bearer-token authentication and migration outcomes")
+            .build(),
+        token_hash_stored: meter
+            .i64_gauge("hubuum_token_hash_stored")
+            .with_description("Stored bearer tokens by bounded key and lifecycle state")
+            .build(),
         task_worker_iterations: meter
             .u64_counter("hubuum_task_worker_iterations")
             .with_description("Task worker loop iterations")

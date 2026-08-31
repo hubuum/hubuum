@@ -539,6 +539,13 @@ impl TokenStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
+    async fn token_key_usage(
+        &self,
+        observation: StorageTokenObservation,
+    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError> {
+        fixture_result()
+    }
+
     async fn create_token(
         &self,
         request: StorageTokenCreate,

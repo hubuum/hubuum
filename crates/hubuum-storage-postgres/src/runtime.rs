@@ -20,7 +20,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260824000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260831000003";
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level observation hook supplied by the application composition root.
@@ -716,5 +716,31 @@ fn log_completion<R>(
             elapsed_ms,
             error = %error,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::REQUIRED_DATABASE_MIGRATION_VERSION;
+
+    #[test]
+    fn required_database_migration_version_matches_latest_migration() {
+        let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let latest = fs::read_dir(migrations)
+            .expect("migration directory must be readable")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .max()
+            .expect("at least one migration must exist");
+        let version = latest
+            .split_once('_')
+            .map_or(latest.as_str(), |(version, _)| version)
+            .replace('-', "");
+
+        assert_eq!(REQUIRED_DATABASE_MIGRATION_VERSION, version);
     }
 }

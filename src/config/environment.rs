@@ -177,6 +177,9 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
+    option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
+    option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
+    option!("HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY", Authentication),
     option!("HUBUUM_SECRET_SOURCE", Operations),
     option!("HUBUUM_SECRET_FILE_ROOT", Operations, sensitive),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
@@ -193,6 +196,7 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
 /// Registered dynamic secret namespaces. The suffix is a consumer-supplied
 /// reference validated by the corresponding secret resolver.
 pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
+    ("HUBUUM_TOKEN_HASH_KEY_", EnvironmentOwner::Authentication),
     ("HUBUUM_REMOTE_SECRET_", EnvironmentOwner::RemoteCalls),
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
     ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),

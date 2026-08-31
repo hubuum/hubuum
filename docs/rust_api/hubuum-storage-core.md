@@ -97,7 +97,7 @@ revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
 External-crate integration tests implement all 44 complete-backend traits,
-compile every one of their 249 methods, exercise every transaction port, and
+compile every one of their 250 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
 the latest crates.io release when a baseline exists.

@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 use std::time::Instant;
 
 use hubuum_secrets::{
-    EnvironmentProvider, FileProvider, FileSymlinkPolicy, ResolvedSecret, SecretError,
-    SecretErrorKind, SecretName, SecretProviderKind, SecretRef, SecretResolver,
+    EnvironmentProvider, FileProvider, FileSymlinkPolicy, ResolvedSecret, ResolvedSecretGroup,
+    SecretError, SecretErrorKind, SecretName, SecretProviderKind, SecretRef, SecretResolver,
 };
 
 const SOURCE_ENVIRONMENT: &str = "HUBUUM_SECRET_SOURCE";
@@ -29,6 +29,31 @@ impl ConsumerSecrets {
                 let reference = SecretRef::new(self.provider_kind, name);
                 self.resolver.resolve(&reference).await
             }
+            Err(error) => Err(error),
+        };
+        crate::observability::metrics::secret_resolution_finished(
+            self.provider_label,
+            self.consumer_label,
+            result
+                .as_ref()
+                .map(|_| "ok")
+                .unwrap_or_else(|error| error_outcome(error.kind())),
+            started.elapsed(),
+        );
+        result
+    }
+
+    async fn resolve_group(&self, aliases: &[String]) -> Result<ResolvedSecretGroup, SecretError> {
+        let started = Instant::now();
+        crate::observability::metrics::secret_source_identity(self.provider_label);
+        let result = aliases
+            .iter()
+            .map(|alias| {
+                SecretName::new(alias).map(|name| SecretRef::new(self.provider_kind, name))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let result = match result {
+            Ok(references) => self.resolver.resolve_group(&references).await,
             Err(error) => Err(error),
         };
         crate::observability::metrics::secret_resolution_finished(
@@ -133,7 +158,7 @@ impl ApplicationSecrets {
             token: consumer_resolver(
                 source,
                 root,
-                "",
+                "HUBUUM_TOKEN_HASH_KEY_",
                 Some(("key", "HUBUUM_TOKEN_HASH_KEY")),
                 "token",
                 "token_hash",
@@ -254,6 +279,18 @@ pub(crate) fn resolve_token_hash_key() -> Result<Vec<u8>, SecretError> {
         return Ok(trimmed.as_bytes().to_vec());
     }
     Ok(resolved.value().expose().to_vec())
+}
+
+pub(crate) fn resolve_token_hash_key_group(
+    aliases: &[String],
+) -> Result<Vec<ResolvedSecret>, SecretError> {
+    let secrets = configured()?;
+    let resolved = futures::executor::block_on(secrets.token.resolve_group(aliases))?;
+    Ok(resolved.values().to_vec())
+}
+
+pub(crate) fn token_hash_secrets_are_text() -> Result<bool, SecretError> {
+    Ok(configured()?.source == SecretSource::Environment)
 }
 
 pub(crate) fn running_source_configuration() -> (&'static str, bool) {

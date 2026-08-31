@@ -9,7 +9,7 @@ use crate::permissions::AppContext;
 use crate::storage::{StorageCallSite, with_storage_call_site};
 
 use super::Metrics;
-use super::{db, event, get, inventory, login, task};
+use super::{db, event, get, inventory, login, task, token};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RefreshOutcome {
@@ -25,6 +25,7 @@ pub(super) enum RefreshSource {
     LoginLimiter,
     Process,
     Tasks,
+    TokenKeys,
 }
 
 impl RefreshSource {
@@ -36,6 +37,7 @@ impl RefreshSource {
             Self::LoginLimiter => "login_limiter",
             Self::Process => "process",
             Self::Tasks => "tasks",
+            Self::TokenKeys => "token_keys",
         }
     }
 }
@@ -82,6 +84,7 @@ async fn refresh_scrape_gauges(metrics: &Metrics, backend: &crate::storage::Stor
         inventory::refresh_inventory_gauges(metrics, backend).await;
         task::refresh_task_gauges(metrics, backend).await;
         event::refresh_event_gauges(metrics, backend).await;
+        token::refresh_token_key_gauges(metrics, backend).await;
     } else {
         metrics.refresh_skipped.add(
             1,
@@ -131,6 +134,7 @@ mod tests {
                 RefreshSource::LoginLimiter,
                 RefreshSource::Process,
                 RefreshSource::Tasks,
+                RefreshSource::TokenKeys,
             ]
             .map(RefreshSource::as_str),
             [
@@ -140,6 +144,7 @@ mod tests {
                 "login_limiter",
                 "process",
                 "tasks",
+                "token_keys",
             ]
         );
     }
