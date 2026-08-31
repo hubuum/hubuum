@@ -204,8 +204,16 @@ sudo ./scripts/install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
-  --database-url 'postgres://hubuum:secret@postgres.example.com:5432/hubuum?sslmode=require'
+  --database-url 'postgres://hubuum_runtime:runtime-secret@postgres.example.com:5432/hubuum?sslmode=require' \
+  --migration-database-url 'postgres://hubuum_migrator:migration-secret@postgres.example.com:5432/hubuum?sslmode=require'
 ```
+
+The runtime and migration identities must be provisioned before installation.
+The migration URL is injected only into the transient migration container and
+the isolated restore executor; API and worker containers receive only the
+runtime URL. See
+[PostgreSQL Database Roles](database_roles.md) for the required grants,
+managed-service workflow, and upgrade diagnostics.
 
 Database TLS behavior follows the URL's `sslmode`:
 

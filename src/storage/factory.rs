@@ -11,9 +11,13 @@ use std::time::Duration;
 
 use hubuum_storage_core::{StorageCallSite, StorageNotification};
 use hubuum_storage_postgres::{
-    PostgresObserver, PostgresPool, PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage,
-    build_postgres_pool,
+    DatabasePrivilegeFinding as PostgresDatabasePrivilegeFinding,
+    DatabasePrivilegeReport as PostgresDatabasePrivilegeReport,
+    DatabaseRoleNames as PostgresDatabaseRoleNames, PostgresObserver, PostgresPool,
+    PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, build_postgres_pool,
+    inspect_database_privileges,
 };
+use serde::Serialize;
 use tracing::{error, info};
 
 use super::{
@@ -21,6 +25,124 @@ use super::{
     DatabasePoolConnections, DatabasePoolState, DatabaseStorageSnapshot, StorageBackendKind,
     StorageError, StorageErrorKind, StorageHandle,
 };
+
+/// Validated names for the database roles used by application composition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StorageDatabaseRoleNames {
+    owner: String,
+    migrator: String,
+    runtime: String,
+}
+
+impl StorageDatabaseRoleNames {
+    pub(crate) fn new(
+        owner: impl Into<String>,
+        migrator: impl Into<String>,
+        runtime: impl Into<String>,
+    ) -> Result<Self, StorageError> {
+        let names = Self {
+            owner: owner.into(),
+            migrator: migrator.into(),
+            runtime: runtime.into(),
+        };
+        names.postgres_names()?;
+        Ok(names)
+    }
+
+    pub(crate) fn runtime(&self) -> &str {
+        &self.runtime
+    }
+
+    fn postgres_names(&self) -> Result<PostgresDatabaseRoleNames, StorageError> {
+        PostgresDatabaseRoleNames::new(
+            self.owner.clone(),
+            self.migrator.clone(),
+            self.runtime.clone(),
+        )
+        .map_err(StorageError::from)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StorageDatabaseRole {
+    Owner,
+    Migrator,
+    Runtime,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct StorageDatabasePrivilegeFinding {
+    code: String,
+    object: String,
+    detail: String,
+}
+
+impl StorageDatabasePrivilegeFinding {
+    pub(crate) fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub(crate) fn object(&self) -> &str {
+        &self.object
+    }
+
+    pub(crate) fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct StorageDatabasePrivilegeReport {
+    role: String,
+    connected_role: String,
+    safe: bool,
+    dangerous: Vec<StorageDatabasePrivilegeFinding>,
+    missing: Vec<StorageDatabasePrivilegeFinding>,
+}
+
+impl StorageDatabasePrivilegeReport {
+    pub(crate) fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub(crate) fn connected_role(&self) -> &str {
+        &self.connected_role
+    }
+
+    pub(crate) const fn is_safe(&self) -> bool {
+        self.safe
+    }
+
+    pub(crate) fn dangerous(&self) -> &[StorageDatabasePrivilegeFinding] {
+        &self.dangerous
+    }
+
+    pub(crate) fn missing(&self) -> &[StorageDatabasePrivilegeFinding] {
+        &self.missing
+    }
+}
+
+impl From<PostgresDatabasePrivilegeReport> for StorageDatabasePrivilegeReport {
+    fn from(report: PostgresDatabasePrivilegeReport) -> Self {
+        let findings = |source: &[PostgresDatabasePrivilegeFinding]| {
+            source
+                .iter()
+                .map(|finding| StorageDatabasePrivilegeFinding {
+                    code: finding.code().to_string(),
+                    object: finding.object().to_string(),
+                    detail: finding.detail().to_string(),
+                })
+                .collect::<Vec<_>>()
+        };
+        Self {
+            role: report.role().to_string(),
+            connected_role: report.connected_role().to_string(),
+            safe: report.is_safe(),
+            dangerous: findings(report.dangerous()),
+            missing: findings(report.missing()),
+        }
+    }
+}
 
 #[derive(Debug)]
 struct ApplicationPostgresObserver;
@@ -294,8 +416,36 @@ impl PostgresAdapterFactory {
     }
 
     #[cfg(feature = "embedded-migrations")]
-    fn run_migrations(settings: &PostgresPoolSettings) -> Result<usize, StorageError> {
-        hubuum_storage_postgres::run_embedded_migrations(settings.connection_url())
+    fn run_migrations(
+        settings: &PostgresPoolSettings,
+        roles: Option<&PostgresDatabaseRoleNames>,
+    ) -> Result<usize, StorageError> {
+        match roles {
+            Some(roles) => hubuum_storage_postgres::run_embedded_migrations_as(
+                settings.connection_url(),
+                roles,
+            ),
+            None => hubuum_storage_postgres::run_embedded_migrations(settings.connection_url()),
+        }
+    }
+
+    async fn inspect_privileges(
+        settings: &PostgresPoolSettings,
+        role: StorageDatabaseRole,
+        roles: &PostgresDatabaseRoleNames,
+    ) -> Result<StorageDatabasePrivilegeReport, StorageError> {
+        let pool_settings =
+            operational_pool_settings(settings, 1).map_err(Self::initialization_error)?;
+        let pool = build_postgres_pool(&pool_settings).map_err(Self::initialization_error)?;
+        let role = match role {
+            StorageDatabaseRole::Owner => roles.owner(),
+            StorageDatabaseRole::Migrator => roles.migrator(),
+            StorageDatabaseRole::Runtime => roles.runtime(),
+        };
+        inspect_database_privileges(&pool, role, roles)
+            .await
+            .map_err(StorageError::from)
+            .map(StorageDatabasePrivilegeReport::from)
     }
 }
 
@@ -328,12 +478,51 @@ pub(crate) fn initialize_storage(
 }
 
 #[cfg(feature = "embedded-migrations")]
-pub(crate) fn run_storage_migrations(settings: &StorageSettings) -> Result<usize, StorageError> {
+pub(crate) fn run_storage_migrations(
+    settings: &StorageSettings,
+    roles: Option<&StorageDatabaseRoleNames>,
+) -> Result<usize, StorageError> {
+    match &settings.adapter {
+        StorageAdapterSettings::Postgres(settings) => match roles {
+            Some(roles) => {
+                let roles = roles.postgres_names()?;
+                PostgresAdapterFactory::run_migrations(settings, Some(&roles))
+            }
+            None => PostgresAdapterFactory::run_migrations(settings, None),
+        },
+        StorageAdapterSettings::Memory => Ok(0),
+    }
+}
+
+pub(crate) fn storage_database_role_setup_sql(
+    roles: &StorageDatabaseRoleNames,
+) -> Result<String, StorageError> {
+    Ok(hubuum_storage_postgres::database_role_setup_sql(
+        &roles.postgres_names()?,
+    ))
+}
+
+pub(crate) fn storage_database_role_grants_sql(
+    roles: &StorageDatabaseRoleNames,
+) -> Result<String, StorageError> {
+    Ok(hubuum_storage_postgres::database_role_reconciliation_sql(
+        &roles.postgres_names()?,
+    ))
+}
+
+pub(crate) async fn inspect_storage_database_privileges(
+    settings: &StorageSettings,
+    role: StorageDatabaseRole,
+    roles: &StorageDatabaseRoleNames,
+) -> Result<Option<StorageDatabasePrivilegeReport>, StorageError> {
     match &settings.adapter {
         StorageAdapterSettings::Postgres(settings) => {
-            PostgresAdapterFactory::run_migrations(settings)
+            let roles = roles.postgres_names()?;
+            PostgresAdapterFactory::inspect_privileges(settings, role, &roles)
+                .await
+                .map(Some)
         }
-        StorageAdapterSettings::Memory => Ok(0),
+        StorageAdapterSettings::Memory => Ok(None),
     }
 }
 

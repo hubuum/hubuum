@@ -75,13 +75,13 @@ pub async fn create_restore_stage(
     params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     request_body = RestoreConfirmRequest,
     responses(
-        (status = 200, description = "Restore completed", body = RestoreStageResponse,
+        (status = 202, description = "Restore confirmed and queued for the isolated executor", body = RestoreStageResponse,
             headers(("Cache-Control" = String, description = "Always no-store for restore metadata"))
         ),
-        (status = 400, description = "Confirmation phrase is invalid", body = ApiErrorResponse),
+        (status = 400, description = "Invalid confirmation", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Administrator or capability rejected", body = ApiErrorResponse),
-        (status = 409, description = "Stage state or SHA-256 mismatch", body = ApiErrorResponse),
+        (status = 403, description = "Administrator access required or restore capability rejected", body = ApiErrorResponse),
+        (status = 409, description = "Restore stage cannot be confirmed", body = ApiErrorResponse),
         (status = 410, description = "Restore stage expired", body = ApiErrorResponse)
     )
 )]
@@ -91,9 +91,11 @@ pub async fn confirm_restore_stage(
     _admin: AdminAccess,
     restore_id: web::Path<RestoreJobID>,
     confirmation: web::Json<RestoreConfirmRequest>,
-) -> Result<impl Responder, ApiError> {
+) -> Result<HttpResponse, ApiError> {
     let response = confirm_restore(&context, restore_id.into_inner(), &confirmation).await?;
-    Ok(ApiResponse::new_no_store(response, StatusCode::OK))
+    Ok(HttpResponse::Accepted()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(response))
 }
 
 #[utoipa::path(

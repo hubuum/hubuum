@@ -31,6 +31,10 @@ fi
 # Generate a collision-resistant database name. Keep it identifier-safe.
 UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
+OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
+MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
+RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
+ADMIN_TEST_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
 
 cleanup() {
     if [ -n "${TEST_DB_NAME:-}" ]; then
@@ -42,18 +46,37 @@ cleanup() {
             -v ON_ERROR_STOP=1 \
             -c "DROP DATABASE IF EXISTS $TEST_DB_NAME;" \
             > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "REVOKE $OWNER_ROLE FROM $MIGRATOR_ROLE; DROP ROLE IF EXISTS $RUNTIME_ROLE; DROP ROLE IF EXISTS $MIGRATOR_ROLE; DROP ROLE IF EXISTS $OWNER_ROLE;" \
+            > /dev/null 2>&1 || true
     fi
 }
 
 trap cleanup EXIT
 
-# Create a new database
-PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE $TEST_DB_NAME;" > /dev/null
+# Create distinct cluster roles and a database owned by the non-login schema
+# owner. Password interpolation is handled by psql, not by SQL string assembly.
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -v owner_role="$OWNER_ROLE" \
+    -v migrator_role="$MIGRATOR_ROLE" \
+    -v runtime_role="$RUNTIME_ROLE" \
+    -v role_password="$DB_PASSWORD" \
+    -f scripts/create-test-database-roles.sql \
+    > /dev/null
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE $TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
 
 echo "Created test database: $TEST_DB_NAME"
 
 
-export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+export HUBUUM_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+export HUBUUM_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+export HUBUUM_DATABASE_OWNER_ROLE="$OWNER_ROLE"
+export HUBUUM_DATABASE_MIGRATOR_ROLE="$MIGRATOR_ROLE"
+export HUBUUM_DATABASE_RUNTIME_ROLE="$RUNTIME_ROLE"
+export HUBUUM_DATABASE_PRIVILEGE_MODE="strict"
+export HUBUUM_DATABASE_ROLE_TESTS="true"
 # Every integration test owns a small connection pool. Bound parallelism so a
 # high-core test host cannot exhaust PostgreSQL while retaining parallel tests.
 export RUST_TEST_THREADS="$TEST_THREADS"
@@ -61,10 +84,29 @@ export RUST_TEST_THREADS="$TEST_THREADS"
 
 # Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.
 # See https://github.com/diesel-rs/diesel/issues/1482.
-diesel migration run --migration-dir "$MIGRATIONS_DIR" --database-url "$HUBUUM_DATABASE_URL" --locked-schema
+PGOPTIONS="-c role=$OWNER_ROLE" diesel migration run \
+    --migration-dir "$MIGRATIONS_DIR" \
+    --database-url "$HUBUUM_MIGRATION_DATABASE_URL" \
+    --locked-schema
+
+# Apply the same generated manifest used by production migration tooling.
+ROLE_SETUP_SQL="$(cargo run --quiet --bin hubuum-admin -- \
+    --database-role-setup-sql \
+    --database-owner-role "$OWNER_ROLE" \
+    --database-migrator-role "$MIGRATOR_ROLE" \
+    --database-runtime-role "$RUNTIME_ROLE")"
+PGPASSWORD=$DB_PASSWORD psql "$ADMIN_TEST_URL" \
+    -v ON_ERROR_STOP=1 -c "$ROLE_SETUP_SQL" > /dev/null
 
 # Run adapter-native tests before the application suite while the isolated,
 # migrated database is available.
+if [ "$#" -eq 0 ]; then
+    cargo test -p hubuum-storage-postgres \
+        --features integration-test-support \
+        --test database_privileges \
+        split_role_reconciliation_adopts_existing_single_role_objects \
+        -- --exact --ignored
+fi
 cargo test -p hubuum-storage-postgres --features integration-test-support "$@"
 
 # Run the application and request-level suites.

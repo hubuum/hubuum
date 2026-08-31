@@ -32,6 +32,7 @@ env:
   RUST_BACKTRACE: 1
   DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
   HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
+  HUBUUM_MIGRATION_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
   HUBUUM_DB_TEST_PASSWORD: postgres
 
 jobs:
@@ -739,6 +740,7 @@ jobs:
           $dbUrl = "postgres://postgres@127.0.0.1:$pgPort/hubuum_rust_test"
           "DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "HUBUUM_DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HUBUUM_MIGRATION_DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PG_TEST_PORT=$pgPort" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PG_LOG=$pgLog" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -923,24 +925,44 @@ jobs:
       - name: Test embedded database migrations and readiness
         env:
           IMAGE: hubuum-server:ci
-          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hubuum_container_test?sslmode=disable
+          MIGRATION_DATABASE_URL: postgres://hubuum_migrator:migrator-test@127.0.0.1:5432/hubuum_container_test?sslmode=disable
+          RUNTIME_DATABASE_URL: postgres://hubuum_runtime:runtime-test@127.0.0.1:5432/hubuum_container_test?sslmode=disable
         run: |
           docker run --rm --entrypoint hubuum-admin "$IMAGE" --help \
             | grep --quiet -- "--migrate"
+          docker run --rm --entrypoint hubuum-admin "$IMAGE" --help \
+            | grep --quiet -- "--restore-executor"
+          docker run --rm --entrypoint hubuum-admin "$IMAGE" \
+            --database-role-setup-sql \
+            | docker run --rm --interactive --network host \
+                --env PGPASSWORD=postgres \
+                postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4 psql \
+                --host 127.0.0.1 \
+                --username postgres \
+                --dbname hubuum_container_test \
+                --set ON_ERROR_STOP=1
+          docker run --rm --network host \
+            --env PGPASSWORD=postgres \
+            postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4 psql \
+            --host 127.0.0.1 \
+            --username postgres \
+            --dbname hubuum_container_test \
+            --set ON_ERROR_STOP=1 \
+            --command "ALTER ROLE hubuum_migrator PASSWORD 'migrator-test'; ALTER ROLE hubuum_runtime PASSWORD 'runtime-test'"
           if docker run --rm --network host \
             --entrypoint hubuum-admin \
-            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" \
             "$IMAGE" --database-ready; then
             echo "database readiness unexpectedly accepted an unmigrated schema" >&2
             exit 1
           fi
           docker run --rm --network host \
             --entrypoint hubuum-admin \
-            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            --env HUBUUM_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" \
             "$IMAGE" --migrate
           docker run --rm --network host \
             --entrypoint hubuum-admin \
-            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" \
             "$IMAGE" --database-ready
           test "$(docker run --rm --network host \
             --env PGPASSWORD=postgres \
@@ -952,7 +974,8 @@ jobs:
             --no-align \
             --command "SELECT to_regclass('public.users') IS NOT NULL")" = "t"
           container_id="$(docker run --rm --detach --network host \
-            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" \
+            --env HUBUUM_DATABASE_PRIVILEGE_MODE=strict \
             --env HUBUUM_BIND_IP=127.0.0.1 \
             "$IMAGE")"
           trap 'docker stop "$container_id"' EXIT

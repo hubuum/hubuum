@@ -22,7 +22,8 @@ use crate::config::get_config;
 use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::{
-    AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath, token_hash_key_ring,
+    AppConfig, ClientAllowlist, DatabasePrivilegeMode, LoginRateLimitBackendKind, MetricsPath,
+    token_hash_key_ring,
 };
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
@@ -42,7 +43,8 @@ use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
-    OperationalStateStorage, StorageBackendKind, StorageSettings, initialize_storage,
+    OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
+    StorageSettings, initialize_storage, inspect_storage_database_privileges,
 };
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
@@ -163,6 +165,69 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             "Storage backend schema is not ready",
             EXIT_CODE_DATABASE_ERROR,
         );
+    }
+    if config.storage_backend == StorageBackendKind::Postgres {
+        let database_roles = StorageDatabaseRoleNames::new(
+            config.database_owner_role.clone(),
+            config.database_migrator_role.clone(),
+            config.database_runtime_role.clone(),
+        )
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+        let privilege_report = inspect_storage_database_privileges(
+            &storage_settings,
+            StorageDatabaseRole::Runtime,
+            &database_roles,
+        )
+        .await;
+        match privilege_report {
+            Ok(Some(report)) if report.is_safe() => {
+                info!(
+                    message = "Database runtime privileges satisfy the generated manifest",
+                    role = report.role(),
+                    privilege_mode = config.database_privilege_mode.as_str(),
+                );
+            }
+            Ok(Some(report)) => {
+                for finding in report.dangerous() {
+                    warn!(
+                        message = "Dangerous database runtime privilege detected",
+                        role = report.role(),
+                        code = finding.code(),
+                        object = finding.object(),
+                        detail = finding.detail(),
+                    );
+                }
+                for finding in report.missing() {
+                    warn!(
+                        message = "Required database runtime privilege is missing",
+                        role = report.role(),
+                        code = finding.code(),
+                        object = finding.object(),
+                        detail = finding.detail(),
+                    );
+                }
+                if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
+                    fatal_error(
+                        "Database runtime privileges do not satisfy the generated manifest",
+                        EXIT_CODE_DATABASE_ERROR,
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(
+                    message = "Database runtime privilege inspection failed",
+                    role = database_roles.runtime(),
+                    error = %error,
+                );
+                if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
+                    fatal_error(
+                        "Database runtime privilege inspection failed in strict mode",
+                        EXIT_CODE_DATABASE_ERROR,
+                    );
+                }
+            }
+        }
     }
 
     let backup_settings = BackupSettings::new(

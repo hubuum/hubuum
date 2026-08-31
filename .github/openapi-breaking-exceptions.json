@@ -175,6 +175,17 @@
         "df58eb5e835d",
         "df42b18ec136"
       ]
+    },
+    {
+      "id": "v0.0.11-asynchronous-destructive-restore",
+      "baseline": "v0.0.11",
+      "expires": "2027-08-31",
+      "reason": "API confirmation now queues a restore for an isolated migrator-backed executor instead of holding the request open across the destructive transaction.",
+      "migration": "`hubuum-admin --restore-executor`",
+      "changelog_entry": "POST /api/v1/restores/{restore_id}/confirm",
+      "fingerprints": [
+        "ca6ee7172865"
+      ]
     }
   ]
 }

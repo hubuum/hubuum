@@ -36,8 +36,9 @@ const RESTORE_DRAIN_TIMEOUT_SECONDS: u64 = 30;
 const RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS: u64 = 60;
 const MISSING_RESTORE_CAPABILITY_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
-// Keep this longer than the bounded drain so normal confirmations enter the
-// advisory-lock-protected restore transaction before recovery is eligible.
+// Compatibility recovery for confirmations created by older in-process
+// coordinators retains their original grace period. The dedicated executor
+// does not wait for this threshold.
 const RESTORE_RECONCILIATION_GRACE_SECONDS: i64 = 60;
 
 struct RestoreJobSummaryData {
@@ -955,30 +956,14 @@ pub async fn confirm_restore(
         ApiError::InternalServerError(format!("Staged restore document became invalid: {error}"))
     })?;
     let validation = validation_summary(&document)?;
-    // The maintenance transition commits before the destructive transaction,
-    // allowing every instance to reject new work. ACCESS EXCLUSIVE table locks
-    // in `apply_restore` are the final drain barrier for requests already in
-    // flight. A failed restore rolls the data transaction back intact.
+    // Confirmation commits only the maintenance transition. A separately
+    // deployed executor owns the privileged destructive transaction, so the
+    // API and worker processes never need a migration credential.
     let job_id = restore_job_id_to_storage(job.id);
     let confirmed_at = storage_handle(pool).start_restore_draining(job_id).await?;
-
-    if let Err(error) = wait_for_instances_drained(pool).await {
-        fail_restore_and_resume(pool, job_id, &error).await?;
-        return Err(error);
-    }
-
-    let completion = match apply_restore(pool, job_id, document).await {
-        Ok(completion) => completion,
-        Err(error) => {
-            fail_restore_and_resume(pool, job_id, &error).await?;
-            return Err(error);
-        }
-    };
-
-    let (started_at, finished_at) = completion.into_parts();
     Ok(RestoreStageResponse {
         id: job.id,
-        status: RestoreJobStatus::Succeeded,
+        status: RestoreJobStatus::Confirmed,
         requested_by: job.requested_by,
         requested_by_identity_scope: job.requested_by_identity_scope,
         requested_by_name: job.requested_by_name,
@@ -987,10 +972,10 @@ pub async fn confirm_restore(
         expires_at: job.expires_at,
         error: None,
         confirmed_at: Some(confirmed_at.naive_utc()),
-        started_at: Some(started_at.naive_utc()),
-        finished_at: Some(finished_at.naive_utc()),
+        started_at: None,
+        finished_at: None,
         created_at: job.created_at,
-        updated_at: finished_at.naive_utc(),
+        updated_at: confirmed_at.naive_utc(),
         validation,
         restore_capability: None,
     })
@@ -998,24 +983,39 @@ pub async fn confirm_restore(
 
 /// Resume a restore whose committed maintenance transition survived a process
 /// restart. The destructive transaction is guarded by an advisory lock and
-/// re-checks the job/maintenance state. Once one coordinator commits, the
-/// maintenance row is normal and every restore staging row has been removed.
+/// re-checks the job/maintenance state. This compatibility recovery entrypoint
+/// retains the grace period used by older in-process coordinators.
 pub async fn reconcile_interrupted_restore(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
     let snapshot = storage_handle(pool)
         .get_restore_coordinator_snapshot()
         .await?;
-    reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
+    reconcile_restore_from_snapshot(pool, snapshot, true)
+        .await
+        .map(|_| ())
 }
 
-async fn reconcile_interrupted_restore_from_snapshot(
+/// Apply one confirmed restore, if present, using an isolated privileged
+/// storage handle. The caller is expected to poll this operation from the
+/// dedicated restore-executor workload.
+pub async fn execute_confirmed_restore(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<bool, ApiError> {
+    let snapshot = storage_handle(pool)
+        .get_restore_coordinator_snapshot()
+        .await?;
+    reconcile_restore_from_snapshot(pool, snapshot, false).await
+}
+
+async fn reconcile_restore_from_snapshot(
     pool: &impl crate::storage::StorageContext,
     snapshot: StorageRestoreCoordinatorSnapshot,
-) -> Result<(), ApiError> {
+    require_stale_confirmation: bool,
+) -> Result<bool, ApiError> {
     let maintenance_state = snapshot.maintenance_state();
     if maintenance_state.is_normal() {
-        return Ok(());
+        return Ok(false);
     }
     if maintenance_state != MaintenanceState::Draining {
         return Err(ApiError::InternalServerError(format!(
@@ -1049,7 +1049,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
         RestoreJobStatus::Failed | RestoreJobStatus::Expired
     ) {
         storage_handle(pool).resume_terminal_restore(job_id).await?;
-        return Ok(());
+        return Ok(false);
     }
     if job.status != RestoreJobStatus::Confirmed {
         let error = ApiError::Conflict(format!(
@@ -1066,8 +1066,10 @@ async fn reconcile_interrupted_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     };
-    if !confirmation_is_stale(confirmed_at, snapshot.backend_now().naive_utc()) {
-        return Ok(());
+    if require_stale_confirmation
+        && !confirmation_is_stale(confirmed_at, snapshot.backend_now().naive_utc())
+    {
+        return Ok(false);
     }
 
     let document: BackupDocument = match serde_json::from_slice(&document_bytes) {
@@ -1092,7 +1094,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn heartbeat_instance(
@@ -1139,23 +1141,6 @@ async fn wait_for_instances_drained(
     }
 }
 
-async fn reconcile_interrupted_restore_with_heartbeat(
-    pool: &impl crate::storage::StorageContext,
-    instance_id: Uuid,
-    snapshot: StorageRestoreCoordinatorSnapshot,
-) -> Result<(), ApiError> {
-    let reconciliation = reconcile_interrupted_restore_from_snapshot(pool, snapshot);
-    tokio::pin!(reconciliation);
-    loop {
-        tokio::select! {
-            result = &mut reconciliation => return result,
-            _ = actix_rt::time::sleep(StdDuration::from_secs(1)) => {
-                heartbeat_instance(pool, instance_id, false).await?;
-            }
-        }
-    }
-}
-
 pub fn ensure_restore_coordinator_running<C>(backend: C)
 where
     C: StorageContext,
@@ -1172,25 +1157,10 @@ where
                         last_run.elapsed()
                             >= StdDuration::from_secs(RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS)
                     });
-                    let snapshot =
-                        heartbeat_instance(&pool, instance_id, expire_validated_jobs).await;
-                    match snapshot {
-                        Ok(snapshot) => {
+                    match heartbeat_instance(&pool, instance_id, expire_validated_jobs).await {
+                        Ok(_) => {
                             if expire_validated_jobs {
                                 last_expiry_run = Some(Instant::now());
-                            }
-                            if let Err(error) = reconcile_interrupted_restore_with_heartbeat(
-                                &pool,
-                                instance_id,
-                                snapshot,
-                            )
-                            .await
-                            {
-                                tracing::error!(
-                                    message = "Interrupted restore reconciliation failed",
-                                    instance_id = %instance_id,
-                                    error = %error,
-                                );
                             }
                         }
                         Err(error) => {

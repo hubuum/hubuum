@@ -189,9 +189,10 @@ backends:
 
 The full image also gets explicit aliases ending in `-full`.
 
-The image runs pending embedded Diesel migrations during startup unless
-`HUBUUM_SKIP_MIGRATIONS` is enabled. The image does not need the standalone Diesel CLI or `psql`;
-operators can run migrations explicitly with `hubuum-admin --migrate`.
+The image never runs embedded Diesel migrations from a long-lived server
+entrypoint. It does not need the standalone Diesel CLI or `psql`; operators run
+migrations with `hubuum-admin --migrate` in a one-shot workload using the
+separate migration database credential.
 
 Publishing from `main` happens in the same workflow run and depends directly on the CI jobs passing.
 Documentation-only and repository-metadata pushes do not rebuild or replace

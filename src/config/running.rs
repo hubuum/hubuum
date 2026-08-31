@@ -105,6 +105,10 @@ pub struct DatabaseConfig {
     pub pool_size: u32,
     pub pool_acquire_timeout_ms: u64,
     pub statement_timeout_ms: u64,
+    pub privilege_mode: String,
+    pub owner_role: String,
+    pub migrator_role: String,
+    pub runtime_role: String,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -318,6 +322,10 @@ impl RunningConfig {
                 pool_size: config.db_pool_size,
                 pool_acquire_timeout_ms: config.db_pool_acquire_timeout_ms,
                 statement_timeout_ms: config.db_statement_timeout_ms,
+                privilege_mode: config.database_privilege_mode.as_str().to_string(),
+                owner_role: config.database_owner_role.clone(),
+                migrator_role: config.database_migrator_role.clone(),
+                runtime_role: config.database_runtime_role.clone(),
             },
             tasks: TaskConfig {
                 workers: config.task_workers,

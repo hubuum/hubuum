@@ -125,6 +125,23 @@ pub enum RuntimeRole {
     Worker,
 }
 
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabasePrivilegeMode {
+    #[default]
+    Warn,
+    Strict,
+}
+
+impl DatabasePrivilegeMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Warn => "warn",
+            Self::Strict => "strict",
+        }
+    }
+}
+
 impl RuntimeRole {
     pub const fn serves_http(self) -> bool {
         matches!(self, Self::All | Self::Api)
@@ -203,6 +220,39 @@ pub struct AppConfig {
         default_value = "postgres://localhost"
     )]
     pub database_url: String,
+
+    /// Whether unsafe or incomplete PostgreSQL runtime grants warn or fail startup
+    #[clap(
+        long,
+        env = "HUBUUM_DATABASE_PRIVILEGE_MODE",
+        value_enum,
+        default_value = "warn"
+    )]
+    pub database_privilege_mode: DatabasePrivilegeMode,
+
+    /// Non-login PostgreSQL role that owns Hubuum database objects
+    #[clap(
+        long,
+        env = "HUBUUM_DATABASE_OWNER_ROLE",
+        default_value = "hubuum_owner"
+    )]
+    pub database_owner_role: String,
+
+    /// PostgreSQL role used by one-shot migrations and destructive restore
+    #[clap(
+        long,
+        env = "HUBUUM_DATABASE_MIGRATOR_ROLE",
+        default_value = "hubuum_migrator"
+    )]
+    pub database_migrator_role: String,
+
+    /// Non-owning PostgreSQL role used by API and worker processes
+    #[clap(
+        long,
+        env = "HUBUUM_DATABASE_RUNTIME_ROLE",
+        default_value = "hubuum_runtime"
+    )]
+    pub database_runtime_role: String,
 
     /// Number of Actix workers
     #[clap(
@@ -1524,6 +1574,13 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .unwrap_or(8080),
         log_level: env_or_default("HUBUUM_LOG_LEVEL", "debug"),
         database_url: env_or_default("HUBUUM_DATABASE_URL", "postgres://test"),
+        database_privilege_mode: env::var("HUBUUM_DATABASE_PRIVILEGE_MODE")
+            .ok()
+            .and_then(|value| DatabasePrivilegeMode::from_str(&value, true).ok())
+            .unwrap_or_default(),
+        database_owner_role: env_or_default("HUBUUM_DATABASE_OWNER_ROLE", "hubuum_owner"),
+        database_migrator_role: env_or_default("HUBUUM_DATABASE_MIGRATOR_ROLE", "hubuum_migrator"),
+        database_runtime_role: env_or_default("HUBUUM_DATABASE_RUNTIME_ROLE", "hubuum_runtime"),
         actix_workers: env::var("HUBUUM_ACTIX_WORKERS")
             .ok()
             .and_then(|value| value.parse().ok())

@@ -1064,7 +1064,7 @@ impl RestoreStorage for MemoryStorage {
             None,
             Some(started_at),
             Some(finished_at),
-            false,
+            true,
         )?;
         state.restore_jobs.insert(job_id.id(), succeeded);
         state.maintenance_state = MaintenanceState::Normal;

@@ -21,8 +21,11 @@ The development Compose stack requires a local, untracked `.env` file instead
 of using a password committed to the repository:
 
 ```bash
-printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
-docker compose up --build
+for variable in POSTGRES_PASSWORD POSTGRES_MIGRATOR_PASSWORD POSTGRES_RUNTIME_PASSWORD; do
+  printf '%s=%s\n' "$variable" "$(openssl rand -hex 32)"
+done > .env
+docker compose --profile administration run --rm hubuum-migrate --migrate
+docker compose up --build -d hubuum
 ```
 
 The API is published on `127.0.0.1:9999` and PostgreSQL on
@@ -31,10 +34,10 @@ The Hubuum container runs as the unprivileged `hubuum` user with a read-only
 root filesystem, all Linux capabilities dropped, and only a small temporary
 filesystem at `/tmp`.
 
-The production image includes a `/healthz` health check and runs pending
-embedded migrations during startup. PostgreSQL client administration tools and
-the standalone Diesel CLI are not installed. Set
-`HUBUUM_SKIP_MIGRATIONS=true` only when migrations are coordinated externally.
+The production image includes a `/healthz` health check, but long-lived server
+containers never run migrations. PostgreSQL client administration tools and
+the standalone Diesel CLI are not installed; use the image's `hubuum-admin`
+binary in a one-shot migration workload.
 
 ### Server Configuration
 
@@ -71,14 +74,20 @@ examples.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
-| `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
+| `HUBUUM_DATABASE_URL` | `postgres://localhost` | Runtime-role PostgreSQL connection URL |
+| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Migrator-role URL accepted by `hubuum-admin --migrate`, `--restore`, and `--restore-executor`; never configure this on an API or worker process |
+| `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role |
+| `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role |
+| `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role |
+| `HUBUUM_DATABASE_PRIVILEGE_MODE` | `warn` | Runtime privilege audit behavior: `warn` or startup-failing `strict` |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
-| `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run migrations; `api` and `worker` roles always skip them |
 | `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `30000` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
 
 See [Database Pool Tuning and Load Testing](performance.md) for connection
 budgeting, pool observability, and a repeatable k6 scenario.
+See [PostgreSQL Database Roles](database_roles.md) for provisioning, grant
+diagnostics, and one-shot workload examples.
 
 Administrators can inspect the selected storage backend and these effective
 pool settings at `GET /api/v1/admin/config`. The endpoint reports only whether
@@ -159,11 +168,11 @@ delivery semantics, operational health, and retention behavior.
 | `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | How long a validated restore stage remains confirmable |
 | `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum full-system restore document size accepted by the API |
 
-Backups and restores are unscoped administrator-only disaster-recovery
-operations. A confirmed restore puts every instance into maintenance mode and
-replaces all application data. See [Backup and Restore](backup-restore.md) for
-the destructive confirmation flow, locking behavior, and export/import
-alternative for selective transfers.
+Backups and restore staging are unscoped administrator-only disaster-recovery
+operations. Destructive confirmation is disabled through the API and must run
+through `hubuum-admin` with the migrator credential. See
+[Backup and Restore](backup-restore.md) for the destructive confirmation flow,
+locking behavior, and export/import alternative for selective transfers.
 
 ### Pagination Configuration
 

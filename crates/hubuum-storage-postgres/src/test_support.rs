@@ -25,8 +25,8 @@ use hubuum_storage_core::{
 use tokio::time::{Duration, Instant, sleep};
 
 use crate::{
-    PostgresConnection, PostgresPool, PostgresPoolSettings, PostgresStorageError,
-    build_postgres_pool,
+    DatabaseRoleNames, PostgresConnection, PostgresPool, PostgresPoolSettings,
+    PostgresStorageError, build_postgres_pool,
 };
 
 /// Build a pool for an adapter integration test against the migrated database
@@ -45,6 +45,37 @@ pub fn integration_test_pool(max_size: u32) -> PostgresPool {
         .build()
         .expect("integration-test PostgreSQL settings must be valid");
     build_postgres_pool(&settings).expect("integration-test PostgreSQL pool must be constructed")
+}
+
+/// Whether the repository runner provisioned the dedicated database-role fixture.
+#[must_use]
+pub fn database_role_tests_enabled() -> bool {
+    std::env::var("HUBUUM_DATABASE_ROLE_TESTS").as_deref() == Ok("true")
+}
+
+/// Role names provisioned by the repository integration-test runner.
+#[must_use]
+pub fn integration_test_database_roles() -> DatabaseRoleNames {
+    DatabaseRoleNames::new(
+        std::env::var("HUBUUM_DATABASE_OWNER_ROLE").expect("test owner role"),
+        std::env::var("HUBUUM_DATABASE_MIGRATOR_ROLE").expect("test migrator role"),
+        std::env::var("HUBUUM_DATABASE_RUNTIME_ROLE").expect("test runtime role"),
+    )
+    .expect("test role names")
+}
+
+/// Build a pool authenticated as the repository test migrator.
+#[must_use]
+pub fn integration_test_migration_pool(max_size: u32) -> PostgresPool {
+    let database_url = std::env::var("HUBUUM_MIGRATION_DATABASE_URL")
+        .expect("HUBUUM_MIGRATION_DATABASE_URL must identify the migrated test database");
+    let settings = PostgresPoolSettings::builder(database_url)
+        .max_size(max_size)
+        .statement_timeout_ms(0)
+        .acquire_timeout_ms(5_000)
+        .build()
+        .expect("integration-test migration settings must be valid");
+    build_postgres_pool(&settings).expect("integration-test migration pool must be constructed")
 }
 
 /// Persisted credential evidence needed by request-level authentication tests.

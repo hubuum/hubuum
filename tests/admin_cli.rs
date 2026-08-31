@@ -62,12 +62,19 @@ fn admin_help_exposes_reset_password() {
     assert!(stdout.contains("--reset-password"));
     assert!(stdout.contains("--backup"));
     assert!(stdout.contains("--restore"));
+    assert!(stdout.contains("--restore-executor"));
+    #[cfg(feature = "embedded-migrations")]
+    assert!(stdout.contains("--legacy-single-role-migration"));
+    assert!(stdout.contains("--database-role-setup-sql"));
+    assert!(stdout.contains("--database-role-grants-sql"));
+    assert!(stdout.contains("--check-database-privileges"));
 }
 
 #[cfg(feature = "embedded-migrations")]
 #[test]
 fn migration_connection_failures_use_the_database_exit_code() {
     let output = Command::new(admin_binary())
+        .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
         .args([
             "--migrate",
             "--database-url",

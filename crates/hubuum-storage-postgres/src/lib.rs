@@ -6,6 +6,7 @@
 
 mod backend;
 mod cursor;
+mod database_privileges;
 mod diagnostics;
 mod error;
 mod failpoints;
@@ -64,6 +65,11 @@ pub mod diesel_async_prelude {
 
 pub use backend::PostgresStorage;
 pub(crate) use cursor::{apply_cursor_ordering_fields, apply_query_options_with_fields};
+pub use database_privileges::{
+    DatabasePrivilegeFinding, DatabasePrivilegeReport, DatabaseRoleName, DatabaseRoleNames,
+    database_privilege_capabilities, database_privilege_manifest_json,
+    database_role_reconciliation_sql, database_role_setup_sql, inspect_database_privileges,
+};
 pub(crate) use diagnostics::{
     PostgresPoolAcquisitionState, PostgresPoolCapacity, PostgresPoolConnectionState,
 };
@@ -82,7 +88,7 @@ pub(crate) use filters::{
     postgres_is_null_filter, postgres_revision_filter, postgres_string_filter,
 };
 #[cfg(feature = "embedded-migrations")]
-pub use migrations::run_embedded_migrations;
+pub use migrations::{run_embedded_migrations, run_embedded_migrations_as};
 #[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 #[doc(hidden)]
 pub use operations::computed_materialization::source_data_sha256;

@@ -31,6 +31,14 @@ struct EventIdRow {
 }
 
 #[derive(QueryableByName)]
+struct PurgeSummaryRow {
+    #[diesel(sql_type = BigInt)]
+    purged_events: i64,
+    #[diesel(sql_type = BigInt)]
+    purged_terminal_deliveries: i64,
+}
+
+#[derive(QueryableByName)]
 struct RetentionBatchRow {
     #[diesel(sql_type = SqlUuid)]
     claim_id: Uuid,
@@ -38,10 +46,6 @@ struct RetentionBatchRow {
     event_ids: Vec<i64>,
     #[diesel(sql_type = Jsonb)]
     event_documents: Value,
-    #[diesel(sql_type = Timestamp)]
-    delivery_cutoff: NaiveDateTime,
-    #[diesel(sql_type = BigInt)]
-    delivery_batch_size: i64,
     #[diesel(sql_type = Nullable<Timestamp>)]
     completed_at: Option<NaiveDateTime>,
     #[diesel(sql_type = Nullable<BigInt>)]
@@ -164,8 +168,6 @@ pub async fn claim_event_retention_batch(
                 claim_id,
                 event_ids,
                 event_documents,
-                delivery_cutoff,
-                delivery_batch_size: settings.query_batch_size(),
                 completed_at: None,
                 purged_events: None,
                 purged_terminal_deliveries: None,
@@ -199,13 +201,7 @@ pub async fn complete_event_retention_batch(
             if claim.completed_at.is_some() {
                 return completed_summary(&claim);
             }
-            let summary = purge_event_retention_batch(
-                connection,
-                claim.delivery_cutoff,
-                claim.delivery_batch_size,
-                &claim.event_ids,
-            )
-            .await?;
+            let summary = purge_event_retention_batch(connection, batch_id).await?;
             diesel::sql_query(
                 "UPDATE event_retention_batches
                  SET completed_at = clock_timestamp() AT TIME ZONE 'UTC',
@@ -239,8 +235,7 @@ async fn load_pending_claim(
     connection: &mut PostgresConnection,
 ) -> Result<Option<RetentionBatchRow>, PostgresStorageError> {
     diesel::sql_query(
-        "SELECT claim_id, event_ids, event_documents, delivery_cutoff,
-                delivery_batch_size, completed_at, purged_events,
+        "SELECT claim_id, event_ids, event_documents, completed_at, purged_events,
                 purged_terminal_deliveries
          FROM event_retention_batches
          WHERE completed_at IS NULL
@@ -258,8 +253,7 @@ async fn load_claim_for_update(
     batch_id: StorageEventRetentionBatchId,
 ) -> Result<RetentionBatchRow, PostgresStorageError> {
     diesel::sql_query(
-        "SELECT claim_id, event_ids, event_documents, delivery_cutoff,
-                delivery_batch_size, completed_at, purged_events,
+        "SELECT claim_id, event_ids, event_documents, completed_at, purged_events,
                 purged_terminal_deliveries
          FROM event_retention_batches
          WHERE claim_id = $1
@@ -355,22 +349,22 @@ async fn select_events_for_retention_purge(
 
 async fn purge_event_retention_batch(
     connection: &mut PostgresConnection,
-    delivery_cutoff: NaiveDateTime,
-    delivery_batch_size: i64,
-    event_ids: &[i64],
+    batch_id: StorageEventRetentionBatchId,
 ) -> Result<StorageEventRetentionSummary, PostgresStorageError> {
-    let purged_terminal_deliveries =
-        purge_terminal_event_deliveries(connection, delivery_cutoff, delivery_batch_size).await?;
-    let purged_events = purge_events_by_id(connection, event_ids).await?;
-    if purged_events != event_ids.len() {
-        return Err(PostgresStorageError::conflict(format!(
-            "Event retention claim expected to purge {} events but purged {purged_events}",
-            event_ids.len(),
-        )));
-    }
+    let row = diesel::sql_query(
+        "SELECT purged_events, purged_terminal_deliveries \
+         FROM hubuum_complete_event_retention_purge($1)",
+    )
+    .bind::<SqlUuid, _>(batch_id.as_uuid())
+    .get_result::<PurgeSummaryRow>(connection)
+    .await?;
     Ok(StorageEventRetentionSummary::new(
-        purged_events,
-        purged_terminal_deliveries,
+        usize::try_from(row.purged_events).map_err(|_| {
+            PostgresStorageError::database("Retention event count does not fit usize")
+        })?,
+        usize::try_from(row.purged_terminal_deliveries).map_err(|_| {
+            PostgresStorageError::database("Retention delivery count does not fit usize")
+        })?,
     ))
 }
 
@@ -399,59 +393,5 @@ async fn select_event_ids_for_retention_purge(
     .load::<EventIdRow>(connection)
     .await
     .map(|rows| rows.into_iter().map(|row| row.id).collect())
-    .map_err(PostgresStorageError::from)
-}
-
-async fn purge_terminal_event_deliveries(
-    connection: &mut PostgresConnection,
-    cutoff: NaiveDateTime,
-    batch_size: i64,
-) -> Result<usize, PostgresStorageError> {
-    diesel::sql_query(
-        "WITH candidates AS (
-             SELECT id
-             FROM event_deliveries
-             WHERE updated_at < $1
-               AND status IN ('succeeded', 'dead')
-             ORDER BY updated_at ASC, id ASC
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM event_deliveries AS delivery
-         USING candidates
-         WHERE delivery.id = candidates.id",
-    )
-    .bind::<Timestamp, _>(cutoff)
-    .bind::<BigInt, _>(batch_size)
-    .execute(connection)
-    .await
-    .map_err(PostgresStorageError::from)
-}
-
-async fn purge_events_by_id(
-    connection: &mut PostgresConnection,
-    event_ids: &[i64],
-) -> Result<usize, PostgresStorageError> {
-    if event_ids.is_empty() {
-        return Ok(0);
-    }
-
-    diesel::sql_query("SELECT set_config('events.allow_purge', 'on', true)")
-        .execute(&mut *connection)
-        .await?;
-    diesel::sql_query(
-        "DELETE FROM events e
-         WHERE e.id = ANY($1)
-           AND e.dispatched_at IS NOT NULL
-           AND NOT EXISTS (
-             SELECT 1
-             FROM event_deliveries d
-             WHERE d.event_id = e.id
-               AND d.status IN ('pending', 'failed', 'in_flight')
-           )",
-    )
-    .bind::<Array<BigInt>, _>(event_ids)
-    .execute(connection)
-    .await
     .map_err(PostgresStorageError::from)
 }

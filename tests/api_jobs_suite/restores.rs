@@ -232,7 +232,7 @@ mod tests {
     #[case::existing_stage(true)]
     #[case::missing_stage(false)]
     #[actix_web::test]
-    async fn invalid_confirmation_capability_does_not_disclose_stage_existence(
+    async fn invalid_restore_confirmation_capability_does_not_disclose_stage_existence(
         #[future(awt)] test_context: TestContext,
         #[case] stage_exists: bool,
     ) {
@@ -374,7 +374,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn expired_confirmation_expires_the_validated_stage(
+    async fn api_confirmation_expires_and_erases_an_expired_stage(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
@@ -426,8 +426,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            (status.as_str(), document.as_slice()),
-            (RestoreJobStatus::Expired.as_str(), b"".as_slice())
+            (status.as_str(), document.is_empty()),
+            (RestoreJobStatus::Expired.as_str(), true)
         );
 
         with_connection(&context.pool, async |conn| {

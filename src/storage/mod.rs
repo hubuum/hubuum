@@ -27,7 +27,11 @@ pub use execution::{
 };
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::run_storage_migrations;
-pub(crate) use factory::{StorageSettings, initialize_storage};
+pub(crate) use factory::{
+    StorageDatabasePrivilegeReport, StorageDatabaseRole, StorageDatabaseRoleNames, StorageSettings,
+    initialize_storage, inspect_storage_database_privileges, storage_database_role_grants_sql,
+    storage_database_role_setup_sql,
+};
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, CatalogStorage,
     ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage, CollectionStorage,

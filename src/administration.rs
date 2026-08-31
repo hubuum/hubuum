@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -22,18 +22,27 @@ use crate::models::{
     BackupRequest, ExportContentType, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest,
     RestoreInitiator, RestoreJobID, RestoreStageRequest,
 };
-use crate::restores::{RestoreSettings, confirm_restore, stage_restore};
+use crate::restores::{
+    RestoreSettings, confirm_restore, execute_confirmed_restore, restore_status, stage_restore,
+};
 use crate::services::identity as identity_service;
 use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
 use crate::storage::run_storage_migrations;
 use crate::storage::{
-    OperationalStateStorage, StorageBackendKind, StorageHandle, StorageSettings,
+    OperationalStateStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
+    StorageDatabaseRole, StorageDatabaseRoleNames, StorageHandle, StorageSettings,
     StorageTokenKeyUsage, StorageTokenObservation, TokenStorage, initialize_storage,
+    inspect_storage_database_privileges, storage_database_role_grants_sql,
+    storage_database_role_setup_sql,
 };
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
 use crate::utilities::is_valid_log_level;
+
+const DEFAULT_DATABASE_OWNER_ROLE: &str = "hubuum_owner";
+const DEFAULT_DATABASE_MIGRATOR_ROLE: &str = "hubuum_migrator";
+const DEFAULT_DATABASE_RUNTIME_ROLE: &str = "hubuum_runtime";
 
 #[derive(Parser)]
 #[command(
@@ -58,6 +67,10 @@ struct AdminCli {
     /// Exact destructive confirmation phrase required with --restore
     #[arg(long, value_name = "PHRASE", requires = "restore")]
     restore_confirmation: Option<String>,
+
+    /// Run the isolated long-lived executor for confirmed web restores
+    #[arg(long, default_value_t = false)]
+    restore_executor: bool,
 
     /// Reset the password for the specified username
     #[arg(long)]
@@ -84,6 +97,49 @@ struct AdminCli {
     #[arg(long, default_value_t = false)]
     migrate: bool,
 
+    /// Migrate an existing single-role database without reconciling split-role grants
+    #[cfg(feature = "embedded-migrations")]
+    #[arg(
+        long,
+        default_value_t = false,
+        requires = "migrate",
+        conflicts_with_all = [
+            "database_owner_role",
+            "database_migrator_role",
+            "database_runtime_role"
+        ]
+    )]
+    legacy_single_role_migration: bool,
+
+    /// Print idempotent SQL for the configured owner, migrator, and runtime roles
+    #[arg(long, default_value_t = false)]
+    database_role_setup_sql: bool,
+
+    /// Print grant/ownership SQL for roles pre-created by a managed database provider
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with = "database_role_setup_sql"
+    )]
+    database_role_grants_sql: bool,
+
+    /// Check a logical database role against the generated privilege manifest
+    #[arg(long, default_value_t = false)]
+    check_database_privileges: bool,
+
+    /// Logical role inspected by --check-database-privileges
+    #[arg(
+        long,
+        value_enum,
+        default_value = "runtime",
+        requires = "check_database_privileges"
+    )]
+    role: DatabasePrivilegeRole,
+
+    /// Emit machine-readable JSON for supported report commands
+    #[arg(long, default_value_t = false)]
+    json: bool,
+
     /// Storage adapter compiled into this application build.
     #[arg(
         long,
@@ -96,6 +152,22 @@ struct AdminCli {
     /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
     database_url: Option<String>,
+
+    /// Privileged migration and restore-executor database URL
+    #[arg(long, env = "HUBUUM_MIGRATION_DATABASE_URL")]
+    migration_database_url: Option<String>,
+
+    /// Non-login role that owns Hubuum database objects
+    #[arg(long, env = "HUBUUM_DATABASE_OWNER_ROLE")]
+    database_owner_role: Option<String>,
+
+    /// Login/workload role used only by migrations and destructive restore
+    #[arg(long, env = "HUBUUM_DATABASE_MIGRATOR_ROLE")]
+    database_migrator_role: Option<String>,
+
+    /// Non-owning login role used by API and worker processes
+    #[arg(long, env = "HUBUUM_DATABASE_RUNTIME_ROLE")]
+    database_runtime_role: Option<String>,
 
     /// Pool-global storage query timeout in milliseconds (0 disables it)
     #[arg(
@@ -135,6 +207,13 @@ struct AdminCli {
     log_level: String,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DatabasePrivilegeRole {
+    Owner,
+    Migrator,
+    Runtime,
+}
+
 /// Parse and execute one Hubuum administration command.
 ///
 /// This is the workspace-internal boundary used by `hubuum-admin`; callers
@@ -143,21 +222,56 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let admin_cli = AdminCli::parse();
     init_logging(&admin_cli.log_level);
 
+    let database_roles = resolve_database_roles(
+        admin_cli.database_owner_role.as_deref(),
+        admin_cli.database_migrator_role.as_deref(),
+        admin_cli.database_runtime_role.as_deref(),
+    )?;
+
+    if admin_cli.database_role_setup_sql {
+        print!("{}", storage_database_role_setup_sql(&database_roles)?);
+        return Ok(());
+    }
+    if admin_cli.database_role_grants_sql {
+        println!("BEGIN;");
+        print!("{}", storage_database_role_grants_sql(&database_roles)?);
+        println!("COMMIT;");
+        return Ok(());
+    }
+
     if admin_cli.restore.is_some()
         && admin_cli.restore_confirmation.as_deref() != Some(RESTORE_CONFIRMATION_PHRASE)
     {
         return Err(destructive_confirmation_error());
     }
 
+    #[cfg(feature = "embedded-migrations")]
+    let migration_requested = admin_cli.migrate;
+    #[cfg(not(feature = "embedded-migrations"))]
+    let migration_requested = false;
+    let privileged_database_operation =
+        migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
+    let database_url = if admin_cli.restore_executor {
+        admin_cli.migration_database_url
+    } else if privileged_database_operation {
+        admin_cli.migration_database_url.or(admin_cli.database_url)
+    } else {
+        admin_cli.database_url
+    };
     let storage_settings = match admin_cli.storage_backend {
         StorageBackendKind::Postgres => {
-            let database_url = admin_cli.database_url.unwrap_or_else(|| {
-                std::env::var("HUBUUM_DATABASE_URL").unwrap_or_else(|_| {
-                    fatal_error(
-                        "HUBUUM_DATABASE_URL must be set if not provided as an argument",
-                        EXIT_CODE_CONFIG_ERROR,
-                    )
-                })
+            let database_url = database_url.unwrap_or_else(|| {
+                let variable = if admin_cli.restore_executor {
+                    "HUBUUM_MIGRATION_DATABASE_URL"
+                } else if privileged_database_operation {
+                    "HUBUUM_MIGRATION_DATABASE_URL (or the compatibility fallback HUBUUM_DATABASE_URL)"
+                } else {
+                    "HUBUUM_DATABASE_URL"
+                };
+                fatal_error(
+                    &format!("{variable} must be set if not provided as an argument"),
+                    EXIT_CODE_CONFIG_ERROR,
+                )
             });
             StorageSettings::postgres(database_url)
                 .max_connections(1)
@@ -170,19 +284,59 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
-        let applied = run_storage_migrations(&storage_settings).unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Failed to run storage migrations: {error}"),
-                EXIT_CODE_DATABASE_ERROR,
-            )
-        });
+        let migration_roles = (!admin_cli.legacy_single_role_migration).then_some(&database_roles);
+        let applied =
+            run_storage_migrations(&storage_settings, migration_roles).unwrap_or_else(|error| {
+                fatal_error(
+                    &format!("Failed to run storage migrations: {error}"),
+                    EXIT_CODE_DATABASE_ERROR,
+                )
+            });
+        if admin_cli.legacy_single_role_migration {
+            eprintln!(
+                "WARNING: --legacy-single-role-migration was requested; migrations ran as the \
+                 connected existing owner without privilege reconciliation. Complete the \
+                 database-role adoption procedure before enabling strict privilege checks or web \
+                 restore confirmations."
+            );
+        }
         println!("Applied {applied} storage migration(s).");
+        return Ok(());
+    }
+
+    if admin_cli.check_database_privileges {
+        let role = match admin_cli.role {
+            DatabasePrivilegeRole::Owner => StorageDatabaseRole::Owner,
+            DatabasePrivilegeRole::Migrator => StorageDatabaseRole::Migrator,
+            DatabasePrivilegeRole::Runtime => StorageDatabaseRole::Runtime,
+        };
+        let report = inspect_storage_database_privileges(&storage_settings, role, &database_roles)
+            .await?
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Database privilege checks require the PostgreSQL storage backend".to_string(),
+                )
+            })?;
+        print_database_privilege_report(&report, admin_cli.json)?;
+        if !report.is_safe() {
+            return Err(ApiError::BadRequest(format!(
+                "Database role '{}' does not satisfy the Hubuum privilege manifest",
+                report.role(),
+            )));
+        }
         return Ok(());
     }
 
     let storage = initialize_storage(&storage_settings)?;
 
-    if let Some(path) = admin_cli.backup {
+    if admin_cli.restore_executor {
+        if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
+            return Err(ApiError::BadRequest(
+                "The restore executor requires the PostgreSQL storage backend".to_string(),
+            ));
+        }
+        run_restore_executor(&storage).await?;
+    } else if let Some(path) = admin_cli.backup {
         backup_database(&storage, &path, !admin_cli.backup_without_history).await?;
     } else if let Some(path) = admin_cli.restore {
         restore_database(&storage, &path, admin_cli.restore_confirmation.as_deref()).await?;
@@ -205,6 +359,59 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         println!("No command specified. Use --help for usage information.");
     }
 
+    Ok(())
+}
+
+fn resolve_database_roles(
+    owner: Option<&str>,
+    migrator: Option<&str>,
+    runtime: Option<&str>,
+) -> Result<StorageDatabaseRoleNames, ApiError> {
+    StorageDatabaseRoleNames::new(
+        owner.unwrap_or(DEFAULT_DATABASE_OWNER_ROLE),
+        migrator.unwrap_or(DEFAULT_DATABASE_MIGRATOR_ROLE),
+        runtime.unwrap_or(DEFAULT_DATABASE_RUNTIME_ROLE),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))
+}
+
+fn print_database_privilege_report(
+    report: &StorageDatabasePrivilegeReport,
+    json: bool,
+) -> Result<(), ApiError> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Failed to serialize database privilege report: {error}"
+                ))
+            })?
+        );
+        return Ok(());
+    }
+    println!(
+        "Database role '{}' (connected as '{}'): {}",
+        report.role(),
+        report.connected_role(),
+        if report.is_safe() { "safe" } else { "unsafe" }
+    );
+    for finding in report.dangerous() {
+        println!(
+            "DANGEROUS {} {}: {}",
+            finding.code(),
+            finding.object(),
+            finding.detail()
+        );
+    }
+    for finding in report.missing() {
+        println!(
+            "MISSING {} {}: {}",
+            finding.code(),
+            finding.object(),
+            finding.detail()
+        );
+    }
     Ok(())
 }
 
@@ -557,25 +764,76 @@ async fn restore_database(
     let initiator = RestoreInitiator::new(None, "system", "hubuum-admin")?;
     let request = RestoreStageRequest::new(initiator, bytes)?;
     let staged = stage_restore(storage, &settings, request).await?;
-    let capability = staged.restore_capability.ok_or_else(|| {
+    let capability = staged.restore_capability.clone().ok_or_else(|| {
         ApiError::InternalServerError("Restore stage did not return a capability".to_string())
     })?;
-    let restored = confirm_restore(
+    let confirmed = confirm_restore(
         storage,
         RestoreJobID::new(staged.id)?,
         &RestoreConfirmRequest {
-            restore_capability: capability,
+            restore_capability: capability.clone(),
             sha256: staged.sha256,
             confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
         },
     )
     .await?;
+    if !execute_confirmed_restore(storage).await? {
+        return Err(ApiError::Conflict(format!(
+            "Restore {} was confirmed but no longer owns draining maintenance",
+            confirmed.id
+        )));
+    }
+    let restored = restore_status(storage, RestoreJobID::new(confirmed.id)?, &capability).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
         restored.status.as_str()
     );
     Ok(())
+}
+
+async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {
+    println!("Restore executor is ready for confirmed web restores.");
+    loop {
+        match execute_confirmed_restore(storage).await {
+            Ok(true) => tracing::info!(message = "Confirmed restore completed"),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(message = "Restore executor iteration failed", error = %error)
+            }
+        }
+        tokio::select! {
+            result = wait_for_restore_executor_shutdown() => {
+                result?;
+                println!("Restore executor stopped.");
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_restore_executor_shutdown() -> Result<(), ApiError> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to install restore executor signal handler: {error}"
+        ))
+    })?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result.map_err(|error| {
+            ApiError::InternalServerError(format!("Restore executor signal error: {error}"))
+        }),
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_restore_executor_shutdown() -> Result<(), ApiError> {
+    tokio::signal::ctrl_c().await.map_err(|error| {
+        ApiError::InternalServerError(format!("Restore executor signal error: {error}"))
+    })
 }
 
 fn destructive_confirmation_error() -> ApiError {
@@ -719,7 +977,11 @@ fn init_logging(log_level: &str) {
 mod tests {
     use clap::Parser;
 
-    use super::{AdminCli, StorageBackendKind};
+    use super::{
+        AdminCli, DEFAULT_DATABASE_MIGRATOR_ROLE, DEFAULT_DATABASE_OWNER_ROLE,
+        DEFAULT_DATABASE_RUNTIME_ROLE, StorageBackendKind, StorageDatabaseRoleNames,
+        resolve_database_roles,
+    };
 
     #[test]
     fn storage_backend_selection_defaults_only_for_an_empty_value() {
@@ -733,5 +995,59 @@ mod tests {
 
         assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn absent_database_role_configuration_uses_documented_defaults() {
+        let roles = resolve_database_roles(None, None, None).unwrap();
+
+        assert_eq!(
+            roles,
+            StorageDatabaseRoleNames::new(
+                DEFAULT_DATABASE_OWNER_ROLE,
+                DEFAULT_DATABASE_MIGRATOR_ROLE,
+                DEFAULT_DATABASE_RUNTIME_ROLE,
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn database_role_configuration_overrides_individual_defaults() {
+        let roles = resolve_database_roles(None, None, Some("existing_hubuum_login")).unwrap();
+
+        assert_eq!(roles.runtime(), "existing_hubuum_login");
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn legacy_single_role_migration_requires_migrate() {
+        let error =
+            match AdminCli::try_parse_from(["hubuum-admin", "--legacy-single-role-migration"]) {
+                Ok(_) => panic!("the compatibility bridge must require --migrate"),
+                Err(error) => error,
+            };
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn legacy_single_role_migration_rejects_split_role_names() {
+        let error = match AdminCli::try_parse_from([
+            "hubuum-admin",
+            "--migrate",
+            "--legacy-single-role-migration",
+            "--database-runtime-role",
+            "existing_hubuum_login",
+        ]) {
+            Ok(_) => panic!("legacy migration must not accept split-role configuration"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

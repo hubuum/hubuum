@@ -1,0 +1,24 @@
+{
+  "schema": "public",
+  "migration_table": "__diesel_schema_migrations",
+  "history_table_suffix": "_history",
+  "read_only_tables": [
+    "restore_success_receipts"
+  ],
+  "events_table": "events",
+  "event_update_columns": [
+    "dispatched_at",
+    "fanout_locked_until",
+    "fanout_claim_token"
+  ],
+  "runtime_functions": [
+    "hubuum_complete_event_retention_purge"
+  ],
+  "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
+  "restore": "isolated_migrator_executor",
+  "built_in_capabilities": [
+    "advisory_locks",
+    "listen_notify",
+    "transaction_local_session_settings"
+  ]
+}

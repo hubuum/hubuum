@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a generated PostgreSQL privilege manifest with distinct non-login
+  owner, dedicated migrator, and non-owning runtime roles; catalog-backed
+  warn/strict startup diagnostics; administrator SQL and JSON reporting; and
+  Compose, single-host, and distributed deployment workflows that keep the
+  migration credential out of long-lived application containers. Web restore
+  is preserved through a separate, non-listening restore-executor workload, with
+  document-free terminal receipts for
+  capability-authenticated status polling.
 - Added bounded online token hash key-ring rotation with versioned bearer
   tokens, active and previous verification keys, race-safe migration of legacy
   digests, strict stable-key startup enforcement, per-key retirement
@@ -26,6 +34,36 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (database deployment):** server container entrypoints no longer
+  apply migrations. Operators must provision the documented owner, migrator,
+  and runtime roles, set `HUBUUM_DATABASE_URL` to the runtime identity, and run
+  `hubuum-admin --migrate` as a one-shot workload with
+  `HUBUUM_MIGRATION_DATABASE_URL` before rolling the server. External
+  single-host installs must add `--migration-database-url` on upgrade. Existing
+  single-role deployments must verify normal maintenance, pause confirmations,
+  adopt the compatibility runtime grants, migrate, start the isolated restore
+  executor, and only then roll runtime-only API and workers; the migration
+  serializes with confirmation, refuses an in-flight confirmed restore, and
+  preserves validated stages. Rollback keeps the compatibility runtime login
+  but must leave old synchronous web confirmation blocked; use the new one-shot
+  administrator restore path until the executor-based release is restored. If
+  role provisioning must follow schema migration, the new admin binary retains
+  an explicit, warned `--legacy-single-role-migration` bridge that rejects
+  split-role settings; operators must still complete role adoption before
+  enabling strict checks or web restore confirmation. Adoption transfers table
+  ownership before attached sequences so existing serial-backed schemas can be
+  reconciled safely.
+- **Breaking (full restore):** `POST /api/v1/restores/{restore_id}/confirm` now
+  returns `202 Accepted` after queuing the validated operation instead of
+  completing the replacement synchronously. Deploy
+  `hubuum-admin --restore-executor` with the migration database credential
+  before allowing confirmations, and update clients to poll the existing
+  capability-authenticated status endpoint until `succeeded` or `failed`.
+  One-shot `hubuum-admin --restore` remains available.
+- Temporal history and append-only audit-event triggers now reject forged
+  restore and purge session flags from the runtime role. Event retention uses
+  a bounded, allowlisted security-definer function tied to an existing durable
+  claim instead of granting the runtime role direct event deletion.
 - **Breaking (experimental `hubuum-storage-core` API):** token creation and
   renewal now receive typed `StorageTokenDigest` values, authentication and
   hash-based revocation accept bounded credential candidates, successful

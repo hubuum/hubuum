@@ -18410,8 +18410,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Restore completed",
+          "202": {
+            "description": "Restore confirmed and queued for the isolated executor",
             "headers": {
               "Cache-Control": {
                 "schema": {
@@ -18429,7 +18429,7 @@
             }
           },
           "400": {
-            "description": "Confirmation phrase is invalid",
+            "description": "Invalid confirmation",
             "content": {
               "application/json": {
                 "schema": {
@@ -18449,7 +18449,7 @@
             }
           },
           "403": {
-            "description": "Administrator or capability rejected",
+            "description": "Administrator access required or restore capability rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -18459,7 +18459,7 @@
             }
           },
           "409": {
-            "description": "Stage state or SHA-256 mismatch",
+            "description": "Restore stage cannot be confirmed",
             "content": {
               "application/json": {
                 "schema": {
@@ -20463,12 +20463,22 @@
           "url",
           "pool_size",
           "pool_acquire_timeout_ms",
-          "statement_timeout_ms"
+          "statement_timeout_ms",
+          "privilege_mode",
+          "owner_role",
+          "migrator_role",
+          "runtime_role"
         ],
         "properties": {
           "backend": {
             "type": "string",
             "description": "Complete storage backend selected by the application composition root."
+          },
+          "migrator_role": {
+            "type": "string"
+          },
+          "owner_role": {
+            "type": "string"
           },
           "pool_acquire_timeout_ms": {
             "type": "integer",
@@ -20479,6 +20489,12 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "privilege_mode": {
+            "type": "string"
+          },
+          "runtime_role": {
+            "type": "string"
           },
           "statement_timeout_ms": {
             "type": "integer",
@@ -28381,7 +28397,7 @@
               "string",
               "null"
             ],
-            "description": "Returned only when a stage is created. It is stored only as a hash and\nmust be supplied to confirm or inspect the restore while its staging\nrecord exists. A successful restore deletes every staging record."
+            "description": "Returned only when a stage is created. It is stored only as a hash and\nmust be supplied to confirm or inspect the restore while its staging\nrecord exists. Success retains only a document-free terminal receipt."
           },
           "sha256": {
             "type": "string"

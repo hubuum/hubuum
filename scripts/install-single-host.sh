@@ -22,6 +22,7 @@ POSTGRES_IMAGE="docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 EXTERNAL_DATABASE_URL=""
+EXTERNAL_MIGRATION_DATABASE_URL=""
 AUTH_CONFIG_HOST_PATH=""
 AUTH_CONFIG_CONTAINER_PATH="/etc/hubuum/auth.toml"
 NETWORK_SUBNET="172.30.42.0/24"
@@ -66,6 +67,8 @@ Options:
   --backend-image IMAGE   Backend image. Default: ghcr.io/hubuum/hubuum-server:main
   --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
+  --migration-database-url URL
+                          Migrator Postgres URL required with --database-url
   --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
   --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.4 on Alpine 3.24 (digest-pinned)
@@ -150,7 +153,8 @@ while [[ $# -gt 0 ]]; do
     --frontend-ref) FRONTEND_REF="$2"; ARG_SET+=" FRONTEND_REF"; shift 2 ;;
     --backend-repo) BACKEND_REPO="$2"; ARG_SET+=" BACKEND_REPO"; shift 2 ;;
     --frontend-repo) FRONTEND_REPO="$2"; ARG_SET+=" FRONTEND_REPO"; shift 2 ;;
-    --database-url) EXTERNAL_DATABASE_URL="$2"; shift 2 ;;
+    --database-url) EXTERNAL_DATABASE_URL="$2"; ARG_SET+=" EXTERNAL_DATABASE_URL"; shift 2 ;;
+    --migration-database-url) EXTERNAL_MIGRATION_DATABASE_URL="$2"; ARG_SET+=" EXTERNAL_MIGRATION_DATABASE_URL"; shift 2 ;;
     --auth-config) AUTH_CONFIG_HOST_PATH="$2"; ARG_SET+=" AUTH_CONFIG_HOST_PATH"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
     --postgres-image) POSTGRES_IMAGE="$2"; ARG_SET+=" POSTGRES_IMAGE"; shift 2 ;;
@@ -452,13 +456,20 @@ fi
 ENV_FILE="$INSTALL_DIR/.env"
 
 POSTGRES_PASSWORD=""
+POSTGRES_MIGRATOR_PASSWORD=""
+POSTGRES_RUNTIME_PASSWORD=""
 HUBUUM_TOKEN_HASH_KEY=""
 EXISTING_POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD || true)"
+EXISTING_POSTGRES_MIGRATOR_PASSWORD="$(read_env_value POSTGRES_MIGRATOR_PASSWORD || true)"
+EXISTING_POSTGRES_RUNTIME_PASSWORD="$(read_env_value POSTGRES_RUNTIME_PASSWORD || true)"
 if [[ "$RECREATE" != "true" ]]; then
   if [[ -z "$EXTERNAL_DATABASE_URL" && "$(read_env_value DATABASE_MANAGED || true)" == "false" ]]; then
     EXTERNAL_DATABASE_URL="$(read_env_value HUBUUM_DATABASE_URL || true)"
+    EXTERNAL_MIGRATION_DATABASE_URL="$(read_env_value HUBUUM_MIGRATION_DATABASE_URL || true)"
   fi
   POSTGRES_PASSWORD="$EXISTING_POSTGRES_PASSWORD"
+  POSTGRES_MIGRATOR_PASSWORD="$EXISTING_POSTGRES_MIGRATOR_PASSWORD"
+  POSTGRES_RUNTIME_PASSWORD="$EXISTING_POSTGRES_RUNTIME_PASSWORD"
   HUBUUM_TOKEN_HASH_KEY="$(read_env_value HUBUUM_TOKEN_HASH_KEY || true)"
 fi
 
@@ -469,16 +480,23 @@ fi
 if [[ "$RECREATE" == "true" && -z "$EXTERNAL_DATABASE_URL" && -n "$EXISTING_POSTGRES_PASSWORD" ]]; then
   echo "WARNING: --recreate does not rotate the managed Postgres password, because the existing database volume was initialized with it. Rotating it would break authentication. To reset the database, uninstall with --purge first, then reinstall." >&2
   POSTGRES_PASSWORD="$EXISTING_POSTGRES_PASSWORD"
+  POSTGRES_MIGRATOR_PASSWORD="$EXISTING_POSTGRES_MIGRATOR_PASSWORD"
+  POSTGRES_RUNTIME_PASSWORD="$EXISTING_POSTGRES_RUNTIME_PASSWORD"
 fi
 
 [[ -n "$POSTGRES_PASSWORD" ]] || POSTGRES_PASSWORD="$(random_hex 32)"
+[[ -n "$POSTGRES_MIGRATOR_PASSWORD" ]] || POSTGRES_MIGRATOR_PASSWORD="$(random_hex 32)"
+[[ -n "$POSTGRES_RUNTIME_PASSWORD" ]] || POSTGRES_RUNTIME_PASSWORD="$(random_hex 32)"
 [[ -n "$HUBUUM_TOKEN_HASH_KEY" ]] || HUBUUM_TOKEN_HASH_KEY="$(random_hex 32)"
 
 DATABASE_MANAGED="true"
-HUBUUM_DATABASE_URL="postgres://hubuum:${POSTGRES_PASSWORD}@postgres:5432/hubuum"
+HUBUUM_DATABASE_URL="postgres://hubuum_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/hubuum"
+HUBUUM_MIGRATION_DATABASE_URL="postgres://hubuum_migrator:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/hubuum"
 if [[ -n "$EXTERNAL_DATABASE_URL" ]]; then
+  [[ -n "$EXTERNAL_MIGRATION_DATABASE_URL" ]] || die "--migration-database-url is required with --database-url (or set HUBUUM_MIGRATION_DATABASE_URL in the existing .env)"
   DATABASE_MANAGED="false"
   HUBUUM_DATABASE_URL="$EXTERNAL_DATABASE_URL"
+  HUBUUM_MIGRATION_DATABASE_URL="$EXTERNAL_MIGRATION_DATABASE_URL"
 fi
 
 LOGIN_RATE_LIMIT_BACKEND="memory"
@@ -510,9 +528,15 @@ write_deployment_env() {
   printf 'POSTGRES_DB=hubuum\n'
   printf 'POSTGRES_USER=hubuum\n'
   printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+  printf 'POSTGRES_MIGRATOR_PASSWORD=%s\n' "$POSTGRES_MIGRATOR_PASSWORD"
+  printf 'POSTGRES_RUNTIME_PASSWORD=%s\n' "$POSTGRES_RUNTIME_PASSWORD"
   printf '\n'
   printf 'HUBUUM_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
-  printf 'DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
+  printf 'HUBUUM_MIGRATION_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_MIGRATION_DATABASE_URL")"
+  printf 'HUBUUM_DATABASE_OWNER_ROLE=hubuum_owner\n'
+  printf 'HUBUUM_DATABASE_MIGRATOR_ROLE=hubuum_migrator\n'
+  printf 'HUBUUM_DATABASE_RUNTIME_ROLE=hubuum_runtime\n'
+  printf 'HUBUUM_DATABASE_PRIVILEGE_MODE=strict\n'
   printf 'HUBUUM_BIND_IP=0.0.0.0\n'
   printf 'HUBUUM_BIND_PORT=%s\n' "$API_PORT"
   printf 'HUBUUM_LOG_LEVEL=info\n'
@@ -570,6 +594,28 @@ else
 fi
 
 chmod 0600 "$ENV_FILE"
+
+DATABASE_ROLE_PASSWORD_SCRIPT="$INSTALL_DIR/set-database-role-passwords.sh"
+cat > "$DATABASE_ROLE_PASSWORD_SCRIPT" <<'EOF'
+#!/bin/sh
+set -eu
+
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+: "${POSTGRES_DB:?POSTGRES_DB is required}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+: "${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}"
+: "${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}"
+
+PGHOST=postgres PGPASSWORD="$POSTGRES_PASSWORD" psql --set ON_ERROR_STOP=1 \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --set migrator_password="$POSTGRES_MIGRATOR_PASSWORD" \
+  --set runtime_password="$POSTGRES_RUNTIME_PASSWORD" <<'SQL'
+ALTER ROLE hubuum_migrator PASSWORD :'migrator_password';
+ALTER ROLE hubuum_runtime PASSWORD :'runtime_password';
+SQL
+EOF
+chmod 0755 "$DATABASE_ROLE_PASSWORD_SCRIPT"
 
 CADDYFILE_TEMP="$(mktemp "$INSTALL_DIR/.Caddyfile.XXXXXX")"
 cat > "$CADDYFILE_TEMP" <<EOF
@@ -746,9 +792,12 @@ if [[ "$DATABASE_MANAGED" == "true" ]]; then
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
       PGUSER: ${POSTGRES_USER}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./set-database-role-passwords.sh:/usr/local/bin/hubuum-set-database-role-passwords:ro
     networks:
       - hubuum_net
     healthcheck:
@@ -759,6 +808,80 @@ if [[ "$DATABASE_MANAGED" == "true" ]]; then
 
 EOF
 fi
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+  hubuum-migrate:
+    profiles: ["administration"]
+EOF
+
+if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    build:
+      context: ./src/hubuum
+    image: local/hubuum-api:single-host
+EOF
+else
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    image: ${BACKEND_IMAGE}
+EOF
+fi
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    entrypoint: /usr/local/bin/hubuum-admin
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL}
+      HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
+      HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
+      HUBUUM_DATABASE_RUNTIME_ROLE: ${HUBUUM_DATABASE_RUNTIME_ROLE}
+    networks:
+      - hubuum_net
+
+EOF
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+  hubuum-restore-executor:
+EOF
+
+if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    build:
+      context: ./src/hubuum
+    image: local/hubuum-api:single-host
+EOF
+else
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    image: ${BACKEND_IMAGE}
+EOF
+fi
+
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+    container_name: hubuum-restore-executor
+    restart: unless-stopped
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: ["--restore-executor"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL}
+      HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
+      HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
+      HUBUUM_DATABASE_RUNTIME_ROLE: ${HUBUUM_DATABASE_RUNTIME_ROLE}
+    networks:
+      - hubuum_net
+
+EOF
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
   hubuum-api: &hubuum-api
@@ -792,7 +915,10 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_BIND_IP: ${HUBUUM_BIND_IP}
       HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}
       HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
-      DATABASE_URL: ${DATABASE_URL}
+      HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
+      HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
+      HUBUUM_DATABASE_RUNTIME_ROLE: ${HUBUUM_DATABASE_RUNTIME_ROLE}
+      HUBUUM_DATABASE_PRIVILEGE_MODE: ${HUBUUM_DATABASE_PRIVILEGE_MODE}
       HUBUUM_LOG_LEVEL: ${HUBUUM_LOG_LEVEL}
       HUBUUM_TOKEN_HASH_KEY: ${HUBUUM_TOKEN_HASH_KEY}
       HUBUUM_CLIENT_ALLOWLIST: ${HUBUUM_CLIENT_ALLOWLIST}

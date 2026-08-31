@@ -11,12 +11,12 @@ use hubuum::models::{
     RestoreJobStatus, RestoreStageRequest, TaskStatus,
 };
 use hubuum::restores::{
-    RestoreSettings, confirm_restore, get_maintenance_state, reconcile_interrupted_restore,
-    stage_restore,
+    RestoreSettings, confirm_restore, execute_confirmed_restore, get_maintenance_state,
+    reconcile_interrupted_restore, restore_status, stage_restore,
 };
 use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
-    restore_jobs, system_maintenance, tasks,
+    restore_jobs, restore_success_receipts, system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
@@ -25,13 +25,23 @@ use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::{with_connection, with_transaction};
 
 fn database_url() -> String {
+    std::env::var("HUBUUM_MIGRATION_DATABASE_URL")
+        .expect("HUBUUM_MIGRATION_DATABASE_URL must provide destructive restore authority")
+}
+
+fn runtime_database_url() -> String {
     std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must point to the isolated migrated test database")
+        .expect("HUBUUM_DATABASE_URL must provide runtime restore-coordination authority")
 }
 
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let runtime_pool = postgres_test_pool_with_timeout(
+        &runtime_database_url(),
+        2,
+        DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    );
     let root_collection_id = with_connection(&pool, async |conn| {
         collections::table
             .filter(collections::parent_collection_id.is_null())
@@ -169,16 +179,16 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         .expect("reconcile interrupted restore");
 
     let (
-        restore_job_exists,
+        success_receipt_exists,
         marker_exists,
         historical_task,
         historical_task_event,
         class_history_provenance,
         restore_event,
     ) = with_connection(&pool, async |conn| {
-        let restore_job = restore_jobs::table
-            .filter(restore_jobs::id.eq(staged.id))
-            .select(restore_jobs::id)
+        let success_receipt = restore_success_receipts::table
+            .filter(restore_success_receipts::id.eq(staged.id))
+            .select(restore_success_receipts::id)
             .first::<i64>(conn)
             .await
             .optional()?;
@@ -220,7 +230,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .await
             .optional()?;
         Ok::<_, diesel::result::Error>((
-            restore_job,
+            success_receipt,
             marker,
             history,
             historical_task_event,
@@ -232,7 +242,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .expect("restored data lookup");
     assert_eq!(
         (
-            restore_job_exists,
+            success_receipt_exists,
             marker_exists,
             historical_task,
             restore_event.as_ref().map(|event| event.0.as_str()),
@@ -242,7 +252,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
                 .and_then(serde_json::Value::as_str),
         ),
         (
-            None,
+            Some(staged.id),
             None,
             Some((historical_task_id, None, Some(provenance_initiator_id))),
             Some("system"),
@@ -299,30 +309,53 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let initiator = RestoreInitiator::new(None, "test", "restore-confirmation")
         .expect("restore confirmation initiator");
     let request = RestoreStageRequest::new(initiator, document).expect("restore request");
-    let confirmed_stage = stage_restore(&pool, &settings, request)
+    let confirmed_stage = stage_restore(&runtime_pool, &settings, request)
         .await
         .expect("stage confirmation-path restore");
-    let completed = confirm_restore(
-        &pool,
+    let capability = confirmed_stage
+        .restore_capability
+        .clone()
+        .expect("restore capability");
+    let confirmed = confirm_restore(
+        &runtime_pool,
         RestoreJobID::new(confirmed_stage.id).expect("positive staged restore id"),
         &RestoreConfirmRequest {
-            restore_capability: confirmed_stage
-                .restore_capability
-                .clone()
-                .expect("restore capability"),
+            restore_capability: capability.clone(),
             sha256: confirmed_stage.sha256,
             confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
         },
     )
     .await
-    .expect("confirm restore");
+    .expect("queue restore through runtime storage");
+    assert_eq!(confirmed.status, RestoreJobStatus::Confirmed);
+
+    assert!(
+        execute_confirmed_restore(&pool)
+            .await
+            .expect("apply restore through migration storage")
+    );
+    let completed = restore_status(
+        &runtime_pool,
+        RestoreJobID::new(confirmed_stage.id).expect("positive staged restore id"),
+        &capability,
+    )
+    .await
+    .expect("poll completed restore through runtime storage");
     let remaining_restore_jobs = with_connection(&pool, async |conn| {
         restore_jobs::table.count().get_result::<i64>(conn).await
     })
     .await
     .expect("remaining restore jobs");
+    let success_receipts = with_connection(&pool, async |conn| {
+        restore_success_receipts::table
+            .count()
+            .get_result::<i64>(conn)
+            .await
+    })
+    .await
+    .expect("successful restore receipts");
     assert_eq!(
-        (completed.status, remaining_restore_jobs),
-        (RestoreJobStatus::Succeeded, 0)
+        (completed.status, remaining_restore_jobs, success_receipts),
+        (RestoreJobStatus::Succeeded, 0, 1)
     );
 }
