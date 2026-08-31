@@ -4,6 +4,7 @@ use hubuum_auth_core::{
     AuthProviderError, AuthenticatedExternalUser, ExternalGroup, ExternalIdentityProvider,
     ExternalUserProfile, ExternalUserRefreshRequest, IdentityScopeName,
 };
+use hubuum_secrets::{ResolvedSecret, SecretError, SecretName};
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,7 @@ pub struct LdapScopeConfig {
     pub url: String,
     pub bind_dn: Option<String>,
     pub bind_password: Option<String>,
+    pub bind_password_ref: Option<String>,
     #[serde(default = "default_connect_timeout_seconds")]
     pub connect_timeout_seconds: u64,
     #[serde(default = "default_operation_timeout_seconds")]
@@ -66,6 +68,10 @@ impl fmt::Debug for LdapScopeConfig {
             .field(
                 "bind_password",
                 &self.bind_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "bind_password_ref",
+                &self.bind_password_ref.as_ref().map(|_| "<redacted>"),
             )
             .field("connect_timeout_seconds", &self.connect_timeout_seconds)
             .field("operation_timeout_seconds", &self.operation_timeout_seconds)
@@ -123,10 +129,30 @@ pub struct LdapIdentityProvider {
     group_filters: Vec<Regex>,
     rules: Vec<GroupMappingRule>,
     starttls: bool,
+    secret_source: Option<std::sync::Arc<dyn LdapSecretSource>>,
+}
+
+#[async_trait::async_trait]
+pub trait LdapSecretSource: Send + Sync {
+    async fn resolve(&self, alias: &str) -> Result<ResolvedSecret, SecretError>;
 }
 
 impl LdapIdentityProvider {
     pub fn new(config: LdapScopeConfig) -> Result<Self, AuthProviderError> {
+        Self::new_with_optional_secret_source(config, None)
+    }
+
+    pub fn with_secret_source(
+        config: LdapScopeConfig,
+        secret_source: std::sync::Arc<dyn LdapSecretSource>,
+    ) -> Result<Self, AuthProviderError> {
+        Self::new_with_optional_secret_source(config, Some(secret_source))
+    }
+
+    fn new_with_optional_secret_source(
+        config: LdapScopeConfig,
+        secret_source: Option<std::sync::Arc<dyn LdapSecretSource>>,
+    ) -> Result<Self, AuthProviderError> {
         let scope_name = IdentityScopeName::new(config.scope.clone())?;
         let parsed_url = Url::parse(&config.url)
             .map_err(|e| AuthProviderError::Config(format!("invalid ldap url: {e}")))?;
@@ -170,9 +196,27 @@ impl LdapIdentityProvider {
                 "ldap operation_timeout_seconds must be positive".to_string(),
             ));
         }
-        if config.bind_dn.is_some() != config.bind_password.is_some() {
+        if config.bind_password.is_some() && config.bind_password_ref.is_some() {
             return Err(AuthProviderError::Config(
-                "ldap bind_dn and bind_password must be configured together".to_string(),
+                "ldap bind_password and bind_password_ref are mutually exclusive".to_string(),
+            ));
+        }
+        if let Some(alias) = &config.bind_password_ref {
+            SecretName::new(alias.clone()).map_err(|_| {
+                AuthProviderError::Config("ldap bind_password_ref is invalid".to_string())
+            })?;
+            if secret_source.is_none() {
+                return Err(AuthProviderError::Config(
+                    "ldap bind_password_ref requires a configured secret source".to_string(),
+                ));
+            }
+        }
+        let has_bind_password =
+            config.bind_password.is_some() || config.bind_password_ref.is_some();
+        if config.bind_dn.is_some() != has_bind_password {
+            return Err(AuthProviderError::Config(
+                "ldap bind_dn and one of bind_password or bind_password_ref must be configured together"
+                    .to_string(),
             ));
         }
         let group_filters = config
@@ -203,6 +247,7 @@ impl LdapIdentityProvider {
             group_filters,
             rules,
             starttls,
+            secret_source,
         })
     }
 
@@ -252,20 +297,59 @@ impl LdapIdentityProvider {
     }
 
     async fn bind_service(&self, ldap: &mut ldap3::Ldap) -> Result<(), AuthProviderError> {
-        match (&self.config.bind_dn, &self.config.bind_password) {
-            (Some(dn), Some(password)) => ldap
-                .with_timeout(self.operation_timeout())
-                .simple_bind(dn, password)
-                .await
-                .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?
-                .success()
-                .map_err(|e| AuthProviderError::Config(format!("ldap service bind failed: {e}")))
-                .map(|_| ()),
-            (None, None) => Ok(()),
+        match (
+            &self.config.bind_dn,
+            &self.config.bind_password,
+            &self.config.bind_password_ref,
+        ) {
+            (Some(dn), Some(password), None) => {
+                self.bind_service_password(ldap, dn, password).await
+            }
+            (Some(dn), None, Some(alias)) => {
+                let resolved = self.resolve_bind_password(alias).await?;
+                let password = resolved.value().expose_utf8().map_err(|_| {
+                    AuthProviderError::Config(
+                        "ldap bind password secret must contain valid UTF-8".to_string(),
+                    )
+                })?;
+                self.bind_service_password(ldap, dn, password).await
+            }
+            (None, None, None) => Ok(()),
             _ => Err(AuthProviderError::Config(
-                "ldap bind_dn and bind_password must be configured together".to_string(),
+                "ldap bind credentials are inconsistent".to_string(),
             )),
         }
+    }
+
+    async fn resolve_bind_password(
+        &self,
+        alias: &str,
+    ) -> Result<ResolvedSecret, AuthProviderError> {
+        let source = self.secret_source.as_ref().ok_or_else(|| {
+            AuthProviderError::Config(
+                "ldap bind password secret source is not configured".to_string(),
+            )
+        })?;
+        source.resolve(alias).await.map_err(|_| {
+            AuthProviderError::Unavailable("ldap bind password secret is unavailable".to_string())
+        })
+    }
+
+    async fn bind_service_password(
+        &self,
+        ldap: &mut ldap3::Ldap,
+        dn: &str,
+        password: &str,
+    ) -> Result<(), AuthProviderError> {
+        ldap.with_timeout(self.operation_timeout())
+            .simple_bind(dn, password)
+            .await
+            .map_err(|error| AuthProviderError::Unavailable(error.to_string()))?
+            .success()
+            .map_err(|error| {
+                AuthProviderError::Config(format!("ldap service bind failed: {error}"))
+            })
+            .map(|_| ())
     }
 
     async fn load_user_by_filter(
@@ -491,8 +575,48 @@ fn default_operation_timeout_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use hubuum_secrets::{FileProvider, SecretName, SecretProviderKind, SecretRef, SecretResolver};
+
     use super::*;
     use std::collections::HashMap;
+
+    static NEXT_SECRET_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct TestSecretDirectory(PathBuf);
+
+    impl TestSecretDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "hubuum-ldap-secrets-{}-{}",
+                std::process::id(),
+                NEXT_SECRET_TEST_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestSecretDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct TestLdapSecretSource {
+        resolver: SecretResolver,
+        reference: SecretRef,
+    }
+
+    #[async_trait::async_trait]
+    impl LdapSecretSource for TestLdapSecretSource {
+        async fn resolve(&self, _alias: &str) -> Result<ResolvedSecret, SecretError> {
+            self.resolver.resolve(&self.reference).await
+        }
+    }
 
     fn ldap_config(url: &str) -> LdapScopeConfig {
         LdapScopeConfig {
@@ -500,6 +624,7 @@ mod tests {
             url: url.into(),
             bind_dn: None,
             bind_password: None,
+            bind_password_ref: None,
             connect_timeout_seconds: default_connect_timeout_seconds(),
             operation_timeout_seconds: default_operation_timeout_seconds(),
             user_base_dn: "dc=example,dc=org".into(),
@@ -607,7 +732,7 @@ mod tests {
         assert!(matches!(&error, AuthProviderError::Config(_)));
         assert_eq!(
             error.to_string(),
-            "provider configuration error: ldap bind_dn and bind_password must be configured together"
+            "provider configuration error: ldap bind_dn and one of bind_password or bind_password_ref must be configured together"
         );
     }
 
@@ -623,7 +748,87 @@ mod tests {
         assert!(matches!(&error, AuthProviderError::Config(_)));
         assert_eq!(
             error.to_string(),
-            "provider configuration error: ldap bind_dn and bind_password must be configured together"
+            "provider configuration error: ldap bind_dn and one of bind_password or bind_password_ref must be configured together"
+        );
+    }
+
+    #[test]
+    fn inline_and_referenced_bind_passwords_are_rejected_as_ambiguous() {
+        let error = LdapIdentityProvider::new(LdapScopeConfig {
+            bind_dn: Some("cn=service,dc=example,dc=org".into()),
+            bind_password: Some("inline-secret".into()),
+            bind_password_ref: Some("directory_bind".into()),
+            ..ldap_config("ldaps://localhost")
+        })
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "provider configuration error: ldap bind_password and bind_password_ref are mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn referenced_bind_password_requires_an_injected_secret_source() {
+        let error = LdapIdentityProvider::new(LdapScopeConfig {
+            bind_dn: Some("cn=service,dc=example,dc=org".into()),
+            bind_password_ref: Some("directory_bind".into()),
+            ..ldap_config("ldaps://localhost")
+        })
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "provider configuration error: ldap bind_password_ref requires a configured secret source"
+        );
+    }
+
+    #[tokio::test]
+    async fn referenced_bind_password_observes_an_invalidated_file_rotation() {
+        let directory = TestSecretDirectory::new();
+        std::fs::write(directory.0.join("directory_bind"), b"first-password").unwrap();
+        let reference = SecretRef::new(
+            SecretProviderKind::file(),
+            SecretName::new("directory_bind").unwrap(),
+        );
+        let source = Arc::new(TestLdapSecretSource {
+            resolver: SecretResolver::builder()
+                .provider(FileProvider::builder(&directory.0).build().unwrap())
+                .unwrap()
+                .build(),
+            reference: reference.clone(),
+        });
+        let provider = LdapIdentityProvider::with_secret_source(
+            LdapScopeConfig {
+                bind_dn: Some("cn=service,dc=example,dc=org".into()),
+                bind_password_ref: Some("directory_bind".into()),
+                ..ldap_config("ldaps://localhost")
+            },
+            source.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            provider
+                .resolve_bind_password("directory_bind")
+                .await
+                .unwrap()
+                .value()
+                .expose(),
+            b"first-password"
+        );
+        std::fs::write(directory.0.join("directory_bind"), b"second-password").unwrap();
+        source.resolver.invalidate(&reference).await;
+        assert_eq!(
+            provider
+                .resolve_bind_password("directory_bind")
+                .await
+                .unwrap()
+                .value()
+                .expose(),
+            b"second-password"
         );
     }
 

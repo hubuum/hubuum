@@ -7,6 +7,32 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added a common typed secret-source layer with non-printing binary values,
+  validated aliases and versions, async environment and confined mounted-file
+  providers, entry- and byte-bounded single-flight caching, atomic provider
+  groups, explicit stale policy, health diagnostics, and low-cardinality
+  metrics. PostgreSQL,
+  token hashing, LDAP bind passwords, event sinks, and remote targets now use
+  the shared boundary; existing environment names remain compatible, and LDAP
+  supports `bind_password_ref` with ambiguous inline/reference configuration
+  rejected.
+
+### Changed
+
+- **Breaking (experimental `hubuum-events-core` API):** removed
+  `resolve_event_sink_secret`, `resolve_event_sink_secret_uri`, and
+  `EventSinkSecretError`, which read process environment directly from the
+  domain event crate. Sink adapters must now receive a resolved
+  `hubuum_secrets::SecretValue` through `SinkDelivery` and use
+  `hubuum_event_sinks_common::resolve_secret_uri` for URI substitution.
+- Operators can set `HUBUUM_SECRET_SOURCE=file` with
+  `HUBUUM_SECRET_FILE_ROOT` to use bounded regular files, including confined
+  Kubernetes projected-secret symlinks. LDAP, event, and remote integrations
+  observe rotation after cache refresh; PostgreSQL pools and token hashing
+  explicitly require restart rather than claiming unsafe live rotation.
+
 ## [0.0.11] - 2026-08-30
 
 ### Added

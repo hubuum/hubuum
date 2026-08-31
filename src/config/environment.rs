@@ -177,6 +177,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
+    option!("HUBUUM_SECRET_SOURCE", Operations),
+    option!("HUBUUM_SECRET_FILE_ROOT", Operations, sensitive),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
     option!("HUBUUM_SKIP_MIGRATIONS", Operations),
     option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
@@ -193,19 +195,19 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
 pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
     ("HUBUUM_REMOTE_SECRET_", EnvironmentOwner::RemoteCalls),
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
+    ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),
 ];
 
 /// Files allowed to translate Hubuum-owned environment values. This list is
-/// intentionally small and reviewable. Dynamic secret resolvers remain here
-/// until they can receive an injected secret-provider trait.
+/// intentionally small and reviewable. The application secret adapter owns
+/// dynamic namespace mapping and injects resolved values into consumers.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
     "src/config/token_hash.rs",
     "src/administration.rs",
     "src/logger.rs",
-    "src/tasks/remote_call.rs",
+    "src/secrets.rs",
     "src/tests/permissions/live_treetop_parity.rs",
-    "crates/hubuum-events-core/src/lib.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
 ];
 

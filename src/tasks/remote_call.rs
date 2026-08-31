@@ -178,7 +178,7 @@ where
         .transpose()?;
 
     let mut headers = rendered_headers;
-    apply_auth(&mut headers, &target.auth_config)?;
+    apply_auth(&mut headers, &target.auth_config).await?;
 
     let timeout_ms = bounded_timeout_ms(target.timeout_ms);
     let preview_limit = get_config()
@@ -455,21 +455,30 @@ fn render_headers(
     Ok(headers)
 }
 
-fn apply_auth(
+async fn apply_auth(
     headers: &mut OutboundHeaders,
     auth_config: &RemoteAuthConfig,
 ) -> Result<(), ApiError> {
     match auth_config {
         RemoteAuthConfig::None => Ok(()),
         RemoteAuthConfig::BearerSecret { secret } => {
-            let value = format!("Bearer {}", resolve_secret(secret)?);
+            let secret = resolve_secret(secret).await?;
+            let value = format!(
+                "Bearer {}",
+                secret.value().expose_utf8().map_err(secret_error)?
+            );
             headers.insert("authorization", &value).map_err(|_| {
                 ApiError::BadRequest("Resolved bearer secret is not a valid header".to_string())
             })?;
             Ok(())
         }
         RemoteAuthConfig::BasicSecret { username, secret } => {
-            let raw = format!("{}:{}", username, resolve_secret(secret)?);
+            let secret = resolve_secret(secret).await?;
+            let raw = format!(
+                "{}:{}",
+                username,
+                secret.value().expose_utf8().map_err(secret_error)?
+            );
             let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
             headers
                 .insert("authorization", &format!("Basic {encoded}"))
@@ -479,33 +488,33 @@ fn apply_auth(
             Ok(())
         }
         RemoteAuthConfig::ApiKeySecret { header, secret } => {
-            let value = resolve_secret(secret)?;
-            headers
-                .insert(header, &value)
-                .map_err(|error| match error {
-                    OutboundHttpError::InvalidHeaderName { .. } => {
-                        ApiError::BadRequest(format!("Invalid API key header name: {header}"))
-                    }
-                    error @ OutboundHttpError::TransportControlledHeader { .. } => {
-                        ApiError::BadRequest(outbound_error_to_api_message(error))
-                    }
-                    OutboundHttpError::InvalidHeaderValue { .. } => ApiError::BadRequest(
-                        "Resolved API key secret is not a valid header".to_string(),
-                    ),
-                    other => ApiError::BadRequest(outbound_error_to_api_message(other)),
-                })?;
+            let secret = resolve_secret(secret).await?;
+            let value = secret.value().expose_utf8().map_err(secret_error)?;
+            headers.insert(header, value).map_err(|error| match error {
+                OutboundHttpError::InvalidHeaderName { .. } => {
+                    ApiError::BadRequest(format!("Invalid API key header name: {header}"))
+                }
+                error @ OutboundHttpError::TransportControlledHeader { .. } => {
+                    ApiError::BadRequest(outbound_error_to_api_message(error))
+                }
+                OutboundHttpError::InvalidHeaderValue { .. } => ApiError::BadRequest(
+                    "Resolved API key secret is not a valid header".to_string(),
+                ),
+                other => ApiError::BadRequest(outbound_error_to_api_message(other)),
+            })?;
             Ok(())
         }
     }
 }
 
-fn resolve_secret(secret: &str) -> Result<String, ApiError> {
-    let key = format!("HUBUUM_REMOTE_SECRET_{}", secret.to_ascii_uppercase());
-    std::env::var(&key).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "Remote secret reference '{secret}' is not configured"
-        ))
-    })
+async fn resolve_secret(secret: &str) -> Result<hubuum_secrets::ResolvedSecret, ApiError> {
+    crate::secrets::resolve_remote_secret(secret)
+        .await
+        .map_err(secret_error)
+}
+
+fn secret_error(_error: hubuum_secrets::SecretError) -> ApiError {
+    ApiError::BadRequest("Remote secret is not configured or is unavailable".to_string())
 }
 
 fn outbound_method(method: RemoteHttpMethod) -> OutboundMethod {

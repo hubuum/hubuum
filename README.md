@@ -198,7 +198,7 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 
 ### Token Hash Key
 
-- `HUBUUM_TOKEN_HASH_KEY` sets the server-side key used for deterministic token hashing at rest.
+- `HUBUUM_TOKEN_HASH_KEY` sets the server-side key used for deterministic token hashing at rest with the default environment secret source. Mounted-file configuration and rotation behavior are described in [Secret Sources](docs/secret_sources.md).
 - If unset, Hubuum generates an ephemeral in-memory key at startup and logs a warning.
 - With an ephemeral key, all existing bearer tokens become invalid after each restart.
 

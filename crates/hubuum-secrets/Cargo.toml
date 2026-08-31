@@ -1,0 +1,22 @@
+[package]
+name = "hubuum-secrets"
+version = "0.0.1"
+edition = "2024"
+description = "Typed secret references and bounded secret providers for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "time"] }
+zeroize = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -2097,6 +2097,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-query",
+ "hubuum-secrets",
  "hubuum-storage-conformance",
  "hubuum-storage-core",
  "hubuum-storage-memory",
@@ -2149,10 +2150,13 @@ dependencies = [
 name = "hubuum-auth-ldap"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "hubuum-auth-core",
+ "hubuum-secrets",
  "ldap3",
  "regex",
  "serde",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -2241,6 +2245,7 @@ dependencies = [
  "hubuum-event-sinks-common",
  "hubuum-events-core",
  "hubuum-outbound-http",
+ "hubuum-secrets",
  "serde",
  "serde_json",
  "tokio",
@@ -2254,6 +2259,8 @@ name = "hubuum-event-sinks-common"
 version = "0.0.1"
 dependencies = [
  "hubuum-events-core",
+ "hubuum-secrets",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tokio",
@@ -2265,7 +2272,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
- "percent-encoding",
  "serde",
  "serde_json",
  "utoipa",
@@ -2294,6 +2300,16 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hubuum-secrets"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "libc",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

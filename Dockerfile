@@ -25,6 +25,7 @@ COPY crates/hubuum-event-sinks-common/Cargo.toml ./crates/hubuum-event-sinks-com
 COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
+COPY crates/hubuum-secrets/Cargo.toml ./crates/hubuum-secrets/Cargo.toml
 COPY crates/hubuum-storage-core/Cargo.toml ./crates/hubuum-storage-core/Cargo.toml
 COPY crates/hubuum-storage-conformance/Cargo.toml ./crates/hubuum-storage-conformance/Cargo.toml
 COPY crates/hubuum-storage-memory/Cargo.toml ./crates/hubuum-storage-memory/Cargo.toml

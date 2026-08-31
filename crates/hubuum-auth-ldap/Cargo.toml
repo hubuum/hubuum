@@ -9,9 +9,14 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+async-trait = "0.1"
 hubuum-auth-core = { path = "../hubuum-auth-core" }
+hubuum-secrets = { path = "../hubuum-secrets" }
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

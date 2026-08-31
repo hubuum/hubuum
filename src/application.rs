@@ -61,7 +61,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     }
 
     #[cfg(not(test))]
-    let config = match initialize_config() {
+    let mut config = match initialize_config() {
         Ok(cfg) => cfg.clone(),
         Err(e) => fatal_error(
             &format!("Failed to load configuration: {}", e),
@@ -69,7 +69,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         ),
     };
     #[cfg(test)]
-    let config = match get_config() {
+    let mut config = match get_config() {
         Ok(cfg) => cfg.clone(),
         Err(e) => fatal_error(
             &format!("Failed to load configuration: {}", e),
@@ -86,10 +86,17 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 
+    if let Err(error) = crate::secrets::validate_configuration() {
+        fatal_error(
+            &format!("Failed to configure secret sources: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        );
+    }
+
     if token_hash_key_is_ephemeral() {
         warn!(
-            message = "HUBUUM_TOKEN_HASH_KEY is not set; using ephemeral in-memory key. Existing tokens will be invalid after restart.",
-            recommendation = "Set HUBUUM_TOKEN_HASH_KEY to a stable secret to preserve token validity across restarts"
+            message = "The token hash key is unavailable; using an ephemeral in-memory key. Existing tokens will be invalid after restart.",
+            recommendation = "Configure a stable token key through the selected Hubuum secret source to preserve token validity across restarts"
         );
     }
 
@@ -101,6 +108,16 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             );
         }
         observability::metrics::runtime_identity(config.runtime_role);
+    }
+    if config.storage_backend == StorageBackendKind::Postgres {
+        config.database_url = crate::secrets::resolve_database_url(&config.database_url)
+            .await
+            .unwrap_or_else(|error| {
+                fatal_error(
+                    &format!("Failed to resolve the database connection secret: {error}"),
+                    EXIT_CODE_CONFIG_ERROR,
+                )
+            });
     }
     utilities::auth::initialize_dummy_password_hash();
     let storage_settings = match config.storage_backend {

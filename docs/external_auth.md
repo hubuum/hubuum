@@ -14,14 +14,14 @@ sets the container path automatically. See
 [Single-Host Container Deployment](deployment.md#external-authentication-configuration).
 The configuration source must be a regular UTF-8 file no larger than 1 MiB.
 Parse errors identify the line and column but deliberately omit the source line
-because it may contain credentials such as `bind_password`.
+because legacy files may contain credentials such as `bind_password`.
 
 ```toml
 [[ldap]]
 scope = "example-directory"
 url = "ldaps://ldap.example.org"
 bind_dn = "cn=readonly,dc=example,dc=org"
-bind_password = "readonly-password"
+bind_password_ref = "readonly_password"
 connect_timeout_seconds = 5
 operation_timeout_seconds = 10
 user_base_dn = "ou=people,dc=example,dc=org"
@@ -46,9 +46,13 @@ description = "Directory group $1"
 LDAP transport is always encrypted. Use `ldaps://` for implicit TLS. An
 `ldap://` URL is upgraded with StartTLS before any bind or search, and the
 connection fails if the server cannot establish verified TLS. Plaintext LDAP
-binds are not supported. Configure `bind_dn` and `bind_password` together, or
-omit both for an anonymous service search; an incomplete pair is rejected at
-startup.
+binds are not supported. Configure `bind_dn` with `bind_password_ref`, then
+provide the alias through the selected [secret source](secret_sources.md). The
+environment source maps this example to
+`HUBUUM_LDAP_SECRET_READONLY_PASSWORD`. Inline `bind_password` remains a
+compatibility option, but it cannot be combined with `bind_password_ref`.
+Omit the bind DN and both password fields for an anonymous service search;
+incomplete or ambiguous credentials are rejected at startup.
 
 All group extraction is configuration-driven. Use `group_attributes` and
 `group_rules` to map provider attributes to Hubuum groups; do not hard-code

@@ -8,14 +8,11 @@ struct TokenHashKeyConfig {
 }
 
 static TOKEN_HASH_KEY_CONFIG: LazyLock<TokenHashKeyConfig> = LazyLock::new(|| {
-    if let Ok(env_key) = std::env::var("HUBUUM_TOKEN_HASH_KEY") {
-        let trimmed = env_key.trim();
-        if !trimmed.is_empty() {
-            return TokenHashKeyConfig {
-                key: trimmed.as_bytes().to_vec(),
-                is_ephemeral: false,
-            };
-        }
+    if let Ok(key) = crate::secrets::resolve_token_hash_key() {
+        return TokenHashKeyConfig {
+            key,
+            is_ephemeral: false,
+        };
     }
 
     let generated = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());

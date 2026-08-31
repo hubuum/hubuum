@@ -8,9 +8,17 @@ use std::hint::black_box;
 // benchmark is self-contained and deterministic in instruction count.
 const RAW_TOKEN: &str = "hubuum_pat_0123456789abcdef0123456789abcdef0123456789abcdef";
 
-#[library_benchmark]
-fn bench_token_storage_hash() -> usize {
-    let digest = Token::storage_hash_from_raw(black_box(RAW_TOKEN));
+fn setup() -> &'static str {
+    // Application startup resolves the process-wide key before bearer-token
+    // authentication begins. Keep that one-time provider/cache initialization
+    // outside the measured per-request hashing path.
+    let _ = Token::storage_hash_from_raw("");
+    RAW_TOKEN
+}
+
+#[library_benchmark(setup = setup)]
+fn bench_token_storage_hash(raw_token: &str) -> usize {
+    let digest = Token::storage_hash_from_raw(black_box(raw_token));
 
     black_box(digest.len())
 }

@@ -221,8 +221,12 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX` | `hubuum:login-rate-limit` | Shared limiter key namespace |
 | `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS` | `1000` | Shared backend I/O timeout |
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
+| `HUBUUM_SECRET_SOURCE` | `environment` | Process-wide secret source: `environment` or `file` |
+| `HUBUUM_SECRET_FILE_ROOT` | *(empty)* | Mounted secret root required by the `file` source |
 
-See [External Authentication](external_auth.md) for LDAP scopes.
+See [Secret Sources](secret_sources.md) for the mounted-file layout and
+rotation contracts, and [External Authentication](external_auth.md) for LDAP
+scopes.
 
 **Token lifetime note**: Newly issued tokens always receive an explicit
 `expires_at`. If a mint request omits it, the server applies

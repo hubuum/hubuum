@@ -3,8 +3,7 @@ use std::fmt;
 use hubuum_event_sinks_common::{
     DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
     ensure_payload_within_limit, parse_sink_config, parse_sink_routing,
-    reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme,
-    resolve_event_sink_secret_uri,
+    reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme, resolve_secret_uri,
 };
 use hubuum_templates::{TemplateLimits, prepare_template};
 use lettre::message::Mailbox;
@@ -85,7 +84,7 @@ impl EmailSink {
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
         let routing = parse_routing(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "email")?;
+        let uri = resolve_secret_uri(&config.uri, delivery.secret(), "email")?;
         require_tls_uri_scheme(&uri, "email", &["smtps"])?;
         let rendered = render_email(envelope, &config)?;
         let message = build_message(&config, &routing, rendered)?;
@@ -283,6 +282,8 @@ fn default_body_template() -> String {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_event_sinks_common::SecretValue;
+
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -357,9 +358,9 @@ mod tests {
     fn delivery<'a>(
         config: &'a Value,
         routing: &'a Value,
-        secret_ref: Option<&'a str>,
+        secret: Option<&'a SecretValue>,
     ) -> SinkDelivery<'a> {
-        SinkDelivery::new(config, routing, secret_ref)
+        SinkDelivery::new(config, routing, secret)
     }
 
     fn config() -> EmailConfig {
@@ -467,23 +468,16 @@ mod tests {
 
     #[test]
     fn secret_ref_replaces_smtp_uri_placeholder_with_encoded_secret() {
-        let secret_ref = "email_sink_unit_test";
-        unsafe {
-            std::env::set_var("HUBUUM_EVENT_SINK_SECRET_EMAIL_SINK_UNIT_TEST", "p@ss/w:rd");
-        }
+        let secret = SecretValue::new(b"p@ss/w:rd".to_vec()).unwrap();
 
-        let uri = resolve_event_sink_secret_uri(
+        let uri = resolve_secret_uri(
             "smtps://publisher:{secret}@smtp.example",
-            Some(secret_ref),
+            Some(&secret),
             "email",
         )
         .unwrap();
 
         assert_eq!(uri, "smtps://publisher:p%40ss%2Fw%3Ard@smtp.example");
-
-        unsafe {
-            std::env::remove_var("HUBUUM_EVENT_SINK_SECRET_EMAIL_SINK_UNIT_TEST");
-        }
     }
 
     #[test]

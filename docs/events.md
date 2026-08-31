@@ -263,9 +263,9 @@ delivery limits:
 }
 ```
 
-When `secret_ref` is set, Hubuum reads
-`HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>` with the reference uppercased and sends
-it as a bearer token. For the example above, the environment variable is
+When `secret_ref` is set, Hubuum resolves the alias through the selected
+[secret source](secret_sources.md) and sends it as a bearer token. With the
+default environment source, the example maps to
 `HUBUUM_EVENT_SINK_SECRET_INVENTORY_WEBHOOK`.
 
 Webhook HTTP execution uses the shared hardened outbound HTTP layer: HTTPS-only
@@ -294,10 +294,11 @@ AMQP sink publishes the event envelope as JSON to the exchange in sink
 }
 ```
 
-When `secret_ref` is set, the AMQP URI must contain `{secret}`. Hubuum reads
-`HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
-userinfo use, and substitutes it into the URI. For the example above, the
-environment variable is `HUBUUM_EVENT_SINK_SECRET_RABBITMQ_PASSWORD`.
+When `secret_ref` is set, the AMQP URI must contain `{secret}`. Hubuum resolves
+the alias through the selected [secret source](secret_sources.md),
+percent-encodes the value for URI userinfo use, and substitutes it into the
+URI. The default environment source maps this example to
+`HUBUUM_EVENT_SINK_SECRET_RABBITMQ_PASSWORD`.
 Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
 instead.
 
@@ -340,10 +341,11 @@ settings:
 }
 ```
 
-When `secret_ref` is set, the URI must contain `{secret}`. Hubuum reads
-`HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
-userinfo use, and substitutes it into the URI. For the example above, the
-environment variable is `HUBUUM_EVENT_SINK_SECRET_VALKEY_PASSWORD`.
+When `secret_ref` is set, the URI must contain `{secret}`. Hubuum resolves the
+alias through the selected [secret source](secret_sources.md), percent-encodes
+the value for URI userinfo use, and substitutes it into the URI. The default
+environment source maps this example to
+`HUBUUM_EVENT_SINK_SECRET_VALKEY_PASSWORD`.
 Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
 instead. `io_timeout_ms` bounds the Redis protocol connection and socket I/O
 for the blocking driver call and defaults to 25,000 ms.
@@ -390,10 +392,10 @@ address, and MiniJinja export templates for the subject and text body:
 ```
 
 SMTP URLs must use the TLS `smtps://` scheme. When `secret_ref` is set, the URI
-must contain `{secret}`. Hubuum
-reads `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for
-URI userinfo use, and substitutes it into the URI. For the example above, the
-environment variable is `HUBUUM_EVENT_SINK_SECRET_SMTP_PASSWORD`.
+must contain `{secret}`. Hubuum resolves the alias through the selected
+[secret source](secret_sources.md), percent-encodes the value for URI userinfo
+use, and substitutes it into the URI. The default environment source maps this
+example to `HUBUUM_EVENT_SINK_SECRET_SMTP_PASSWORD`.
 Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
 instead.
 

@@ -12,6 +12,8 @@ rust-api = "workspace-internal"
 
 [dependencies]
 hubuum-events-core = { path = "../hubuum-events-core" }
+hubuum-secrets = { path = "../hubuum-secrets" }
+percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
