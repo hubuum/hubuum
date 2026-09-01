@@ -38,7 +38,7 @@ pub use sink::{
 };
 
 pub use hubuum_events_core::{
-    Action, ActorKind, CollectionId, CorrelationId, EntityType, EventCatalogError, EventContext,
+    Action, ActorKind, CURRENT_EVENT_SCHEMA_VERSION, CollectionId, CorrelationId, EntityType, EventCatalogError, EventContext,
     EventEntityId, EventId, EventSequence, MutationProvenance, NewEvent, PrincipalId, Provenance,
     ProvenanceActor, ProvenancePrincipal, TaskId, TraceLink, is_valid_pair, valid_actions,
 };

@@ -76,6 +76,11 @@ if ! file_changed "docs/openapi.json"; then
   exit 1
 fi
 
+if ! file_changed "docs/operational-contract.json"; then
+  echo "Cargo.toml version changed from $base_version to $head_version, but docs/operational-contract.json was not updated." >&2
+  exit 1
+fi
+
 "$repo_root/scripts/check-release-readiness.sh"
 
 echo "Version bump checks passed for $base_version -> $head_version"

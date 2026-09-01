@@ -27,7 +27,8 @@ pub enum EnvironmentOwner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exposure {
     Public,
-    Sensitive,
+    SensitiveMetadata,
+    Secret,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +50,14 @@ macro_rules! option {
         EnvironmentVariable {
             name: $name,
             owner: EnvironmentOwner::$owner,
-            exposure: Exposure::Sensitive,
+            exposure: Exposure::Secret,
+        }
+    };
+    ($name:literal, $owner:ident, metadata) => {
+        EnvironmentVariable {
+            name: $name,
+            owner: EnvironmentOwner::$owner,
+            exposure: Exposure::SensitiveMetadata,
         }
     };
 }
@@ -176,12 +184,12 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     ),
     option!("HUBUUM_ADMIN_GROUPNAME", Authentication),
     option!("HUBUUM_ADMIN_IDENTITY_SCOPE", Authentication),
-    option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, sensitive),
+    option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, metadata),
     option!("HUBUUM_DEFAULT_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_TRANSITIVE_DEPTH", Relations),
     option!("HUBUUM_TLS_CERT_PATH", Server),
-    option!("HUBUUM_TLS_KEY_PATH", Server, sensitive),
+    option!("HUBUUM_TLS_KEY_PATH", Server, metadata),
     option!("HUBUUM_TLS_KEY_PASSPHRASE", Server, sensitive),
     option!("HUBUUM_TLS_BACKEND", Server),
     option!("HUBUUM_METRICS_ENABLED", Server),
@@ -207,9 +215,9 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
     option!("HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY", Authentication),
     option!("HUBUUM_SECRET_SOURCE", Operations),
-    option!("HUBUUM_SECRET_FILE_ROOT", Operations, sensitive),
+    option!("HUBUUM_SECRET_FILE_ROOT", Operations, metadata),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
-    option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
+    option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, metadata),
     option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),
     option!("HUBUUM_TREETOP_TEST_CONTAINER_NAME", Permissions),
     option!("HUBUUM_TREETOP_TEST_IMAGE", Permissions),

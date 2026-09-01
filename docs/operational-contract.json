@@ -1,0 +1,7498 @@
+{
+  "schema_version": 1,
+  "release": "0.0.11",
+  "metrics": [
+    {
+      "name": "hubuum_api_errors_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "class",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "API errors by public error class",
+      "feature": null
+    },
+    {
+      "name": "hubuum_build_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "version",
+          "bounded_by": "one configured process identity",
+          "values": []
+        },
+        {
+          "name": "git_sha",
+          "bounded_by": "one configured process identity",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Build identity for the process",
+      "feature": null
+    },
+    {
+      "name": "hubuum_client_allowlist_rejections_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "reason",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Requests rejected by the client allowlist",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_errors_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "code",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Computed-field runtime errors by stable code",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_evaluations_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Computed-field evaluations",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_live_fallbacks_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Stale materializations evaluated live",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_read_repairs_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Guarded computed-field read repairs",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_rebuild_batches_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "items",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Computed-field rebuild batches",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_rebuild_completions_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Computed-field rebuild terminal outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_computed_field_rebuild_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Computed-field rebuild duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_db_connection_acquire_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "caller",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Database connection acquisition duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_db_connection_acquire_failures_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "caller",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Database connection acquisition failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_db_operation_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "caller",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "operation",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "result",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Database helper operation duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_db_operation_errors_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "caller",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "operation",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "result",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Database helper operation failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_db_pool_connections",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "state",
+          "bounded_by": "enumerated values",
+          "values": [
+            "configured",
+            "open",
+            "idle",
+            "checked_out"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Database pool connections by state",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_oldest_age_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "queue",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Oldest actionable event-queue item age",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_queue_items",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "queue",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        },
+        {
+          "name": "state",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Event queue items by state",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_stale_claims",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "queue",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Stale event worker claims",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_worker_batch_size",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "worker",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured event-worker batch size",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_worker_lock_timeout_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "worker",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured event-worker claim timeout",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_worker_poll_interval_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "worker",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured event-worker poll interval",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_worker_wakeups_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "worker",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        },
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "notification",
+            "notifications_sent",
+            "poll"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Event-worker wakeups",
+      "feature": null
+    },
+    {
+      "name": "hubuum_event_workers_configured",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "worker",
+          "bounded_by": "enumerated values",
+          "values": [
+            "delivery",
+            "fanout"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured event workers",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_completions_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "content_type",
+          "bounded_by": "enumerated values",
+          "values": [
+            "application/json",
+            "text/plain",
+            "text/html",
+            "text/csv"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Persisted export completions",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "template_id",
+          "bounded_by": "current stored export-template catalog; explicit cardinality exception",
+          "values": []
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Total export duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_phase_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "phase",
+          "bounded_by": "enumerated values",
+          "values": [
+            "total",
+            "query",
+            "hydration",
+            "render"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Export phase duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_template_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "template_id",
+          "bounded_by": "current stored export-template catalog; explicit cardinality exception",
+          "values": []
+        },
+        {
+          "name": "template_name",
+          "bounded_by": "current stored export-template catalog; explicit cardinality exception",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Current export-template identities",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_truncations_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "content_type",
+          "bounded_by": "enumerated values",
+          "values": [
+            "application/json",
+            "text/plain",
+            "text/html",
+            "text/csv"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Persisted truncated exports",
+      "feature": null
+    },
+    {
+      "name": "hubuum_export_warnings_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "content_type",
+          "bounded_by": "enumerated values",
+          "values": [
+            "application/json",
+            "text/plain",
+            "text/html",
+            "text/csv"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Warnings on persisted exports",
+      "feature": null
+    },
+    {
+      "name": "hubuum_extraction_failures_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Request extraction failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_http_request_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "method",
+          "bounded_by": "enumerated values",
+          "values": [
+            "DELETE",
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "PATCH",
+            "POST",
+            "PUT"
+          ]
+        },
+        {
+          "name": "route",
+          "bounded_by": "registered route templates and fixed coarse route groups",
+          "values": []
+        },
+        {
+          "name": "status_family",
+          "bounded_by": "enumerated values",
+          "values": [
+            "none",
+            "1xx",
+            "2xx",
+            "3xx",
+            "4xx",
+            "5xx"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "HTTP request duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_http_requests_in_flight",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "route",
+          "bounded_by": "registered route templates and fixed coarse route groups",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "HTTP requests currently in flight",
+      "feature": null
+    },
+    {
+      "name": "hubuum_http_requests_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "method",
+          "bounded_by": "enumerated values",
+          "values": [
+            "DELETE",
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "PATCH",
+            "POST",
+            "PUT"
+          ]
+        },
+        {
+          "name": "route",
+          "bounded_by": "registered route templates and fixed coarse route groups",
+          "values": []
+        },
+        {
+          "name": "status_code",
+          "bounded_by": "valid HTTP status-code range",
+          "values": []
+        },
+        {
+          "name": "status_family",
+          "bounded_by": "enumerated values",
+          "values": [
+            "none",
+            "1xx",
+            "2xx",
+            "3xx",
+            "4xx",
+            "5xx"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "HTTP requests handled",
+      "feature": null
+    },
+    {
+      "name": "hubuum_import_failed_items_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Import items completed with failure",
+      "feature": null
+    },
+    {
+      "name": "hubuum_import_phase_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "phase",
+          "bounded_by": "enumerated values",
+          "values": [
+            "total",
+            "planning",
+            "execution"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Import phase duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_import_processed_items_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Items processed by terminal imports",
+      "feature": null
+    },
+    {
+      "name": "hubuum_import_succeeded_items_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Import items completed successfully",
+      "feature": null
+    },
+    {
+      "name": "hubuum_inventory_entities",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "entity_type",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Current inventory entity counts",
+      "feature": null
+    },
+    {
+      "name": "hubuum_login_attempts_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Login attempts",
+      "feature": null
+    },
+    {
+      "name": "hubuum_login_limiter_backend_failures_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "backend",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "operation",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Shared login-limiter failures",
+      "feature": "login-rate-limit-valkey"
+    },
+    {
+      "name": "hubuum_login_limiter_entries",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "state",
+          "bounded_by": "enumerated values",
+          "values": [
+            "active",
+            "locked"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Local login-limiter entries",
+      "feature": null
+    },
+    {
+      "name": "hubuum_login_lockouts_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "scope",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Login limiter lockout transitions",
+      "feature": null
+    },
+    {
+      "name": "hubuum_metrics_refresh_duration_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "source",
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "events",
+            "inventory",
+            "login_limiter",
+            "process",
+            "tasks",
+            "token_keys"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Duration of the latest metrics refresh",
+      "feature": null
+    },
+    {
+      "name": "hubuum_metrics_refresh_failures_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "source",
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "events",
+            "inventory",
+            "login_limiter",
+            "process",
+            "tasks",
+            "token_keys"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Best-effort metrics refresh failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_metrics_refresh_last_success_timestamp_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "source",
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "events",
+            "inventory",
+            "login_limiter",
+            "process",
+            "tasks",
+            "token_keys"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Latest successful metrics refresh timestamp",
+      "feature": null
+    },
+    {
+      "name": "hubuum_metrics_refresh_skipped_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "source",
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "events",
+            "inventory",
+            "login_limiter",
+            "process",
+            "tasks",
+            "token_keys"
+          ]
+        },
+        {
+          "name": "reason",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Skipped concurrent metrics refreshes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_process_start_time_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Time when Hubuum initialized metrics",
+      "feature": null
+    },
+    {
+      "name": "hubuum_remote_call_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "method",
+          "bounded_by": "enumerated values",
+          "values": [
+            "DELETE",
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "PATCH",
+            "POST",
+            "PUT"
+          ]
+        },
+        {
+          "name": "status_family",
+          "bounded_by": "enumerated values",
+          "values": [
+            "none",
+            "1xx",
+            "2xx",
+            "3xx",
+            "4xx",
+            "5xx"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0
+      ],
+      "scope": "process",
+      "description": "Remote HTTP execution duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_remote_call_results_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "method",
+          "bounded_by": "enumerated values",
+          "values": [
+            "DELETE",
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "PATCH",
+            "POST",
+            "PUT"
+          ]
+        },
+        {
+          "name": "status_family",
+          "bounded_by": "enumerated values",
+          "values": [
+            "none",
+            "1xx",
+            "2xx",
+            "3xx",
+            "4xx",
+            "5xx"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Remote HTTP execution outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_revision_conditions_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "matched",
+            "wildcard",
+            "stale",
+            "unconditional",
+            "malformed",
+            "async_stale",
+            "invariant_failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Conditional-write outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_runtime_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "role",
+          "bounded_by": "enumerated values",
+          "values": [
+            "all",
+            "api",
+            "worker"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Runtime role for the process",
+      "feature": null
+    },
+    {
+      "name": "hubuum_secret_resolution_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "provider",
+          "bounded_by": "enumerated values",
+          "values": [
+            "environment",
+            "file"
+          ]
+        },
+        {
+          "name": "consumer",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Secret resolution duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_secret_resolutions_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "provider",
+          "bounded_by": "enumerated values",
+          "values": [
+            "environment",
+            "file"
+          ]
+        },
+        {
+          "name": "consumer",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Secret resolution outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_secret_source_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "provider",
+          "bounded_by": "enumerated values",
+          "values": [
+            "environment",
+            "file"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Selected secret provider",
+      "feature": null
+    },
+    {
+      "name": "hubuum_storage_backend_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "backend",
+          "bounded_by": "enumerated values",
+          "values": [
+            "memory",
+            "postgresql"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Selected storage backend",
+      "feature": null
+    },
+    {
+      "name": "hubuum_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "backend",
+          "bounded_by": "enumerated values",
+          "values": [
+            "memory",
+            "postgresql"
+          ]
+        },
+        {
+          "name": "capability",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "operation",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "result",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Logical storage operation duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_storage_operation_errors_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "backend",
+          "bounded_by": "enumerated values",
+          "values": [
+            "memory",
+            "postgresql"
+          ]
+        },
+        {
+          "name": "capability",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "operation",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "result",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Logical storage operation failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_claims_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Tasks claimed by workers",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_completions_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "final_status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Tasks reaching a terminal status",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_execution_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "final_status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Task execution duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_last_terminal_timestamp_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Most recent terminal-task timestamp",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_lease_recoveries_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Tasks failed after lease expiry",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_oldest_age_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "state",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Oldest queued or active task age",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_output_cleanup_deleted_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Stored outputs deleted by cleanup",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_output_cleanup_failures_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Stored output cleanup failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_output_cleanup_runs_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Stored output cleanup runs",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_poll_interval_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured task-worker poll interval",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_queue_wait_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Task queue wait duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_worker_iterations_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "claimed",
+            "idle",
+            "error"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Task worker loop iterations",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_workers_configured",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured task workers",
+      "feature": null
+    },
+    {
+      "name": "hubuum_tasks",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "status",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Current task counts",
+      "feature": null
+    },
+    {
+      "name": "hubuum_token_authentications_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "format",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "key_state",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Bearer-token authentication outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_token_hash_key_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "mode",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "active_key_id",
+          "bounded_by": "one configured process identity",
+          "values": []
+        },
+        {
+          "name": "ring_identity",
+          "bounded_by": "one configured process identity",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Token hash key-ring identity",
+      "feature": null
+    },
+    {
+      "name": "hubuum_token_hash_keys",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "state",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured token hash keys",
+      "feature": null
+    },
+    {
+      "name": "hubuum_token_hash_stored",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "key_state",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        },
+        {
+          "name": "lifecycle",
+          "bounded_by": "closed Rust enums or fixed call sites",
+          "values": []
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Stored bearer tokens by key lifecycle",
+      "feature": null
+    },
+    {
+      "name": "process_cpu_seconds_total",
+      "kind": "counter",
+      "unit": "seconds",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Process user and system CPU time",
+      "feature": null
+    },
+    {
+      "name": "process_max_fds",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Process file-descriptor limit",
+      "feature": null
+    },
+    {
+      "name": "process_open_fds",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Open file descriptors or handles",
+      "feature": null
+    },
+    {
+      "name": "process_resident_memory_bytes",
+      "kind": "gauge",
+      "unit": "bytes",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Resident process memory",
+      "feature": null
+    },
+    {
+      "name": "process_start_time_seconds",
+      "kind": "gauge",
+      "unit": "seconds",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Operating-system process start time",
+      "feature": null
+    },
+    {
+      "name": "process_virtual_memory_bytes",
+      "kind": "gauge",
+      "unit": "bytes",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Virtual process memory",
+      "feature": null
+    }
+  ],
+  "configuration": [
+    {
+      "name": "HUBUUM_ACTIX_WORKERS",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [],
+      "dynamic_default": {
+        "source": "available_parallelism",
+        "divisor": 1,
+        "rounding": "ceiling",
+        "minimum": 1
+      },
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ADMIN_GROUPNAME",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "admin"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ADMIN_IDENTITY_SCOPE",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "local"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_AUTH_CONFIG_HOST_PATH",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_AUTH_CONFIG_PATH",
+      "owner": "authentication",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
+      "owner": "backups",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
+      "owner": "backups",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+      "owner": "backups",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "24"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BIND_IP",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "127.0.0.1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BIND_PORT",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "8080"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_BUILD_GIT_SHA",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CLIENT_ALLOWLIST",
+      "owner": "network",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "127.0.0.1,::1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 1000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_MIGRATOR_ROLE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum_migrator"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_OWNER_ROLE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum_owner"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_PRIVILEGE_MODE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "warn"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "warn",
+        "strict"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_ROLE_MODE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "single"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "single",
+        "split"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_ROLE_TESTS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_RUNTIME_ROLE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum_runtime"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DATABASE_URL",
+      "owner": "database",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DB_POOL_SIZE",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "10"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_DEFAULT_PAGE_LIMIT",
+      "owner": "pagination",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "10"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "25000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_DELIVERY_WORKERS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "0"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_FANOUT_WORKERS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_DAYS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "365"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_PURGE_ENABLED",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+      "owner": "events",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "3600"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EVENT_SINK_SECRET_*",
+      "owner": "events",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "dynamic secret namespace",
+      "dynamic_prefix": true
+    },
+    {
+      "name": "HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "0"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_MAX_OUTPUT_BYTES",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "262144"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "168"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_STAGE_TIMEOUT_MS",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "10000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_TEMPLATE_FUEL",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "50000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "64"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LDAP_SECRET_*",
+      "owner": "authentication",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "dynamic secret namespace",
+      "dynamic_prefix": true
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_BACKEND",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "memory"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "memory",
+        "valkey"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "86400"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_ENABLED",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "true"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "20"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "24"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 32,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "64"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 128,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum:login-rate-limit"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL",
+      "owner": "authentication",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_LOG_LEVEL",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "info"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_MAX_PAGE_LIMIT",
+      "owner": "pagination",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "250"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "8760"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_MAX_TRANSITIVE_DEPTH",
+      "owner": "relations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_METRICS_ENABLED",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "true"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_METRICS_PATH",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "/metrics"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_MIGRATION_DATABASE_URL",
+      "owner": "database",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PERMISSION_BACKEND",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "local"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "local",
+        "treetop"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS",
+      "owner": "remotecalls",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
+      "owner": "remotecalls",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "100"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES",
+      "owner": "remotecalls",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "262144"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_REMOTE_CALL_TIMEOUT_MS",
+      "owner": "remotecalls",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "10000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_REMOTE_SECRET_*",
+      "owner": "remotecalls",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "dynamic secret namespace",
+      "dynamic_prefix": true
+    },
+    {
+      "name": "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "true",
+        "false",
+        "1",
+        "0"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
+      "owner": "restores",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
+      "owner": "restores",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "60"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_RUNTIME_ROLE",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "all"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SECRET_FILE_ROOT",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SECRET_SOURCE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "environment"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "environment",
+        "file"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_STORAGE_BACKEND",
+      "owner": "database",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "postgresql"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "postgresql",
+        "memory"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_HEARTBEAT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "20"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_LEASE_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "60"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_POLL_INTERVAL_MS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_WORKERS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [],
+      "dynamic_default": {
+        "source": "available_parallelism",
+        "divisor": 2,
+        "rounding": "ceiling",
+        "minimum": 1
+      },
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TLS_BACKEND",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "rustls",
+        "openssl"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TLS_CERT_PATH",
+      "owner": "server",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TLS_KEY_PASSPHRASE",
+      "owner": "server",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TLS_KEY_PATH",
+      "owner": "server",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_HASH_KEY",
+      "owner": "authentication",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_HASH_KEY_*",
+      "owner": "authentication",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "dynamic secret namespace",
+      "dynamic_prefix": true
+    },
+    {
+      "name": "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_LIFETIME_HOURS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "24"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2147483647,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_RETENTION_DAYS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 10,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "true"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "3600"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_ACCEPT_INVALID_CERTS",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_CA_CERT",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_CONNECT_TIMEOUT_MS",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_REQUEST_TIMEOUT_MS",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TEST_CA_CERT",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TEST_CONTAINER_NAME",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TEST_IMAGE",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TEST_REVISION",
+      "owner": "permissions",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TEST_URL",
+      "owner": "permissions",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_TLS_TEST_URL",
+      "owner": "permissions",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TREETOP_URL",
+      "owner": "permissions",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRUSTED_PROXIES",
+      "owner": "network",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        ""
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRUSTED_PROXY_HOPS",
+      "owner": "network",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "0"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRUST_IP_HEADERS",
+      "owner": "network",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    }
+  ],
+  "configuration_constraints": [
+    "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT",
+    "HUBUUM_TASK_HEARTBEAT_SECONDS must be less than HUBUUM_TASK_LEASE_SECONDS",
+    "HUBUUM_RUNTIME_ROLE=worker requires at least one task, fan-out, delivery, event-retention, or token-retention worker",
+    "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS must be less than HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+    "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS must not exceed HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+    "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true requires HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+    "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS must not exceed HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+    "HUBUUM_TOKEN_LIFETIME_HOURS must not exceed HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+    "HUBUUM_TLS_CERT_PATH and HUBUUM_TLS_KEY_PATH must be configured together",
+    "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL",
+    "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
+    "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT"
+  ],
+  "events": {
+    "schema_version": 1,
+    "envelope_fields": [
+      {
+        "name": "id",
+        "nullable": false
+      },
+      {
+        "name": "event_id",
+        "nullable": false
+      },
+      {
+        "name": "occurred_at",
+        "nullable": false
+      },
+      {
+        "name": "entity_type",
+        "nullable": false
+      },
+      {
+        "name": "entity_id",
+        "nullable": true
+      },
+      {
+        "name": "entity_name",
+        "nullable": true
+      },
+      {
+        "name": "collection_id",
+        "nullable": true
+      },
+      {
+        "name": "action",
+        "nullable": false
+      },
+      {
+        "name": "actor_user_id",
+        "nullable": true
+      },
+      {
+        "name": "actor_kind",
+        "nullable": false
+      },
+      {
+        "name": "provenance",
+        "nullable": false
+      },
+      {
+        "name": "request_id",
+        "nullable": true
+      },
+      {
+        "name": "correlation_id",
+        "nullable": true
+      },
+      {
+        "name": "summary",
+        "nullable": false
+      },
+      {
+        "name": "before",
+        "nullable": true
+      },
+      {
+        "name": "after",
+        "nullable": true
+      },
+      {
+        "name": "metadata",
+        "nullable": false
+      },
+      {
+        "name": "schema_version",
+        "nullable": false
+      }
+    ],
+    "provenance_fields": [
+      {
+        "name": "actor",
+        "nullable": false
+      },
+      {
+        "name": "actor.kind",
+        "nullable": true
+      },
+      {
+        "name": "actor.principal",
+        "nullable": true
+      },
+      {
+        "name": "actor.principal.principal_id",
+        "nullable": false
+      },
+      {
+        "name": "actor.principal.name",
+        "nullable": true
+      },
+      {
+        "name": "initiator",
+        "nullable": true
+      },
+      {
+        "name": "initiator.principal_id",
+        "nullable": false
+      },
+      {
+        "name": "initiator.name",
+        "nullable": true
+      },
+      {
+        "name": "task_id",
+        "nullable": true
+      }
+    ],
+    "sink_payload_fields": [
+      {
+        "name": "id",
+        "nullable": false
+      },
+      {
+        "name": "event_id",
+        "nullable": false
+      },
+      {
+        "name": "occurred_at",
+        "nullable": false
+      },
+      {
+        "name": "entity_type",
+        "nullable": false
+      },
+      {
+        "name": "entity_id",
+        "nullable": true
+      },
+      {
+        "name": "entity_name",
+        "nullable": true
+      },
+      {
+        "name": "collection_id",
+        "nullable": true
+      },
+      {
+        "name": "action",
+        "nullable": false
+      },
+      {
+        "name": "actor_user_id",
+        "nullable": true
+      },
+      {
+        "name": "actor_kind",
+        "nullable": false
+      },
+      {
+        "name": "provenance",
+        "nullable": false
+      },
+      {
+        "name": "request_id",
+        "nullable": true
+      },
+      {
+        "name": "correlation_id",
+        "nullable": true
+      },
+      {
+        "name": "summary",
+        "nullable": false
+      },
+      {
+        "name": "before",
+        "nullable": true
+      },
+      {
+        "name": "after",
+        "nullable": true
+      },
+      {
+        "name": "metadata",
+        "nullable": false
+      },
+      {
+        "name": "schema_version",
+        "nullable": false
+      }
+    ],
+    "schema_version_semantics": [
+      "positive integer",
+      "omitted builder value defaults to the current event schema version",
+      "incompatible envelope, provenance, or sink payload shape changes require an increase"
+    ],
+    "actors": [
+      "user",
+      "system",
+      "worker"
+    ],
+    "entities": [
+      {
+        "name": "collection",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "class",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "object",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "class_relation",
+        "actions": [
+          "created",
+          "deleted"
+        ]
+      },
+      {
+        "name": "object_relation",
+        "actions": [
+          "created",
+          "deleted"
+        ]
+      },
+      {
+        "name": "user",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "group",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "user_group",
+        "actions": [
+          "added",
+          "removed"
+        ]
+      },
+      {
+        "name": "permission",
+        "actions": [
+          "granted",
+          "revoked"
+        ]
+      },
+      {
+        "name": "token",
+        "actions": [
+          "created",
+          "revoked",
+          "purged"
+        ]
+      },
+      {
+        "name": "remote_target",
+        "actions": [
+          "created",
+          "updated",
+          "deleted",
+          "invoked"
+        ]
+      },
+      {
+        "name": "export_template",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "task",
+        "actions": [
+          "queued",
+          "started",
+          "validating",
+          "running",
+          "succeeded",
+          "failed",
+          "partially_succeeded",
+          "cancelled",
+          "cleanup"
+        ]
+      },
+      {
+        "name": "service_account",
+        "actions": [
+          "created",
+          "updated",
+          "disabled",
+          "deleted"
+        ]
+      },
+      {
+        "name": "event_sink",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "event_subscription",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "computed_field_definition",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "external_identity_sync",
+        "actions": [
+          "succeeded",
+          "failed"
+        ]
+      },
+      {
+        "name": "restore",
+        "actions": [
+          "succeeded"
+        ]
+      }
+    ],
+    "redaction_rules": [
+      "partially visible events replace before and after with null",
+      "partially visible events replace metadata with an empty object",
+      "event debug output never includes before, after, metadata, or routing secrets"
+    ],
+    "audit_document_versions": [
+      1,
+      2
+    ]
+  },
+  "documents": {
+    "backup": {
+      "version": 5,
+      "required_fields": [
+        "backup_version",
+        "created_at",
+        "source_version",
+        "state",
+        "manifest"
+      ],
+      "optional_fields": [
+        "history"
+      ],
+      "sections": [
+        "identity_scopes",
+        "groups",
+        "principals",
+        "users",
+        "service_accounts",
+        "group_memberships",
+        "group_membership_sources",
+        "collections",
+        "collection_authorization",
+        "collection_hierarchy",
+        "collection_permission_grants",
+        "classes",
+        "computed_field_definitions",
+        "class_relations",
+        "objects",
+        "object_relations",
+        "export_templates",
+        "remote_targets",
+        "event_sinks",
+        "event_subscriptions",
+        "collection_history",
+        "class_history",
+        "class_relation_history",
+        "object_history",
+        "object_relation_history",
+        "export_template_history",
+        "remote_target_history",
+        "terminal_tasks",
+        "import_results",
+        "export_outputs",
+        "remote_call_results",
+        "audit_events",
+        "terminal_event_deliveries"
+      ],
+      "rejection_policy": "reject any backup_version other than the current version"
+    },
+    "import": {
+      "version": 2,
+      "required_fields": [
+        "version",
+        "graph"
+      ],
+      "optional_fields": [
+        "dry_run",
+        "mode"
+      ],
+      "sections": [
+        "identity_scopes",
+        "groups",
+        "principals",
+        "group_memberships",
+        "collections",
+        "classes",
+        "objects",
+        "computed_fields",
+        "class_relations",
+        "object_relations",
+        "collection_permissions",
+        "export_templates",
+        "remote_targets",
+        "event_sinks",
+        "event_subscriptions"
+      ],
+      "rejection_policy": "reject any import version other than the current version"
+    },
+    "export": {
+      "scope_kinds": [
+        "collections",
+        "classes",
+        "objects_in_class",
+        "class_relations",
+        "object_relations",
+        "related_objects"
+      ],
+      "content_types": [
+        "application/json",
+        "text/plain",
+        "text/html",
+        "text/csv"
+      ],
+      "missing_data_policies": [
+        "strict",
+        "null",
+        "omit"
+      ],
+      "template_kinds": [
+        "export",
+        "fragment"
+      ]
+    }
+  },
+  "cli": [
+    {
+      "command": "hubuum-server",
+      "options": [
+        {
+          "id": "runtime_role",
+          "long": "runtime-role",
+          "short": null,
+          "environment": "HUBUUM_RUNTIME_ROLE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "all"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "all",
+            "api",
+            "worker"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "storage_backend",
+          "long": "storage-backend",
+          "short": null,
+          "environment": "HUBUUM_STORAGE_BACKEND",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "postgresql"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "postgresql",
+            "memory"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "bind_ip",
+          "long": "bind-ip",
+          "short": null,
+          "environment": "HUBUUM_BIND_IP",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "127.0.0.1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "port",
+          "long": "port",
+          "short": null,
+          "environment": "HUBUUM_BIND_PORT",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "8080"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "log_level",
+          "long": "log-level",
+          "short": null,
+          "environment": "HUBUUM_LOG_LEVEL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "info"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_url",
+          "long": "database-url",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_URL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "postgres://localhost"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_role_mode",
+          "long": "database-role-mode",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_ROLE_MODE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "single"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "single",
+            "split"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_privilege_mode",
+          "long": "database-privilege-mode",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_PRIVILEGE_MODE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "warn"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "warn",
+            "strict"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_owner_role",
+          "long": "database-owner-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_OWNER_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum_owner"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_migrator_role",
+          "long": "database-migrator-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_MIGRATOR_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum_migrator"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_runtime_role",
+          "long": "database-runtime-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_RUNTIME_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum_runtime"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "actix_workers",
+          "long": "actix-workers",
+          "short": null,
+          "environment": "HUBUUM_ACTIX_WORKERS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": {
+            "source": "available_parallelism",
+            "divisor": 1,
+            "rounding": "ceiling",
+            "minimum": 1
+          },
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_workers",
+          "long": "task-workers",
+          "short": null,
+          "environment": "HUBUUM_TASK_WORKERS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": {
+            "source": "available_parallelism",
+            "divisor": 2,
+            "rounding": "ceiling",
+            "minimum": 1
+          },
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_poll_interval_ms",
+          "long": "task-poll-interval-ms",
+          "short": null,
+          "environment": "HUBUUM_TASK_POLL_INTERVAL_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_lease_seconds",
+          "long": "task-lease-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_LEASE_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "60"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_heartbeat_seconds",
+          "long": "task-heartbeat-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_HEARTBEAT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "20"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_recovery_interval_seconds",
+          "long": "task-recovery-interval-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "computed_reindex_batch_size",
+          "long": "computed-reindex-batch-size",
+          "short": null,
+          "environment": "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_fanout_workers",
+          "long": "event-fanout-workers",
+          "short": null,
+          "environment": "HUBUUM_EVENT_FANOUT_WORKERS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_fanout_batch_size",
+          "long": "event-fanout-batch-size",
+          "short": null,
+          "environment": "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_fanout_poll_interval_ms",
+          "long": "event-fanout-poll-interval-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_fanout_lock_timeout_ms",
+          "long": "event-fanout-lock-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_workers",
+          "long": "event-delivery-workers",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_WORKERS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "0"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_batch_size",
+          "long": "event-delivery-batch-size",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_poll_interval_ms",
+          "long": "event-delivery-poll-interval-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_lock_timeout_ms",
+          "long": "event-delivery-lock-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_transport_timeout_ms",
+          "long": "event-delivery-transport-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "25000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_retry_backoff_base_ms",
+          "long": "event-delivery-retry-backoff-base-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_retry_backoff_max_ms",
+          "long": "event-delivery-retry-backoff-max-ms",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_max_attempts",
+          "long": "event-delivery-max-attempts",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "10"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_purge_enabled",
+          "long": "event-retention-purge-enabled",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_PURGE_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_days",
+          "long": "event-retention-days",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_DAYS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "365"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_delivery_retention_days",
+          "long": "event-delivery-retention-days",
+          "short": null,
+          "environment": "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_purge_interval_seconds",
+          "long": "event-retention-purge-interval-seconds",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "3600"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_purge_batch_size",
+          "long": "event-retention-purge-batch-size",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_file_archive_enabled",
+          "long": "event-retention-file-archive-enabled",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "event_retention_archive_path",
+          "long": "event-retention-archive-path",
+          "short": null,
+          "environment": "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_output_retention_hours",
+          "long": "export-output-retention-hours",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "168"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_output_cleanup_interval_seconds",
+          "long": "export-output-cleanup-interval-seconds",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_output_retention_hours",
+          "long": "backup-output-retention-hours",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "24"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_max_active_tasks_per_user",
+          "long": "backup-max-active-tasks-per-user",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_max_output_bytes",
+          "long": "backup-max-output-bytes",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "restore_stage_retention_minutes",
+          "long": "restore-stage-retention-minutes",
+          "short": null,
+          "environment": "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "60"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "restore_max_upload_bytes",
+          "long": "restore-max-upload-bytes",
+          "short": null,
+          "environment": "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "import_max_active_tasks_per_user",
+          "long": "import-max-active-tasks-per-user",
+          "short": null,
+          "environment": "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_max_active_tasks_per_user",
+          "long": "export-max-active-tasks-per-user",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_recursion_limit",
+          "long": "export-template-recursion-limit",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "64"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_fuel",
+          "long": "export-template-fuel",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_TEMPLATE_FUEL",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "50000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_max_objects",
+          "long": "export-template-max-objects",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_max_output_bytes",
+          "long": "export-max-output-bytes",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_MAX_OUTPUT_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "262144"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_stage_timeout_ms",
+          "long": "export-stage-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_STAGE_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "10000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "remote_call_timeout_ms",
+          "long": "remote-call-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_REMOTE_CALL_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "10000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "remote_call_max_response_bytes",
+          "long": "remote-call-max-response-bytes",
+          "short": null,
+          "environment": "HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "262144"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "remote_call_allow_private_targets",
+          "long": "remote-call-allow-private-targets",
+          "short": null,
+          "environment": "HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "remote_call_max_active_tasks_per_user",
+          "long": "remote-call-max-active-tasks-per-user",
+          "short": null,
+          "environment": "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "db_statement_timeout_ms",
+          "long": "db-statement-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_db_statement_timeout_ms",
+          "long": "export-db-statement-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "0"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "db_pool_acquire_timeout_ms",
+          "long": "db-pool-acquire-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "db_pool_size",
+          "long": "db-pool-size",
+          "short": null,
+          "environment": "HUBUUM_DB_POOL_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "10"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_lifetime_hours",
+          "long": "token-lifetime-hours",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_LIFETIME_HOURS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "24"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "max_token_lifetime_hours",
+          "long": "max-token-lifetime-hours",
+          "short": null,
+          "environment": "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "8760"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_retention_purge_enabled",
+          "long": "token-retention-purge-enabled",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "true"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_retention_days",
+          "long": "token-retention-days",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_RETENTION_DAYS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_retention_purge_interval_seconds",
+          "long": "token-retention-purge-interval-seconds",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "3600"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_retention_purge_batch_size",
+          "long": "token-retention-purge-batch-size",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_enabled",
+          "long": "login-rate-limit-enabled",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "true"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_max_attempts",
+          "long": "login-rate-limit-max-attempts",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_max_attempts_per_ip",
+          "long": "login-rate-limit-max-attempts-per-ip",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "20"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_max_attempts_per_subnet",
+          "long": "login-rate-limit-max-attempts-per-subnet",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_window_seconds",
+          "long": "login-rate-limit-window-seconds",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_backoff_base_seconds",
+          "long": "login-rate-limit-backoff-base-seconds",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_backoff_max_seconds",
+          "long": "login-rate-limit-backoff-max-seconds",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "86400"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_subnet_prefix_v4",
+          "long": "login-rate-limit-subnet-prefix-v4",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "24"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_subnet_prefix_v6",
+          "long": "login-rate-limit-subnet-prefix-v6",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "64"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_backend",
+          "long": "login-rate-limit-backend",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_BACKEND",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "memory"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "memory",
+            "valkey"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_valkey_url",
+          "long": "login-rate-limit-valkey-url",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_valkey_prefix",
+          "long": "login-rate-limit-valkey-prefix",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum:login-rate-limit"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "login_rate_limit_valkey_io_timeout_ms",
+          "long": "login-rate-limit-valkey-io-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "default_page_limit",
+          "long": "default-page-limit",
+          "short": null,
+          "environment": "HUBUUM_DEFAULT_PAGE_LIMIT",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "max_page_limit",
+          "long": "max-page-limit",
+          "short": null,
+          "environment": "HUBUUM_MAX_PAGE_LIMIT",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "250"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "max_transitive_depth",
+          "long": "max-transitive-depth",
+          "short": null,
+          "environment": "HUBUUM_MAX_TRANSITIVE_DEPTH",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "100"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "admin_groupname",
+          "long": "admin-groupname",
+          "short": null,
+          "environment": "HUBUUM_ADMIN_GROUPNAME",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "admin"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "admin_identity_scope",
+          "long": "admin-identity-scope",
+          "short": null,
+          "environment": "HUBUUM_ADMIN_IDENTITY_SCOPE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "local"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "auth_config_path",
+          "long": "auth-config-path",
+          "short": null,
+          "environment": "HUBUUM_AUTH_CONFIG_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tls_cert_path",
+          "long": "tls-cert-path",
+          "short": null,
+          "environment": "HUBUUM_TLS_CERT_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tls_key_path",
+          "long": "tls-key-path",
+          "short": null,
+          "environment": "HUBUUM_TLS_KEY_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tls_key_passphrase",
+          "long": "tls-key-passphrase",
+          "short": null,
+          "environment": "HUBUUM_TLS_KEY_PASSPHRASE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tls_backend",
+          "long": "tls-backend",
+          "short": null,
+          "environment": "HUBUUM_TLS_BACKEND",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [
+            "rustls",
+            "openssl"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "permission_backend",
+          "long": "permission-backend",
+          "short": null,
+          "environment": "HUBUUM_PERMISSION_BACKEND",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "local"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "local",
+            "treetop"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "treetop_url",
+          "long": "treetop-url",
+          "short": null,
+          "environment": "HUBUUM_TREETOP_URL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "treetop_connect_timeout_ms",
+          "long": "treetop-connect-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_TREETOP_CONNECT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "treetop_request_timeout_ms",
+          "long": "treetop-request-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_TREETOP_REQUEST_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "treetop_ca_cert",
+          "long": "treetop-ca-cert",
+          "short": null,
+          "environment": "HUBUUM_TREETOP_CA_CERT",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "treetop_accept_invalid_certs",
+          "long": "treetop-accept-invalid-certs",
+          "short": null,
+          "environment": "HUBUUM_TREETOP_ACCEPT_INVALID_CERTS",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "metrics_enabled",
+          "long": "metrics-enabled",
+          "short": null,
+          "environment": "HUBUUM_METRICS_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "true"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "metrics_path",
+          "long": "metrics-path",
+          "short": null,
+          "environment": "HUBUUM_METRICS_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "/metrics"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "trust_ip_headers",
+          "long": "trust-ip-headers",
+          "short": null,
+          "environment": "HUBUUM_TRUST_IP_HEADERS",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "trusted_proxies",
+          "long": "trusted-proxies",
+          "short": null,
+          "environment": "HUBUUM_TRUSTED_PROXIES",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            ""
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "trusted_proxy_hops",
+          "long": "trusted-proxy-hops",
+          "short": null,
+          "environment": "HUBUUM_TRUSTED_PROXY_HOPS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "0"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "client_allowlist",
+          "long": "client-allowlist",
+          "short": null,
+          "environment": "HUBUUM_CLIENT_ALLOWLIST",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "127.0.0.1,::1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        }
+      ],
+      "stable_output_modes": [],
+      "exit_codes": {
+        "database": 3,
+        "generic": 1,
+        "initialization": 4,
+        "permission_backend": 6,
+        "success": 0,
+        "tls": 5,
+        "usage_or_configuration": 2
+      }
+    },
+    {
+      "command": "hubuum-admin",
+      "options": [
+        {
+          "id": "backup",
+          "long": "backup",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_without_history",
+          "long": "backup-without-history",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "backup"
+          ]
+        },
+        {
+          "id": "verify_backup",
+          "long": "verify-backup",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "backup",
+            "restore",
+            "restore_executor"
+          ],
+          "requires": []
+        },
+        {
+          "id": "restore_test_database_url",
+          "long": "restore-test-database-url",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "verify_backup"
+          ]
+        },
+        {
+          "id": "keep_restore_test_database",
+          "long": "keep-restore-test-database",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "restore_test_database_url"
+          ]
+        },
+        {
+          "id": "restore",
+          "long": "restore",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "backup"
+          ],
+          "requires": []
+        },
+        {
+          "id": "restore_confirmation",
+          "long": "restore-confirmation",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "restore"
+          ]
+        },
+        {
+          "id": "restore_executor",
+          "long": "restore-executor",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "reset_password",
+          "long": "reset-password",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "audit_templates",
+          "long": "audit-templates",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_health",
+          "long": "export-template-health",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_ready",
+          "long": "database-ready",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_key_status",
+          "long": "token-key-status",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "migrate",
+          "long": "migrate",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "legacy_single_role_migration",
+          "long": "legacy-single-role-migration",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "database_migrator_role",
+            "database_owner_role",
+            "database_runtime_role"
+          ],
+          "requires": [
+            "migrate"
+          ]
+        },
+        {
+          "id": "database_role_setup_sql",
+          "long": "database-role-setup-sql",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_role_grants_sql",
+          "long": "database-role-grants-sql",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "database_role_setup_sql"
+          ],
+          "requires": []
+        },
+        {
+          "id": "check_database_privileges",
+          "long": "check-database-privileges",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "role",
+          "long": "role",
+          "short": null,
+          "environment": null,
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "runtime"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "owner",
+            "migrator",
+            "runtime"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "check_database_privileges"
+          ]
+        },
+        {
+          "id": "json",
+          "long": "json",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "storage_backend",
+          "long": "storage-backend",
+          "short": null,
+          "environment": "HUBUUM_STORAGE_BACKEND",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "postgresql"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "postgresql",
+            "memory"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_role_mode",
+          "long": "database-role-mode",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_ROLE_MODE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "single"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "single",
+            "split"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_url",
+          "long": "database-url",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_URL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "migration_database_url",
+          "long": "migration-database-url",
+          "short": null,
+          "environment": "HUBUUM_MIGRATION_DATABASE_URL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_owner_role",
+          "long": "database-owner-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_OWNER_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_migrator_role",
+          "long": "database-migrator-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_MIGRATOR_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "database_runtime_role",
+          "long": "database-runtime-role",
+          "short": null,
+          "environment": "HUBUUM_DATABASE_RUNTIME_ROLE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "db_statement_timeout_ms",
+          "long": "db-statement-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "token_lifetime_hours",
+          "long": "token-lifetime-hours",
+          "short": null,
+          "environment": "HUBUUM_TOKEN_LIFETIME_HOURS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "24"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_recursion_limit",
+          "long": "export-template-recursion-limit",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "64"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "export_template_fuel",
+          "long": "export-template-fuel",
+          "short": null,
+          "environment": "HUBUUM_EXPORT_TEMPLATE_FUEL",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "50000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "log_level",
+          "long": "log-level",
+          "short": null,
+          "environment": "HUBUUM_LOG_LEVEL",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "info"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        }
+      ],
+      "stable_output_modes": [
+        "--json",
+        "--database-role-setup-sql",
+        "--database-role-grants-sql"
+      ],
+      "exit_codes": {
+        "database": 3,
+        "generic": 1,
+        "success": 0,
+        "usage_or_configuration": 2
+      }
+    }
+  ],
+  "compatibility_policy": {
+    "additive": "new optional fields, commands, variables, metrics, or catalog values",
+    "behavioral": "changed defaults, descriptions, scopes, or expanded bounded value domains",
+    "breaking": "removed or narrowed items, changed types, labels, buckets, requirements, or unversioned format shapes"
+  }
+}

@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -1128,6 +1128,10 @@ pub struct AppConfig {
     /// Whitelist of client IPs or CIDRs ("*" allows all)
     #[clap(long, default_value = "127.0.0.1,::1", env = "HUBUUM_CLIENT_ALLOWLIST")]
     pub client_allowlist: ClientAllowlist,
+}
+
+pub(crate) fn app_command() -> clap::Command {
+    AppConfig::command()
 }
 
 impl AppConfig {

@@ -573,6 +573,7 @@ fn tagged_release_validation_requires_each_direct_prerequisite() {
         "verify-tag-main-ci-success",
         "dependency-policy",
         "openapi-contract",
+        "operational-contract",
         "container-build",
     ] {
         assert!(validation.contains(&format!("needs.{prerequisite}.result == 'success'")));

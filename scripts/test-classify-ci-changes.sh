@@ -147,6 +147,7 @@ assert_flag "$rust_api_policy_output" benchmarks false
 
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
+assert_flag "$openapi_output" operational_contract false
 assert_flag "$openapi_output" code false
 
 openapi_policy_output="$(bash "$classifier" \
@@ -160,6 +161,19 @@ assert_flag "$openapi_policy_output" openapi true
 assert_flag "$openapi_policy_output" code true
 assert_flag "$openapi_policy_output" container false
 assert_flag "$openapi_policy_output" artifacts false
+
+operational_contract_output="$(bash "$classifier" \
+  docs/operational-contract.json \
+  docs/metrics-reference.md \
+  .github/operational-contract-breaking-exceptions.json \
+  scripts/check-operational-contract-compatibility.py \
+  scripts/resolve-operational-contract-baseline.sh \
+  scripts/test-operational-contract-compatibility.py \
+  scripts/test-operational-contract-compatibility.sh)"
+assert_flag "$operational_contract_output" operational_contract true
+assert_flag "$operational_contract_output" code true
+assert_flag "$operational_contract_output" container false
+assert_flag "$operational_contract_output" artifacts false
 
 embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
 assert_flag "$embedded_doc_output" markdown true
@@ -179,6 +193,7 @@ assert_flag "$source_output" container true
 assert_flag "$source_output" artifacts true
 assert_flag "$source_output" benchmarks true
 assert_flag "$source_output" runtime_benchmark true
+assert_flag "$source_output" operational_contract true
 assert_flag "$source_output" treetop_conformance false
 
 treetop_output="$(bash "$classifier" \
