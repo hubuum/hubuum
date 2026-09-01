@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 
+use hubuum_storage_core::MAX_STORAGE_CANDIDATE_PAGE_SIZE;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -64,6 +65,15 @@ impl LimitMode {
         match self {
             Self::Standard => 250,
             Self::Extended => 1_500,
+        }
+    }
+
+    pub const fn candidate_page_limit(self) -> usize {
+        let page_limit = self.page_limit();
+        if page_limit < MAX_STORAGE_CANDIDATE_PAGE_SIZE {
+            page_limit
+        } else {
+            MAX_STORAGE_CANDIDATE_PAGE_SIZE
         }
     }
 
@@ -932,6 +942,10 @@ impl WorkloadSpec {
             limit_mode.page_limit().to_string(),
         );
         values.insert(
+            "candidate_page_limit".to_string(),
+            limit_mode.candidate_page_limit().to_string(),
+        );
+        values.insert(
             "graph_depth".to_string(),
             limit_mode.graph_depth().to_string(),
         );
@@ -1378,6 +1392,11 @@ mod tests {
         assert_eq!(standard.maximum_page_limit, 250);
         assert_eq!(standard.maximum_graph_depth, 100);
         assert_eq!(standard.maximum_export_output_bytes, 262_144);
+        assert_eq!(LimitMode::Standard.candidate_page_limit(), 250);
+        assert_eq!(
+            LimitMode::Extended.candidate_page_limit(),
+            MAX_STORAGE_CANDIDATE_PAGE_SIZE
+        );
         assert!(extended.maximum_page_limit > standard.maximum_page_limit);
         assert!(extended.maximum_graph_depth > standard.maximum_graph_depth);
         assert!(extended.maximum_export_output_bytes > standard.maximum_export_output_bytes);
@@ -1431,12 +1450,20 @@ mod tests {
         let manifest = profile.manifest().unwrap();
         let workload = WorkloadSpec::bundled().unwrap();
 
-        for scenario in &workload.scenarios {
-            let path = workload
-                .render_path(scenario, &manifest, LimitMode::Standard)
-                .unwrap();
-            assert!(path.starts_with("/api/"));
-            assert!(!path.contains(['{', '}']));
+        for limit_mode in [LimitMode::Standard, LimitMode::Extended] {
+            for scenario in &workload.scenarios {
+                let path = workload
+                    .render_path(scenario, &manifest, limit_mode)
+                    .unwrap();
+                assert!(path.starts_with("/api/"));
+                assert!(!path.contains(['{', '}']));
+                if scenario.name == "unified-search" {
+                    assert!(path.ends_with(&format!(
+                        "limit_per_kind={}",
+                        limit_mode.candidate_page_limit()
+                    )));
+                }
+            }
         }
     }
 

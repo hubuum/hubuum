@@ -86,8 +86,9 @@ The two workload modes apply and report these server limits:
 | extended |          250 |        1,500 |         200 |              50 |         4 MiB |
 
 The related-object include ceiling is a fixed application safety limit and is
-therefore unchanged. Dataset backup/restore ceilings are separate provisioning
-limits declared by each profile.
+therefore unchanged. Unified search is also capped at the backend-neutral
+512-candidate page ceiling even in extended mode. Dataset backup/restore
+ceilings are separate provisioning limits declared by each profile.
 
 The `manifest`, `load`, `measure`, and `assess` subcommands allow the phases to
 be run separately. `measure` requires a manifest from the loaded database. The

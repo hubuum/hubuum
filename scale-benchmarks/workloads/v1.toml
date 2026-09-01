@@ -184,7 +184,7 @@ weight = 3
 [[scenarios]]
 name = "unified-search"
 principal = "tenant"
-path = "/api/v1/search?q=scale-object&limit_per_kind={page_limit}"
+path = "/api/v1/search?q=scale-object&limit_per_kind={candidate_page_limit}"
 weight = 5
 
 [[scenarios]]

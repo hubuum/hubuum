@@ -622,9 +622,13 @@ pub async fn claim_task_by_id_with_lease(
         attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
-    let now = chrono::Utc::now().naive_utc();
     let token = uuid::Uuid::new_v4();
     let mut connection = pool.get().await?;
+    let now = diesel::select(diesel::dsl::sql::<Timestamp>(
+        "clock_timestamp() AT TIME ZONE 'UTC'",
+    ))
+    .get_result::<NaiveDateTime>(&mut connection)
+    .await?;
     let row = diesel::update(
         tasks
             .filter(id.eq(task_id_value.id()))
