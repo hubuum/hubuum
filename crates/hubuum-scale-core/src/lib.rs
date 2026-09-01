@@ -2404,14 +2404,11 @@ impl ScaleSensitivityReport {
     }
 
     pub fn markdown(&self) -> String {
-        let mode = match self.limit_mode {
-            LimitMode::Standard => "standard",
-            LimitMode::Extended => "extended",
-        };
         let mut output = format!(
-            "## {} / {} / {mode} scale growth\n\n",
+            "## {} / {} / page limit {} scale growth\n\n",
             self.runtime.backend.name,
-            self.profile.as_str()
+            self.profile.as_str(),
+            self.limit_mode.page_limit()
         );
         output.push_str(&format!(
             "Fixed binary `{}`; {} {} backend; dataset `{}`; workload `{}`; page limit {}. Every point starts from a fresh copy of the baseline and changes only the named balanced-region axis.\n\n",
@@ -3589,12 +3586,21 @@ mod tests {
             2.0
         );
         assert!(markdown.contains("Baseline collections"));
+        assert!(markdown.contains("## postgres / large / page limit 250 scale growth"));
         assert!(markdown.contains("250,000"));
         assert!(markdown.contains("+20% (+50,000)"));
         assert!(markdown.contains("300,000"));
         assert!(markdown.contains("+100% (+1,000,000)"));
         assert!(markdown.contains("1 → 2"));
         assert!(markdown.contains("Each percentage is relative to the stated baseline"));
+
+        let mut extended_summary = summary.clone();
+        extended_summary.limit_mode = LimitMode::Extended;
+        assert!(
+            extended_summary
+                .markdown()
+                .contains("## postgres / large / page limit 1500 scale growth")
+        );
     }
 
     #[test]
