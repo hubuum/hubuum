@@ -7,8 +7,8 @@
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Timestamp};
 use diesel::{
-    ExpressionMethods, Insertable, OptionalExtension, QueryDsl, Queryable, QueryableByName,
-    Selectable, SelectableHelper,
+    ExpressionMethods, Insertable, NullableExpressionMethods, OptionalExtension, QueryDsl,
+    Queryable, QueryableByName, Selectable, SelectableHelper,
 };
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
@@ -1252,18 +1252,17 @@ pub async fn assign_task_lease(
     expires_at: NaiveDateTime,
 ) -> Result<(), PostgresStorageError> {
     use crate::schema::tasks::dsl::{
-        id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
+        created_at, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
     let mut connection = pool.get().await?;
-    let claimed_at = chrono::Utc::now().naive_utc();
     let updated = diesel::update(tasks.filter(id.eq(task_id.id())))
         .set((
             status.eq(status_value.as_str()),
-            started_at.eq(Some(claimed_at)),
+            started_at.eq(created_at.nullable()),
             lease_token.eq(Some(claim_token)),
             lease_expires_at.eq(Some(expires_at)),
-            updated_at.eq(claimed_at),
+            updated_at.eq(created_at),
         ))
         .execute(&mut connection)
         .await?;

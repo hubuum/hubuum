@@ -1,0 +1,219 @@
+schema_version = 1
+workload_version = 1
+seed = 36520260901
+warmup_requests = 3
+single_client_samples = 12
+moderate_concurrency = 8
+higher_concurrency = 24
+concurrent_samples = 96
+mixed_samples = 160
+request_timeout_seconds = 30
+
+[[scenarios]]
+name = "collections-first-page-with-total"
+principal = "admin"
+path = "/api/v1/collections?limit={page_limit}&sort=id"
+weight = 6
+
+[[scenarios]]
+name = "collections-nested-filter"
+principal = "tenant"
+path = "/api/v1/collections/{nested_collection_id}/children"
+weight = 4
+
+[[scenarios]]
+name = "classes-high-cardinality-collection"
+principal = "admin"
+path = "/api/v1/classes?limit={page_limit}&collections={class_heavy_collection_id}&sort=id"
+weight = 7
+traverse = true
+
+[[scenarios]]
+name = "classes-fragmented-global"
+principal = "admin"
+path = "/api/v1/classes?limit={page_limit}&sort=name"
+weight = 4
+
+[[scenarios]]
+name = "objects-small-class"
+principal = "admin"
+path = "/api/v1/classes/{sparse_class_id}/?limit={page_limit}&sort=id"
+weight = 4
+
+[[scenarios]]
+name = "objects-medium-class"
+principal = "admin"
+path = "/api/v1/classes/{medium_class_id}/?limit={page_limit}&sort=created_at,id"
+weight = 4
+
+[[scenarios]]
+name = "objects-empty-class"
+principal = "admin"
+path = "/api/v1/classes/{empty_class_id}/?limit={page_limit}&sort=id"
+weight = 2
+
+[[scenarios]]
+name = "objects-hot-class"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&sort=id"
+weight = 10
+traverse = true
+
+[[scenarios]]
+name = "objects-hot-class-no-total"
+principal = "tenant"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&sort=id&include_total=false"
+weight = 10
+
+[[scenarios]]
+name = "objects-sparse-principal-backfill"
+principal = "sparse"
+path = "/api/v1/classes?limit={page_limit}&sort=id"
+weight = 8
+traverse = true
+verify_sparse_visibility = true
+
+[[scenarios]]
+name = "objects-filter-none"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&json_data__equals=selectivity_bucket=101"
+weight = 2
+
+[[scenarios]]
+name = "objects-filter-one-percent"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&json_data__equals=selectivity_bucket=1"
+weight = 4
+
+[[scenarios]]
+name = "objects-filter-quarter"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&json_data__lt=selectivity_bucket=25"
+weight = 4
+
+[[scenarios]]
+name = "objects-filter-all"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/?limit={page_limit}&json_data__gte=selectivity_bucket=0"
+weight = 3
+
+[[scenarios]]
+name = "point-object"
+principal = "tenant"
+path = "/api/v1/classes/{hot_class_id}/{ordinary_object_id}"
+weight = 9
+
+[[scenarios]]
+name = "point-class"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}"
+weight = 3
+
+[[scenarios]]
+name = "point-collection"
+principal = "admin"
+path = "/api/v1/collections/{nested_collection_id}"
+weight = 3
+
+[[scenarios]]
+name = "point-principal"
+principal = "admin"
+path = "/api/v1/iam/users/{admin_principal_id}"
+weight = 2
+
+[[scenarios]]
+name = "point-task"
+principal = "admin"
+path = "/api/v1/tasks/{terminal_task_id}"
+weight = 2
+
+[[scenarios]]
+name = "hub-object-relations"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/objects/{hub_object_id}/related/relations?limit={page_limit}&sort=id"
+weight = 7
+
+[[scenarios]]
+name = "ordinary-object-relations"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/objects/{ordinary_object_id}/related/relations?limit={page_limit}&sort=id"
+weight = 4
+
+[[scenarios]]
+name = "relations-concentrated-class-relation"
+principal = "admin"
+path = "/api/v1/relations/objects?class_relation={concentrated_class_relation_id}&limit={page_limit}&sort=id"
+weight = 5
+
+[[scenarios]]
+name = "relations-spread-class-relation"
+principal = "admin"
+path = "/api/v1/relations/objects?class_relation={spread_class_relation_id}&limit={page_limit}&sort=id"
+weight = 5
+
+[[scenarios]]
+name = "bounded-transitive-graph"
+principal = "admin"
+path = "/api/v1/classes/{adversarial_class_id}/related/graph?limit={page_limit}"
+weight = 2
+
+[[scenarios]]
+name = "typical-history"
+principal = "admin"
+path = "/api/v1/classes/{history_class_id}/{history_object_id}/history?limit={page_limit}&sort=revision"
+weight = 3
+
+[[scenarios]]
+name = "heavy-history"
+principal = "admin"
+path = "/api/v1/classes/{history_class_id}/{heavy_history_object_id}/history?limit={page_limit}&sort=revision"
+weight = 3
+
+[[scenarios]]
+name = "object-aggregation"
+principal = "admin"
+path = "/api/v1/classes/{hot_class_id}/object-aggregates?group_by=json_data.selectivity_bucket&limit={page_limit}"
+weight = 3
+
+[[scenarios]]
+name = "computed-object-read"
+principal = "admin"
+path = "/api/v1/classes/{computed_class_id}/?limit={page_limit}&include=computed"
+weight = 3
+
+[[scenarios]]
+name = "unified-search"
+principal = "tenant"
+path = "/api/v1/search?q=scale-object&limit_per_kind={page_limit}"
+weight = 5
+
+[[scenarios]]
+name = "task-list"
+principal = "admin"
+path = "/api/v1/tasks?limit={page_limit}&sort=-created_at"
+weight = 2
+
+[[scenarios]]
+name = "group-membership-list"
+principal = "admin"
+path = "/api/v1/iam/groups/{admin_group_id}/members?limit={page_limit}&sort=id"
+weight = 2
+
+[[scenarios]]
+name = "collection-permission-list"
+principal = "admin"
+path = "/api/v1/collections/{root_collection_id}/permissions"
+weight = 2
+
+[[scenarios]]
+name = "event-list"
+principal = "admin"
+path = "/api/v1/events?limit={page_limit}&sort=occurred_at.desc"
+weight = 2
+
+
+[[scenarios]]
+name = "event-delivery-list"
+principal = "admin"
+path = "/api/v1/event-deliveries?limit={page_limit}&sort=updated_at,id"
+weight = 2

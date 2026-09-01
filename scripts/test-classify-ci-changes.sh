@@ -218,6 +218,46 @@ benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
 assert_flag "$benchmark_output" benchmarks true
 assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
+assert_flag "$benchmark_output" scale_benchmark false
+
+scale_benchmark_output="$(bash "$classifier" \
+  .github/workflows/scale-benchmarks.yml \
+  scale-benchmarks/profiles/large.toml \
+  scale-benchmarks/profiles/huge.toml \
+  scale-benchmarks/workloads/v1.toml \
+  src/bin/scale_benchmark.rs \
+  src/observability/scale_benchmark/loader.rs)"
+assert_flag "$scale_benchmark_output" code true
+assert_flag "$scale_benchmark_output" benchmarks true
+assert_flag "$scale_benchmark_output" runtime_benchmark false
+assert_flag "$scale_benchmark_output" scale_benchmark true
+assert_flag "$scale_benchmark_output" container false
+assert_flag "$scale_benchmark_output" artifacts false
+
+python3 - "$repo_root/.github/workflows/scale-benchmarks.yml" <<'PY'
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = [
+    "ci:scale-large",
+    "ci:scale-huge",
+    "workflow_dispatch:",
+    "schedule:",
+    "17 3 * * 2",
+    "43 3 1 * *",
+    "base.json",
+    "head.json",
+    "Scale operational benchmark:",
+    "cancel-in-progress: true",
+]
+missing = [token for token in required if token not in workflow]
+if missing:
+    raise SystemExit(f"scale workflow is missing required controls: {missing}")
+for generic_label in ("ci:full", "ci:benchmarks"):
+    if generic_label in workflow:
+        raise SystemExit(f"{generic_label} must not enable the scale workflow")
+PY
 
 storage_benchmark_output="$(
   bash "$classifier" benches/storage_postgres_criterion.rs
@@ -233,12 +273,14 @@ runtime_check_output="$(
 assert_flag "$runtime_check_output" code true
 assert_flag "$runtime_check_output" benchmarks true
 assert_flag "$runtime_check_output" runtime_benchmark true
+assert_flag "$runtime_check_output" scale_benchmark false
 assert_flag "$runtime_check_output" artifacts true
 
 classifier_output="$(bash "$classifier" scripts/classify-ci-changes.sh)"
 assert_flag "$classifier_output" code true
 assert_flag "$classifier_output" benchmarks true
 assert_flag "$classifier_output" runtime_benchmark true
+assert_flag "$classifier_output" scale_benchmark true
 assert_flag "$classifier_output" artifacts false
 
 docker_output="$(bash "$classifier" Dockerfile)"

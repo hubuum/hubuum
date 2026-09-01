@@ -1,0 +1,241 @@
+name: Scale operational benchmarks
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+      - unlabeled
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Dataset profile
+        required: true
+        default: large
+        type: choice
+        options:
+          - large
+          - huge
+          - both
+      limit_mode:
+        description: Operational limit policy
+        required: true
+        default: both
+        type: choice
+        options:
+          - standard
+          - extended
+          - both
+  schedule:
+    - cron: "17 3 * * 2"
+    - cron: "43 3 1 * *"
+
+concurrency:
+  group: >-
+    scale-benchmarks-${{ github.event.pull_request.number || github.ref }}-${{
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      github.event.label.name != 'ci:scale-large' &&
+      github.event.label.name != 'ci:scale-huge' && github.run_id || 'selected' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select explicit scale tiers
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.matrix.outputs.enabled }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build requested profile matrix
+        id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          CHANGED_LABEL: ${{ github.event.label.name }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          INPUT_PROFILE: ${{ inputs.profile }}
+          INPUT_LIMIT_MODE: ${{ inputs.limit_mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          profiles=()
+          modes=(standard extended)
+
+          case "$EVENT_NAME" in
+            pull_request)
+              if [[ "$EVENT_ACTION" == "labeled" || "$EVENT_ACTION" == "unlabeled" ]]; then
+                if [[ "$CHANGED_LABEL" != "ci:scale-large" && "$CHANGED_LABEL" != "ci:scale-huge" ]]; then
+                  echo 'enabled=false' >> "$GITHUB_OUTPUT"
+                  echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+              fi
+              if jq --exit-status 'index("ci:scale-large") != null' <<< "$PR_LABELS" >/dev/null; then
+                profiles+=(large)
+              fi
+              if jq --exit-status 'index("ci:scale-huge") != null' <<< "$PR_LABELS" >/dev/null; then
+                profiles+=(huge)
+              fi
+              ;;
+            workflow_dispatch)
+              if [[ "$INPUT_PROFILE" == "both" ]]; then
+                profiles=(large huge)
+              else
+                profiles=("$INPUT_PROFILE")
+              fi
+              if [[ "$INPUT_LIMIT_MODE" != "both" ]]; then
+                modes=("$INPUT_LIMIT_MODE")
+              fi
+              ;;
+            schedule)
+              if [[ "$SCHEDULE" == "17 3 * * 2" ]]; then
+                profiles=(large)
+              else
+                profiles=(huge)
+              fi
+              ;;
+          esac
+
+          matrix='{"include":[]}'
+          for profile in "${profiles[@]}"; do
+            for mode in "${modes[@]}"; do
+              matrix="$(jq --compact-output \
+                --arg profile "$profile" --arg mode "$mode" \
+                '.include += [{profile: $profile, mode: $mode}]' <<< "$matrix")"
+            done
+          done
+          if [[ "${#profiles[@]}" -eq 0 ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  scale:
+    name: ${{ matrix.profile }} / ${{ matrix.mode }}
+    needs: select
+    if: needs.select.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --shm-size 2g
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_base
+      BASE_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_base_verify
+      HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_head
+      HEAD_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_head_verify
+      REPORT_ROOT: target/scale-reports/${{ matrix.profile }}/${{ matrix.mode }}
+    steps:
+      - name: Check out benchmark implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Cache Cargo and target directories
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Verify PostgreSQL build tools
+        run: |
+          command -v pg_config
+          pkg-config --exists libpq
+      - name: Create isolated databases
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb --host localhost --username postgres hubuum_scale_base
+          createdb --host localhost --username postgres hubuum_scale_base_verify
+          createdb --host localhost --username postgres hubuum_scale_head
+          createdb --host localhost --username postgres hubuum_scale_head_verify
+          mkdir -p "$REPORT_ROOT"
+      - name: Build head runner and production binaries
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          CARGO_TARGET_DIR=target/scale-head cargo build --locked \
+            --release \
+            --features scale-benchmark \
+            --bin hubuum-scale-benchmark --bin hubuum-server --bin hubuum-admin
+      - name: Measure pull-request base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git checkout --detach "$BASE_SHA"
+          CARGO_TARGET_DIR=target/scale-base cargo build --locked \
+            --release --features embedded-migrations \
+            --bin hubuum-server --bin hubuum-admin
+          target/scale-base/release/hubuum-admin \
+            --migrate --legacy-single-role-migration \
+            --database-url "$BASE_DATABASE_URL"
+          target/scale-head/release/hubuum-scale-benchmark run \
+            --profile "${{ matrix.profile }}" \
+            --limit-mode "${{ matrix.mode }}" \
+            --server-binary target/scale-base/release/hubuum-server \
+            --admin-binary target/scale-base/release/hubuum-admin \
+            --database-url "$BASE_DATABASE_URL" \
+            --restore-test-database-url "$BASE_VERIFY_DATABASE_URL" \
+            --label "$BASE_SHA" \
+            --manifest-output "$REPORT_ROOT/base-manifest.json" \
+            --load-report-output "$REPORT_ROOT/base-load.json" \
+            --output "$REPORT_ROOT/base.json" \
+            --artifact-directory "$REPORT_ROOT/base-artifacts"
+      - name: Measure pull-request head
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          target/scale-head/release/hubuum-admin \
+            --migrate --legacy-single-role-migration \
+            --database-url "$HEAD_DATABASE_URL"
+          target/scale-head/release/hubuum-scale-benchmark run \
+            --profile "${{ matrix.profile }}" \
+            --limit-mode "${{ matrix.mode }}" \
+            --server-binary target/scale-head/release/hubuum-server \
+            --admin-binary target/scale-head/release/hubuum-admin \
+            --database-url "$HEAD_DATABASE_URL" \
+            --restore-test-database-url "$HEAD_VERIFY_DATABASE_URL" \
+            --label "$HEAD_SHA" \
+            --manifest-output "$REPORT_ROOT/head-manifest.json" \
+            --load-report-output "$REPORT_ROOT/head-load.json" \
+            --output "$REPORT_ROOT/head.json" \
+            --artifact-directory "$REPORT_ROOT/head-artifacts"
+      - name: Assess correctness and summarize timing
+        if: always()
+        run: |
+          {
+            echo "## Scale operational benchmark: ${{ matrix.profile }} / ${{ matrix.mode }}"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          base_args=()
+          if [[ -f "$REPORT_ROOT/base.json" ]]; then
+            base_args=(--base "$REPORT_ROOT/base.json")
+          fi
+          target/scale-head/release/hubuum-scale-benchmark assess \
+            --head "$REPORT_ROOT/head.json" \
+            "${base_args[@]}" \
+            --markdown-output "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized reports and lifecycle artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scale-${{ matrix.profile }}-${{ matrix.mode }}
+          path: ${{ env.REPORT_ROOT }}
+          retention-days: 14

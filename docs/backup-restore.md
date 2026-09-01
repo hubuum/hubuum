@@ -261,7 +261,7 @@ reports only the safe projections.
 | `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum stored backup document size in bytes |
 | `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | Shared cleanup cadence for expired export and backup artifacts; the legacy name is retained for compatibility |
 | `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | Minutes a validated restore stage remains confirmable |
-| `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum restore document upload size in bytes |
+| `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum restore upload and `hubuum-admin --verify-backup` document size in bytes |
 
 ## SQL safety
 

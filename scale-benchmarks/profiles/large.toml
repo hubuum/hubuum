@@ -1,0 +1,69 @@
+schema_version = 1
+profile_version = 1
+name = "large"
+seed = 36520260901
+
+[totals]
+collections = 1000
+classes = 4000
+objects = 250000
+class_relations = 8000
+object_relations = 1000000
+principals = 1000
+groups = 400
+memberships = 6000
+permission_grants = 1200
+
+[regions.object_heavy]
+collections = 16
+classes = 12
+objects = 120000
+class_relations = 32
+object_relations = 600000
+
+[regions.class_heavy]
+collections = 384
+classes = 3188
+objects = 32000
+class_relations = 6000
+object_relations = 200000
+
+[regions.balanced]
+collections = 600
+classes = 800
+objects = 98000
+class_relations = 1968
+object_relations = 200000
+
+[overlays]
+history_resources = 2500
+history_typical_revisions = 2
+history_moderate_resources = 250
+history_moderate_revisions = 6
+history_heavy_resources = 8
+history_heavy_revisions = 48
+computed_classes = 100
+templates = 100
+remote_targets = 25
+event_sinks = 12
+event_subscriptions = 100
+event_deliveries = 10000
+terminal_tasks = 5000
+audit_events = 10000
+
+[invariants]
+minimum_hot_class_objects = 50000
+maximum_median_objects_per_class = 20
+minimum_hub_object_degree = 10000
+minimum_concentrated_relation_count = 100000
+minimum_heavy_history_revisions = 32
+maximum_sparse_visibility_percent = 1.0
+class_component_size = 8
+adversarial_component_size = 8
+maximum_graph_depth = 7
+
+[provisioning]
+backup_max_output_bytes = 268435456
+restore_max_upload_bytes = 268435456
+db_statement_timeout_ms = 0
+db_pool_size = 20

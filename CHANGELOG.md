@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added opt-in deterministic large and huge operational benchmark profiles with
+  skewed relational, history, computed, authorization, task, and event data;
+  production API and worker workloads; standard and extended limit coverage;
+  correctness-gated base/head reports; resource and lifecycle evidence; and
+  isolated backup/restore verification. Pull requests select the expensive
+  tiers only through `ci:scale-large` or `ci:scale-huge`, while scheduled and
+  manual runs retain explicit profile control.
 - Added `hubuum-admin --verify-backup` for bounded offline validation and an
   opt-in isolated PostgreSQL restore drill with empty-target and production-
   endpoint safeguards, sanitized JSON evidence, readiness checks, and explicit

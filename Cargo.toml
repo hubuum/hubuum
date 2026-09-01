@@ -165,6 +165,13 @@ postgres-bench = [
 # server processes and enforces operational budgets rather than benchmarking a
 # library function, so it is intentionally a binary instead of a Cargo bench.
 runtime-behavior-check = ["hubuum-storage-postgres/benchmark-support"]
+# Enables the opt-in stateful large-scale operational benchmark. The runner
+# provisions disposable PostgreSQL databases and starts production server
+# processes, so it is deliberately separate from normal builds and unit tests.
+scale-benchmark = [
+    "hubuum-storage-postgres/benchmark-support",
+    "embedded-migrations",
+]
 production-all = [
     "amqp",
     "email",
@@ -210,6 +217,12 @@ name = "hubuum-runtime-behavior-check"
 path = "src/bin/runtime_behavior_check.rs"
 test = false
 required-features = ["runtime-behavior-check"]
+
+[[bin]]
+name = "hubuum-scale-benchmark"
+path = "src/bin/scale_benchmark.rs"
+test = false
+required-features = ["scale-benchmark"]
 
 [[test]]
 name = "api_core_data"
