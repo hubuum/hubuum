@@ -131,9 +131,12 @@ hubuum-admin \
 
 An existing installation can remain in `single` mode indefinitely. To adopt
 split roles, keep restore confirmation blocked and privilege mode at `warn`,
-then complete the role-adoption procedure below before setting
-`HUBUUM_DATABASE_ROLE_MODE=split`, starting the migrator-backed restore
-executor, enabling strict mode, or unblocking web restore confirmation.
+then complete the role-adoption procedure below before setting split mode on
+long-lived API or worker processes, starting the migrator-backed restore
+executor, enabling strict mode, or unblocking web restore confirmation. The
+candidate migration command itself must use `HUBUUM_DATABASE_ROLE_MODE=split`
+after the role-setup SQL has been applied so it assumes the owner role and
+reconciles grants for newly migrated objects.
 `hubuum-admin --migrate --legacy-single-role-migration` remains as a deprecated
 alias for an ordinary single-role migration; new automation should use the
 role-mode setting instead.
@@ -176,6 +179,7 @@ server versions during that rollout. Then use this order:
    ```bash
    psql "$ROLE_ADMIN_DATABASE_URL" --set ON_ERROR_STOP=1 \
      --file hubuum-database-role-adoption.sql
+   export HUBUUM_DATABASE_ROLE_MODE=split
    export HUBUUM_MIGRATION_DATABASE_URL='postgres://hubuum_migrator:.../hubuum'
    export HUBUUM_DATABASE_OWNER_ROLE=hubuum_owner
    export HUBUUM_DATABASE_MIGRATOR_ROLE=hubuum_migrator
@@ -206,11 +210,11 @@ hubuum-admin --migrate --legacy-single-role-migration \
 ```
 
 Confirm the compatibility warning, then provision the roles and apply the
-adoption SQL. Run `hubuum-admin --migrate` again with the migrator URL and all
-three role names set; this second invocation has no schema work but performs
-ownership and grant reconciliation. Do not proceed to step 4, enable strict
-privilege checks, or unpause confirmation until that reconciliation and its
-privilege report pass.
+adoption SQL. Run `hubuum-admin --migrate` again with
+`HUBUUM_DATABASE_ROLE_MODE=split`, the migrator URL, and all three role names
+set; this second invocation has no schema work but performs ownership and grant
+reconciliation. Do not proceed to step 4, enable strict privilege checks, or
+unpause confirmation until that reconciliation and its privilege report pass.
 
 The managed single-host updater automates this transition. It retains the
 existing volume's bootstrap password, creates and reconciles the three new

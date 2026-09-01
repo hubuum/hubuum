@@ -73,15 +73,25 @@ fn admin_help_exposes_reset_password() {
 }
 
 #[cfg(feature = "embedded-migrations")]
-#[test]
-fn migration_connection_failures_use_the_database_exit_code() {
-    let output = Command::new(admin_binary())
+#[rstest::rstest]
+#[case::unset(None)]
+#[case::empty(Some(""))]
+fn single_role_migration_uses_the_database_url_when_the_override_is_absent(
+    #[case] migration_database_url: Option<&str>,
+) {
+    let mut command = Command::new(admin_binary());
+    command
         .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
+        .env_remove("HUBUUM_DATABASE_ROLE_MODE")
         .args([
             "--migrate",
             "--database-url",
             "postgres://hubuum@127.0.0.1:1/unreachable",
-        ])
+        ]);
+    if let Some(database_url) = migration_database_url {
+        command.args(["--migration-database-url", database_url]);
+    }
+    let output = command
         .output()
         .expect("hubuum-admin --migrate should report its connection failure");
 
@@ -91,18 +101,28 @@ fn migration_connection_failures_use_the_database_exit_code() {
 }
 
 #[cfg(feature = "embedded-migrations")]
-#[test]
-fn split_role_migration_requires_the_privileged_database_url() {
-    let output = Command::new(admin_binary())
+#[rstest::rstest]
+#[case::unset(None)]
+#[case::empty(Some(""))]
+fn split_role_migration_requires_the_privileged_database_url(
+    #[case] migration_database_url: Option<&str>,
+) {
+    let mut command = Command::new(admin_binary());
+    command
         .env_remove("HUBUUM_DATABASE_URL")
         .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
+        .env_remove("HUBUUM_DATABASE_ROLE_MODE")
         .args([
             "--migrate",
             "--database-role-mode",
             "split",
             "--database-url",
             "postgres://hubuum@127.0.0.1:1/unreachable",
-        ])
+        ]);
+    if let Some(database_url) = migration_database_url {
+        command.args(["--migration-database-url", database_url]);
+    }
+    let output = command
         .output()
         .expect("hubuum-admin --migrate should validate split-role configuration");
 

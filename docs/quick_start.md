@@ -23,7 +23,7 @@ of using a password committed to the repository:
 ```bash
 printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
 docker compose --profile administration run --rm hubuum-migrate --migrate
-docker compose up --build -d hubuum
+docker compose up --build -d hubuum-restore-executor hubuum
 ```
 
 This default uses one PostgreSQL login for the server, one-shot migrations,

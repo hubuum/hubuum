@@ -298,15 +298,22 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_role_mode = admin_cli.database_role_mode;
     let privileged_database_operation =
         migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
+    let configured_database_url = admin_cli
+        .database_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty());
+    let configured_migration_database_url = admin_cli
+        .migration_database_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty());
     let database_url = if privileged_database_operation && database_role_mode.uses_split_roles() {
-        admin_cli.migration_database_url.clone()
+        configured_migration_database_url.map(str::to_owned)
     } else if privileged_database_operation {
-        admin_cli
-            .migration_database_url
-            .clone()
-            .or_else(|| admin_cli.database_url.clone())
+        configured_migration_database_url
+            .or(configured_database_url)
+            .map(str::to_owned)
     } else {
-        admin_cli.database_url.clone()
+        configured_database_url.map(str::to_owned)
     };
     let storage_settings = match admin_cli.storage_backend {
         StorageBackendKind::Postgres => {
