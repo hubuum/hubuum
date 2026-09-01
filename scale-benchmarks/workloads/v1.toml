@@ -152,6 +152,12 @@ path = "/api/v1/relations/objects?class_relation={spread_class_relation_id}&limi
 weight = 5
 
 [[scenarios]]
+name = "relations-balanced-spread-class-relation"
+principal = "admin"
+path = "/api/v1/relations/objects?class_relation={balanced_spread_class_relation_id}&limit={page_limit}&sort=id"
+weight = 5
+
+[[scenarios]]
 name = "bounded-transitive-graph"
 principal = "admin"
 path = "/api/v1/classes/{adversarial_class_id}/related/graph?limit={page_limit}"

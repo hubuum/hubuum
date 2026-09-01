@@ -10,8 +10,8 @@ use hubuum_storage_postgres::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ClassPlan, DatasetManifest, DatasetRegion, Error, ProfileName, Result, ScaleProfile,
-    invalid_data,
+    ClassPlan, ClassRelationPlan, DatasetManifest, DatasetRegion, Error, ProfileName, Result,
+    ScaleProfile, class_relation_plan, invalid_data,
 };
 
 const BENCHMARK_PASSWORD: &str = "hubuum-scale-benchmark-disposable-password";
@@ -23,14 +23,6 @@ pub struct LoadReport {
     pub generation_ms: u64,
     pub loading_ms: u64,
     pub manifest: DatasetManifest,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ClassRelationPlan {
-    id: u64,
-    from_class_id: u64,
-    to_class_id: u64,
-    region: DatasetRegion,
 }
 
 #[derive(Debug)]
@@ -307,68 +299,6 @@ async fn load_classes_and_objects(
         ))
         .await?;
     Ok(())
-}
-
-fn class_relation_plan(profile: &ScaleProfile) -> Result<Vec<ClassRelationPlan>> {
-    let mut output = Vec::with_capacity(profile.totals.class_relations as usize);
-    let mut next_id = 1_u64;
-    let mut first_class = 1_u64;
-    for (region_name, region) in [
-        (DatasetRegion::ObjectHeavy, &profile.regions.object_heavy),
-        (DatasetRegion::ClassHeavy, &profile.regions.class_heavy),
-        (DatasetRegion::Balanced, &profile.regions.balanced),
-    ] {
-        let component_size = profile.invariants.class_component_size;
-        let mut candidates = Vec::new();
-        for component_start in
-            (first_class..first_class + region.classes).step_by(component_size as usize)
-        {
-            let component_end =
-                (component_start + component_size).min(first_class + region.classes);
-            for from in component_start..component_end {
-                for to in from + 1..component_end {
-                    let component = (from - first_class) / component_size;
-                    if region_name != DatasetRegion::ClassHeavy || component != 1 || to == from + 1
-                    {
-                        candidates.push((from, to));
-                    }
-                }
-            }
-        }
-        candidates.sort_by_key(|(from, to)| {
-            let component = (*from - first_class) / component_size;
-            let anchor_priority = u64::from(
-                !((region_name == DatasetRegion::ObjectHeavy
-                    && *from == first_class
-                    && *to == first_class + 1)
-                    || (region_name == DatasetRegion::ClassHeavy && component <= 1)),
-            );
-            (
-                anchor_priority,
-                mix(profile.seed ^ from.rotate_left(17) ^ to.rotate_left(31)),
-                *from,
-                *to,
-            )
-        });
-        for (from, to) in candidates.into_iter().take(region.class_relations as usize) {
-            output.push(ClassRelationPlan {
-                id: next_id,
-                from_class_id: from,
-                to_class_id: to,
-                region: region_name,
-            });
-            next_id += 1;
-        }
-        first_class += region.classes;
-    }
-    if output.len() != profile.totals.class_relations as usize {
-        return Err(invalid_data(format!(
-            "profile requests {} class relations, but its bounded graph regions can realize only {}",
-            profile.totals.class_relations,
-            output.len()
-        )));
-    }
-    Ok(output)
 }
 
 fn reachability_plan(relations: &[ClassRelationPlan]) -> Vec<ReachabilityPlan> {
@@ -1098,14 +1028,6 @@ async fn ratio(pool: &PostgresPool, query: &str) -> Result<f64> {
     )
     .await
     .map_err(storage_error)
-}
-
-fn mix(mut value: u64) -> u64 {
-    value ^= value >> 30;
-    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    value ^= value >> 27;
-    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
-    value ^ (value >> 31)
 }
 
 fn elapsed_ms(started: Instant) -> u64 {

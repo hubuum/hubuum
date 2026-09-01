@@ -19,6 +19,7 @@ const HUGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/huge
 const WORKLOAD_V1: &str = include_str!("../../../scale-benchmarks/workloads/v1.toml");
 const DATASET_SCHEMA_VERSION: u32 = 1;
 const REPORT_SCHEMA_VERSION: u32 = 1;
+const IMPACT_REPORT_SCHEMA_VERSION: u32 = 1;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
@@ -48,6 +49,91 @@ impl FromStr for ProfileName {
             "huge" => Ok(Self::Huge),
             _ => Err(format!(
                 "unknown scale profile '{value}'; expected large or huge"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScaleAxis {
+    Objects,
+    ObjectRelations,
+}
+
+impl ScaleAxis {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Objects => "objects",
+            Self::ObjectRelations => "object_relations",
+        }
+    }
+
+    pub const fn topology(self) -> &'static str {
+        match self {
+            Self::Objects => "balanced-region objects distributed across existing classes",
+            Self::ObjectRelations => {
+                "balanced-region spread relations across existing class relations"
+            }
+        }
+    }
+
+    const fn target_region_name(self) -> &'static str {
+        "balanced"
+    }
+
+    const fn total(self, totals: &ResourceTotals) -> u64 {
+        match self {
+            Self::Objects => totals.objects,
+            Self::ObjectRelations => totals.object_relations,
+        }
+    }
+
+    const fn set_total(self, totals: &mut ResourceTotals, value: u64) {
+        match self {
+            Self::Objects => totals.objects = value,
+            Self::ObjectRelations => totals.object_relations = value,
+        }
+    }
+
+    const fn region_total(self, regions: &RegionSpecs) -> u64 {
+        match self {
+            Self::Objects => regions.balanced.objects,
+            Self::ObjectRelations => regions.balanced.object_relations,
+        }
+    }
+
+    const fn set_region_total(self, regions: &mut RegionSpecs, value: u64) {
+        match self {
+            Self::Objects => regions.balanced.objects = value,
+            Self::ObjectRelations => regions.balanced.object_relations = value,
+        }
+    }
+
+    const fn set_manifest_region_total(self, region: &mut RegionSpec, value: u64) {
+        match self {
+            Self::Objects => region.objects = value,
+            Self::ObjectRelations => region.object_relations = value,
+        }
+    }
+
+    const fn manifest_region_total(self, region: &RegionSpec) -> u64 {
+        match self {
+            Self::Objects => region.objects,
+            Self::ObjectRelations => region.object_relations,
+        }
+    }
+}
+
+impl FromStr for ScaleAxis {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "objects" => Ok(Self::Objects),
+            "object-relations" | "object_relations" => Ok(Self::ObjectRelations),
+            _ => Err(format!(
+                "unknown scale axis '{value}'; expected objects or object-relations"
             )),
         }
     }
@@ -224,6 +310,24 @@ impl ScaleProfile {
         Ok(self)
     }
 
+    pub fn with_increment(mut self, axis: ScaleAxis, amount: u64) -> Result<Self> {
+        if amount == 0 {
+            return Err(invalid_data("scale increment must be non-zero"));
+        }
+        let total = axis
+            .total(&self.totals)
+            .checked_add(amount)
+            .ok_or_else(|| invalid_data("scale total overflowed"))?;
+        let region_total = axis
+            .region_total(&self.regions)
+            .checked_add(amount)
+            .ok_or_else(|| invalid_data("scale region total overflowed"))?;
+        axis.set_total(&mut self.totals, total);
+        axis.set_region_total(&mut self.regions, region_total);
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != DATASET_SCHEMA_VERSION {
             return Err(invalid_data(format!(
@@ -362,6 +466,7 @@ impl ScaleProfile {
     pub fn manifest(&self) -> Result<DatasetManifest> {
         self.validate()?;
         let plans = self.class_plan();
+        let relation_plans = class_relation_plan(self)?;
         let objects_per_class = Distribution::from_values(
             &plans
                 .iter()
@@ -369,7 +474,7 @@ impl ScaleProfile {
                 .collect::<Vec<_>>(),
         );
         let classes_per_collection = class_collection_distribution(self, &plans);
-        let relations_per_class_relation = relation_distribution(self);
+        let relations_per_class_relation = relation_distribution(self, &plans, &relation_plans)?;
         let anchors = manifest_anchors(self, &plans)?;
         let sparse_collection_count = (self.totals.collections / 100).max(1);
         let sparse_visibility =
@@ -504,6 +609,14 @@ pub struct ClassPlan {
     pub first_object_id: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClassRelationPlan {
+    pub(crate) id: u64,
+    pub(crate) from_class_id: u64,
+    pub(crate) to_class_id: u64,
+    pub(crate) region: DatasetRegion,
+}
+
 fn append_object_heavy_classes(
     plans: &mut Vec<ClassPlan>,
     region: &RegionSpec,
@@ -592,29 +705,154 @@ fn class_collection_distribution(profile: &ScaleProfile, plans: &[ClassPlan]) ->
     Distribution::from_values(&counts)
 }
 
-fn relation_distribution(profile: &ScaleProfile) -> Distribution {
-    let mut counts = Vec::with_capacity(profile.totals.class_relations as usize);
-    for (region, concentrates_relations) in [
-        (&profile.regions.object_heavy, true),
-        (&profile.regions.class_heavy, false),
-        (&profile.regions.balanced, false),
+fn relation_distribution(
+    profile: &ScaleProfile,
+    classes: &[ClassPlan],
+    relations: &[ClassRelationPlan],
+) -> Result<Distribution> {
+    let counts = object_relation_counts(profile, classes, relations)?;
+    Ok(Distribution::from_values(&counts))
+}
+
+fn object_relation_counts(
+    profile: &ScaleProfile,
+    classes: &[ClassPlan],
+    relations: &[ClassRelationPlan],
+) -> Result<Vec<u64>> {
+    let mut counts = vec![0_u64; profile.totals.class_relations as usize];
+    let first_class = classes
+        .first()
+        .ok_or_else(|| invalid_data("object-heavy region has no first class"))?;
+    let second_class = classes
+        .get(1)
+        .ok_or_else(|| invalid_data("object-heavy region has no second class"))?;
+    let hub_edges = profile.invariants.minimum_hub_object_degree;
+    let remaining_edges = profile
+        .regions
+        .object_heavy
+        .object_relations
+        .saturating_sub(hub_edges);
+    let remaining_capacity = u128::from(first_class.object_count.saturating_sub(1))
+        * u128::from(second_class.object_count);
+    if hub_edges > second_class.object_count
+        || profile.regions.object_heavy.object_relations < hub_edges
+        || u128::from(remaining_edges) > remaining_capacity
+    {
+        return Err(invalid_data(format!(
+            "object-heavy relation request cannot realize {hub_edges} unique hub edges and {} remaining edges",
+            remaining_edges
+        )));
+    }
+    counts[0] = profile.regions.object_heavy.object_relations;
+
+    for (region_name, requested) in [
+        (
+            DatasetRegion::ClassHeavy,
+            profile.regions.class_heavy.object_relations,
+        ),
+        (
+            DatasetRegion::Balanced,
+            profile.regions.balanced.object_relations,
+        ),
     ] {
-        for offset in 0..region.class_relations {
-            let count = if offset == 0 && region.object_relations > 0 {
-                if concentrates_relations {
-                    region.object_relations
-                } else {
-                    distributed_count(region.object_relations, region.class_relations, offset)
-                }
-            } else if concentrates_relations {
-                0
-            } else {
-                distributed_count(region.object_relations, region.class_relations, offset)
-            };
-            counts.push(count);
+        let eligible = relations
+            .iter()
+            .filter(|relation| relation.region == region_name)
+            .filter_map(|relation| {
+                let source = classes.get((relation.from_class_id - 1) as usize)?;
+                let target = classes.get((relation.to_class_id - 1) as usize)?;
+                (source.object_count > 0 && target.object_count > 0)
+                    .then_some((relation, source, target))
+            })
+            .collect::<Vec<_>>();
+        if requested > 0 && eligible.is_empty() {
+            return Err(invalid_data(format!(
+                "{region_name:?} requests object relations but has no eligible class pairs"
+            )));
+        }
+        for (slot, (relation, source, target)) in eligible.iter().enumerate() {
+            let assigned = distributed_count(requested, eligible.len() as u64, slot as u64);
+            let capacity = u128::from(source.object_count) * u128::from(target.object_count);
+            if u128::from(assigned) > capacity {
+                return Err(invalid_data(format!(
+                    "{region_name:?} class relation {} requests {assigned} unique object edges but its class pair capacity is {capacity}",
+                    relation.id
+                )));
+            }
+            counts[(relation.id - 1) as usize] = assigned;
         }
     }
-    Distribution::from_values(&counts)
+    Ok(counts)
+}
+
+pub(crate) fn class_relation_plan(profile: &ScaleProfile) -> Result<Vec<ClassRelationPlan>> {
+    let mut output = Vec::with_capacity(profile.totals.class_relations as usize);
+    let mut next_id = 1_u64;
+    let mut first_class = 1_u64;
+    for (region_name, region) in [
+        (DatasetRegion::ObjectHeavy, &profile.regions.object_heavy),
+        (DatasetRegion::ClassHeavy, &profile.regions.class_heavy),
+        (DatasetRegion::Balanced, &profile.regions.balanced),
+    ] {
+        let component_size = profile.invariants.class_component_size;
+        let mut candidates = Vec::new();
+        for component_start in
+            (first_class..first_class + region.classes).step_by(component_size as usize)
+        {
+            let component_end =
+                (component_start + component_size).min(first_class + region.classes);
+            for from in component_start..component_end {
+                for to in from + 1..component_end {
+                    let component = (from - first_class) / component_size;
+                    if region_name != DatasetRegion::ClassHeavy || component != 1 || to == from + 1
+                    {
+                        candidates.push((from, to));
+                    }
+                }
+            }
+        }
+        candidates.sort_by_key(|(from, to)| {
+            let component = (*from - first_class) / component_size;
+            let anchor_priority = u64::from(
+                !((region_name == DatasetRegion::ObjectHeavy
+                    && *from == first_class
+                    && *to == first_class + 1)
+                    || (region_name == DatasetRegion::ClassHeavy && component <= 1)),
+            );
+            (
+                anchor_priority,
+                mix(profile.seed ^ from.rotate_left(17) ^ to.rotate_left(31)),
+                *from,
+                *to,
+            )
+        });
+        for (from, to) in candidates.into_iter().take(region.class_relations as usize) {
+            output.push(ClassRelationPlan {
+                id: next_id,
+                from_class_id: from,
+                to_class_id: to,
+                region: region_name,
+            });
+            next_id += 1;
+        }
+        first_class += region.classes;
+    }
+    if output.len() != profile.totals.class_relations as usize {
+        return Err(invalid_data(format!(
+            "profile requests {} class relations, but its bounded graph regions can realize only {}",
+            profile.totals.class_relations,
+            output.len()
+        )));
+    }
+    Ok(output)
+}
+
+fn mix(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 fn manifest_anchors(profile: &ScaleProfile, plans: &[ClassPlan]) -> Result<BTreeMap<String, i64>> {
@@ -666,6 +904,12 @@ fn manifest_anchors(profile: &ScaleProfile, plans: &[ClassPlan]) -> Result<BTree
         (
             "spread_class_relation_id".to_string(),
             (profile.regions.object_heavy.class_relations + 1) as i64,
+        ),
+        (
+            "balanced_spread_class_relation_id".to_string(),
+            (profile.regions.object_heavy.class_relations
+                + profile.regions.class_heavy.class_relations
+                + 1) as i64,
         ),
         ("admin_principal_id".to_string(), 1),
         ("admin_group_id".to_string(), 1),
@@ -1171,6 +1415,558 @@ impl ScaleBenchmarkReport {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct MetricDelta {
+    pub baseline: f64,
+    pub comparison: f64,
+    pub absolute: f64,
+    pub percent: Option<f64>,
+    pub per_normalization_unit: f64,
+}
+
+impl MetricDelta {
+    fn between(baseline: f64, comparison: f64, axis_delta: u64, unit: u64) -> Self {
+        let absolute = comparison - baseline;
+        Self {
+            baseline,
+            comparison,
+            absolute,
+            percent: (baseline != 0.0).then_some(absolute * 100.0 / baseline),
+            per_normalization_unit: absolute * unit as f64 / axis_delta as f64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ScenarioImpact {
+    pub name: String,
+    pub phase: String,
+    pub principal: String,
+    pub concurrency: usize,
+    pub metrics: BTreeMap<String, MetricDelta>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ScaleImpactReport {
+    pub schema_version: u32,
+    pub axis: ScaleAxis,
+    pub topology: String,
+    pub normalization_unit: u64,
+    pub baseline_label: String,
+    pub comparison_label: String,
+    pub baseline_manifest_digest: String,
+    pub comparison_manifest_digest: String,
+    pub baseline_total: u64,
+    pub comparison_total: u64,
+    pub axis_delta: u64,
+    pub profile: ProfileName,
+    pub seed: u64,
+    pub workload_digest: String,
+    pub limit_mode: LimitMode,
+    pub runtime: RuntimeIdentity,
+    pub scenarios: Vec<ScenarioImpact>,
+    pub resources: BTreeMap<String, MetricDelta>,
+    pub lifecycle: BTreeMap<String, MetricDelta>,
+}
+
+impl ScaleImpactReport {
+    pub fn compare(
+        baseline: &ScaleBenchmarkReport,
+        comparison: &ScaleBenchmarkReport,
+        axis: ScaleAxis,
+        normalization_unit: Option<u64>,
+    ) -> Result<Self> {
+        validate_impact_controls(baseline, comparison, axis)?;
+        let baseline_total = axis.total(&baseline.manifest.totals);
+        let comparison_total = axis.total(&comparison.manifest.totals);
+        let axis_delta = comparison_total
+            .checked_sub(baseline_total)
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "comparison {} total must exceed baseline total",
+                    axis.as_str()
+                ))
+            })?;
+        if axis_delta == 0 {
+            return Err(invalid_data(format!(
+                "comparison {} total must exceed baseline total",
+                axis.as_str()
+            )));
+        }
+        let normalization_unit = normalization_unit.unwrap_or(axis_delta);
+        if normalization_unit == 0 {
+            return Err(invalid_data(
+                "scale impact normalization unit must be non-zero",
+            ));
+        }
+
+        let scenarios = compare_scenarios(
+            &baseline.scenarios,
+            &comparison.scenarios,
+            axis_delta,
+            normalization_unit,
+        )?;
+        let resources = compare_resources(
+            &baseline.resources,
+            &comparison.resources,
+            axis_delta,
+            normalization_unit,
+        );
+        let lifecycle = compare_lifecycle(
+            &baseline.lifecycle,
+            &comparison.lifecycle,
+            axis_delta,
+            normalization_unit,
+        );
+
+        Ok(Self {
+            schema_version: IMPACT_REPORT_SCHEMA_VERSION,
+            axis,
+            topology: axis.topology().to_string(),
+            normalization_unit,
+            baseline_label: baseline.label.clone(),
+            comparison_label: comparison.label.clone(),
+            baseline_manifest_digest: baseline.manifest.semantic_digest.clone(),
+            comparison_manifest_digest: comparison.manifest.semantic_digest.clone(),
+            baseline_total,
+            comparison_total,
+            axis_delta,
+            profile: baseline.manifest.profile,
+            seed: baseline.manifest.seed,
+            workload_digest: baseline.workload_digest.clone(),
+            limit_mode: baseline.limit_mode,
+            runtime: baseline.runtime.clone(),
+            scenarios,
+            resources,
+            lifecycle,
+        })
+    }
+
+    pub fn write(&self, path: &Path) -> Result<()> {
+        write_json(path, self)
+    }
+
+    pub fn markdown(&self) -> String {
+        let mut output = String::from("## Hubuum scale sensitivity\n\n");
+        output.push_str(&format!(
+            "Changed only `{}` from {} to {} ({:+}); topology: {}. Deltas are normalized per +{} {} and remain informational.\n\n",
+            self.axis.as_str(),
+            self.baseline_total,
+            self.comparison_total,
+            self.axis_delta,
+            self.topology,
+            self.normalization_unit,
+            self.axis.as_str()
+        ));
+        output.push_str(
+            "| Scenario | Phase | Baseline p95 ms | Comparison p95 ms | p95 change | p95 per unit | Throughput change |\n",
+        );
+        output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+        for scenario in &self.scenarios {
+            let p95 = &scenario.metrics["latency_p95_ms"];
+            let throughput = &scenario.metrics["requests_per_second"];
+            output.push_str(&format!(
+                "| {} | {} | {:.2} | {:.2} | {} | {:+.2} ms | {} |\n",
+                scenario.name,
+                scenario.phase,
+                p95.baseline,
+                p95.comparison,
+                format_percent(p95.percent),
+                p95.per_normalization_unit,
+                format_percent(throughput.percent)
+            ));
+        }
+        output.push_str("\n| Resource | Baseline | Comparison | Change | Per unit |\n");
+        output.push_str("| --- | ---: | ---: | ---: | ---: |\n");
+        for (name, delta) in &self.resources {
+            output.push_str(&format!(
+                "| {} | {:.2} | {:.2} | {} | {:+.2} |\n",
+                name,
+                delta.baseline,
+                delta.comparison,
+                format_percent(delta.percent),
+                delta.per_normalization_unit
+            ));
+        }
+        output.push_str(
+            "\nPositive latency, size, CPU, and duration changes are declines; negative throughput changes are declines. Repeat paired trials before drawing a performance conclusion.\n\n",
+        );
+        output
+    }
+
+    pub fn append_markdown(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = OpenOptions::new().create(true).append(true).open(path)?;
+        output.write_all(self.markdown().as_bytes())?;
+        Ok(())
+    }
+}
+
+fn validate_impact_controls(
+    baseline: &ScaleBenchmarkReport,
+    comparison: &ScaleBenchmarkReport,
+    axis: ScaleAxis,
+) -> Result<()> {
+    if !baseline.correctness.passed() || !comparison.correctness.passed() {
+        return Err(invalid_data(
+            "scale impact comparison requires two correctness-passing reports",
+        ));
+    }
+    if baseline.schema_version != comparison.schema_version
+        || baseline.manifest.schema_version != comparison.manifest.schema_version
+        || baseline.manifest.profile_version != comparison.manifest.profile_version
+        || baseline.manifest.profile != comparison.manifest.profile
+        || baseline.manifest.seed != comparison.manifest.seed
+        || baseline.workload_version != comparison.workload_version
+        || baseline.workload_seed != comparison.workload_seed
+        || baseline.workload_digest != comparison.workload_digest
+        || baseline.limit_mode != comparison.limit_mode
+        || baseline.effective_limits != comparison.effective_limits
+        || baseline.runtime != comparison.runtime
+    {
+        return Err(invalid_data(
+            "scale impact reports differ in profile, seed, workload, limits, or runtime",
+        ));
+    }
+    let mut baseline_totals = baseline.manifest.totals.clone();
+    let mut comparison_totals = comparison.manifest.totals.clone();
+    axis.set_total(&mut baseline_totals, 0);
+    axis.set_total(&mut comparison_totals, 0);
+    if baseline_totals != comparison_totals {
+        return Err(invalid_data(format!(
+            "scale impact comparison changed totals other than {}",
+            axis.as_str()
+        )));
+    }
+    let mut baseline_regions = baseline.manifest.regions.clone();
+    let mut comparison_regions = comparison.manifest.regions.clone();
+    let target_region = axis.target_region_name();
+    let baseline_target = baseline_regions
+        .get_mut(target_region)
+        .ok_or_else(|| invalid_data(format!("baseline manifest has no {target_region} region")))?;
+    let comparison_target = comparison_regions.get_mut(target_region).ok_or_else(|| {
+        invalid_data(format!("comparison manifest has no {target_region} region"))
+    })?;
+    let baseline_region_total = axis.manifest_region_total(baseline_target);
+    let comparison_region_total = axis.manifest_region_total(comparison_target);
+    let total_delta = axis
+        .total(&comparison.manifest.totals)
+        .checked_sub(axis.total(&baseline.manifest.totals));
+    let region_delta = comparison_region_total.checked_sub(baseline_region_total);
+    if total_delta.is_none() || total_delta != region_delta {
+        return Err(invalid_data(format!(
+            "scale impact {} total and {target_region}-region deltas differ",
+            axis.as_str()
+        )));
+    }
+    axis.set_manifest_region_total(baseline_target, 0);
+    axis.set_manifest_region_total(comparison_target, 0);
+    if baseline_regions != comparison_regions
+        || baseline.manifest.overlays != comparison.manifest.overlays
+        || baseline.manifest.anchors != comparison.manifest.anchors
+        || baseline.manifest.provisioning != comparison.manifest.provisioning
+        || baseline.manifest.classes_per_collection != comparison.manifest.classes_per_collection
+        || baseline.manifest.history_revisions != comparison.manifest.history_revisions
+        || baseline.manifest.json_payload_bytes != comparison.manifest.json_payload_bytes
+        || baseline.manifest.principals != comparison.manifest.principals
+    {
+        return Err(invalid_data(format!(
+            "scale impact comparison changed corpus controls other than {}-region {}",
+            target_region,
+            axis.as_str(),
+        )));
+    }
+    Ok(())
+}
+
+fn compare_scenarios(
+    baseline: &[ScenarioReport],
+    comparison: &[ScenarioReport],
+    axis_delta: u64,
+    unit: u64,
+) -> Result<Vec<ScenarioImpact>> {
+    let mut baseline_by_key = BTreeMap::new();
+    for scenario in baseline {
+        let key = (
+            scenario.name.clone(),
+            scenario.phase.clone(),
+            scenario.principal.clone(),
+            scenario.concurrency,
+        );
+        if baseline_by_key.insert(key, scenario).is_some() {
+            return Err(invalid_data(
+                "baseline report contains duplicate scenario keys",
+            ));
+        }
+    }
+    let mut impacts = Vec::with_capacity(comparison.len());
+    for scenario in comparison {
+        let key = (
+            scenario.name.clone(),
+            scenario.phase.clone(),
+            scenario.principal.clone(),
+            scenario.concurrency,
+        );
+        let baseline_scenario = baseline_by_key.remove(&key).ok_or_else(|| {
+            invalid_data(format!(
+                "comparison scenario '{}'/{} has no controlled baseline",
+                scenario.name, scenario.phase
+            ))
+        })?;
+        let mut metrics = BTreeMap::from([
+            (
+                "latency_maximum_ms".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.latency.maximum_ms,
+                    scenario.latency.maximum_ms,
+                    axis_delta,
+                    unit,
+                ),
+            ),
+            (
+                "latency_p50_ms".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.latency.p50_ms,
+                    scenario.latency.p50_ms,
+                    axis_delta,
+                    unit,
+                ),
+            ),
+            (
+                "latency_p95_ms".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.latency.p95_ms,
+                    scenario.latency.p95_ms,
+                    axis_delta,
+                    unit,
+                ),
+            ),
+            (
+                "latency_p99_ms".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.latency.p99_ms,
+                    scenario.latency.p99_ms,
+                    axis_delta,
+                    unit,
+                ),
+            ),
+            (
+                "requests_per_second".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.requests_per_second,
+                    scenario.requests_per_second,
+                    axis_delta,
+                    unit,
+                ),
+            ),
+        ]);
+        insert_optional_metric(
+            &mut metrics,
+            "traversal_ms",
+            baseline_scenario.traversal_ms,
+            scenario.traversal_ms,
+            axis_delta,
+            unit,
+        );
+        impacts.push(ScenarioImpact {
+            name: scenario.name.clone(),
+            phase: scenario.phase.clone(),
+            principal: scenario.principal.clone(),
+            concurrency: scenario.concurrency,
+            metrics,
+        });
+    }
+    if !baseline_by_key.is_empty() {
+        return Err(invalid_data(
+            "baseline report contains scenarios missing from the comparison",
+        ));
+    }
+    Ok(impacts)
+}
+
+fn compare_resources(
+    baseline: &ResourceReport,
+    comparison: &ResourceReport,
+    axis_delta: u64,
+    unit: u64,
+) -> BTreeMap<String, MetricDelta> {
+    let mut metrics = BTreeMap::from([
+        (
+            "application_cpu_seconds".to_string(),
+            MetricDelta::between(
+                baseline.application_cpu_seconds,
+                comparison.application_cpu_seconds,
+                axis_delta,
+                unit,
+            ),
+        ),
+        (
+            "database_bytes".to_string(),
+            MetricDelta::between(
+                baseline.database_bytes as f64,
+                comparison.database_bytes as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+        (
+            "index_bytes".to_string(),
+            MetricDelta::between(
+                baseline.index_bytes as f64,
+                comparison.index_bytes as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+        (
+            "peak_application_resident_bytes".to_string(),
+            MetricDelta::between(
+                baseline.peak_application_resident_bytes as f64,
+                comparison.peak_application_resident_bytes as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+        (
+            "table_bytes".to_string(),
+            MetricDelta::between(
+                baseline.table_bytes as f64,
+                comparison.table_bytes as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+    ]);
+    insert_optional_metric(
+        &mut metrics,
+        "postgres_cpu_seconds",
+        baseline.postgres_cpu_seconds,
+        comparison.postgres_cpu_seconds,
+        axis_delta,
+        unit,
+    );
+    insert_optional_u64_metric(
+        &mut metrics,
+        "peak_postgres_resident_bytes",
+        baseline.peak_postgres_resident_bytes,
+        comparison.peak_postgres_resident_bytes,
+        axis_delta,
+        unit,
+    );
+    insert_optional_u64_metric(
+        &mut metrics,
+        "wal_bytes",
+        baseline.wal_bytes,
+        comparison.wal_bytes,
+        axis_delta,
+        unit,
+    );
+    metrics
+}
+
+fn compare_lifecycle(
+    baseline: &LifecycleReport,
+    comparison: &LifecycleReport,
+    axis_delta: u64,
+    unit: u64,
+) -> BTreeMap<String, MetricDelta> {
+    let mut metrics = BTreeMap::from([
+        (
+            "dataset_generation_ms".to_string(),
+            MetricDelta::between(
+                baseline.dataset_generation_ms as f64,
+                comparison.dataset_generation_ms as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+        (
+            "dataset_loading_ms".to_string(),
+            MetricDelta::between(
+                baseline.dataset_loading_ms as f64,
+                comparison.dataset_loading_ms as f64,
+                axis_delta,
+                unit,
+            ),
+        ),
+    ]);
+    for (name, baseline_value, comparison_value) in [
+        (
+            "backup_generation_ms",
+            baseline.backup_generation_ms,
+            comparison.backup_generation_ms,
+        ),
+        (
+            "backup_artifact_bytes",
+            baseline.backup_artifact_bytes,
+            comparison.backup_artifact_bytes,
+        ),
+        ("restore_ms", baseline.restore_ms, comparison.restore_ms),
+        (
+            "semantic_verification_ms",
+            baseline.semantic_verification_ms,
+            comparison.semantic_verification_ms,
+        ),
+        (
+            "computed_rebuild_ms",
+            baseline.computed_rebuild_ms,
+            comparison.computed_rebuild_ms,
+        ),
+    ] {
+        insert_optional_u64_metric(
+            &mut metrics,
+            name,
+            baseline_value,
+            comparison_value,
+            axis_delta,
+            unit,
+        );
+    }
+    metrics
+}
+
+fn insert_optional_metric(
+    metrics: &mut BTreeMap<String, MetricDelta>,
+    name: &str,
+    baseline: Option<f64>,
+    comparison: Option<f64>,
+    axis_delta: u64,
+    unit: u64,
+) {
+    if let (Some(baseline), Some(comparison)) = (baseline, comparison) {
+        metrics.insert(
+            name.to_string(),
+            MetricDelta::between(baseline, comparison, axis_delta, unit),
+        );
+    }
+}
+
+fn insert_optional_u64_metric(
+    metrics: &mut BTreeMap<String, MetricDelta>,
+    name: &str,
+    baseline: Option<u64>,
+    comparison: Option<u64>,
+    axis_delta: u64,
+    unit: u64,
+) {
+    insert_optional_metric(
+        metrics,
+        name,
+        baseline.map(|value| value as f64),
+        comparison.map(|value| value as f64),
+        axis_delta,
+        unit,
+    );
+}
+
+fn format_percent(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:+.1}%"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScaleAssessment {
     markdown: String,
@@ -1384,6 +2180,57 @@ mod tests {
     }
 
     #[test]
+    fn scale_increments_are_arbitrary_and_change_one_declared_region() {
+        let baseline = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let objects = baseline
+            .clone()
+            .with_increment(ScaleAxis::Objects, 2_500)
+            .unwrap();
+        let relations = baseline
+            .clone()
+            .with_increment(ScaleAxis::ObjectRelations, 125_000)
+            .unwrap();
+
+        assert_eq!(objects.totals.objects, baseline.totals.objects + 2_500);
+        assert_eq!(
+            objects.regions.balanced.objects,
+            baseline.regions.balanced.objects + 2_500
+        );
+        assert_eq!(objects.regions.class_heavy, baseline.regions.class_heavy);
+        assert_eq!(
+            relations.totals.object_relations,
+            baseline.totals.object_relations + 125_000
+        );
+        assert_eq!(
+            relations.regions.balanced.object_relations,
+            baseline.regions.balanced.object_relations + 125_000
+        );
+        assert_eq!(relations.regions.class_heavy, baseline.regions.class_heavy);
+        relations.manifest().unwrap();
+    }
+
+    #[test]
+    fn relation_manifest_models_eligible_pairs_and_rejects_saturation() {
+        let baseline = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let classes = baseline.class_plan();
+        let relations = class_relation_plan(&baseline).unwrap();
+        let counts = object_relation_counts(&baseline, &classes, &relations).unwrap();
+        let manifest = baseline.manifest().unwrap();
+
+        assert_eq!(counts.iter().sum::<u64>(), baseline.totals.object_relations);
+        assert_eq!(
+            Distribution::from_values(&counts),
+            manifest.object_relations_per_class_relation
+        );
+
+        let mut saturated = baseline;
+        saturated.totals.object_relations += 1_000_000;
+        saturated.regions.class_heavy.object_relations += 1_000_000;
+        let error = saturated.manifest().unwrap_err();
+        assert!(error.to_string().contains("class pair capacity"));
+    }
+
+    #[test]
     fn limit_modes_preserve_production_defaults_and_declare_elevated_values() {
         let standard = LimitMode::Standard.settings();
         let extended = LimitMode::Extended.settings();
@@ -1422,6 +2269,7 @@ mod tests {
             "hub_object_id",
             "heavy_history_object_id",
             "adversarial_class_id",
+            "balanced_spread_class_relation_id",
         ] {
             assert!(manifest.anchors.contains_key(anchor));
         }
@@ -1580,6 +2428,51 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("correctness"));
         assert!(error.to_string().contains("not semantically equivalent"));
+    }
+
+    #[test]
+    fn impact_normalizes_to_the_measured_step_when_no_unit_is_requested() {
+        let baseline = report("baseline");
+        let mut comparison = report("comparison");
+        comparison.manifest = ScaleProfile::bundled(ProfileName::Large)
+            .unwrap()
+            .with_increment(ScaleAxis::Objects, 2_500)
+            .unwrap()
+            .manifest()
+            .unwrap();
+        comparison.scenarios[0].latency = LatencyDistribution::from_samples(&[7.0]);
+        comparison.scenarios[0].requests_per_second = 8.0;
+        comparison.resources.database_bytes = 30;
+
+        let impact =
+            ScaleImpactReport::compare(&baseline, &comparison, ScaleAxis::Objects, None).unwrap();
+        let latency = &impact.scenarios[0].metrics["latency_p95_ms"];
+
+        assert_eq!(impact.axis_delta, 2_500);
+        assert_eq!(impact.normalization_unit, 2_500);
+        assert_eq!(latency.absolute, 2.0);
+        assert_eq!(latency.percent, Some(40.0));
+        assert_eq!(latency.per_normalization_unit, 2.0);
+        assert!(impact.markdown().contains("Repeat paired trials"));
+    }
+
+    #[test]
+    fn impact_rejects_experiments_that_change_multiple_axes() {
+        let baseline = report("baseline");
+        let mut comparison = report("comparison");
+        comparison.manifest = ScaleProfile::bundled(ProfileName::Large)
+            .unwrap()
+            .with_increment(ScaleAxis::Objects, 2_500)
+            .unwrap()
+            .with_increment(ScaleAxis::ObjectRelations, 125_000)
+            .unwrap()
+            .manifest()
+            .unwrap();
+
+        let error = ScaleImpactReport::compare(&baseline, &comparison, ScaleAxis::Objects, None)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("totals other than objects"));
     }
 
     #[test]

@@ -102,6 +102,98 @@ target/release/hubuum-scale-benchmark assess \
   --markdown-output target/scale/summary.md
 ```
 
+## Measure Scale Sensitivity
+
+Base/head assessment asks whether code changed at one fixed corpus size. It
+does not answer the marginal cost of more data, and comparing `large` with
+`huge` is not causal because every dataset dimension changes together.
+
+For a controlled sensitivity experiment, run the same binary, workload, seed,
+limit mode, PostgreSQL settings, and fresh-database procedure twice. Leave the
+first profile unchanged and add an arbitrary positive amount along exactly one
+axis in the second:
+
+```bash
+: "${OBJECT_STEP:?set a pilot-derived object increment}"
+
+target/release/hubuum-scale-benchmark run \
+  --profile large \
+  --add-objects "$OBJECT_STEP" \
+  --limit-mode standard \
+  --server-binary target/release/hubuum-server \
+  --database-url postgres://localhost/hubuum_scale_objects \
+  --workload-spec scale-benchmarks/workloads/v1.toml \
+  --label objects-step \
+  --manifest-output target/scale/objects/manifest.json \
+  --load-report-output target/scale/objects/load.json \
+  --output target/scale/objects/report.json \
+  --artifact-directory target/scale/objects/artifacts
+```
+
+The baseline uses the same command without `--add-objects`. Use
+`--add-object-relations` for the relation-volume axis. Object increments are
+distributed through existing balanced classes. Relation increments are spread
+through existing balanced class relations, whose source and target classes
+have enough pair capacity for useful volume experiments. The increment has no
+default; it is an experimental input, not a benchmark constant.
+
+Compare the two sanitized reports:
+
+```bash
+target/release/hubuum-scale-benchmark impact \
+  --baseline target/scale/baseline/report.json \
+  --comparison target/scale/objects/report.json \
+  --axis objects \
+  --output target/scale/objects/impact.json \
+  --markdown-output target/scale/objects/impact.md
+```
+
+The command rejects failed correctness checks, mismatched runtimes or
+workloads, and changes outside the declared axis and region. Its JSON and
+Markdown report matching-scenario latency and throughput deltas together with
+database, table, index, WAL, CPU, memory, generation, loading, backup, restore,
+and rebuild deltas when those measurements exist. With no
+`--normalization-unit`, the report describes the actual step. Supply a common
+unit only when several points need directly comparable slopes.
+
+Choose steps empirically. Run at least three unmodified baselines to establish
+the local noise envelope, then probe logarithmic relative steps such as small,
+medium, and large percentages of the starting axis. Refine around the first
+repeatable change outside that envelope and around operational boundaries such
+as an extra pagination page, cache or memory capacity, timeout, or uniqueness
+saturation. Alternate baseline and variant order, keep the hardware quiet, and
+repeat each candidate point. One paired run discovers signal; it is not a
+performance conclusion.
+
+The first calibration of this runner found that small count changes could be
+invisible in endpoint latency even though database and index growth remained
+measurable. Larger object steps first appeared clearly in global search rather
+than point or bounded class queries. Relation traversal changed sharply when a
+representative class relation crossed the 250-row page boundary. It also found
+that adding edges to small class pairs can exhaust the finite set of unique
+source/target pairs. That is a density or saturation experiment, not the same
+question as raw relation-table volume.
+
+High-value questions include:
+
+| Dimension | Hold fixed | Vary and ask |
+| --------- | ---------- | ------------ |
+| Object volume | Classes, relations, authorization, payload shape | Which search, count, filter, aggregation, and pagination paths grow with object count? |
+| Relation volume | Objects, classes, graph topology | What are the latency, throughput, index, WAL, and traversal slopes for spread edges? |
+| Relation density | Object and class counts | Where do class pairs approach unique-edge capacity, and how does high density affect writes and reads? |
+| Graph shape | Total edge count | How do hub degree, component width, and traversal depth change cost independently of volume? |
+| Tenant skew | Global totals | How do hot classes, empty classes, sparse visibility, and authorization backfill affect tail latency? |
+| Authorization size | Domain corpus | How do principals, groups, memberships, grants, and candidate rejection affect each principal shape? |
+| History and operations | Live domain rows | How do revision depth, audit events, tasks, and delivery history affect current reads and retention work? |
+| Payload and computed work | Row counts | Where do JSON size, filtering selectivity, computed materialization, and rebuild time become dominant? |
+| Concurrency | Corpus and request mix | At what client count do pool waits, timeouts, CPU, memory, and throughput become nonlinear? |
+| Lifecycle | Logical corpus | How do loading, backup size, verification, restore, and computed rebuilding scale, and where do supported ceilings fail? |
+
+For every curve, report absolute values, percentage changes, normalized slopes,
+correctness, timeouts, database and index growth, WAL, CPU and memory, and the
+exact topology. Averages alone can hide the relevant decline; retain p95/p99,
+first/middle/final traversal pages, and principal-specific results.
+
 ## Measurement Phases
 
 The versioned workload includes collection, class, object, relation, graph,

@@ -5,7 +5,8 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand};
 use hubuum::observability::scale_benchmark::{
     DatasetManifest, LimitMode, LoadReport, MeasureOptions, ProfileName, ScaleAssessment,
-    ScaleBenchmarkReport, ScaleProfile, WorkloadSpec, load_dataset, measure_scale_benchmark,
+    ScaleAxis, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile, WorkloadSpec, load_dataset,
+    measure_scale_benchmark,
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -30,6 +31,8 @@ enum Command {
     Run(RunArgs),
     /// Compare equivalent base/head reports and fail only on correctness drift.
     Assess(AssessArgs),
+    /// Compare reports that differ along exactly one controlled scale axis.
+    Impact(ImpactArgs),
 }
 
 #[derive(Debug, Args)]
@@ -40,6 +43,10 @@ struct ProfileArgs {
     profile_spec: Option<PathBuf>,
     #[arg(long)]
     seed: Option<u64>,
+    #[arg(long, conflicts_with = "add_object_relations")]
+    add_objects: Option<u64>,
+    #[arg(long, conflicts_with = "add_objects")]
+    add_object_relations: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -122,6 +129,22 @@ struct AssessArgs {
     markdown_output: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct ImpactArgs {
+    #[arg(long)]
+    baseline: PathBuf,
+    #[arg(long)]
+    comparison: PathBuf,
+    #[arg(long, value_parser = parse_scale_axis)]
+    axis: ScaleAxis,
+    #[arg(long)]
+    normalization_unit: Option<u64>,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    markdown_output: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
@@ -130,6 +153,7 @@ async fn main() -> Result<()> {
         Command::Measure(args) => measure(args).await,
         Command::Run(args) => run(args).await,
         Command::Assess(args) => assess(args),
+        Command::Impact(args) => impact(args),
     }
 }
 
@@ -252,6 +276,20 @@ fn assess(args: AssessArgs) -> Result<()> {
     assessment.ensure_passed()
 }
 
+fn impact(args: ImpactArgs) -> Result<()> {
+    let baseline = ScaleBenchmarkReport::read(&args.baseline)?;
+    let comparison = ScaleBenchmarkReport::read(&args.comparison)?;
+    let impact =
+        ScaleImpactReport::compare(&baseline, &comparison, args.axis, args.normalization_unit)?;
+    impact.write(&args.output)?;
+    let markdown = impact.markdown();
+    print!("{markdown}");
+    if let Some(path) = args.markdown_output.as_deref() {
+        impact.append_markdown(path)?;
+    }
+    Ok(())
+}
+
 fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
     let profile = match args.profile_spec.as_deref() {
         Some(path) => ScaleProfile::read(path)?,
@@ -264,9 +302,17 @@ fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
             args.profile.as_str()
         )));
     }
-    match args.seed {
+    let profile = match args.seed {
         Some(seed) => profile.with_seed(seed),
         None => Ok(profile),
+    }?;
+    match (args.add_objects, args.add_object_relations) {
+        (Some(amount), None) => profile.with_increment(ScaleAxis::Objects, amount),
+        (None, Some(amount)) => profile.with_increment(ScaleAxis::ObjectRelations, amount),
+        (None, None) => Ok(profile),
+        (Some(_), Some(_)) => Err(io_error(
+            "only one scale axis may be changed in a controlled experiment",
+        )),
     }
 }
 
@@ -289,6 +335,10 @@ fn parse_profile_name(value: &str) -> std::result::Result<ProfileName, String> {
 }
 
 fn parse_limit_mode(value: &str) -> std::result::Result<LimitMode, String> {
+    value.parse()
+}
+
+fn parse_scale_axis(value: &str) -> std::result::Result<ScaleAxis, String> {
     value.parse()
 }
 
