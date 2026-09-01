@@ -1064,10 +1064,22 @@ impl ScaleBenchmarkBackend for PostgresScaleBackend {
     }
 
     async fn prepare_measurement(&self) -> Result<BackendPreparation> {
-        let database_fresh = scalar(&self.pool, "SELECT count(*) AS value FROM tokens").await? == 0;
-        let version = text_scalar(&self.pool, "SHOW server_version").await?;
-        let settings = load_database_settings(&self.pool).await?;
-        let sparse_collection_ids = load_sparse_collection_ids(&self.pool).await?;
+        let database_fresh = scalar(&self.pool, "SELECT count(*) AS value FROM tokens")
+            .await
+            .map_err(|error| operation_error("checking whether the database is fresh", error))?
+            == 0;
+        let version = text_scalar(
+            &self.pool,
+            "SELECT current_setting('server_version') AS value",
+        )
+        .await
+        .map_err(|error| operation_error("reading the PostgreSQL version", error))?;
+        let settings = load_database_settings(&self.pool)
+            .await
+            .map_err(|error| operation_error("reading PostgreSQL settings", error))?;
+        let sparse_collection_ids = load_sparse_collection_ids(&self.pool)
+            .await
+            .map_err(|error| operation_error("reading sparse collection identifiers", error))?;
         Ok(BackendPreparation {
             identity: BackendIdentity {
                 name: self.name().to_string(),
@@ -1285,4 +1297,10 @@ fn elapsed_ms(started: Instant) -> u64 {
 
 fn storage_error(error: impl std::fmt::Display) -> Error {
     invalid_data(format!("scale benchmark storage operation failed: {error}"))
+}
+
+fn operation_error(operation: &str, error: impl std::fmt::Display) -> Error {
+    invalid_data(format!(
+        "PostgreSQL scale benchmark failed while {operation}: {error}"
+    ))
 }
