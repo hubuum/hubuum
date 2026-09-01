@@ -1,29 +1,23 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
+use argon2::{Argon2, password_hash::PasswordHasher};
+use async_trait::async_trait;
 use diesel::QueryableByName;
-use diesel::sql_types::{BigInt, Double, Text};
+use diesel::sql_types::{BigInt, Double, Integer, Text};
 use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
-use hubuum_storage_postgres::{
-    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection, with_transaction,
+use hubuum_scale_core::{
+    BackendIdentity, BackendPreparation, BackendResourceReport, BenchmarkPrincipal, ClassPlan,
+    ClassRelationPlan, DatasetManifest, DatasetRegion, Error, LoadReport, Result,
+    ScaleBenchmarkBackend, ScaleProfile, class_relation_plan, invalid_data,
 };
-use serde::{Deserialize, Serialize};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
-use super::{
-    ClassPlan, ClassRelationPlan, DatasetManifest, DatasetRegion, Error, ProfileName, Result,
-    ScaleProfile, class_relation_plan, invalid_data,
+use crate::{
+    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection, with_transaction,
 };
 
 const BENCHMARK_PASSWORD: &str = "hubuum-scale-benchmark-disposable-password";
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct LoadReport {
-    pub profile: ProfileName,
-    pub seed: u64,
-    pub generation_ms: u64,
-    pub loading_ms: u64,
-    pub manifest: DatasetManifest,
-}
 
 #[derive(Debug)]
 struct ReachabilityPlan {
@@ -52,8 +46,47 @@ struct RatioRow {
     value: f64,
 }
 
-pub fn benchmark_password() -> &'static str {
-    BENCHMARK_PASSWORD
+#[derive(QueryableByName)]
+struct TextRow {
+    #[diesel(sql_type = Text)]
+    value: String,
+}
+
+#[derive(QueryableByName)]
+struct CollectionIdRow {
+    #[diesel(sql_type = Integer)]
+    collection_id: i32,
+}
+
+#[derive(QueryableByName)]
+struct DatabaseResourceRow {
+    #[diesel(sql_type = BigInt)]
+    database_bytes: i64,
+    #[diesel(sql_type = BigInt)]
+    table_bytes: i64,
+    #[diesel(sql_type = BigInt)]
+    index_bytes: i64,
+}
+
+#[derive(Clone)]
+pub struct PostgresScaleBackend {
+    database_url: String,
+    pool: PostgresPool,
+}
+
+pub struct PostgresResourceBaseline {
+    wal_position: i64,
+    cpu_seconds: Option<f64>,
+    resident_bytes: Option<u64>,
+}
+
+impl PostgresScaleBackend {
+    pub fn connect(database_url: &str, max_size: u32) -> Result<Self> {
+        Ok(Self {
+            database_url: database_url.to_string(),
+            pool: benchmark_pool(database_url, max_size)?,
+        })
+    }
 }
 
 fn benchmark_pool(database_url: &str, max_size: u32) -> Result<PostgresPool> {
@@ -65,7 +98,7 @@ fn benchmark_pool(database_url: &str, max_size: u32) -> Result<PostgresPool> {
     Ok(build_postgres_pool(&settings)?)
 }
 
-pub async fn load_dataset(profile: &ScaleProfile, database_url: &str) -> Result<LoadReport> {
+async fn load_dataset_with_pool(profile: &ScaleProfile, pool: &PostgresPool) -> Result<LoadReport> {
     profile.validate()?;
     let generation_started = Instant::now();
     let manifest = profile.manifest()?;
@@ -73,18 +106,18 @@ pub async fn load_dataset(profile: &ScaleProfile, database_url: &str) -> Result<
     let relation_plans = class_relation_plan(profile)?;
     let reachability = reachability_plan(&relation_plans);
     let generation_ms = elapsed_ms(generation_started);
-    let password_hash = crate::utilities::auth::hash_password_async(BENCHMARK_PASSWORD.to_string())
-        .await
-        .map_err(|error| invalid_data(format!("failed to hash benchmark credential: {error}")))?;
-    let pool = benchmark_pool(database_url, profile.provisioning.db_pool_size as u32)?;
-    ensure_fresh_database(&pool).await?;
+    let password_hash = Argon2::default()
+        .hash_password(BENCHMARK_PASSWORD.as_bytes())
+        .map_err(|error| invalid_data(format!("failed to hash benchmark credential: {error}")))?
+        .to_string();
+    ensure_fresh_database(pool).await?;
 
     let loading_started = Instant::now();
     let profile_name = profile.name;
     let profile_seed = profile.seed;
     let transaction_profile = profile.clone();
     with_transaction(
-        &pool,
+        pool,
         async move |connection| -> std::result::Result<_, diesel::result::Error> {
             connection
                 .batch_execute(
@@ -110,7 +143,7 @@ pub async fn load_dataset(profile: &ScaleProfile, database_url: &str) -> Result<
     .map_err(|error| invalid_data(format!("scale dataset load failed: {error}")))?;
 
     with_connection(
-        &pool,
+        pool,
         async |connection| -> std::result::Result<_, diesel::result::Error> {
             connection
                 .batch_execute(
@@ -125,8 +158,9 @@ pub async fn load_dataset(profile: &ScaleProfile, database_url: &str) -> Result<
     .await
     .map_err(|error| invalid_data(format!("scale dataset analyze failed: {error}")))?;
 
-    verify_loaded_dataset(&pool, profile, &manifest).await?;
+    verify_loaded_dataset(pool, profile, &manifest).await?;
     Ok(LoadReport {
+        backend: "postgres".to_string(),
         profile: profile_name,
         seed: profile_seed,
         generation_ms,
@@ -818,7 +852,7 @@ async fn reset_sequences(
         .await
 }
 
-pub async fn verify_loaded_dataset(
+async fn verify_loaded_dataset(
     pool: &PostgresPool,
     profile: &ScaleProfile,
     manifest: &DatasetManifest,
@@ -989,6 +1023,221 @@ pub async fn verify_loaded_dataset(
         )));
     }
     Ok(())
+}
+
+#[async_trait]
+impl ScaleBenchmarkBackend for PostgresScaleBackend {
+    type ResourceBaseline = PostgresResourceBaseline;
+
+    fn name(&self) -> &'static str {
+        "postgres"
+    }
+
+    fn server_environment(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([("HUBUUM_DATABASE_URL".to_string(), self.database_url.clone())])
+    }
+
+    fn benchmark_principals(&self) -> Vec<BenchmarkPrincipal> {
+        [
+            ("admin", "scale-admin"),
+            ("tenant", "scale-tenant"),
+            ("sparse", "scale-sparse"),
+        ]
+        .into_iter()
+        .map(|(role, username)| {
+            BenchmarkPrincipal::new(role, username, BENCHMARK_PASSWORD)
+                .expect("static PostgreSQL benchmark principal must be valid")
+        })
+        .collect()
+    }
+
+    async fn load_dataset(&self, profile: &ScaleProfile) -> Result<LoadReport> {
+        load_dataset_with_pool(profile, &self.pool).await
+    }
+
+    async fn verify_dataset(
+        &self,
+        profile: &ScaleProfile,
+        manifest: &DatasetManifest,
+    ) -> Result<()> {
+        verify_loaded_dataset(&self.pool, profile, manifest).await
+    }
+
+    async fn prepare_measurement(&self) -> Result<BackendPreparation> {
+        let database_fresh = scalar(&self.pool, "SELECT count(*) AS value FROM tokens").await? == 0;
+        let version = text_scalar(&self.pool, "SHOW server_version").await?;
+        let settings = load_database_settings(&self.pool).await?;
+        let sparse_collection_ids = load_sparse_collection_ids(&self.pool).await?;
+        Ok(BackendPreparation {
+            identity: BackendIdentity {
+                name: self.name().to_string(),
+                version,
+                settings,
+            },
+            database_fresh,
+            sparse_collection_ids,
+        })
+    }
+
+    async fn mark_computed_ready(&self) -> Result<()> {
+        with_connection(
+            &self.pool,
+            async |connection| -> std::result::Result<_, diesel::result::Error> {
+                diesel::sql_query(
+                    "UPDATE class_computation_state SET rebuild_status = 'ready'\n\
+                     WHERE rebuild_status = 'rebuilding'",
+                )
+                .execute(connection)
+                .await
+                .map(|_| ())
+            },
+        )
+        .await
+        .map_err(storage_error)
+    }
+
+    async fn begin_resource_measurement(&self) -> Result<Self::ResourceBaseline> {
+        let (cpu_seconds, resident_bytes) = postgres_process_resources();
+        Ok(PostgresResourceBaseline {
+            wal_position: current_wal(&self.pool).await?,
+            cpu_seconds,
+            resident_bytes,
+        })
+    }
+
+    async fn finish_resource_measurement(
+        &self,
+        baseline: Self::ResourceBaseline,
+    ) -> Result<BackendResourceReport> {
+        let database = with_connection(
+            &self.pool,
+            async |connection| -> std::result::Result<_, diesel::result::Error> {
+                diesel::sql_query(
+                    "SELECT pg_database_size(current_database())::BIGINT AS database_bytes,\n\
+                       coalesce(sum(pg_relation_size(oid)), 0)::BIGINT AS table_bytes,\n\
+                       coalesce(sum(pg_indexes_size(oid)), 0)::BIGINT AS index_bytes\n\
+                     FROM pg_class\n\
+                     WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')",
+                )
+                .get_result::<DatabaseResourceRow>(connection)
+                .await
+            },
+        )
+        .await
+        .map_err(storage_error)?;
+        let wal_end = current_wal(&self.pool).await?;
+        let (cpu_after, resident_after) = postgres_process_resources();
+        Ok(BackendResourceReport {
+            cpu_seconds: cpu_after
+                .zip(baseline.cpu_seconds)
+                .map(|(after, before)| (after - before).max(0.0)),
+            peak_resident_bytes: resident_after
+                .into_iter()
+                .chain(baseline.resident_bytes)
+                .max(),
+            storage_bytes: database.database_bytes.max(0) as u64,
+            data_bytes: Some(database.table_bytes.max(0) as u64),
+            index_bytes: Some(database.index_bytes.max(0) as u64),
+            write_ahead_bytes: Some(wal_end.saturating_sub(baseline.wal_position) as u64),
+            metrics: BTreeMap::new(),
+        })
+    }
+}
+
+async fn load_sparse_collection_ids(
+    pool: &PostgresPool,
+) -> Result<std::collections::BTreeSet<i64>> {
+    let rows = with_connection(
+        pool,
+        async |connection| -> std::result::Result<_, diesel::result::Error> {
+            diesel::sql_query(
+                "SELECT collection_id FROM permissions\n\
+                 WHERE group_id = 3 AND has_read_object\n\
+                 ORDER BY collection_id",
+            )
+            .get_results::<CollectionIdRow>(connection)
+            .await
+        },
+    )
+    .await
+    .map_err(storage_error)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| i64::from(row.collection_id))
+        .collect())
+}
+
+async fn load_database_settings(pool: &PostgresPool) -> Result<BTreeMap<String, String>> {
+    let rows = with_connection(
+        pool,
+        async |connection| -> std::result::Result<_, diesel::result::Error> {
+            diesel::sql_query(
+                "SELECT name || '=' || setting || coalesce(unit, '') AS value FROM pg_settings\n\
+                 WHERE name IN (\n\
+                   'max_connections', 'shared_buffers', 'work_mem', 'maintenance_work_mem',\n\
+                   'effective_cache_size', 'random_page_cost', 'max_parallel_workers_per_gather'\n\
+                 ) ORDER BY name",
+            )
+            .load::<TextRow>(connection)
+            .await
+        },
+    )
+    .await
+    .map_err(storage_error)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            row.value
+                .split_once('=')
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+        })
+        .collect())
+}
+
+async fn current_wal(pool: &PostgresPool) -> Result<i64> {
+    scalar(
+        pool,
+        "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::BIGINT AS value",
+    )
+    .await
+}
+
+async fn text_scalar(pool: &PostgresPool, query: &str) -> Result<String> {
+    with_connection(
+        pool,
+        async move |connection| -> std::result::Result<_, diesel::result::Error> {
+            diesel::sql_query(query)
+                .get_result::<TextRow>(connection)
+                .await
+                .map(|row| row.value)
+        },
+    )
+    .await
+    .map_err(storage_error)
+}
+
+fn postgres_process_resources() -> (Option<f64>, Option<u64>) {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    let mut found = false;
+    let mut cpu_millis = 0_u64;
+    let mut resident_bytes = 0_u64;
+    for process in system.processes().values() {
+        if process.name().to_string_lossy().contains("postgres") {
+            found = true;
+            cpu_millis = cpu_millis.saturating_add(process.accumulated_cpu_time());
+            resident_bytes = resident_bytes.saturating_add(process.memory());
+        }
+    }
+    if found {
+        (Some(cpu_millis as f64 / 1_000.0), Some(resident_bytes))
+    } else {
+        (None, None)
+    }
 }
 
 async fn scalar(pool: &PostgresPool, query: &str) -> Result<i64> {

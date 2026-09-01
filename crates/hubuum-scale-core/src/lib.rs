@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 
+use async_trait::async_trait;
 use hubuum_storage_core::MAX_STORAGE_CANDIDATE_PAGE_SIZE;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,11 +19,12 @@ const LARGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/lar
 const HUGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/huge.toml");
 const WORKLOAD_V1: &str = include_str!("../../../scale-benchmarks/workloads/v1.toml");
 const DATASET_SCHEMA_VERSION: u32 = 1;
-const REPORT_SCHEMA_VERSION: u32 = 1;
-const IMPACT_REPORT_SCHEMA_VERSION: u32 = 1;
+const REPORT_SCHEMA_VERSION: u32 = 2;
+const IMPACT_REPORT_SCHEMA_VERSION: u32 = 2;
+const BACKEND_COMPARISON_SCHEMA_VERSION: u32 = 1;
 
-type Error = Box<dyn std::error::Error + Send + Sync>;
-type Result<T> = std::result::Result<T, Error>;
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -283,6 +285,16 @@ pub struct ScaleProfile {
     pub overlays: OverlaySpec,
     pub invariants: InvariantSpec,
     pub provisioning: ProvisioningLimits,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct LoadReport {
+    pub backend: String,
+    pub profile: ProfileName,
+    pub seed: u64,
+    pub generation_ms: u64,
+    pub loading_ms: u64,
+    pub manifest: DatasetManifest,
 }
 
 impl ScaleProfile {
@@ -610,11 +622,11 @@ pub struct ClassPlan {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClassRelationPlan {
-    pub(crate) id: u64,
-    pub(crate) from_class_id: u64,
-    pub(crate) to_class_id: u64,
-    pub(crate) region: DatasetRegion,
+pub struct ClassRelationPlan {
+    pub id: u64,
+    pub from_class_id: u64,
+    pub to_class_id: u64,
+    pub region: DatasetRegion,
 }
 
 fn append_object_heavy_classes(
@@ -785,7 +797,7 @@ fn object_relation_counts(
     Ok(counts)
 }
 
-pub(crate) fn class_relation_plan(profile: &ScaleProfile) -> Result<Vec<ClassRelationPlan>> {
+pub fn class_relation_plan(profile: &ScaleProfile) -> Result<Vec<ClassRelationPlan>> {
     let mut output = Vec::with_capacity(profile.totals.class_relations as usize);
     let mut next_id = 1_u64;
     let mut first_class = 1_u64;
@@ -1313,25 +1325,124 @@ impl CorrectnessReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BackendIdentity {
+    pub name: String,
+    pub version: String,
+    pub settings: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct BackendResourceReport {
+    pub cpu_seconds: Option<f64>,
+    pub peak_resident_bytes: Option<u64>,
+    pub storage_bytes: u64,
+    pub data_bytes: Option<u64>,
+    pub index_bytes: Option<u64>,
+    pub write_ahead_bytes: Option<u64>,
+    pub metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackendPreparation {
+    pub identity: BackendIdentity,
+    pub database_fresh: bool,
+    pub sparse_collection_ids: BTreeSet<i64>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct BenchmarkPrincipal {
+    role: String,
+    username: String,
+    password: String,
+}
+
+impl BenchmarkPrincipal {
+    pub fn new(
+        role: impl Into<String>,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<Self> {
+        let principal = Self {
+            role: role.into(),
+            username: username.into(),
+            password: password.into(),
+        };
+        if principal.role.trim().is_empty()
+            || principal.username.trim().is_empty()
+            || principal.password.is_empty()
+        {
+            return Err(invalid_data(
+                "benchmark principal role, username, and password must be non-empty",
+            ));
+        }
+        Ok(principal)
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+}
+
+/// Adapter-owned scale operations used by the shared benchmark frontend.
+///
+/// Logical workload execution stays in the frontend. Each storage adapter owns
+/// fixture loading, physical-resource probes, and any backend-specific setup.
+#[async_trait]
+pub trait ScaleBenchmarkBackend: Send + Sync {
+    type ResourceBaseline: Send;
+
+    fn name(&self) -> &'static str;
+
+    /// Environment required to select this backend in the production server.
+    /// Values may contain credentials and must never be copied into reports.
+    fn server_environment(&self) -> BTreeMap<String, String>;
+
+    /// Stable workload principals loaded by this adapter. Credentials are
+    /// process-local inputs and must never be copied into reports.
+    fn benchmark_principals(&self) -> Vec<BenchmarkPrincipal>;
+
+    async fn load_dataset(&self, profile: &ScaleProfile) -> Result<LoadReport>;
+
+    async fn verify_dataset(
+        &self,
+        profile: &ScaleProfile,
+        manifest: &DatasetManifest,
+    ) -> Result<()>;
+
+    async fn prepare_measurement(&self) -> Result<BackendPreparation>;
+
+    async fn mark_computed_ready(&self) -> Result<()>;
+
+    async fn begin_resource_measurement(&self) -> Result<Self::ResourceBaseline>;
+
+    async fn finish_resource_measurement(
+        &self,
+        baseline: Self::ResourceBaseline,
+    ) -> Result<BackendResourceReport>;
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RuntimeIdentity {
     pub runner: String,
-    pub postgres_version: String,
+    pub backend: BackendIdentity,
     pub process_fresh: bool,
     pub database_fresh: bool,
     pub deliberate_warmup_requests: usize,
-    pub database_settings: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ResourceReport {
     pub application_cpu_seconds: f64,
-    pub postgres_cpu_seconds: Option<f64>,
     pub peak_application_resident_bytes: u64,
-    pub peak_postgres_resident_bytes: Option<u64>,
-    pub database_bytes: u64,
-    pub table_bytes: u64,
-    pub index_bytes: u64,
-    pub wal_bytes: Option<u64>,
+    pub backend: BackendResourceReport,
     pub storage_metric_deltas: BTreeMap<String, f64>,
     pub pool_metric_deltas: BTreeMap<String, f64>,
 }
@@ -1803,19 +1914,10 @@ fn compare_resources(
             ),
         ),
         (
-            "database_bytes".to_string(),
+            "storage_bytes".to_string(),
             MetricDelta::between(
-                baseline.database_bytes as f64,
-                comparison.database_bytes as f64,
-                axis_delta,
-                unit,
-            ),
-        ),
-        (
-            "index_bytes".to_string(),
-            MetricDelta::between(
-                baseline.index_bytes as f64,
-                comparison.index_bytes as f64,
+                baseline.backend.storage_bytes as f64,
+                comparison.backend.storage_bytes as f64,
                 axis_delta,
                 unit,
             ),
@@ -1829,40 +1931,55 @@ fn compare_resources(
                 unit,
             ),
         ),
-        (
-            "table_bytes".to_string(),
-            MetricDelta::between(
-                baseline.table_bytes as f64,
-                comparison.table_bytes as f64,
-                axis_delta,
-                unit,
-            ),
-        ),
     ]);
+    insert_optional_u64_metric(
+        &mut metrics,
+        "data_bytes",
+        baseline.backend.data_bytes,
+        comparison.backend.data_bytes,
+        axis_delta,
+        unit,
+    );
+    insert_optional_u64_metric(
+        &mut metrics,
+        "index_bytes",
+        baseline.backend.index_bytes,
+        comparison.backend.index_bytes,
+        axis_delta,
+        unit,
+    );
     insert_optional_metric(
         &mut metrics,
-        "postgres_cpu_seconds",
-        baseline.postgres_cpu_seconds,
-        comparison.postgres_cpu_seconds,
+        "backend_cpu_seconds",
+        baseline.backend.cpu_seconds,
+        comparison.backend.cpu_seconds,
         axis_delta,
         unit,
     );
     insert_optional_u64_metric(
         &mut metrics,
-        "peak_postgres_resident_bytes",
-        baseline.peak_postgres_resident_bytes,
-        comparison.peak_postgres_resident_bytes,
+        "peak_backend_resident_bytes",
+        baseline.backend.peak_resident_bytes,
+        comparison.backend.peak_resident_bytes,
         axis_delta,
         unit,
     );
     insert_optional_u64_metric(
         &mut metrics,
-        "wal_bytes",
-        baseline.wal_bytes,
-        comparison.wal_bytes,
+        "write_ahead_bytes",
+        baseline.backend.write_ahead_bytes,
+        comparison.backend.write_ahead_bytes,
         axis_delta,
         unit,
     );
+    for (name, baseline_value) in &baseline.backend.metrics {
+        if let Some(comparison_value) = comparison.backend.metrics.get(name) {
+            metrics.insert(
+                format!("backend_{name}"),
+                MetricDelta::between(*baseline_value, *comparison_value, axis_delta, unit),
+            );
+        }
+    }
     metrics
 }
 
@@ -1961,6 +2078,173 @@ fn insert_optional_u64_metric(
     );
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct BackendPerformanceSummary {
+    pub label: String,
+    pub identity: BackendIdentity,
+    pub scenarios: Vec<ScenarioReport>,
+    pub resources: ResourceReport,
+    pub lifecycle: LifecycleReport,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct BackendComparisonReport {
+    pub schema_version: u32,
+    pub profile: ProfileName,
+    pub manifest_digest: String,
+    pub workload_version: u32,
+    pub workload_digest: String,
+    pub limit_mode: LimitMode,
+    pub backends: Vec<BackendPerformanceSummary>,
+}
+
+impl BackendComparisonReport {
+    pub fn compare(reports: &[ScaleBenchmarkReport]) -> Result<Self> {
+        let reference = reports
+            .first()
+            .ok_or_else(|| invalid_data("backend comparison requires at least one report"))?;
+        if !reference.correctness.passed() {
+            return Err(invalid_data(format!(
+                "backend '{}' did not pass correctness checks",
+                reference.runtime.backend.name
+            )));
+        }
+        let reference_scenarios = scenario_keys(reference);
+        let mut names = BTreeSet::new();
+        for report in reports {
+            if !report.correctness.passed() {
+                return Err(invalid_data(format!(
+                    "backend '{}' did not pass correctness checks",
+                    report.runtime.backend.name
+                )));
+            }
+            report.manifest.equivalent_to(&reference.manifest)?;
+            if report.schema_version != reference.schema_version
+                || report.workload_version != reference.workload_version
+                || report.workload_seed != reference.workload_seed
+                || report.workload_digest != reference.workload_digest
+                || report.limit_mode != reference.limit_mode
+                || report.effective_limits != reference.effective_limits
+                || report.runtime.runner != reference.runtime.runner
+                || report.runtime.process_fresh != reference.runtime.process_fresh
+                || report.runtime.database_fresh != reference.runtime.database_fresh
+                || report.runtime.deliberate_warmup_requests
+                    != reference.runtime.deliberate_warmup_requests
+            {
+                return Err(invalid_data(
+                    "backend reports differ in schema, workload, effective limits, or runner controls",
+                ));
+            }
+            if scenario_keys(report) != reference_scenarios {
+                return Err(invalid_data(format!(
+                    "backend '{}' reported a different scenario set",
+                    report.runtime.backend.name
+                )));
+            }
+            if !names.insert(report.runtime.backend.name.clone()) {
+                return Err(invalid_data(format!(
+                    "backend '{}' appears more than once",
+                    report.runtime.backend.name
+                )));
+            }
+        }
+        let mut backends = reports
+            .iter()
+            .map(|report| BackendPerformanceSummary {
+                label: report.label.clone(),
+                identity: report.runtime.backend.clone(),
+                scenarios: report.scenarios.clone(),
+                resources: report.resources.clone(),
+                lifecycle: report.lifecycle.clone(),
+            })
+            .collect::<Vec<_>>();
+        backends.sort_by(|left, right| left.identity.name.cmp(&right.identity.name));
+        Ok(Self {
+            schema_version: BACKEND_COMPARISON_SCHEMA_VERSION,
+            profile: reference.manifest.profile,
+            manifest_digest: reference.manifest.semantic_digest.clone(),
+            workload_version: reference.workload_version,
+            workload_digest: reference.workload_digest.clone(),
+            limit_mode: reference.limit_mode,
+            backends,
+        })
+    }
+
+    pub fn write(&self, path: &Path) -> Result<()> {
+        write_json(path, self)
+    }
+
+    pub fn markdown(&self) -> String {
+        let mut output = String::from("## Hubuum storage-backend comparison\n\n");
+        output.push_str(&format!(
+            "Same `{}` corpus `{}` and workload `{}` across {} backend(s). Values are informational and are not normalized across different physical storage models.\n\n",
+            self.profile.as_str(),
+            &self.manifest_digest[..12],
+            &self.workload_digest[..12],
+            self.backends.len()
+        ));
+        output.push_str(
+            "| Backend | Version | Scenario | Phase | p95 ms | Requests/s | Failures |\n",
+        );
+        output.push_str("| --- | --- | --- | --- | ---: | ---: | ---: |\n");
+        for backend in &self.backends {
+            for scenario in &backend.scenarios {
+                output.push_str(&format!(
+                    "| {} | {} | {} | {} | {:.2} | {:.2} | {} |\n",
+                    backend.identity.name,
+                    backend.identity.version,
+                    scenario.name,
+                    scenario.phase,
+                    scenario.latency.p95_ms,
+                    scenario.requests_per_second,
+                    scenario.failures + scenario.timeouts
+                ));
+            }
+        }
+        output.push_str("\n<details><summary>Backend resources and lifecycle</summary>\n\n");
+        output.push_str(
+            "| Backend | Storage bytes | Data bytes | Index bytes | Application CPU s | Backend CPU s | Load ms |\n",
+        );
+        output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        for backend in &self.backends {
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {:.2} | {} | {} |\n",
+                backend.identity.name,
+                backend.resources.backend.storage_bytes,
+                format_optional_bytes(backend.resources.backend.data_bytes),
+                format_optional_bytes(backend.resources.backend.index_bytes),
+                backend.resources.application_cpu_seconds,
+                backend
+                    .resources
+                    .backend
+                    .cpu_seconds
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                backend.lifecycle.dataset_loading_ms
+            ));
+        }
+        output.push_str("\n</details>\n");
+        output
+    }
+
+    pub fn append_markdown(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = OpenOptions::new().create(true).append(true).open(path)?;
+        output.write_all(self.markdown().as_bytes())?;
+        Ok(())
+    }
+}
+
+fn scenario_keys(report: &ScaleBenchmarkReport) -> BTreeSet<(&str, &str)> {
+    report
+        .scenarios
+        .iter()
+        .map(|scenario| (scenario.name.as_str(), scenario.phase.as_str()))
+        .collect()
+}
+
 fn format_percent(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:+.1}%"))
@@ -1990,6 +2274,11 @@ impl ScaleAssessment {
             {
                 failures.push(
                     "base and head workload specifications or limit modes differ".to_string(),
+                );
+            }
+            if head.runtime.backend != base.runtime.backend {
+                failures.push(
+                    "base and head backend identities or effective settings differ".to_string(),
                 );
             }
         }
@@ -2024,17 +2313,6 @@ fn render_assessment(
     base: Option<&ScaleBenchmarkReport>,
     failures: &[String],
 ) -> String {
-    let mut output = String::from("## Hubuum scale benchmark\n\n");
-    output.push_str(&format!(
-        "Profile `{}` / `{:?}` limits; dataset `{}`; performance is informational.\n\n",
-        head.manifest.profile.as_str(),
-        head.limit_mode,
-        &head.manifest.semantic_digest[..12]
-    ));
-    output.push_str(
-        "| Scenario | Phase | Head p95 ms | Base p95 ms | Change | Head rps | Failures |\n",
-    );
-    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
     let base_scenarios = base
         .map(|report| {
             report
@@ -2044,6 +2322,95 @@ fn render_assessment(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
+    let paired_scenarios = head
+        .scenarios
+        .iter()
+        .filter_map(|scenario| {
+            base_scenarios
+                .get(&(scenario.name.as_str(), scenario.phase.as_str()))
+                .copied()
+                .map(|base_scenario| (base_scenario, scenario))
+        })
+        .collect::<Vec<_>>();
+    let median_p95_change = median_percent_change(
+        &paired_scenarios
+            .iter()
+            .filter_map(|(base, head)| percent_change(base.latency.p95_ms, head.latency.p95_ms))
+            .collect::<Vec<_>>(),
+    );
+    let median_throughput_change = median_percent_change(
+        &paired_scenarios
+            .iter()
+            .filter_map(|(base, head)| {
+                percent_change(base.requests_per_second, head.requests_per_second)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let scenario_failures = head
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.failures + scenario.timeouts)
+        .sum::<u64>();
+    let mode = match head.limit_mode {
+        LimitMode::Standard => "standard",
+        LimitMode::Extended => "extended",
+    };
+    let mut output = format!(
+        "## {} / {} / {mode}\n\n",
+        head.runtime.backend.name,
+        head.manifest.profile.as_str()
+    );
+    if let Some(base) = base {
+        output.push_str(&format!(
+            "Base `{}` → PR `{}`; dataset `{}`; {} paired scenario/phase rows.\n\n",
+            short_report_label(&base.label),
+            short_report_label(&head.label),
+            &head.manifest.semantic_digest[..12],
+            paired_scenarios.len()
+        ));
+    } else {
+        output.push_str(&format!(
+            "Run `{}`; dataset `{}`; {} scenario/phase rows.\n\n",
+            short_report_label(&head.label),
+            &head.manifest.semantic_digest[..12],
+            head.scenarios.len()
+        ));
+    }
+    output.push_str(&format!(
+        "| Correctness | Paired rows | Median p95 change | Median throughput change | Storage size change | Index size change |\n\
+         | --- | ---: | ---: | ---: | ---: | ---: |\n\
+         | {} | {} | {} | {} | {} | {} |\n\n",
+        if failures.is_empty() && scenario_failures == 0 {
+            "passed"
+        } else {
+            "failed"
+        },
+        paired_scenarios.len(),
+        format_percent(median_p95_change),
+        format_percent(median_throughput_change),
+        format_percent(base.and_then(|base| percent_change(
+            base.resources.backend.storage_bytes as f64,
+            head.resources.backend.storage_bytes as f64,
+        ))),
+        format_percent(base.and_then(|base| {
+            base.resources
+                .backend
+                .index_bytes
+                .zip(head.resources.backend.index_bytes)
+                .and_then(|(base, head)| percent_change(base as f64, head as f64))
+        }))
+    ));
+    output.push_str(
+        "Timing and resource differences are informational. A single paired run is evidence, not a regression threshold. The summary changes are medians of the paired per-scenario changes.\n\n",
+    );
+    output.push_str(&format!(
+        "<details><summary>Scenario timing ({} rows)</summary>\n\n",
+        head.scenarios.len()
+    ));
+    output.push_str(
+        "| Scenario | Phase | Base p95 ms | PR p95 ms | p95 change | Base rps | PR rps | Throughput change | Failures |\n",
+    );
+    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for scenario in &head.scenarios {
         let base_scenario = base_scenarios
             .get(&(scenario.name.as_str(), scenario.phase.as_str()))
@@ -2051,29 +2418,103 @@ fn render_assessment(
         let base_p95 = base_scenario
             .map(|value| format!("{:.2}", value.latency.p95_ms))
             .unwrap_or_else(|| "-".to_string());
-        let change = base_scenario
-            .filter(|value| value.latency.p95_ms > 0.0)
-            .map(|value| {
-                format!(
-                    "{:+.1}%",
-                    (scenario.latency.p95_ms / value.latency.p95_ms - 1.0) * 100.0
-                )
-            })
+        let base_throughput = base_scenario
+            .map(|value| format!("{:.2}", value.requests_per_second))
             .unwrap_or_else(|| "-".to_string());
         output.push_str(&format!(
-            "| {} | {} | {:.2} | {} | {} | {:.2} | {} |\n",
+            "| {} | {} | {} | {:.2} | {} | {} | {:.2} | {} | {} |\n",
             scenario.name,
             scenario.phase,
-            scenario.latency.p95_ms,
             base_p95,
-            change,
+            scenario.latency.p95_ms,
+            format_percent(
+                base_scenario
+                    .and_then(|base| percent_change(base.latency.p95_ms, scenario.latency.p95_ms,))
+            ),
+            base_throughput,
             scenario.requests_per_second,
+            format_percent(base_scenario.and_then(|base| percent_change(
+                base.requests_per_second,
+                scenario.requests_per_second,
+            ))),
             scenario.failures + scenario.timeouts
         ));
     }
-    output.push('\n');
+    output.push_str("\n</details>\n\n");
+    output.push_str("<details><summary>Resource and lifecycle comparison</summary>\n\n");
+    output.push_str("| Metric | Base | PR | Change |\n");
+    output.push_str("| --- | ---: | ---: | ---: |\n");
+    render_comparison_row(
+        &mut output,
+        "Storage size",
+        base.map(|value| value.resources.backend.storage_bytes as f64),
+        head.resources.backend.storage_bytes as f64,
+        format_bytes,
+    );
+    if let Some(head_data_bytes) = head.resources.backend.data_bytes {
+        render_comparison_row(
+            &mut output,
+            "Data size",
+            base.and_then(|value| value.resources.backend.data_bytes)
+                .map(|value| value as f64),
+            head_data_bytes as f64,
+            format_bytes,
+        );
+    }
+    if let Some(head_index_bytes) = head.resources.backend.index_bytes {
+        render_comparison_row(
+            &mut output,
+            "Index size",
+            base.and_then(|value| value.resources.backend.index_bytes)
+                .map(|value| value as f64),
+            head_index_bytes as f64,
+            format_bytes,
+        );
+    }
+    render_comparison_row(
+        &mut output,
+        "Peak application RSS",
+        base.map(|value| value.resources.peak_application_resident_bytes as f64),
+        head.resources.peak_application_resident_bytes as f64,
+        format_bytes,
+    );
+    render_comparison_row(
+        &mut output,
+        "Application CPU",
+        base.map(|value| value.resources.application_cpu_seconds),
+        head.resources.application_cpu_seconds,
+        |value| format!("{value:.2} s"),
+    );
+    render_comparison_row(
+        &mut output,
+        "Dataset loading",
+        base.map(|value| value.lifecycle.dataset_loading_ms as f64),
+        head.lifecycle.dataset_loading_ms as f64,
+        |value| format!("{value:.0} ms"),
+    );
+    if let Some(head_backup_ms) = head.lifecycle.backup_generation_ms {
+        render_comparison_row(
+            &mut output,
+            "Backup generation",
+            base.and_then(|value| value.lifecycle.backup_generation_ms)
+                .map(|value| value as f64),
+            head_backup_ms as f64,
+            |value| format!("{value:.0} ms"),
+        );
+    }
+    if let Some(head_backup_bytes) = head.lifecycle.backup_artifact_bytes {
+        render_comparison_row(
+            &mut output,
+            "Backup artifact",
+            base.and_then(|value| value.lifecycle.backup_artifact_bytes)
+                .map(|value| value as f64),
+            head_backup_bytes as f64,
+            format_bytes,
+        );
+    }
+    output.push_str("\n</details>\n\n");
     if failures.is_empty() {
-        output.push_str("Correctness checks passed. Timing differences do not fail this run.\n\n");
+        output.push_str("Correctness checks passed.\n\n");
     } else {
         output.push_str("Correctness checks failed:\n\n");
         for failure in failures {
@@ -2082,12 +2523,55 @@ fn render_assessment(
         output.push('\n');
     }
     output.push_str(&format!(
-        "Lifecycle outcome: `{}`; database {} bytes; peak application RSS {} bytes.\n\n",
+        "Lifecycle outcome: `{}`; backend `{}`; storage {} bytes; peak application RSS {} bytes.\n\n",
         head.lifecycle.outcome,
-        head.resources.database_bytes,
+        head.runtime.backend.name,
+        head.resources.backend.storage_bytes,
         head.resources.peak_application_resident_bytes
     ));
     output
+}
+
+fn short_report_label(label: &str) -> String {
+    label.chars().take(12).collect()
+}
+
+fn percent_change(baseline: f64, comparison: f64) -> Option<f64> {
+    (baseline != 0.0).then_some((comparison / baseline - 1.0) * 100.0)
+}
+
+fn median_percent_change(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut values = values.to_vec();
+    values.sort_by(f64::total_cmp);
+    Some(float_percentile(&values, 50))
+}
+
+fn format_bytes(value: f64) -> String {
+    format!("{:.1} MiB", value / 1_048_576.0)
+}
+
+fn format_optional_bytes(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn render_comparison_row(
+    output: &mut String,
+    name: &str,
+    baseline: Option<f64>,
+    comparison: f64,
+    formatter: impl Fn(f64) -> String,
+) {
+    output.push_str(&format!(
+        "| {name} | {} | {} | {} |\n",
+        baseline.map(&formatter).unwrap_or_else(|| "-".to_string()),
+        formatter(comparison),
+        format_percent(baseline.and_then(|baseline| percent_change(baseline, comparison)))
+    ));
 }
 
 pub fn validate_traversal(
@@ -2123,7 +2607,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-fn invalid_data(message: impl Into<String>) -> Error {
+pub fn invalid_data(message: impl Into<String>) -> Error {
     Box::new(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         message.into(),
@@ -2139,16 +2623,6 @@ fn encode_digest(bytes: &[u8]) -> String {
     }
     encoded
 }
-
-#[cfg(feature = "scale-benchmark")]
-mod loader;
-#[cfg(feature = "scale-benchmark")]
-mod runner;
-
-#[cfg(feature = "scale-benchmark")]
-pub use loader::{LoadReport, load_dataset, verify_loaded_dataset};
-#[cfg(feature = "scale-benchmark")]
-pub use runner::{MeasureOptions, measure_scale_benchmark};
 
 #[cfg(test)]
 mod tests {
@@ -2336,11 +2810,14 @@ mod tests {
             LimitMode::Standard,
             RuntimeIdentity {
                 runner: "test".to_string(),
-                postgres_version: "test".to_string(),
+                backend: BackendIdentity {
+                    name: "postgres".to_string(),
+                    version: "test".to_string(),
+                    settings: BTreeMap::new(),
+                },
                 process_fresh: true,
                 database_fresh: true,
                 deliberate_warmup_requests: 3,
-                database_settings: BTreeMap::new(),
             },
             vec![ScenarioReport {
                 name: "point".to_string(),
@@ -2377,13 +2854,16 @@ mod tests {
             },
             ResourceReport {
                 application_cpu_seconds: 1.0,
-                postgres_cpu_seconds: None,
                 peak_application_resident_bytes: 10,
-                peak_postgres_resident_bytes: None,
-                database_bytes: 20,
-                table_bytes: 15,
-                index_bytes: 5,
-                wal_bytes: None,
+                backend: BackendResourceReport {
+                    cpu_seconds: None,
+                    peak_resident_bytes: None,
+                    storage_bytes: 20,
+                    data_bytes: Some(15),
+                    index_bytes: Some(5),
+                    write_ahead_bytes: None,
+                    metrics: BTreeMap::new(),
+                },
                 storage_metric_deltas: BTreeMap::new(),
                 pool_metric_deltas: BTreeMap::new(),
             },
@@ -2411,9 +2891,19 @@ mod tests {
         let mut head = report("head");
         head.scenarios[0].latency = LatencyDistribution::from_samples(&[5_000.0]);
 
-        ScaleAssessment::assess(&head, Some(&base))
-            .ensure_passed()
-            .unwrap();
+        let assessment = ScaleAssessment::assess(&head, Some(&base));
+
+        assessment.ensure_passed().unwrap();
+        assert!(assessment.markdown().contains("Base `base` → PR `head`"));
+        assert!(assessment.markdown().contains("Median p95 change"));
+        assert!(assessment.markdown().contains("+99900.0%"));
+        assert!(assessment.markdown().contains("<details>"));
+        assert!(assessment.markdown().contains("Resource and lifecycle"));
+        assert!(
+            assessment
+                .markdown()
+                .contains("single paired run is evidence")
+        );
     }
 
     #[test]
@@ -2442,7 +2932,7 @@ mod tests {
             .unwrap();
         comparison.scenarios[0].latency = LatencyDistribution::from_samples(&[7.0]);
         comparison.scenarios[0].requests_per_second = 8.0;
-        comparison.resources.database_bytes = 30;
+        comparison.resources.backend.storage_bytes = 30;
 
         let impact =
             ScaleImpactReport::compare(&baseline, &comparison, ScaleAxis::Objects, None).unwrap();
@@ -2473,6 +2963,22 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("totals other than objects"));
+    }
+
+    #[test]
+    fn backend_comparison_accepts_matching_logical_runs() {
+        let postgres = report("postgres-run");
+        let mut memory = report("memory-run");
+        memory.runtime.backend.name = "memory".to_string();
+        memory.runtime.backend.version = "1".to_string();
+        memory.scenarios[0].latency = LatencyDistribution::from_samples(&[2.5]);
+
+        let comparison = BackendComparisonReport::compare(&[postgres, memory]).unwrap();
+
+        assert_eq!(comparison.backends[0].identity.name, "memory");
+        assert_eq!(comparison.backends[1].identity.name, "postgres");
+        assert!(comparison.markdown().contains("Same `large` corpus"));
+        assert!(comparison.markdown().contains("| memory | 1 | point |"));
     }
 
     #[test]

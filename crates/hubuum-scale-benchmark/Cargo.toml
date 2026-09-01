@@ -1,0 +1,23 @@
+[package]
+name = "hubuum-scale-benchmark"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+description = "Shared operational scale benchmark frontend for Hubuum storage backends."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+hubuum-scale-core = { path = "../hubuum-scale-core" }
+hubuum-storage-postgres = { path = "../hubuum-storage-postgres", features = ["scale-benchmark-support"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

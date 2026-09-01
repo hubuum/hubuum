@@ -2,12 +2,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
-use hubuum::observability::scale_benchmark::{
-    DatasetManifest, LimitMode, LoadReport, MeasureOptions, ProfileName, ScaleAssessment,
-    ScaleAxis, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile, WorkloadSpec, load_dataset,
-    measure_scale_benchmark,
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use hubuum_scale_core::{
+    BackendComparisonReport, DatasetManifest, LimitMode, LoadReport, ProfileName, ScaleAssessment,
+    ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile,
+    WorkloadSpec,
 };
+use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
+
+mod metrics;
+mod runner;
+
+use runner::{MeasureOptions, measure_scale_benchmark};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
@@ -21,18 +27,33 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Write the deterministic semantic manifest without loading PostgreSQL.
+    /// Write the deterministic semantic manifest without loading a backend.
     Manifest(ManifestArgs),
-    /// Load one freshly migrated PostgreSQL database and verify every invariant.
+    /// Load one fresh selected backend and verify every invariant.
     Load(LoadArgs),
     /// Measure an already loaded database through a production server process.
     Measure(MeasureArgs),
-    /// Load and measure a fresh database in one local-friendly command.
+    /// Load and measure a fresh backend in one local-friendly command.
     Run(RunArgs),
     /// Compare equivalent base/head reports and fail only on correctness drift.
     Assess(AssessArgs),
     /// Compare reports that differ along exactly one controlled scale axis.
     Impact(ImpactArgs),
+    /// Render matching reports from each selected storage backend side by side.
+    CompareBackends(CompareBackendsArgs),
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BackendName {
+    Postgres,
+}
+
+impl BackendName {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +84,8 @@ struct LoadArgs {
     profile: ProfileArgs,
     #[arg(long)]
     database_url: String,
+    #[arg(long, value_enum, default_value_t = BackendName::Postgres)]
+    backend: BackendName,
     #[arg(long)]
     manifest_output: PathBuf,
     #[arg(long)]
@@ -79,6 +102,8 @@ struct CommonMeasureArgs {
     admin_binary: Option<PathBuf>,
     #[arg(long)]
     database_url: String,
+    #[arg(long, value_enum, default_value_t = BackendName::Postgres)]
+    backend: BackendName,
     #[arg(long)]
     restore_test_database_url: Option<String>,
     #[arg(long)]
@@ -145,6 +170,16 @@ struct ImpactArgs {
     markdown_output: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct CompareBackendsArgs {
+    #[arg(long, required = true, num_args = 1..)]
+    reports: Vec<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    markdown_output: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
@@ -154,6 +189,7 @@ async fn main() -> Result<()> {
         Command::Run(args) => run(args).await,
         Command::Assess(args) => assess(args),
         Command::Impact(args) => impact(args),
+        Command::CompareBackends(args) => compare_backends(args),
     }
 }
 
@@ -172,7 +208,13 @@ fn manifest(args: ManifestArgs) -> Result<()> {
 
 async fn load(args: LoadArgs) -> Result<()> {
     let profile = load_profile(&args.profile)?;
-    let report = load_dataset(&profile, &args.database_url).await?;
+    let report = match args.backend {
+        BackendName::Postgres => {
+            postgres_backend(&args.database_url, &profile)?
+                .load_dataset(&profile)
+                .await?
+        }
+    };
     report.manifest.write(&args.manifest_output)?;
     write_json(&args.load_report_output, &report)?;
     println!(
@@ -186,11 +228,21 @@ async fn load(args: LoadArgs) -> Result<()> {
 async fn measure(args: MeasureArgs) -> Result<()> {
     let profile = load_profile(&args.common.profile)?;
     let manifest = DatasetManifest::read(&args.manifest)?;
-    let (generation_ms, loading_ms) = args
+    let load_report = args
         .load_report
         .as_deref()
         .map(read_load_report)
-        .transpose()?
+        .transpose()?;
+    if let Some(report) = &load_report
+        && report.backend != args.common.backend.as_str()
+    {
+        return Err(io_error(format!(
+            "load report backend '{}' does not match selected backend '{}'",
+            report.backend,
+            args.common.backend.as_str()
+        )));
+    }
+    let (generation_ms, loading_ms) = load_report
         .map(|report| (report.generation_ms, report.loading_ms))
         .unwrap_or_default();
     measure_common(args.common, profile, manifest, generation_ms, loading_ms).await
@@ -198,7 +250,13 @@ async fn measure(args: MeasureArgs) -> Result<()> {
 
 async fn run(args: RunArgs) -> Result<()> {
     let profile = load_profile(&args.common.profile)?;
-    let load_report = load_dataset(&profile, &args.common.database_url).await?;
+    let load_report = match args.common.backend {
+        BackendName::Postgres => {
+            postgres_backend(&args.common.database_url, &profile)?
+                .load_dataset(&profile)
+                .await?
+        }
+    };
     load_report.manifest.write(&args.manifest_output)?;
     write_json(&args.load_report_output, &load_report)?;
     measure_common(
@@ -223,11 +281,14 @@ async fn measure_common(
         None => WorkloadSpec::bundled()?,
     };
     let output = args.output.clone();
+    let backend = match args.backend {
+        BackendName::Postgres => postgres_backend(&args.database_url, &profile)?,
+    };
     let report = measure_scale_benchmark(
+        &backend,
         MeasureOptions {
             server_binary: args.server_binary,
             admin_binary: args.admin_binary,
-            database_url: args.database_url,
             restore_test_database_url: args.restore_test_database_url,
             artifact_directory: args.artifact_directory,
             label: args.label,
@@ -261,6 +322,10 @@ async fn measure_common(
     }
 }
 
+fn postgres_backend(database_url: &str, profile: &ScaleProfile) -> Result<PostgresScaleBackend> {
+    PostgresScaleBackend::connect(database_url, profile.provisioning.db_pool_size as u32)
+}
+
 fn assess(args: AssessArgs) -> Result<()> {
     let head = ScaleBenchmarkReport::read(&args.head)?;
     let base = args
@@ -286,6 +351,22 @@ fn impact(args: ImpactArgs) -> Result<()> {
     print!("{markdown}");
     if let Some(path) = args.markdown_output.as_deref() {
         impact.append_markdown(path)?;
+    }
+    Ok(())
+}
+
+fn compare_backends(args: CompareBackendsArgs) -> Result<()> {
+    let reports = args
+        .reports
+        .iter()
+        .map(|path| ScaleBenchmarkReport::read(path))
+        .collect::<hubuum_scale_core::Result<Vec<_>>>()?;
+    let comparison = BackendComparisonReport::compare(&reports)?;
+    comparison.write(&args.output)?;
+    let markdown = comparison.markdown();
+    print!("{markdown}");
+    if let Some(path) = args.markdown_output.as_deref() {
+        comparison.append_markdown(path)?;
     }
     Ok(())
 }

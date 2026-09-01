@@ -1,12 +1,35 @@
 # Scale Operational Benchmarks
 
-The scale suite generates deterministic, skewed PostgreSQL data and drives it
-through a production `hubuum-server` process with API and worker roles enabled.
-It is designed for operational validation, not microbenchmarking. Timing and
-resource measurements are evidence; correctness failures fail the run.
+The scale suite generates deterministic, skewed data and drives it through a
+production `hubuum-server` process with API and worker roles enabled. It is
+designed for operational validation, not microbenchmarking. Timing and resource
+measurements are evidence; correctness failures fail the run. PostgreSQL is the
+first implemented scale adapter.
 
 The loader replaces data in a freshly migrated, disposable database. Never point
 it at a development, staging, or production database.
+
+## Architecture and Backend Comparisons
+
+The suite is split along the storage boundary:
+
+- `hubuum-scale-core` owns backend-neutral profiles, logical manifests,
+  workloads, reports, scale-impact analysis, and backend comparison output.
+- `hubuum-scale-benchmark` is the shared command-line and HTTP workload
+  frontend. It does not depend on the root `hubuum` library.
+- Each storage adapter implements `ScaleBenchmarkBackend`. The adapter owns
+  fixture loading, physical validation, readiness hooks, backend identity and
+  effective settings, and resource probes that only make sense for that
+  backend. PostgreSQL's implementation is opt-in under
+  `scale-benchmark-support`.
+
+Every selected backend runs the same logical manifest and versioned HTTP
+workload. Common measurements use neutral names such as storage bytes, while
+optional data, index, write-ahead, resident-memory, CPU, and named custom
+metrics are reported only when an adapter can measure them honestly. This lets
+the suite distinguish three questions: base versus pull-request code at a fixed
+backend and corpus, one-axis corpus growth within a backend, and the reactions
+of different backends to the same corpus sizes.
 
 ## Dataset Profiles
 
@@ -33,12 +56,12 @@ logical corpus while preserving the declared shape.
 
 ## Build and Prepare
 
-Build the feature-gated runner and the real production binaries:
+Build the shared runner and the real production binaries:
 
 ```bash
-cargo build --locked --features scale-benchmark \
-  --release \
-  --bin hubuum-scale-benchmark --bin hubuum-server --bin hubuum-admin
+cargo build --locked --release --package hubuum-scale-benchmark
+cargo build --locked --release --features embedded-migrations \
+  --bin hubuum-server --bin hubuum-admin
 ```
 
 Create two empty disposable databases: one for the benchmark and one for the
@@ -59,6 +82,7 @@ Run the large profile under standard limits:
 
 ```bash
 target/release/hubuum-scale-benchmark run \
+  --backend postgres \
   --profile large \
   --limit-mode standard \
   --server-binary target/release/hubuum-server \
@@ -91,9 +115,10 @@ therefore unchanged. Unified search is also capped at the backend-neutral
 ceilings are separate provisioning limits declared by each profile.
 
 The `manifest`, `load`, `measure`, and `assess` subcommands allow the phases to
-be run separately. `measure` requires a manifest from the loaded database. The
-following comparison fails on corpus drift or correctness drift while keeping
-latency changes informational:
+be run separately. `load`, `measure`, and `run` accept `--backend`; PostgreSQL is
+the current default. `measure` requires a manifest from the loaded database.
+The following comparison fails on corpus drift, backend drift, or correctness
+drift while keeping latency changes informational:
 
 ```bash
 target/release/hubuum-scale-benchmark assess \
@@ -101,6 +126,20 @@ target/release/hubuum-scale-benchmark assess \
   --head target/scale/head.json \
   --markdown-output target/scale/summary.md
 ```
+
+When more than one adapter is available, run each against the same logical
+profile and workload, then render raw side-by-side results:
+
+```bash
+target/release/hubuum-scale-benchmark compare-backends \
+  --reports target/scale/postgres/report.json target/scale/other/report.json \
+  --output target/scale/backend-comparison.json \
+  --markdown-output target/scale/backend-comparison.md
+```
+
+The command rejects mismatched corpora, workloads, limits, scenario sets, and
+failed correctness checks. It does not normalize unlike physical storage
+models or imply that a single run establishes a winner.
 
 ## Measure Scale Sensitivity
 
@@ -148,11 +187,11 @@ target/release/hubuum-scale-benchmark impact \
   --markdown-output target/scale/objects/impact.md
 ```
 
-The command rejects failed correctness checks, mismatched runtimes or
+The command rejects failed correctness checks, mismatched backends, runtimes or
 workloads, and changes outside the declared axis and region. Its JSON and
 Markdown report matching-scenario latency and throughput deltas together with
-database, table, index, WAL, CPU, memory, generation, loading, backup, restore,
-and rebuild deltas when those measurements exist. With no
+storage, data, index, write-ahead, CPU, memory, generation, loading, backup,
+restore, and rebuild deltas when those measurements exist. With no
 `--normalization-unit`, the report describes the actual step. Supply a common
 unit only when several points need directly comparable slopes.
 
@@ -221,10 +260,10 @@ operations. It runs these phases in order:
 Reports contain per-scenario request counts, p50/p95/p99/max latency,
 throughput, bytes, pages, traversal time, timeouts, failures, resource use,
 first/middle/final traversal-page latency, authorization candidate and returned
-counts, database and index size, WAL growth, storage and pool metric deltas,
-PostgreSQL identity and settings, and lifecycle durations. The runner starts
-and stops the server itself, and its artifacts never contain bearer tokens,
-password hashes, database URLs, or environment dumps.
+counts, storage and index size, write-ahead growth, storage and pool metric
+deltas, backend identity and effective settings, and lifecycle durations. The
+runner starts and stops the server itself, and its artifacts never contain
+bearer tokens, password hashes, database URLs, or environment dumps.
 
 ## Backup and Restore Lifecycle
 
@@ -257,7 +296,10 @@ manually with explicit profile and limit selections. A weekly schedule runs the
 large profile and a monthly schedule runs the huge profile. Superseded runs are
 cancelled. Each profile and limit combination has a distinct job summary and
 artifact name, and pull-request jobs use the head runner to generate equivalent
-base and head corpora before assessing them.
+base and head corpora before assessing them. A final job consolidates the
+compact summaries into one updatable `Scale PR Bench Report` comment with a
+link to the workflow and its sanitized 14-day artifacts. Scenario timing and
+resource details remain collapsed in the comment.
 
 Generator code, profile and workload specifications, and the scale workflow
 have an explicit `scale_benchmark` classification in

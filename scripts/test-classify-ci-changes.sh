@@ -225,8 +225,9 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/profiles/large.toml \
   scale-benchmarks/profiles/huge.toml \
   scale-benchmarks/workloads/v1.toml \
-  src/bin/scale_benchmark.rs \
-  src/observability/scale_benchmark/loader.rs)"
+  crates/hubuum-scale-benchmark/src/runner.rs \
+  crates/hubuum-scale-core/src/lib.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark.rs)"
 assert_flag "$scale_benchmark_output" code true
 assert_flag "$scale_benchmark_output" benchmarks true
 assert_flag "$scale_benchmark_output" runtime_benchmark false
@@ -249,6 +250,8 @@ required = [
     "base.json",
     "head.json",
     "Scale operational benchmark:",
+    "hubuum-scale-pr-bench",
+    "pull-requests: write",
     "cancel-in-progress: true",
 ]
 missing = [token for token in required if token not in workflow]

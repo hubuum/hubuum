@@ -65,6 +65,7 @@ jobs:
         run: |
           profiles=()
           modes=(standard extended)
+          backends=(postgres)
 
           case "$EVENT_NAME" in
             pull_request)
@@ -104,9 +105,11 @@ jobs:
           matrix='{"include":[]}'
           for profile in "${profiles[@]}"; do
             for mode in "${modes[@]}"; do
-              matrix="$(jq --compact-output \
-                --arg profile "$profile" --arg mode "$mode" \
-                '.include += [{profile: $profile, mode: $mode}]' <<< "$matrix")"
+              for backend in "${backends[@]}"; do
+                matrix="$(jq --compact-output \
+                  --arg backend "$backend" --arg profile "$profile" --arg mode "$mode" \
+                  '.include += [{backend: $backend, profile: $profile, mode: $mode}]' <<< "$matrix")"
+              done
             done
           done
           if [[ "${#profiles[@]}" -eq 0 ]]; then
@@ -117,7 +120,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   scale:
-    name: ${{ matrix.profile }} / ${{ matrix.mode }}
+    name: ${{ matrix.backend }} / ${{ matrix.profile }} / ${{ matrix.mode }}
     needs: select
     if: needs.select.outputs.enabled == 'true'
     strategy:
@@ -171,8 +174,10 @@ jobs:
           git checkout --detach "$HEAD_SHA"
           CARGO_TARGET_DIR=target/scale-head cargo build --locked \
             --release \
-            --features scale-benchmark \
-            --bin hubuum-scale-benchmark --bin hubuum-server --bin hubuum-admin
+            --package hubuum-scale-benchmark
+          CARGO_TARGET_DIR=target/scale-head cargo build --locked \
+            --release --features embedded-migrations \
+            --bin hubuum-server --bin hubuum-admin
       - name: Measure pull-request base
         if: github.event_name == 'pull_request'
         env:
@@ -186,6 +191,7 @@ jobs:
             --migrate --legacy-single-role-migration \
             --database-url "$BASE_DATABASE_URL"
           target/scale-head/release/hubuum-scale-benchmark run \
+            --backend "${{ matrix.backend }}" \
             --profile "${{ matrix.profile }}" \
             --limit-mode "${{ matrix.mode }}" \
             --server-binary target/scale-base/release/hubuum-server \
@@ -206,6 +212,7 @@ jobs:
             --migrate --legacy-single-role-migration \
             --database-url "$HEAD_DATABASE_URL"
           target/scale-head/release/hubuum-scale-benchmark run \
+            --backend "${{ matrix.backend }}" \
             --profile "${{ matrix.profile }}" \
             --limit-mode "${{ matrix.mode }}" \
             --server-binary target/scale-head/release/hubuum-server \
@@ -221,7 +228,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Scale operational benchmark: ${{ matrix.profile }} / ${{ matrix.mode }}"
+            echo "## Scale operational benchmark: ${{ matrix.backend }} / ${{ matrix.profile }} / ${{ matrix.mode }}"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
           base_args=()
@@ -231,11 +238,87 @@ jobs:
           target/scale-head/release/hubuum-scale-benchmark assess \
             --head "$REPORT_ROOT/head.json" \
             "${base_args[@]}" \
-            --markdown-output "$GITHUB_STEP_SUMMARY"
+            --markdown-output "$REPORT_ROOT/assessment.md" \
+            >> "$GITHUB_STEP_SUMMARY"
       - name: Upload sanitized reports and lifecycle artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: scale-${{ matrix.profile }}-${{ matrix.mode }}
+          name: scale-${{ matrix.backend }}-${{ matrix.profile }}-${{ matrix.mode }}
           path: ${{ env.REPORT_ROOT }}
           retention-days: 14
+
+  report:
+    name: Scale PR report
+    needs:
+      - select
+      - scale
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.select.outputs.enabled == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    env:
+      COMMENT_PATH: target/scale-pr-comment.md
+      DOWNLOAD_ROOT: target/scale-pr-reports
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Download scale reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: scale-*
+          path: ${{ env.DOWNLOAD_ROOT }}
+      - name: Compose consolidated scale report
+        env:
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          mkdir -p "$(dirname "$COMMENT_PATH")"
+          reports=()
+          for candidate in "$DOWNLOAD_ROOT"/scale-*/assessment.md; do
+            if [[ -f "$candidate" ]]; then
+              reports+=("$candidate")
+            fi
+          done
+
+          {
+            echo '<!-- hubuum-scale-pr-bench -->'
+            echo '# Scale PR Bench Report'
+            echo
+            echo "PR #$PR_NUMBER • Base: $PR_BASE_REF • Head: ${HEAD_SHA:0:7} • Latest: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo 'These production-shaped base/PR comparisons are informational. Correctness failures fail the scale job; timing from one paired run does not.'
+            echo
+            if [[ "${#reports[@]}" -eq 0 ]]; then
+              echo 'No completed assessment was available. Open the workflow run for the failing job and any partial artifacts.'
+              echo
+            else
+              for report in "${reports[@]}"; do
+                cat "$report"
+              done
+            fi
+            echo "[Open workflow run and download sanitized reports]($SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID) (14-day retention)."
+          } > "$COMMENT_PATH"
+      - name: Upsert scale PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          comments_path="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
+          comment_id="$(gh api "$comments_path?per_page=100" \
+            --jq '[.[] | select(.body | startswith("<!-- hubuum-scale-pr-bench -->"))][0].id // empty')"
+          jq --null-input --rawfile body "$COMMENT_PATH" '{body: $body}' > target/scale-pr-comment.json
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --input target/scale-pr-comment.json
+          else
+            gh api --method POST "$comments_path" \
+              --input target/scale-pr-comment.json
+          fi

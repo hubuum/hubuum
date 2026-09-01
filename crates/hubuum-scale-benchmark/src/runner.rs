@@ -4,26 +4,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use diesel::QueryableByName;
-use diesel::sql_types::{BigInt, Integer, Text};
-use diesel_async::RunQueryDsl;
 use futures_util::{StreamExt, stream};
-use hubuum_storage_postgres::{
-    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection,
+use hubuum_scale_core::{
+    BackendResourceReport, BenchmarkPrincipal, CorrectnessReport, DatasetManifest,
+    LatencyDistribution, LifecycleReport, LimitMode, ResourceReport, Result, RuntimeIdentity,
+    ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleProfile, ScenarioReport, WorkloadScenario,
+    WorkloadSpec, invalid_data,
 };
 use reqwest::{Client, StatusCode, Url, header};
 use serde_json::{Value, json};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::System;
 use tokio::time::sleep;
 
-use crate::observability::runtime_behavior::MetricSnapshot;
-
-use super::loader::{benchmark_password, verify_loaded_dataset};
-use super::{
-    CorrectnessReport, DatasetManifest, Error, LatencyDistribution, LifecycleReport, LimitMode,
-    ResourceReport, Result, RuntimeIdentity, ScaleBenchmarkReport, ScaleProfile, ScenarioReport,
-    WorkloadScenario, WorkloadSpec, invalid_data,
-};
+use crate::metrics::MetricSnapshot;
 
 const TOKEN_HASH_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -31,7 +24,6 @@ const TOKEN_HASH_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef01
 pub struct MeasureOptions {
     pub server_binary: PathBuf,
     pub admin_binary: Option<PathBuf>,
-    pub database_url: String,
     pub restore_test_database_url: Option<String>,
     pub artifact_directory: PathBuf,
     pub label: String,
@@ -47,7 +39,11 @@ struct ManagedServer {
 }
 
 impl ManagedServer {
-    fn spawn(options: &MeasureOptions, profile: &ScaleProfile) -> Result<Self> {
+    fn spawn(
+        options: &MeasureOptions,
+        profile: &ScaleProfile,
+        backend_environment: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         fs::create_dir_all(&options.artifact_directory)?;
         let log_path = options.artifact_directory.join("server.log");
         let log = File::create(&log_path)?;
@@ -55,7 +51,6 @@ impl ManagedServer {
         let mut command = Command::new(&options.server_binary);
         command
             .env_clear()
-            .env("HUBUUM_DATABASE_URL", &options.database_url)
             .env("HUBUUM_BIND_IP", "127.0.0.1")
             .env("HUBUUM_BIND_PORT", options.port.to_string())
             .env("HUBUUM_RUNTIME_ROLE", "all")
@@ -105,6 +100,7 @@ impl ManagedServer {
             .env("HUBUUM_TOKEN_HASH_KEY", TOKEN_HASH_KEY)
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log));
+        command.envs(backend_environment);
         Ok(Self {
             child: command.spawn()?,
             log_path,
@@ -159,31 +155,8 @@ struct RequestOutcome {
     authorized_rows: Option<u64>,
 }
 
-#[derive(QueryableByName)]
-struct TextRow {
-    #[diesel(sql_type = Text)]
-    value: String,
-}
-
-#[derive(QueryableByName)]
-struct CollectionIdRow {
-    #[diesel(sql_type = Integer)]
-    collection_id: i32,
-}
-
-#[derive(QueryableByName)]
-struct DatabaseResourceRow {
-    #[diesel(sql_type = BigInt)]
-    database_bytes: i64,
-    #[diesel(sql_type = BigInt)]
-    table_bytes: i64,
-    #[diesel(sql_type = BigInt)]
-    index_bytes: i64,
-    #[diesel(sql_type = BigInt)]
-    wal_bytes: i64,
-}
-
-pub async fn measure_scale_benchmark(
+pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
+    backend: &B,
     options: MeasureOptions,
     profile: ScaleProfile,
     manifest: DatasetManifest,
@@ -195,32 +168,26 @@ pub async fn measure_scale_benchmark(
     manifest.validate(&profile)?;
     workload.validate()?;
     fs::create_dir_all(&options.artifact_directory)?;
-    let pool = benchmark_pool(
-        &options.database_url,
-        profile.provisioning.db_pool_size as u32,
-    )?;
-    verify_loaded_dataset(&pool, &profile, &manifest).await?;
-    let database_fresh = scalar(&pool, "SELECT count(*) AS value FROM tokens").await? == 0;
-    let wal_start = current_wal(&pool).await?;
-    let postgres_version = text_scalar(&pool, "SELECT version() AS value").await?;
-    let database_settings = load_database_settings(&pool).await?;
+    backend.verify_dataset(&profile, &manifest).await?;
+    let preparation = backend.prepare_measurement().await?;
+    let backend_resources_before = backend.begin_resource_measurement().await?;
 
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(2))
         .timeout(Duration::from_secs(workload.request_timeout_seconds))
         .build()?;
     let base_url = format!("http://127.0.0.1:{}", options.port);
-    let mut server = ManagedServer::spawn(&options, &profile)?;
+    let backend_environment = backend.server_environment();
+    let mut server = ManagedServer::spawn(&options, &profile, &backend_environment)?;
     wait_until_ready(&client, &base_url, &mut server, options.startup_timeout).await?;
     let before_metrics = fetch_metrics(&client, &base_url).await?;
-    let postgres_resources_before = postgres_process_resources();
-    let tokens = login_principals(&client, &base_url).await?;
-    let sparse_collection_ids = load_sparse_collection_ids(&pool).await?;
+    let benchmark_principals = backend.benchmark_principals();
+    let tokens = login_principals(&client, &base_url, &benchmark_principals).await?;
     let context = RequestContext {
         client: client.clone(),
         base_url: base_url.clone(),
         tokens,
-        sparse_collection_ids,
+        sparse_collection_ids: preparation.sparse_collection_ids.clone(),
         sparse_candidate_count: manifest.totals.classes,
     };
 
@@ -247,7 +214,7 @@ pub async fn measure_scale_benchmark(
         ));
     }
 
-    mark_computed_ready(&pool).await?;
+    backend.mark_computed_ready().await?;
     for scenario in &workload.scenarios {
         let path = workload.render_path(scenario, &manifest, options.limit_mode)?;
         for _ in 0..workload.warmup_requests {
@@ -355,20 +322,21 @@ pub async fn measure_scale_benchmark(
 
     server.ensure_running()?;
     let after_metrics = fetch_metrics(&client, &base_url).await?;
-    let wal_end = current_wal(&pool).await?;
-    let resources = resource_report(
-        &pool,
-        &before_metrics,
-        &after_metrics,
-        postgres_resources_before,
-        wal_start,
-        wal_end,
-    )
-    .await?;
+    let backend_resources = backend
+        .finish_resource_measurement(backend_resources_before)
+        .await?;
+    let resources = resource_report(&before_metrics, &after_metrics, backend_resources)?;
     drop(server);
 
     let lifecycle = if options.run_lifecycle {
-        run_lifecycle(&options, &profile, generation_ms, loading_ms).await
+        run_lifecycle(
+            &options,
+            &profile,
+            &backend_environment,
+            generation_ms,
+            loading_ms,
+        )
+        .await
     } else {
         LifecycleReport {
             dataset_generation_ms: generation_ms,
@@ -399,11 +367,10 @@ pub async fn measure_scale_benchmark(
     }
     let runtime = RuntimeIdentity {
         runner: runner_identity(),
-        postgres_version,
+        backend: preparation.identity,
         process_fresh: true,
-        database_fresh,
+        database_fresh: preparation.database_fresh,
         deliberate_warmup_requests: workload.warmup_requests,
-        database_settings,
     };
     ScaleBenchmarkReport::new(
         options.label,
@@ -416,15 +383,6 @@ pub async fn measure_scale_benchmark(
         resources,
         lifecycle,
     )
-}
-
-fn benchmark_pool(database_url: &str, max_size: u32) -> Result<PostgresPool> {
-    let settings = PostgresPoolSettings::builder(database_url)
-        .max_size(max_size)
-        .statement_timeout_ms(0)
-        .acquire_timeout_ms(60_000)
-        .build()?;
-    Ok(build_postgres_pool(&settings)?)
 }
 
 async fn wait_until_ready(
@@ -452,21 +410,25 @@ async fn wait_until_ready(
     }
 }
 
-async fn login_principals(client: &Client, base_url: &str) -> Result<BTreeMap<String, String>> {
+async fn login_principals(
+    client: &Client,
+    base_url: &str,
+    principals: &[BenchmarkPrincipal],
+) -> Result<BTreeMap<String, String>> {
     let mut tokens = BTreeMap::new();
-    for (key, name) in [
-        ("admin", "scale-admin"),
-        ("tenant", "scale-tenant"),
-        ("sparse", "scale-sparse"),
-    ] {
+    for principal in principals {
         let response = client
             .post(format!("{base_url}/api/v0/auth/login"))
-            .json(&json!({"name": name, "password": benchmark_password()}))
+            .json(&json!({
+                "name": principal.username(),
+                "password": principal.password()
+            }))
             .send()
             .await?;
         if response.status() != StatusCode::OK {
             return Err(invalid_data(format!(
-                "benchmark principal '{key}' could not authenticate ({})",
+                "benchmark principal '{}' could not authenticate ({})",
+                principal.role(),
                 response.status()
             )));
         }
@@ -475,7 +437,7 @@ async fn login_principals(client: &Client, base_url: &str) -> Result<BTreeMap<St
             .get("token")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid_data("login response did not contain a token"))?;
-        tokens.insert(key.to_string(), token.to_string());
+        tokens.insert(principal.role().to_string(), token.to_string());
     }
     Ok(tokens)
 }
@@ -1063,44 +1025,6 @@ fn merge_correctness(report: &mut CorrectnessReport, outcome: &RequestOutcome) {
     report.unauthorized_rows += outcome.unauthorized_rows;
 }
 
-async fn load_sparse_collection_ids(pool: &PostgresPool) -> Result<BTreeSet<i64>> {
-    let rows = with_connection(
-        pool,
-        async |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(
-                "SELECT collection_id FROM permissions\n\
-                 WHERE group_id = 3 AND has_read_object\n\
-                 ORDER BY collection_id",
-            )
-            .get_results::<CollectionIdRow>(connection)
-            .await
-        },
-    )
-    .await
-    .map_err(storage_error)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| i64::from(row.collection_id))
-        .collect())
-}
-
-async fn mark_computed_ready(pool: &PostgresPool) -> Result<()> {
-    with_connection(
-        pool,
-        async |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(
-                "UPDATE class_computation_state SET rebuild_status = 'ready'\n\
-                 WHERE rebuild_status = 'rebuilding'",
-            )
-            .execute(connection)
-            .await
-            .map(|_| ())
-        },
-    )
-    .await
-    .map_err(storage_error)
-}
-
 async fn fetch_metrics(client: &Client, base_url: &str) -> Result<MetricSnapshot> {
     let response = client.get(format!("{base_url}/metrics")).send().await?;
     if response.status() != StatusCode::OK {
@@ -1112,38 +1036,11 @@ async fn fetch_metrics(client: &Client, base_url: &str) -> Result<MetricSnapshot
     MetricSnapshot::parse(&response.text().await?)
 }
 
-async fn resource_report(
-    pool: &PostgresPool,
+fn resource_report(
     before: &MetricSnapshot,
     after: &MetricSnapshot,
-    postgres_before: (Option<f64>, Option<u64>),
-    wal_start: i64,
-    wal_end: i64,
+    backend: BackendResourceReport,
 ) -> Result<ResourceReport> {
-    let database = with_connection(
-        pool,
-        async |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(
-                "SELECT pg_database_size(current_database())::BIGINT AS database_bytes,\n\
-                   coalesce(sum(pg_relation_size(oid)), 0)::BIGINT AS table_bytes,\n\
-                   coalesce(sum(pg_indexes_size(oid)), 0)::BIGINT AS index_bytes,\n\
-                   0::BIGINT AS wal_bytes FROM pg_class\n\
-                 WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')",
-            )
-            .get_result::<DatabaseResourceRow>(connection)
-            .await
-        },
-    )
-    .await
-    .map_err(storage_error)?;
-    let (postgres_cpu_after, postgres_resident_after) = postgres_process_resources();
-    let postgres_cpu_seconds = postgres_cpu_after
-        .zip(postgres_before.0)
-        .map(|(after, before)| (after - before).max(0.0));
-    let postgres_resident_bytes = postgres_resident_after
-        .into_iter()
-        .chain(postgres_before.1)
-        .max();
     let mut storage_metric_deltas = BTreeMap::new();
     for metric in [
         "hubuum_storage_operation_duration_seconds_count",
@@ -1169,48 +1066,20 @@ async fn resource_report(
     Ok(ResourceReport {
         application_cpu_seconds: after.value("process_cpu_seconds_total", &[])
             - before.value("process_cpu_seconds_total", &[]),
-        postgres_cpu_seconds,
         peak_application_resident_bytes: before
             .value("process_resident_memory_bytes", &[])
             .max(after.value("process_resident_memory_bytes", &[]))
             .max(0.0) as u64,
-        peak_postgres_resident_bytes: postgres_resident_bytes,
-        database_bytes: database.database_bytes.max(0) as u64,
-        table_bytes: database.table_bytes.max(0) as u64,
-        index_bytes: database.index_bytes.max(0) as u64,
-        wal_bytes: Some(wal_end.saturating_sub(wal_start).max(database.wal_bytes) as u64),
+        backend,
         storage_metric_deltas,
         pool_metric_deltas,
     })
 }
 
-fn postgres_process_resources() -> (Option<f64>, Option<u64>) {
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cpu().with_memory(),
-    );
-    let mut found = false;
-    let mut cpu_millis = 0_u64;
-    let mut resident_bytes = 0_u64;
-    for process in system.processes().values() {
-        if process.name().to_string_lossy().contains("postgres") {
-            found = true;
-            cpu_millis = cpu_millis.saturating_add(process.accumulated_cpu_time());
-            resident_bytes = resident_bytes.saturating_add(process.memory());
-        }
-    }
-    if found {
-        (Some(cpu_millis as f64 / 1_000.0), Some(resident_bytes))
-    } else {
-        (None, None)
-    }
-}
-
 async fn run_lifecycle(
     options: &MeasureOptions,
     profile: &ScaleProfile,
+    backend_environment: &BTreeMap<String, String>,
     generation_ms: u64,
     loading_ms: u64,
 ) -> LifecycleReport {
@@ -1238,7 +1107,7 @@ async fn run_lifecycle(
     };
     let backup_path = options.artifact_directory.join("dataset-backup.json");
     let started = Instant::now();
-    let backup = admin_command(admin_binary, options, profile)
+    let backup = admin_command(admin_binary, profile, backend_environment)
         .arg("--backup")
         .arg(&backup_path)
         .output();
@@ -1262,7 +1131,7 @@ async fn run_lifecycle(
     }
 
     let started = Instant::now();
-    let offline = admin_command(admin_binary, options, profile)
+    let offline = admin_command(admin_binary, profile, backend_environment)
         .arg("--json")
         .arg("--verify-backup")
         .arg(&backup_path)
@@ -1285,7 +1154,7 @@ async fn run_lifecycle(
     };
 
     let started = Instant::now();
-    let restore = admin_command(admin_binary, options, profile)
+    let restore = admin_command(admin_binary, profile, backend_environment)
         .arg("--json")
         .arg("--verify-backup")
         .arg(&backup_path)
@@ -1312,11 +1181,14 @@ async fn run_lifecycle(
     report
 }
 
-fn admin_command(binary: &Path, options: &MeasureOptions, profile: &ScaleProfile) -> Command {
+fn admin_command(
+    binary: &Path,
+    profile: &ScaleProfile,
+    backend_environment: &BTreeMap<String, String>,
+) -> Command {
     let mut command = Command::new(binary);
     command
         .env_clear()
-        .env("HUBUUM_DATABASE_URL", &options.database_url)
         .env("HUBUUM_TOKEN_HASH_KEY", TOKEN_HASH_KEY)
         .env(
             "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
@@ -1326,6 +1198,7 @@ fn admin_command(binary: &Path, options: &MeasureOptions, profile: &ScaleProfile
             "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
             profile.provisioning.restore_max_upload_bytes.to_string(),
         );
+    command.envs(backend_environment);
     command
 }
 
@@ -1366,74 +1239,6 @@ fn find_u64_map(value: &Value, key: &str) -> BTreeMap<String, u64> {
     }
 }
 
-async fn load_database_settings(pool: &PostgresPool) -> Result<BTreeMap<String, String>> {
-    let rows = with_connection(
-        pool,
-        async |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(
-                "SELECT name || '=' || setting || coalesce(unit, '') AS value FROM pg_settings\n\
-                 WHERE name IN (\n\
-                   'max_connections', 'shared_buffers', 'work_mem', 'maintenance_work_mem',\n\
-                   'effective_cache_size', 'random_page_cost', 'max_parallel_workers_per_gather'\n\
-                 ) ORDER BY name",
-            )
-            .load::<TextRow>(connection)
-            .await
-        },
-    )
-    .await
-    .map_err(storage_error)?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| {
-            row.value
-                .split_once('=')
-                .map(|(name, value)| (name.to_string(), value.to_string()))
-        })
-        .collect())
-}
-
-async fn current_wal(pool: &PostgresPool) -> Result<i64> {
-    scalar(
-        pool,
-        "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::BIGINT AS value",
-    )
-    .await
-}
-
-async fn scalar(pool: &PostgresPool, query: &str) -> Result<i64> {
-    #[derive(QueryableByName)]
-    struct Row {
-        #[diesel(sql_type = BigInt)]
-        value: i64,
-    }
-    with_connection(
-        pool,
-        async move |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(query)
-                .get_result::<Row>(connection)
-                .await
-                .map(|row| row.value)
-        },
-    )
-    .await
-    .map_err(storage_error)
-}
-
-async fn text_scalar(pool: &PostgresPool, query: &str) -> Result<String> {
-    with_connection(
-        pool,
-        async move |connection| -> std::result::Result<_, diesel::result::Error> {
-            diesel::sql_query(query)
-                .get_result::<TextRow>(connection)
-                .await
-                .map(|row| row.value)
-        },
-    )
-    .await
-    .map_err(storage_error)
-}
-
 fn runner_identity() -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -1464,8 +1269,4 @@ fn mix(mut value: u64) -> u64 {
 
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
-}
-
-fn storage_error(error: impl std::fmt::Display) -> Error {
-    invalid_data(format!("scale benchmark storage operation failed: {error}"))
 }

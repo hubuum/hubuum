@@ -1,0 +1,20 @@
+[package]
+name = "hubuum-scale-core"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+description = "Backend-neutral scale benchmark profiles, workloads, and reports for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+async-trait = "0.1"
+hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.11"
+toml = "1.1"

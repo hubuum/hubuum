@@ -98,7 +98,8 @@ for path in "$@"; do
       runtime_benchmark=true
       ;;
     .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
-      src/bin/scale_benchmark.rs | src/observability/scale_benchmark/*)
+      crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
+      crates/hubuum-storage-postgres/src/scale_benchmark.rs)
       code=true
       benchmarks=true
       scale_benchmark=true
