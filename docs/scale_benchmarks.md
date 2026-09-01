@@ -174,6 +174,14 @@ that adding edges to small class pairs can exhaust the finite set of unique
 source/target pairs. That is a density or saturation experiment, not the same
 question as raw relation-table volume.
 
+Treat a repeatable corpus-size slope in a bounded, fixed-result operation as
+an optimization target unless the operation intentionally examines a
+proportional number of rows. Diagnose that slope with query plans, buffer and
+row-flow evidence, and application profiling. Keep it separate from costs
+caused by increasing the requested result set, local relation fan-out, or the
+number of pagination pages; those experiments change the amount of work the
+operation is asked to return.
+
 High-value questions include:
 
 | Dimension | Hold fixed | Vary and ask |
