@@ -5,11 +5,11 @@
 
 use hubuum_scale_core::ScaleBenchmarkBackend;
 use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
+use hubuum_storage_postgres::test_support::integration_test_database_url;
 
 #[tokio::test]
 async fn benchmark_preparation_reports_postgres_identity() {
-    let database_url = std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database");
+    let database_url = integration_test_database_url();
     let backend = PostgresScaleBackend::connect(&database_url, 1).expect("benchmark backend");
 
     let preparation = backend

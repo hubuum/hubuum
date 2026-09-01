@@ -29,6 +29,16 @@ use crate::{
     PostgresStorageError, build_postgres_pool,
 };
 
+/// Return the migrated database URL selected by the repository test runner.
+///
+/// Environment translation stays in this adapter-owned support module instead
+/// of being repeated by each integration-test binary.
+#[must_use]
+pub fn integration_test_database_url() -> String {
+    std::env::var("HUBUUM_DATABASE_URL")
+        .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database")
+}
+
 /// Build a pool for an adapter integration test against the migrated database
 /// selected by the repository test runner.
 ///
@@ -36,8 +46,7 @@ use crate::{
 /// of being repeated by each integration-test binary.
 #[must_use]
 pub fn integration_test_pool(max_size: u32) -> PostgresPool {
-    let database_url = std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database");
+    let database_url = integration_test_database_url();
     let settings = PostgresPoolSettings::builder(database_url)
         .max_size(max_size)
         .statement_timeout_ms(0)
