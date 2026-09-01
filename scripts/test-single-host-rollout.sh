@@ -369,6 +369,7 @@ fi
 [[ "$reload_output" == *'fake reload diagnostic'* ]]
 
 DATABASE_MANAGED="true"
+DATABASE_ROLE_MODE="split"
 : > "$COMMAND_LOG"
 hubuum_run_migrations
 cat > "$TEST_ROOT/expected-managed-migration.log" <<EOF
@@ -378,5 +379,13 @@ compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/l
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 EOF
 assert_commands "$TEST_ROOT/expected-managed-migration.log"
+
+DATABASE_ROLE_MODE="single"
+: > "$COMMAND_LOG"
+hubuum_run_migrations
+cat > "$TEST_ROOT/expected-managed-single-role-migration.log" <<EOF
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+EOF
+assert_commands "$TEST_ROOT/expected-managed-single-role-migration.log"
 
 echo "Single-host rolling update test passed"

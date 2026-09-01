@@ -133,6 +133,27 @@ pub enum DatabasePrivilegeMode {
     Strict,
 }
 
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseRoleMode {
+    #[default]
+    Single,
+    Split,
+}
+
+impl DatabaseRoleMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Split => "split",
+        }
+    }
+
+    pub const fn uses_split_roles(self) -> bool {
+        matches!(self, Self::Split)
+    }
+}
+
 impl DatabasePrivilegeMode {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -220,6 +241,15 @@ pub struct AppConfig {
         default_value = "postgres://localhost"
     )]
     pub database_url: String,
+
+    /// Database credential topology: one shared login or split owner/migrator/runtime roles
+    #[clap(
+        long,
+        env = "HUBUUM_DATABASE_ROLE_MODE",
+        value_enum,
+        default_value = "single"
+    )]
+    pub database_role_mode: DatabaseRoleMode,
 
     /// Whether unsafe or incomplete PostgreSQL runtime grants warn or fail startup
     #[clap(
@@ -1574,6 +1604,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .unwrap_or(8080),
         log_level: env_or_default("HUBUUM_LOG_LEVEL", "debug"),
         database_url: env_or_default("HUBUUM_DATABASE_URL", "postgres://test"),
+        database_role_mode: env::var("HUBUUM_DATABASE_ROLE_MODE")
+            .ok()
+            .and_then(|value| DatabaseRoleMode::from_str(&value, true).ok())
+            .unwrap_or_default(),
         database_privilege_mode: env::var("HUBUUM_DATABASE_PRIVILEGE_MODE")
             .ok()
             .and_then(|value| DatabasePrivilegeMode::from_str(&value, true).ok())
@@ -1956,9 +1990,10 @@ mod tests {
         DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_TASK_POLL_INTERVAL_MS,
         DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
         DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
-        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole,
-        StorageBackendKind, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
-        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, DatabaseRoleMode, MAX_PAGE_LIMIT,
+        RuntimeRole, StorageBackendKind, TEST_ENV_LOCK, TlsBackend, default_actix_workers,
+        default_task_workers, get_config_from_env, token_hash_key_bytes,
+        token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -2096,6 +2131,24 @@ mod tests {
         assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
         assert!(!loaded.runtime_role.serves_http());
         assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[test]
+    fn database_role_mode_defaults_to_single_and_accepts_split_opt_in() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _role_mode_guard = EnvVarGuard::set("HUBUUM_DATABASE_ROLE_MODE", None);
+
+        let default = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let split =
+            AppConfig::try_parse_from(["hubuum-server", "--database-role-mode", "split"]).unwrap();
+        let loaded = {
+            let _split_guard = EnvVarGuard::set("HUBUUM_DATABASE_ROLE_MODE", Some("split"));
+            get_config_from_env().unwrap()
+        };
+
+        assert_eq!(default.database_role_mode, DatabaseRoleMode::Single);
+        assert_eq!(split.database_role_mode, DatabaseRoleMode::Split);
+        assert_eq!(loaded.database_role_mode, DatabaseRoleMode::Split);
     }
 
     #[test]

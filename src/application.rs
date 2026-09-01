@@ -166,7 +166,9 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             EXIT_CODE_DATABASE_ERROR,
         );
     }
-    if config.storage_backend == StorageBackendKind::Postgres {
+    if config.storage_backend == StorageBackendKind::Postgres
+        && config.database_role_mode.uses_split_roles()
+    {
         let database_roles = StorageDatabaseRoleNames::new(
             config.database_owner_role.clone(),
             config.database_migrator_role.clone(),

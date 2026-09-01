@@ -110,9 +110,10 @@ Content-Type: application/json
 
 The endpoint commits draining maintenance and returns `202 Accepted` with
 status `confirmed`. It does not perform privileged SQL. A separately deployed
-`hubuum-admin --restore-executor` process, holding only the migration database
-URL, re-loads and revalidates the staged bytes, waits for API and worker
-instances to drain, and applies the replacement transaction.
+`hubuum-admin --restore-executor` process, holding the database URL selected
+for its single- or split-role topology, re-loads and revalidates the staged
+bytes, waits for API and worker instances to drain, and applies the replacement
+transaction.
 
 Inspect validation, draining, or failure status by sending the capability in a
 header:
@@ -134,7 +135,7 @@ listener and accepts no request-provided SQL, identifier, or file path. Multiple
 replicas are protected by the same database advisory lock, but a single replica
 avoids redundant conflict logs. See
 [PostgreSQL Database Roles](database_roles.md) for deployment isolation, threat
-model, and the existing single-role migration order.
+model, and role-topology choices.
 
 ## Admin CLI
 
@@ -218,21 +219,22 @@ the split database roles described in
    representative reads, background work, audit history, and computed-field
    rebuilding. Then delete the disposable database.
 4. Confirm production maintenance is `normal` and no confirmed restore is in
-   flight. Follow the single-role adoption procedure, run the one-shot schema
-   migration, start the isolated restore executor, and roll runtime-only API
-   and worker processes.
-5. Keep restore confirmation blocked until the executor and runtime privilege
-   report pass. Retain the pre-upgrade deployment and backup through the
-   observation window. Application rollback after role adoption uses the
-   compatibility runtime login; web restore stays blocked and the candidate
-   one-shot admin restore remains the recovery path.
+   flight. Run the one-shot schema migration, start the isolated restore
+   executor, and roll runtime-only API and worker processes. If opting into
+   split roles, complete the documented adoption before those workloads start.
+5. Keep restore confirmation blocked until the executor is healthy. In split
+   mode, also require the runtime privilege report to pass. Retain the
+   pre-upgrade deployment and backup through the observation window. After a
+   split-role adoption, application rollback uses the compatibility runtime
+   login; web restore stays blocked and the candidate one-shot admin restore
+   remains the recovery path.
 
 This is an application migration path, not an automatic database downgrade.
 Older application releases are only certified against the adjacent migrated
 schema as documented in [Releasing Hubuum](releasing.md).
 
-Restore requires the explicit destructive phrase and the separate migration
-credential:
+Restore always requires the explicit destructive phrase. Split mode also uses
+the separate migration credential:
 
 ```text
 hubuum-admin \
@@ -240,6 +242,10 @@ hubuum-admin \
   --restore backup.json \
   --restore-confirmation "REPLACE ALL HUBUUM DATA"
 ```
+
+In the default single-role mode, omit `--migration-database-url`; the command
+uses `HUBUUM_DATABASE_URL`. Split-role deployments use the privileged URL shown
+above.
 
 The CLI stages and confirms the document, then runs one executor iteration in
 the same process. It appends the `restore.succeeded` provenance event on

@@ -18,13 +18,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Existing installations on v0.0.9 or older must first upgrade to v0.0.10 or
   v0.0.11 and create a version 5 backup; version 4-or-older artifacts are not
   converted in place.
-- Added a generated PostgreSQL privilege manifest with distinct non-login
-  owner, dedicated migrator, and non-owning runtime roles; catalog-backed
-  warn/strict startup diagnostics; administrator SQL and JSON reporting; and
-  Compose, single-host, and distributed deployment workflows that keep the
-  migration credential out of long-lived application containers. Web restore
-  is preserved through a separate, non-listening restore-executor workload, with
-  document-free terminal receipts for
+- Added an opt-in split PostgreSQL role topology with a generated privilege
+  manifest, distinct non-login owner, dedicated migrator, and non-owning
+  runtime roles; catalog-backed warn/strict startup diagnostics;
+  administrator SQL and JSON reporting; and Compose, single-host, and
+  distributed deployment workflows that keep the migration credential out of
+  long-lived application containers. The default `single` topology retains one
+  database login for runtime, migrations, and restore execution; set
+  `HUBUUM_DATABASE_ROLE_MODE=split` to enable the least-privilege boundary. Web
+  restore is preserved in either topology through a separate, non-listening
+  restore-executor workload, with document-free terminal receipts for
   capability-authenticated status polling.
 - Added bounded online token hash key-ring rotation with versioned bearer
   tokens, active and previous verification keys, race-safe migration of legacy
@@ -44,24 +47,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - **Breaking (database deployment):** server container entrypoints no longer
-  apply migrations. Operators must provision the documented owner, migrator,
-  and runtime roles, set `HUBUUM_DATABASE_URL` to the runtime identity, and run
-  `hubuum-admin --migrate` as a one-shot workload with
-  `HUBUUM_MIGRATION_DATABASE_URL` before rolling the server. External
-  single-host installs must add `--migration-database-url` on upgrade. Existing
-  single-role deployments must verify normal maintenance, pause confirmations,
-  adopt the compatibility runtime grants, migrate, start the isolated restore
-  executor, and only then roll runtime-only API and workers; the migration
-  serializes with confirmation, refuses an in-flight confirmed restore, and
-  preserves validated stages. Rollback keeps the compatibility runtime login
-  but must leave old synchronous web confirmation blocked; use the new one-shot
-  administrator restore path until the executor-based release is restored. If
-  role provisioning must follow schema migration, the new admin binary retains
-  an explicit, warned `--legacy-single-role-migration` bridge that rejects
-  split-role settings; operators must still complete role adoption before
-  enabling strict checks or web restore confirmation. Adoption transfers table
-  ownership before attached sequences so existing serial-backed schemas can be
-  reconciled safely.
+  apply migrations. Run `hubuum-admin --migrate` as a one-shot workload before
+  rolling the server and deploy the isolated restore executor. Existing
+  installations may keep one database login: `single` is the default and
+  privileged admin commands fall back to `HUBUUM_DATABASE_URL`.
+  `--legacy-single-role-migration` remains as a deprecated compatibility alias.
+  Deployments choosing `HUBUUM_DATABASE_ROLE_MODE=split` must provision the
+  documented owner, migrator, and runtime roles, set the runtime and migration
+  URLs separately, and complete the adoption sequence before enabling strict
+  checks or web restore confirmation. Existing users of the split-only local
+  Compose example must also retain `POSTGRES_USER=hubuum_bootstrap` when reusing
+  its database volume. Split-role migration serializes with
+  confirmation, refuses an in-flight confirmed restore, preserves validated
+  stages, and transfers table ownership before attached sequences. Rollback
+  must leave old synchronous web confirmation blocked; use the new one-shot
+  administrator restore path until the executor-based release is restored.
 - **Breaking (full restore):** `POST /api/v1/restores/{restore_id}/confirm` now
   returns `202 Accepted` after queuing the validated operation instead of
   completing the replacement synchronously. Deploy

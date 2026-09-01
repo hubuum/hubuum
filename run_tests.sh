@@ -31,12 +31,23 @@ fi
 # Generate a collision-resistant database name. Keep it identifier-safe.
 UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
+SINGLE_TEST_DB_NAME="${TEST_DB_NAME}_single"
 OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
 MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
 RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
 ADMIN_TEST_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
 
 cleanup() {
+    if [ -n "${SINGLE_TEST_DB_NAME:-}" ]; then
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$SINGLE_TEST_DB_NAME' AND pid <> pg_backend_pid();" \
+            > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS $SINGLE_TEST_DB_NAME;" \
+            > /dev/null 2>&1 || true
+    fi
     if [ -n "${TEST_DB_NAME:-}" ]; then
         PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
             -v ON_ERROR_STOP=1 \
@@ -55,6 +66,25 @@ cleanup() {
 
 trap cleanup EXIT
 
+# Prove the default topology can migrate a database owned by the connected
+# login without creating or reconciling any cluster roles.
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE $SINGLE_TEST_DB_NAME;" > /dev/null
+SINGLE_TEST_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$SINGLE_TEST_DB_NAME$SSL_MODE"
+env -u HUBUUM_MIGRATION_DATABASE_URL \
+    -u HUBUUM_DATABASE_ROLE_MODE \
+    -u HUBUUM_DATABASE_OWNER_ROLE \
+    -u HUBUUM_DATABASE_MIGRATOR_ROLE \
+    -u HUBUUM_DATABASE_RUNTIME_ROLE \
+    cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
+        --migrate \
+        --database-url "$SINGLE_TEST_URL" > /dev/null
+PGPASSWORD=$DB_PASSWORD psql "$SINGLE_TEST_URL" -v ON_ERROR_STOP=1 \
+    -c "SELECT 1 FROM users LIMIT 1;" > /dev/null
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -c "DROP DATABASE $SINGLE_TEST_DB_NAME;" > /dev/null
+SINGLE_TEST_DB_NAME=""
+
 # Create distinct cluster roles and a database owned by the non-login schema
 # owner. Password interpolation is handled by psql, not by SQL string assembly.
 PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
@@ -72,6 +102,7 @@ echo "Created test database: $TEST_DB_NAME"
 
 export HUBUUM_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
 export HUBUUM_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+export HUBUUM_DATABASE_ROLE_MODE="split"
 export HUBUUM_DATABASE_OWNER_ROLE="$OWNER_ROLE"
 export HUBUUM_DATABASE_MIGRATOR_ROLE="$MIGRATOR_ROLE"
 export HUBUUM_DATABASE_RUNTIME_ROLE="$RUNTIME_ROLE"

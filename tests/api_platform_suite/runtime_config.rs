@@ -37,6 +37,10 @@ mod tests {
         let serialized = serde_json::to_string(&body).unwrap();
 
         assert_eq!(body["database"]["backend"], "postgresql");
+        assert!(matches!(
+            body["database"]["role_mode"].as_str(),
+            Some("single" | "split")
+        ));
         assert!(body["database"].get("contract_version").is_none());
         assert!(body["database"].get("capabilities").is_none());
         assert_eq!(body["database"]["url"]["configured"], true);

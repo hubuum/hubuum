@@ -20464,6 +20464,7 @@
           "pool_size",
           "pool_acquire_timeout_ms",
           "statement_timeout_ms",
+          "role_mode",
           "privilege_mode",
           "owner_role",
           "migrator_role",
@@ -20491,6 +20492,9 @@
             "minimum": 0
           },
           "privilege_mode": {
+            "type": "string"
+          },
+          "role_mode": {
             "type": "string"
           },
           "runtime_role": {

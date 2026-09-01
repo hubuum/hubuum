@@ -112,6 +112,7 @@ fi
 BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
 INSTALL_MODE="$(read_env_value INSTALL_MODE || printf 'all')"
 DATABASE_MANAGED="$(read_env_value DATABASE_MANAGED || printf 'true')"
+DATABASE_ROLE_MODE="$(read_env_value HUBUUM_DATABASE_ROLE_MODE || printf 'single')"
 API_PORT="$(read_env_value HUBUUM_BIND_PORT || printf '8080')"
 MANAGEMENT_SCRIPT_BASE_URL="$(
   read_env_value MANAGEMENT_SCRIPT_BASE_URL || printf '%s' "$DEFAULT_MANAGEMENT_SCRIPT_BASE_URL"
@@ -214,6 +215,7 @@ if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
   [[ -n "$AUTH_CONFIG_HOST_PATH" ]] || die "HUBUUM_AUTH_CONFIG_HOST_PATH is missing from $ENV_FILE"
   absolute_config_path "$AUTH_CONFIG_HOST_PATH" >/dev/null
 fi
+DATABASE_ROLE_MODE="$(read_env_value HUBUUM_DATABASE_ROLE_MODE || printf 'single')"
 
 if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   PULL_SERVICES=(caddy)

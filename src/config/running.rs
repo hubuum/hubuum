@@ -105,6 +105,7 @@ pub struct DatabaseConfig {
     pub pool_size: u32,
     pub pool_acquire_timeout_ms: u64,
     pub statement_timeout_ms: u64,
+    pub role_mode: String,
     pub privilege_mode: String,
     pub owner_role: String,
     pub migrator_role: String,
@@ -322,6 +323,7 @@ impl RunningConfig {
                 pool_size: config.db_pool_size,
                 pool_acquire_timeout_ms: config.db_pool_acquire_timeout_ms,
                 statement_timeout_ms: config.db_statement_timeout_ms,
+                role_mode: config.database_role_mode.as_str().to_string(),
                 privilege_mode: config.database_privilege_mode.as_str().to_string(),
                 owner_role: config.database_owner_role.clone(),
                 migrator_role: config.database_migrator_role.clone(),
@@ -503,6 +505,10 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
+        assert!(json.contains(&format!(
+            "\"role_mode\":\"{}\"",
+            config.database_role_mode.as_str()
+        )));
         assert!(json.contains("\"secrets\":{\"provider\":\"environment\""));
         assert!(json.contains("\"stale_values_allowed\":false"));
         assert!(!json.contains("contract_version"));

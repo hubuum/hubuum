@@ -153,6 +153,7 @@ services:
     profiles: ["administration"]
     entrypoint: /usr/local/bin/hubuum-admin
     environment:
+      HUBUUM_DATABASE_ROLE_MODE: split
       HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL}
 
   hubuum-restore-executor:
@@ -160,6 +161,7 @@ services:
     entrypoint: /usr/local/bin/hubuum-admin
     command: ["--restore-executor"]
     environment:
+      HUBUUM_DATABASE_ROLE_MODE: split
       HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_MIGRATION_DATABASE_URL}
 
   hubuum-api: &hubuum-api
@@ -175,6 +177,7 @@ services:
     environment:
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_BIND_PORT: 8080
+      HUBUUM_DATABASE_ROLE_MODE: split
       HUBUUM_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_DATABASE_URL}
       HUBUUM_DATABASE_PRIVILEGE_MODE: strict
       HUBUUM_CLIENT_ALLOWLIST: "*"

@@ -12,6 +12,20 @@ require_identifier() {
 
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
+
+role_mode="${HUBUUM_DATABASE_ROLE_MODE:-single}"
+case "$role_mode" in
+    single)
+        exit 0
+        ;;
+    split)
+        ;;
+    *)
+        echo "HUBUUM_DATABASE_ROLE_MODE must be single or split" >&2
+        exit 1
+        ;;
+esac
+
 : "${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}"
 : "${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}"
 

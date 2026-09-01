@@ -346,7 +346,11 @@ This column is NULL until anonymization occurs. It serves as:
 
 ### Database Role Privilege Model
 
-Run the Hubuum application under a **non-owning, unprivileged PostgreSQL role**:
+For database-enforced separation, opt into
+`HUBUUM_DATABASE_ROLE_MODE=split` and run the application under a
+**non-owning, unprivileged PostgreSQL role**. Hubuum's generated privilege
+manifest supplies the exact grants; this simplified example illustrates the
+boundary:
 
 ```sql
 CREATE ROLE hubuum_app NOINHERIT;
@@ -357,9 +361,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO hubuum_ap
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hubuum_app;
 ```
 
+The default `single` topology intentionally uses one login for runtime and
+schema management. It remains supported, but that login can alter or own
+database objects, so it does not provide this defense against direct database
+credential compromise. See [PostgreSQL Database Roles](database_roles.md).
+
 ### History Table Protections
 
-**DEPLOYMENT CHECKLIST REQUIREMENT**: History integrity depends on database-level enforcement. In production:
+In split-role production deployments, history integrity depends on
+database-level enforcement:
 
 - **MUST NOT grant** `UPDATE` or `DELETE` on `_history` tables to the application role.
 - Triggers insert into history tables; the application role should only have **SELECT** grants.

@@ -5,7 +5,7 @@ use chrono::{Duration, Utc};
 use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 #[cfg(feature = "embedded-migrations")]
-use hubuum::errors::EXIT_CODE_DATABASE_ERROR;
+use hubuum::errors::{EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR};
 use hubuum::models::NewUser;
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use hubuum::schema::{collections, export_templates, identity_scopes, principals, users};
@@ -69,6 +69,7 @@ fn admin_help_exposes_reset_password() {
     assert!(stdout.contains("--database-role-setup-sql"));
     assert!(stdout.contains("--database-role-grants-sql"));
     assert!(stdout.contains("--check-database-privileges"));
+    assert!(stdout.contains("--database-role-mode"));
 }
 
 #[cfg(feature = "embedded-migrations")]
@@ -87,6 +88,27 @@ fn migration_connection_failures_use_the_database_exit_code() {
     assert_eq!(output.status.code(), Some(EXIT_CODE_DATABASE_ERROR));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Failed to run storage migrations"));
+}
+
+#[cfg(feature = "embedded-migrations")]
+#[test]
+fn split_role_migration_requires_the_privileged_database_url() {
+    let output = Command::new(admin_binary())
+        .env_remove("HUBUUM_DATABASE_URL")
+        .env_remove("HUBUUM_MIGRATION_DATABASE_URL")
+        .args([
+            "--migrate",
+            "--database-role-mode",
+            "split",
+            "--database-url",
+            "postgres://hubuum@127.0.0.1:1/unreachable",
+        ])
+        .output()
+        .expect("hubuum-admin --migrate should validate split-role configuration");
+
+    assert_eq!(output.status.code(), Some(EXIT_CODE_CONFIG_ERROR));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("HUBUUM_MIGRATION_DATABASE_URL must be set"));
 }
 
 #[cfg(unix)]

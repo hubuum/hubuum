@@ -1,9 +1,14 @@
 # PostgreSQL Database Roles
 
-Hubuum uses three distinct PostgreSQL roles. Long-lived API and worker
-processes must use only the runtime role. Schema changes and the isolated
-restore executor use a separate migrator credential, while a non-login owner
-holds application objects.
+Hubuum defaults to `HUBUUM_DATABASE_ROLE_MODE=single`, in which the server,
+one-shot migration job, and isolated restore executor all use
+`HUBUUM_DATABASE_URL`. This preserves the original one-login deployment model
+while keeping schema migration and restore execution in separate processes.
+
+Set `HUBUUM_DATABASE_ROLE_MODE=split` to opt into three distinct PostgreSQL
+roles. Long-lived API and worker processes then use only the runtime role.
+Schema changes and the isolated restore executor use a separate migrator
+credential, while a non-login owner holds application objects.
 
 | Role | Login | Purpose | Must not have |
 | --- | --- | --- | --- |
@@ -14,7 +19,26 @@ holds application objects.
 The default names are `hubuum_owner`, `hubuum_migrator`, and
 `hubuum_runtime`. Override all workloads consistently with
 `HUBUUM_DATABASE_OWNER_ROLE`, `HUBUUM_DATABASE_MIGRATOR_ROLE`, and
-`HUBUUM_DATABASE_RUNTIME_ROLE`.
+`HUBUUM_DATABASE_RUNTIME_ROLE`. These names and the generated privilege
+manifest are ignored by normal server startup in `single` mode.
+
+## Choosing A Topology
+
+Use `single` when the database provider supplies one application identity or
+operational simplicity is more important than limiting the impact of a leaked
+runtime credential. Run migrations and the restore executor with the same URL:
+
+```bash
+export HUBUUM_DATABASE_ROLE_MODE=single
+export HUBUUM_DATABASE_URL='postgres://hubuum:.../hubuum'
+hubuum-admin --migrate
+hubuum-admin --restore-executor
+```
+
+Use `split` when the provider can express role membership and separate
+workload credentials. Set the mode on the server, migration job, and restore
+executor. The remaining sections describe provisioning and operating that
+topology.
 
 ## Privilege Manifest
 
@@ -48,6 +72,7 @@ Run the full setup SQL through an identity that may create roles and change
 object ownership. The output is idempotent and contains no credentials:
 
 ```bash
+export HUBUUM_DATABASE_ROLE_MODE=split
 hubuum-admin --database-role-setup-sql > hubuum-database-roles.sql
 psql "$POSTGRES_BOOTSTRAP_URL" --set ON_ERROR_STOP=1 \
   --file hubuum-database-roles.sql
@@ -104,17 +129,14 @@ hubuum-admin \
   --database-role-setup-sql > hubuum-database-role-adoption.sql
 ```
 
-The new admin binary also retains an explicit legacy bridge for deployments
-that must upgrade the schema before they can provision roles.
-`hubuum-admin --migrate --legacy-single-role-migration` applies migrations as
-the connected existing owner and prints a compatibility-mode warning. It does
-not transfer ownership or reconcile runtime grants. The flag rejects all three
-database-role settings so the bridge cannot be confused with split-role
-migration. Keep restore confirmation blocked and privilege mode at `warn`, then
-complete the role-adoption procedure below before starting the restore
-executor, enabling strict mode, or unblocking web restore confirmation. Without
-the legacy flag, migration always reconciles the split roles, using the
-documented defaults for names not overridden.
+An existing installation can remain in `single` mode indefinitely. To adopt
+split roles, keep restore confirmation blocked and privilege mode at `warn`,
+then complete the role-adoption procedure below before setting
+`HUBUUM_DATABASE_ROLE_MODE=split`, starting the migrator-backed restore
+executor, enabling strict mode, or unblocking web restore confirmation.
+`hubuum-admin --migrate --legacy-single-role-migration` remains as a deprecated
+alias for an ordinary single-role migration; new automation should use the
+role-mode setting instead.
 
 Set `HUBUUM_DATABASE_RUNTIME_ROLE=EXISTING_APPLICATION_ROLE` on the old and new
 server versions during that rollout. Then use this order:
@@ -229,12 +251,12 @@ Add `--json` for machine-readable output. The audit checks the role named in
 the manifest and also requires PostgreSQL `current_user` to be that role; an
 overprivileged connection cannot pass by auditing a different safe identity.
 
-Server startup repeats this audit. `HUBUUM_DATABASE_PRIVILEGE_MODE=warn` is the
-compatibility default and emits findings without stopping the process. New
-production deployments should use `strict`, which fails startup when the role
-is dangerous, incomplete, different from the connected identity, or cannot be
-inspected. Runtime configuration reports the mode and role names but never a
-database URL or credential.
+Server startup repeats this audit only in `split` mode.
+`HUBUUM_DATABASE_PRIVILEGE_MODE=warn` emits findings without stopping the
+process. Split-role production deployments should use `strict`, which fails
+startup when the role is dangerous, incomplete, different from the connected
+identity, or cannot be inspected. Runtime configuration reports the topology,
+audit mode, and role names but never a database URL or credential.
 
 ## Container And Single-Host Deployments
 
@@ -247,20 +269,31 @@ docker compose --profile administration run --rm hubuum-migrate --migrate
 docker compose up -d hubuum-restore-executor hubuum
 ```
 
-Set unique `POSTGRES_PASSWORD`, `POSTGRES_MIGRATOR_PASSWORD`, and
-`POSTGRES_RUNTIME_PASSWORD` values in `.env`. The long-lived `hubuum` service
-receives only the runtime URL. The isolated
-`hubuum-restore-executor` receives only the migration URL, exposes no network
-port, and runs read-only with all Linux capabilities dropped. The transient
+The default repository Compose configuration requires only
+`POSTGRES_PASSWORD`; every workload connects as `hubuum`. To enable split
+roles on a fresh volume, set `HUBUUM_DATABASE_ROLE_MODE=split`, unique
+`POSTGRES_MIGRATOR_PASSWORD` and `POSTGRES_RUNTIME_PASSWORD` values, and the
+matching runtime and migration URLs shown in `.env.example`. The long-lived
+`hubuum` service then receives only the runtime URL. The isolated
+`hubuum-restore-executor` receives the migration URL, exposes no network port,
+and runs read-only with all Linux capabilities dropped. The transient
 `hubuum-migrate` service uses the same privileged URL for schema changes.
 
-The single-host installer implements the same boundary automatically. For an
-external PostgreSQL server, both URLs are required:
+If reusing a volume initialized by the earlier split-only Compose example, set
+`HUBUUM_DATABASE_ROLE_MODE=split`, `POSTGRES_USER=hubuum_bootstrap`, and the
+existing runtime and migration URLs before starting it with this Compose file.
+Those values preserve the bootstrap login and established role topology.
+
+The single-host installer defaults to one generated database login. Pass
+`--database-role-mode split` to generate and deploy the separated identities.
+For an external PostgreSQL server, the migration URL is required only with
+split mode:
 
 ```bash
 sudo ./scripts/install-single-host.sh \
   --api hubuum-api.example.com \
   --email admin@example.com \
+  --database-role-mode split \
   --database-url 'postgres://hubuum_runtime:.../hubuum?sslmode=require' \
   --migration-database-url 'postgres://hubuum_migrator:.../hubuum?sslmode=require'
 ```
@@ -305,6 +338,8 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           command: ["/usr/local/bin/hubuum-admin", "--migrate"]
           env:
+            - name: HUBUUM_DATABASE_ROLE_MODE
+              value: split
             - name: HUBUUM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -323,6 +358,8 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           args: ["--runtime-role", "api"]
           env:
+            - name: HUBUUM_DATABASE_ROLE_MODE
+              value: split
             - name: HUBUUM_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -357,6 +394,8 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           command: ["/usr/local/bin/hubuum-admin", "--restore-executor"]
           env:
+            - name: HUBUUM_DATABASE_ROLE_MODE
+              value: split
             - name: HUBUUM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -381,7 +420,8 @@ process. The administrator stages and confirms the exact document through the
 API. Confirmation enters draining maintenance and returns `202 Accepted`; the
 isolated `hubuum-admin --restore-executor` process re-loads and validates the
 stored document, waits for runtime instances to drain, and performs the
-replacement with `HUBUUM_MIGRATION_DATABASE_URL`. The capability-authenticated
+replacement with `HUBUUM_DATABASE_URL` in single mode or
+`HUBUUM_MIGRATION_DATABASE_URL` in split mode. The capability-authenticated
 status endpoint reports `confirmed`, then `succeeded` or `failed`.
 
 The executor accepts no SQL, identifiers, or document path from the network.

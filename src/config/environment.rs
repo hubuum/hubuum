@@ -62,6 +62,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_RUNTIME_ROLE", Server),
     option!("HUBUUM_STORAGE_BACKEND", Database),
     option!("HUBUUM_DATABASE_URL", Database, sensitive),
+    option!("HUBUUM_DATABASE_ROLE_MODE", Database),
     option!("HUBUUM_DATABASE_PRIVILEGE_MODE", Database),
     option!("HUBUUM_DATABASE_OWNER_ROLE", Database),
     option!("HUBUUM_DATABASE_MIGRATOR_ROLE", Database),
