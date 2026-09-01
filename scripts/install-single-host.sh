@@ -23,6 +23,7 @@ VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 EXTERNAL_DATABASE_URL=""
 EXTERNAL_MIGRATION_DATABASE_URL=""
+DATABASE_ROLE_MODE="single"
 AUTH_CONFIG_HOST_PATH=""
 AUTH_CONFIG_CONTAINER_PATH="/etc/hubuum/auth.toml"
 NETWORK_SUBNET="172.30.42.0/24"
@@ -68,7 +69,9 @@ Options:
   --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
   --migration-database-url URL
-                          Migrator Postgres URL required with --database-url
+                          Migrator Postgres URL required for split database roles
+  --database-role-mode MODE
+                          Database roles: single or split. Default: single
   --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
   --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.4 on Alpine 3.24 (digest-pinned)
@@ -155,6 +158,7 @@ while [[ $# -gt 0 ]]; do
     --frontend-repo) FRONTEND_REPO="$2"; ARG_SET+=" FRONTEND_REPO"; shift 2 ;;
     --database-url) EXTERNAL_DATABASE_URL="$2"; ARG_SET+=" EXTERNAL_DATABASE_URL"; shift 2 ;;
     --migration-database-url) EXTERNAL_MIGRATION_DATABASE_URL="$2"; ARG_SET+=" EXTERNAL_MIGRATION_DATABASE_URL"; shift 2 ;;
+    --database-role-mode) DATABASE_ROLE_MODE="$2"; ARG_SET+=" DATABASE_ROLE_MODE"; shift 2 ;;
     --auth-config) AUTH_CONFIG_HOST_PATH="$2"; ARG_SET+=" AUTH_CONFIG_HOST_PATH"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
     --postgres-image) POSTGRES_IMAGE="$2"; ARG_SET+=" POSTGRES_IMAGE"; shift 2 ;;
@@ -219,11 +223,21 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env FRONTEND_REPO FRONTEND_REPO
   reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
   reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
+  reuse_from_env DATABASE_ROLE_MODE HUBUUM_DATABASE_ROLE_MODE
   reuse_from_env AUTH_CONFIG_HOST_PATH HUBUUM_AUTH_CONFIG_HOST_PATH
   reuse_from_env SCRIPT_BASE_URL MANAGEMENT_SCRIPT_BASE_URL
+  if ! arg_was_set DATABASE_ROLE_MODE \
+    && [[ -z "$(read_env_value HUBUUM_DATABASE_ROLE_MODE || true)" ]] \
+    && [[ -n "$(read_env_value POSTGRES_MIGRATOR_PASSWORD || true)" ]] \
+    && [[ -n "$(read_env_value POSTGRES_RUNTIME_PASSWORD || true)" ]]; then
+    # Installations generated while split roles were mandatory predate the
+    # topology setting. Preserve their established credential boundary.
+    DATABASE_ROLE_MODE="split"
+  fi
 fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
+[[ "$DATABASE_ROLE_MODE" == "single" || "$DATABASE_ROLE_MODE" == "split" ]] || die "--database-role-mode must be single or split"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
 [[ "$API_PORT" =~ ^[0-9]+$ && "$API_PORT" -ge 1 && "$API_PORT" -le 65535 ]] || die "--api-port must be an integer between 1 and 65535"
 if [[ -n "$SHARED_HOST_ROUTING" && "$SHARED_HOST_ROUTING" != "bff" && "$SHARED_HOST_ROUTING" != "direct" && "$SHARED_HOST_ROUTING" != "prefixed" ]]; then
@@ -485,18 +499,29 @@ if [[ "$RECREATE" == "true" && -z "$EXTERNAL_DATABASE_URL" && -n "$EXISTING_POST
 fi
 
 [[ -n "$POSTGRES_PASSWORD" ]] || POSTGRES_PASSWORD="$(random_hex 32)"
-[[ -n "$POSTGRES_MIGRATOR_PASSWORD" ]] || POSTGRES_MIGRATOR_PASSWORD="$(random_hex 32)"
-[[ -n "$POSTGRES_RUNTIME_PASSWORD" ]] || POSTGRES_RUNTIME_PASSWORD="$(random_hex 32)"
+if [[ "$DATABASE_ROLE_MODE" == "split" ]]; then
+  [[ -n "$POSTGRES_MIGRATOR_PASSWORD" ]] || POSTGRES_MIGRATOR_PASSWORD="$(random_hex 32)"
+  [[ -n "$POSTGRES_RUNTIME_PASSWORD" ]] || POSTGRES_RUNTIME_PASSWORD="$(random_hex 32)"
+fi
 [[ -n "$HUBUUM_TOKEN_HASH_KEY" ]] || HUBUUM_TOKEN_HASH_KEY="$(random_hex 32)"
 
 DATABASE_MANAGED="true"
-HUBUUM_DATABASE_URL="postgres://hubuum_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/hubuum"
-HUBUUM_MIGRATION_DATABASE_URL="postgres://hubuum_migrator:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/hubuum"
+if [[ "$DATABASE_ROLE_MODE" == "split" ]]; then
+  HUBUUM_DATABASE_URL="postgres://hubuum_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/hubuum"
+  HUBUUM_MIGRATION_DATABASE_URL="postgres://hubuum_migrator:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/hubuum"
+  HUBUUM_DATABASE_PRIVILEGE_MODE="strict"
+else
+  HUBUUM_DATABASE_URL="postgres://hubuum:${POSTGRES_PASSWORD}@postgres:5432/hubuum"
+  HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_DATABASE_URL"
+  HUBUUM_DATABASE_PRIVILEGE_MODE="warn"
+fi
 if [[ -n "$EXTERNAL_DATABASE_URL" ]]; then
-  [[ -n "$EXTERNAL_MIGRATION_DATABASE_URL" ]] || die "--migration-database-url is required with --database-url (or set HUBUUM_MIGRATION_DATABASE_URL in the existing .env)"
+  if [[ "$DATABASE_ROLE_MODE" == "split" && -z "$EXTERNAL_MIGRATION_DATABASE_URL" ]]; then
+    die "--migration-database-url is required with --database-role-mode split"
+  fi
   DATABASE_MANAGED="false"
   HUBUUM_DATABASE_URL="$EXTERNAL_DATABASE_URL"
-  HUBUUM_MIGRATION_DATABASE_URL="$EXTERNAL_MIGRATION_DATABASE_URL"
+  HUBUUM_MIGRATION_DATABASE_URL="${EXTERNAL_MIGRATION_DATABASE_URL:-$EXTERNAL_DATABASE_URL}"
 fi
 
 LOGIN_RATE_LIMIT_BACKEND="memory"
@@ -531,12 +556,13 @@ write_deployment_env() {
   printf 'POSTGRES_MIGRATOR_PASSWORD=%s\n' "$POSTGRES_MIGRATOR_PASSWORD"
   printf 'POSTGRES_RUNTIME_PASSWORD=%s\n' "$POSTGRES_RUNTIME_PASSWORD"
   printf '\n'
+  printf 'HUBUUM_DATABASE_ROLE_MODE=%s\n' "$DATABASE_ROLE_MODE"
   printf 'HUBUUM_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
   printf 'HUBUUM_MIGRATION_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_MIGRATION_DATABASE_URL")"
   printf 'HUBUUM_DATABASE_OWNER_ROLE=hubuum_owner\n'
   printf 'HUBUUM_DATABASE_MIGRATOR_ROLE=hubuum_migrator\n'
   printf 'HUBUUM_DATABASE_RUNTIME_ROLE=hubuum_runtime\n'
-  printf 'HUBUUM_DATABASE_PRIVILEGE_MODE=strict\n'
+  printf 'HUBUUM_DATABASE_PRIVILEGE_MODE=%s\n' "$HUBUUM_DATABASE_PRIVILEGE_MODE"
   printf 'HUBUUM_BIND_IP=0.0.0.0\n'
   printf 'HUBUUM_BIND_PORT=%s\n' "$API_PORT"
   printf 'HUBUUM_LOG_LEVEL=info\n'
@@ -603,6 +629,13 @@ set -eu
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
+case "${HUBUUM_DATABASE_ROLE_MODE:-single}" in
+  single) exit 0 ;;
+  split) ;;
+  *) echo "HUBUUM_DATABASE_ROLE_MODE must be single or split" >&2; exit 1 ;;
+esac
+
 : "${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}"
 : "${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}"
 
@@ -792,6 +825,7 @@ if [[ "$DATABASE_MANAGED" == "true" ]]; then
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      HUBUUM_DATABASE_ROLE_MODE: ${HUBUUM_DATABASE_ROLE_MODE}
       POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD}
       POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
       PGUSER: ${POSTGRES_USER}
@@ -836,6 +870,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     security_opt:
       - no-new-privileges:true
     environment:
+      HUBUUM_DATABASE_ROLE_MODE: ${HUBUUM_DATABASE_ROLE_MODE}
+      HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
       HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL}
       HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
       HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
@@ -874,6 +910,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     security_opt:
       - no-new-privileges:true
     environment:
+      HUBUUM_DATABASE_ROLE_MODE: ${HUBUUM_DATABASE_ROLE_MODE}
+      HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
       HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL}
       HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
       HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}
@@ -914,6 +952,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     environment:
       HUBUUM_BIND_IP: ${HUBUUM_BIND_IP}
       HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}
+      HUBUUM_DATABASE_ROLE_MODE: ${HUBUUM_DATABASE_ROLE_MODE}
       HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
       HUBUUM_DATABASE_OWNER_ROLE: ${HUBUUM_DATABASE_OWNER_ROLE}
       HUBUUM_DATABASE_MIGRATOR_ROLE: ${HUBUUM_DATABASE_MIGRATOR_ROLE}

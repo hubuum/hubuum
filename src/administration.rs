@@ -12,7 +12,7 @@ use crate::config::{
     DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
-    DEFAULT_TOKEN_LIFETIME_HOURS, token_hash_key_ring,
+    DEFAULT_TOKEN_LIFETIME_HOURS, DatabaseRoleMode, token_hash_key_ring,
 };
 #[cfg(feature = "embedded-migrations")]
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
@@ -120,7 +120,7 @@ struct AdminCli {
     #[arg(long, default_value_t = false)]
     migrate: bool,
 
-    /// Migrate an existing single-role database without reconciling split-role grants
+    /// Compatibility alias for --database-role-mode single during migration
     #[cfg(feature = "embedded-migrations")]
     #[arg(
         long,
@@ -171,6 +171,15 @@ struct AdminCli {
         default_value = "postgresql"
     )]
     storage_backend: StorageBackendKind,
+
+    /// Database credential topology: one shared login or split owner/migrator/runtime roles
+    #[arg(
+        long,
+        env = "HUBUUM_DATABASE_ROLE_MODE",
+        value_enum,
+        default_value = "single"
+    )]
+    database_role_mode: DatabaseRoleMode,
 
     /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
@@ -260,17 +269,13 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         return Ok(());
     }
 
-    let database_roles = resolve_database_roles(
-        admin_cli.database_owner_role.as_deref(),
-        admin_cli.database_migrator_role.as_deref(),
-        admin_cli.database_runtime_role.as_deref(),
-    )?;
-
     if admin_cli.database_role_setup_sql {
+        let database_roles = configured_database_roles(&admin_cli)?;
         print!("{}", storage_database_role_setup_sql(&database_roles)?);
         return Ok(());
     }
     if admin_cli.database_role_grants_sql {
+        let database_roles = configured_database_roles(&admin_cli)?;
         println!("BEGIN;");
         print!("{}", storage_database_role_grants_sql(&database_roles)?);
         println!("COMMIT;");
@@ -287,22 +292,38 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let migration_requested = admin_cli.migrate;
     #[cfg(not(feature = "embedded-migrations"))]
     let migration_requested = false;
+    #[cfg(feature = "embedded-migrations")]
+    let database_role_mode = effective_database_role_mode(&admin_cli)?;
+    #[cfg(not(feature = "embedded-migrations"))]
+    let database_role_mode = admin_cli.database_role_mode;
     let privileged_database_operation =
         migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
-    let database_url = if admin_cli.restore_executor {
-        admin_cli.migration_database_url
+    let configured_database_url = admin_cli
+        .database_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty());
+    let configured_migration_database_url = admin_cli
+        .migration_database_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty());
+    let database_url = if privileged_database_operation && database_role_mode.uses_split_roles() {
+        configured_migration_database_url.map(str::to_owned)
     } else if privileged_database_operation {
-        admin_cli.migration_database_url.or(admin_cli.database_url)
+        configured_migration_database_url
+            .or(configured_database_url)
+            .map(str::to_owned)
     } else {
-        admin_cli.database_url
+        configured_database_url.map(str::to_owned)
     };
     let storage_settings = match admin_cli.storage_backend {
         StorageBackendKind::Postgres => {
             let database_url = database_url.unwrap_or_else(|| {
-                let variable = if admin_cli.restore_executor {
+                let variable = if privileged_database_operation
+                    && database_role_mode.uses_split_roles()
+                {
                     "HUBUUM_MIGRATION_DATABASE_URL"
                 } else if privileged_database_operation {
-                    "HUBUUM_MIGRATION_DATABASE_URL (or the compatibility fallback HUBUUM_DATABASE_URL)"
+                    "HUBUUM_DATABASE_URL (or the optional HUBUUM_MIGRATION_DATABASE_URL override)"
                 } else {
                     "HUBUUM_DATABASE_URL"
                 };
@@ -322,9 +343,12 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
-        let migration_roles = (!admin_cli.legacy_single_role_migration).then_some(&database_roles);
-        let applied =
-            run_storage_migrations(&storage_settings, migration_roles).unwrap_or_else(|error| {
+        let database_roles = database_role_mode
+            .uses_split_roles()
+            .then(|| configured_database_roles(&admin_cli))
+            .transpose()?;
+        let applied = run_storage_migrations(&storage_settings, database_roles.as_ref())
+            .unwrap_or_else(|error| {
                 fatal_error(
                     &format!("Failed to run storage migrations: {error}"),
                     EXIT_CODE_DATABASE_ERROR,
@@ -332,10 +356,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             });
         if admin_cli.legacy_single_role_migration {
             eprintln!(
-                "WARNING: --legacy-single-role-migration was requested; migrations ran as the \
-                 connected existing owner without privilege reconciliation. Complete the \
-                 database-role adoption procedure before enabling strict privilege checks or web \
-                 restore confirmations."
+                "WARNING: --legacy-single-role-migration is deprecated; single-role migration is \
+                 now the default. Use --database-role-mode single explicitly if desired."
             );
         }
         println!("Applied {applied} storage migration(s).");
@@ -343,6 +365,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     if admin_cli.check_database_privileges {
+        let database_roles = configured_database_roles(&admin_cli)?;
         let role = match admin_cli.role {
             DatabasePrivilegeRole::Owner => StorageDatabaseRole::Owner,
             DatabasePrivilegeRole::Migrator => StorageDatabaseRole::Migrator,
@@ -411,6 +434,29 @@ fn resolve_database_roles(
         runtime.unwrap_or(DEFAULT_DATABASE_RUNTIME_ROLE),
     )
     .map_err(|error| ApiError::BadRequest(error.to_string()))
+}
+
+fn configured_database_roles(admin_cli: &AdminCli) -> Result<StorageDatabaseRoleNames, ApiError> {
+    resolve_database_roles(
+        admin_cli.database_owner_role.as_deref(),
+        admin_cli.database_migrator_role.as_deref(),
+        admin_cli.database_runtime_role.as_deref(),
+    )
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn effective_database_role_mode(admin_cli: &AdminCli) -> Result<DatabaseRoleMode, ApiError> {
+    if admin_cli.legacy_single_role_migration && admin_cli.database_role_mode.uses_split_roles() {
+        return Err(ApiError::BadRequest(
+            "--legacy-single-role-migration cannot be combined with --database-role-mode split"
+                .to_string(),
+        ));
+    }
+    if admin_cli.legacy_single_role_migration {
+        Ok(DatabaseRoleMode::Single)
+    } else {
+        Ok(admin_cli.database_role_mode)
+    }
 }
 
 fn print_database_privilege_report(
@@ -1233,10 +1279,12 @@ fn init_logging(log_level: &str) {
 mod tests {
     use clap::Parser;
 
+    #[cfg(feature = "embedded-migrations")]
+    use super::effective_database_role_mode;
     use super::{
         AdminCli, DEFAULT_DATABASE_MIGRATOR_ROLE, DEFAULT_DATABASE_OWNER_ROLE,
-        DEFAULT_DATABASE_RUNTIME_ROLE, StorageBackendKind, StorageDatabaseRoleNames,
-        resolve_database_roles,
+        DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
+        StorageDatabaseRoleNames, resolve_database_roles,
     };
 
     #[test]
@@ -1305,5 +1353,35 @@ mod tests {
         };
 
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn legacy_single_role_migration_rejects_split_mode() {
+        let cli = AdminCli::try_parse_from([
+            "hubuum-admin",
+            "--migrate",
+            "--legacy-single-role-migration",
+            "--database-role-mode",
+            "split",
+        ])
+        .unwrap();
+
+        let error = effective_database_role_mode(&cli).unwrap_err();
+
+        assert!(error.to_string().contains("cannot be combined"));
+    }
+
+    #[test]
+    fn database_role_mode_accepts_explicit_single_and_split_values() {
+        for (value, expected) in [
+            ("single", DatabaseRoleMode::Single),
+            ("split", DatabaseRoleMode::Split),
+        ] {
+            let cli =
+                AdminCli::try_parse_from(["hubuum-admin", "--database-role-mode", value]).unwrap();
+
+            assert_eq!(cli.database_role_mode, expected);
+        }
     }
 }

@@ -244,7 +244,7 @@ hubuum_reload_caddy_and_wait_for_upstreams() {
 }
 
 hubuum_run_migrations() {
-  if [[ "${DATABASE_MANAGED:-true}" == "true" ]]; then
+  if [[ "${DATABASE_MANAGED:-true}" == "true" && "${DATABASE_ROLE_MODE:-${HUBUUM_DATABASE_ROLE_MODE:-single}}" == "split" ]]; then
     echo "Reconciling managed database roles..."
     "${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate \
       --database-role-setup-sql | \

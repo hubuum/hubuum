@@ -51,6 +51,11 @@ migrations; it does not require the Diesel CLI or `psql`. See
 [PostgreSQL Database Roles](database_roles.md) for initial provisioning and the
 complete least-privilege contract.
 
+With the default `HUBUUM_DATABASE_ROLE_MODE=single`, give the Job
+`HUBUUM_DATABASE_URL`, using the same Secret as the application. The example
+below shows the opt-in split topology; set the mode on every workload and keep
+the migration Secret out of API and worker Deployments.
+
 ```yaml
 apiVersion: batch/v1
 kind: Job
@@ -65,6 +70,8 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           command: ["/usr/local/bin/hubuum-admin", "--migrate"]
           env:
+            - name: HUBUUM_DATABASE_ROLE_MODE
+              value: split
             - name: HUBUUM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -101,7 +108,7 @@ migration required by the binary. API `/readyz` performs the same schema check.
 This prevents a missed or incomplete migration job from making a replica appear
 ready, while keeping migration ownership in the one-shot job.
 
-For the database-role migration, first verify maintenance is `normal` and block
+When adopting split database roles, first verify maintenance is `normal` and block
 `POST /api/v1/restores/*/confirm` at the ingress. The migration shares the
 restore advisory lock and refuses to run if a confirmed restore is draining;
 validated stages are preserved. After the Job succeeds, deploy and verify the
@@ -135,6 +142,8 @@ spec:
           image: ghcr.io/hubuum/hubuum-server:VERSION
           command: ["/usr/local/bin/hubuum-admin", "--restore-executor"]
           env:
+            - name: HUBUUM_DATABASE_ROLE_MODE
+              value: split
             - name: HUBUUM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -147,10 +156,10 @@ spec:
               drop: ["ALL"]
 ```
 
-Do not add a Service or mount the migration secret into API or worker pods.
-The executor polls database control state, revalidates the staged document, and
-uses the migrator role only for the closed, transaction-protected restore
-operation.
+Do not add a Service. In split mode, do not mount the migration secret into API
+or worker pods. The executor polls database control state, revalidates the
+staged document, and uses the configured single or migrator identity only for
+the closed, transaction-protected restore operation.
 
 ## Kubernetes And Helm HTTP Availability
 
@@ -242,11 +251,12 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 ```
 
-The migration Job must use the new application image and a distinct migrator
-credential that is not mounted into any Deployment. If the chart creates that
-credential, make it available before the hook runs or keep migration ownership
-in the release pipeline. A failed migration must stop the rollout while the old
-API replicas remain online.
+The migration Job must use the new application image. In single mode it may use
+the application database Secret. In split mode it must use a distinct migrator
+credential that is not mounted into any application Deployment. If the chart
+creates that credential, make it available before the hook runs or keep
+migration ownership in the release pipeline. A failed migration must stop the
+rollout while the old API replicas remain online.
 
 Every migration used in this sequence must be compatible with both the old and
 new API versions. Use expand/backfill/switch/contract changes across releases;

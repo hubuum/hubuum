@@ -364,6 +364,26 @@ fn development_compose_requires_a_local_password() {
 }
 
 #[test]
+fn compose_database_roles_default_to_single_with_split_opt_in() {
+    let compose = read_repository_text("docker-compose.yml");
+    let initializer = read_repository_text("docker/postgres/init-database-roles.sh");
+
+    assert!(compose.contains("HUBUUM_DATABASE_ROLE_MODE: ${HUBUUM_DATABASE_ROLE_MODE:-single}"));
+    assert!(compose.contains("HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL:-}"));
+    assert!(!compose.contains(
+        "HUBUUM_MIGRATION_DATABASE_URL: ${HUBUUM_MIGRATION_DATABASE_URL:-${HUBUUM_DATABASE_URL"
+    ));
+    assert!(
+        compose
+            .contains("HUBUUM_DATABASE_PRIVILEGE_MODE: ${HUBUUM_DATABASE_PRIVILEGE_MODE:-strict}")
+    );
+    assert!(compose.contains("POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:-}"));
+    assert!(compose.contains("POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:-}"));
+    assert!(initializer.contains("role_mode=\"${HUBUUM_DATABASE_ROLE_MODE:-single}\""));
+    assert!(initializer.contains("split)"));
+}
+
+#[test]
 fn development_compose_limits_container_privileges() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let compose = fs::read_to_string(repository.join("docker-compose.yml"))

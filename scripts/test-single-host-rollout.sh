@@ -128,6 +128,21 @@ assert_commands() {
   diff -u "$expected" "$actual"
 }
 
+assert_commands_with_unordered_prefix() {
+  local expected="$1"
+  local unordered_count="$2"
+  local actual="$TEST_ROOT/actual.log"
+  local ordered_start=$((unordered_count + 1))
+
+  grep -E '(^| )(run|up|exec|start|stop) ' "$COMMAND_LOG" > "$actual"
+  diff -u \
+    <(head -n "$unordered_count" "$expected" | sort) \
+    <(head -n "$unordered_count" "$actual" | sort)
+  diff -u \
+    <(tail -n +"$ordered_start" "$expected") \
+    <(tail -n +"$ordered_start" "$actual")
+}
+
 assert_caddy_upstream_status_eligibility() {
   local expected="$1"
   local upstreams="$2"
@@ -369,6 +384,7 @@ fi
 [[ "$reload_output" == *'fake reload diagnostic'* ]]
 
 DATABASE_MANAGED="true"
+DATABASE_ROLE_MODE="split"
 : > "$COMMAND_LOG"
 hubuum_run_migrations
 cat > "$TEST_ROOT/expected-managed-migration.log" <<EOF
@@ -377,6 +393,17 @@ compose --env-file .env -f compose.yml exec -T postgres psql --set ON_ERROR_STOP
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-set-database-role-passwords postgres
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 EOF
-assert_commands "$TEST_ROOT/expected-managed-migration.log"
+# Bash starts both sides of a pipeline concurrently, so either Compose process
+# may reach the fake engine first. The password update and migration remain
+# ordered after both pipeline processes finish.
+assert_commands_with_unordered_prefix "$TEST_ROOT/expected-managed-migration.log" 2
+
+DATABASE_ROLE_MODE="single"
+: > "$COMMAND_LOG"
+hubuum_run_migrations
+cat > "$TEST_ROOT/expected-managed-single-role-migration.log" <<EOF
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+EOF
+assert_commands "$TEST_ROOT/expected-managed-single-role-migration.log"
 
 echo "Single-host rolling update test passed"

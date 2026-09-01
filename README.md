@@ -111,8 +111,9 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Atomic RFC 6902 updates to raw object data are documented in
   [docs/object_data_json_patch.md](docs/object_data_json_patch.md).
 - Full-system disaster-recovery behavior is documented in [docs/backup-restore.md](docs/backup-restore.md).
-- PostgreSQL owner, migrator, and runtime privilege boundaries are documented
-  in [docs/database_roles.md](docs/database_roles.md).
+- Optional PostgreSQL owner, migrator, and runtime privilege boundaries are
+  documented in [docs/database_roles.md](docs/database_roles.md); the default
+  topology retains one database login.
 - Database pool sizing, observability, and load testing are documented in [docs/performance.md](docs/performance.md).
 
 ### Production Behavior

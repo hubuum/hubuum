@@ -21,12 +21,16 @@ The development Compose stack requires a local, untracked `.env` file instead
 of using a password committed to the repository:
 
 ```bash
-for variable in POSTGRES_PASSWORD POSTGRES_MIGRATOR_PASSWORD POSTGRES_RUNTIME_PASSWORD; do
-  printf '%s=%s\n' "$variable" "$(openssl rand -hex 32)"
-done > .env
+printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
 docker compose --profile administration run --rm hubuum-migrate --migrate
-docker compose up --build -d hubuum
+docker compose up --build -d hubuum-restore-executor hubuum
 ```
+
+This default uses one PostgreSQL login for the server, one-shot migrations,
+and the isolated restore executor. To opt into separate least-privilege roles,
+set `HUBUUM_DATABASE_ROLE_MODE=split`, provide unique migrator and runtime
+passwords and URLs as shown in `.env.example`, and initialize a fresh Compose
+database volume.
 
 The API is published on `127.0.0.1:9999` and PostgreSQL on
 `127.0.0.1:9998`; neither service listens on all host interfaces by default.
@@ -74,12 +78,13 @@ examples.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
-| `HUBUUM_DATABASE_URL` | `postgres://localhost` | Runtime-role PostgreSQL connection URL |
-| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Migrator-role URL accepted by `hubuum-admin --migrate`, `--restore`, and `--restore-executor`; never configure this on an API or worker process |
-| `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role |
-| `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role |
-| `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role |
-| `HUBUUM_DATABASE_PRIVILEGE_MODE` | `warn` | Runtime privilege audit behavior: `warn` or startup-failing `strict` |
+| `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL; used by all workloads in `single` mode and only runtime workloads in `split` mode |
+| `HUBUUM_DATABASE_ROLE_MODE` | `single` | Credential topology: one shared login (`single`) or separate owner, migrator, and runtime roles (`split`) |
+| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Optional privileged URL for admin migrations and restore execution in `single` mode; required for those workloads in `split` mode and never configured on an API or worker process |
+| `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role used in `split` mode |
+| `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role used in `split` mode |
+| `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role used in `split` mode |
+| `HUBUUM_DATABASE_PRIVILEGE_MODE` | `warn` | Split-role runtime privilege audit behavior: `warn` or startup-failing `strict`; ignored in `single` mode |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
 | `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `30000` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |

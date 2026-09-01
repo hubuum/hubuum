@@ -204,14 +204,26 @@ sudo ./scripts/install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
+  --database-url 'postgres://hubuum:secret@postgres.example.com:5432/hubuum?sslmode=require'
+```
+
+This uses the default single-role topology. To isolate the runtime credential,
+opt into split roles and provide both URLs:
+
+```bash
+sudo ./scripts/install-single-host.sh \
+  --web hubuum.example.com \
+  --api hubuum-api.example.com \
+  --email admin@example.com \
+  --database-role-mode split \
   --database-url 'postgres://hubuum_runtime:runtime-secret@postgres.example.com:5432/hubuum?sslmode=require' \
   --migration-database-url 'postgres://hubuum_migrator:migration-secret@postgres.example.com:5432/hubuum?sslmode=require'
 ```
 
-The runtime and migration identities must be provisioned before installation.
-The migration URL is injected only into the transient migration container and
-the isolated restore executor; API and worker containers receive only the
-runtime URL. See
+For split mode, the runtime and migration identities must be provisioned before
+installation. The migration URL is injected only into the transient migration
+container and the isolated restore executor; API and worker containers receive
+only the runtime URL. See
 [PostgreSQL Database Roles](database_roles.md) for the required grants,
 managed-service workflow, and upgrade diagnostics.
 
@@ -455,6 +467,8 @@ Common optional parameters:
 - `--dir`: install directory. Default: `/opt/hubuum`.
 - `--mode`: `all` or `backend`. Default: `all`.
 - `--database-url`: existing Postgres URL. If omitted, the installer creates a managed Postgres container.
+- `--database-role-mode`: `single` (default) or `split`.
+- `--migration-database-url`: privileged Postgres URL required with an external database only in split mode.
 - `--auth-config`: absolute path to a host auth-provider TOML file. The API container mounts it read-only at `/etc/hubuum/auth.toml`.
 - `--engine`: `auto`, `docker`, or `podman`. Default: `auto`.
 - `--backend-image`: backend image. Default: `ghcr.io/hubuum/hubuum-server:main`.
