@@ -156,6 +156,7 @@ name = "relations-balanced-spread-class-relation"
 principal = "admin"
 path = "/api/v1/relations/objects?class_relation={balanced_spread_class_relation_id}&limit={page_limit}&sort=id"
 weight = 5
+traverse = true
 
 [[scenarios]]
 name = "bounded-transitive-graph"

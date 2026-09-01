@@ -27,9 +27,10 @@ Every selected backend runs the same logical manifest and versioned HTTP
 workload. Common measurements use neutral names such as storage bytes, while
 optional data, index, write-ahead, resident-memory, CPU, and named custom
 metrics are reported only when an adapter can measure them honestly. This lets
-the suite distinguish three questions: base versus pull-request code at a fixed
-backend and corpus, one-axis corpus growth within a backend, and the reactions
-of different backends to the same corpus sizes.
+the suite measure one-axis corpus growth within a backend and compare how
+different backends react to the same corpus sizes. Ordinary `rust-pr-bench`
+jobs own base-versus-pull-request code-regression comparisons at a fixed
+corpus.
 
 ## Dataset Profiles
 
@@ -143,9 +144,11 @@ models or imply that a single run establishes a winner.
 
 ## Measure Scale Sensitivity
 
-Base/head assessment asks whether code changed at one fixed corpus size. It
-does not answer the marginal cost of more data, and comparing `large` with
-`huge` is not causal because every dataset dimension changes together.
+Base/head assessment asks whether code changed at one fixed corpus size. It is
+available as a local diagnostic, but ordinary `rust-pr-bench` CI owns that
+regression question. Scale CI instead asks for the marginal cost of more data.
+Comparing `large` with `huge` is not causal because every dataset dimension
+changes together.
 
 For a controlled sensitivity experiment, run the same binary, workload, seed,
 limit mode, PostgreSQL settings, and fresh-database procedure twice. Leave the
@@ -212,6 +215,21 @@ representative class relation crossed the 250-row page boundary. It also found
 that adding edges to small class pairs can exhaust the finite set of unique
 source/target pairs. That is a density or saturation experiment, not the same
 question as raw relation-table volume.
+
+The versioned CI experiment in `scale-benchmarks/sensitivity-v1.toml` therefore
+uses independent +20%, +50%, and +100% points for objects and object relations.
+In the pilot, +1% and +5% object changes stayed inside repeated-baseline
+endpoint variance; +20% was the first useful object-volume signal, +50%
+captured the observed relation-pagination boundary, and +100% tested whether
+the trend continued. These percentages are calibration choices, not permanent
+thresholds. Revise the versioned experiment after repeated measurements show
+that different points carry more information.
+
+Use `sensitivity-plan` to turn the relative matrix into exact increments for a
+profile, then produce one `impact` report per fresh-database point. After all
+points complete, `summarize-sensitivity` validates that the expected matrix is
+complete and renders exact baseline and expanded corpus sizes, absolute
+measurements, and relative costs in one report.
 
 Treat a repeatable corpus-size slope in a bounded, fixed-result operation as
 an optimization target unless the operation intentionally examines a
@@ -295,11 +313,13 @@ Applying both labels runs both profiles. The workflow can also be dispatched
 manually with explicit profile and limit selections. A weekly schedule runs the
 large profile and a monthly schedule runs the huge profile. Superseded runs are
 cancelled. Each profile and limit combination has a distinct job summary and
-artifact name, and pull-request jobs use the head runner to generate equivalent
-base and head corpora before assessing them. A final job consolidates the
-compact summaries into one updatable `Scale PR Bench Report` comment with a
-link to the workflow and its sanitized 14-day artifacts. Scenario timing and
-resource details remain collapsed in the comment.
+artifact name. It holds one binary, workload, backend, seed, and limit mode
+fixed; measures a fresh baseline; then measures each calibrated object and
+object-relation growth point against its own fresh database. A final job
+consolidates exact corpus sizes, search and relation latency/throughput,
+traversal pagination, and database/index costs into one updatable `Scale Growth
+Report` comment with a link to the workflow and its sanitized 14-day artifacts.
+The report explicitly leaves code-regression detection to `rust-pr-bench`.
 
 Generator code, profile and workload specifications, and the scale workflow
 have an explicit `scale_benchmark` classification in

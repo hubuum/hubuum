@@ -142,10 +142,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_base
-      BASE_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_base_verify
-      HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_head
-      HEAD_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_head_verify
+      SCALE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_measure
+      SCALE_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_verify
       REPORT_ROOT: target/scale-reports/${{ matrix.profile }}/${{ matrix.mode }}
     steps:
       - name: Check out benchmark implementation
@@ -158,16 +156,10 @@ jobs:
         run: |
           command -v pg_config
           pkg-config --exists libpq
-      - name: Create isolated databases
-        env:
-          PGPASSWORD: postgres
+      - name: Create report directories
         run: |
-          createdb --host localhost --username postgres hubuum_scale_base
-          createdb --host localhost --username postgres hubuum_scale_base_verify
-          createdb --host localhost --username postgres hubuum_scale_head
-          createdb --host localhost --username postgres hubuum_scale_head_verify
-          mkdir -p "$REPORT_ROOT"
-      - name: Build head runner and production binaries
+          mkdir -p "$REPORT_ROOT/impacts" "$REPORT_ROOT/points"
+      - name: Build fixed runner and production binaries
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -178,67 +170,83 @@ jobs:
           CARGO_TARGET_DIR=target/scale-head cargo build --locked \
             --release --features embedded-migrations \
             --bin hubuum-server --bin hubuum-admin
-      - name: Measure pull-request base
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git checkout --detach "$BASE_SHA"
-          CARGO_TARGET_DIR=target/scale-base cargo build --locked \
-            --release --features embedded-migrations \
-            --bin hubuum-server --bin hubuum-admin
-          target/scale-base/release/hubuum-admin \
-            --migrate --legacy-single-role-migration \
-            --database-url "$BASE_DATABASE_URL"
-          target/scale-head/release/hubuum-scale-benchmark run \
-            --backend "${{ matrix.backend }}" \
-            --profile "${{ matrix.profile }}" \
-            --limit-mode "${{ matrix.mode }}" \
-            --server-binary target/scale-base/release/hubuum-server \
-            --admin-binary target/scale-base/release/hubuum-admin \
-            --database-url "$BASE_DATABASE_URL" \
-            --restore-test-database-url "$BASE_VERIFY_DATABASE_URL" \
-            --label "$BASE_SHA" \
-            --manifest-output "$REPORT_ROOT/base-manifest.json" \
-            --load-report-output "$REPORT_ROOT/base-load.json" \
-            --output "$REPORT_ROOT/base.json" \
-            --artifact-directory "$REPORT_ROOT/base-artifacts"
-      - name: Measure pull-request head
+      - name: Measure controlled corpus growth
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PGPASSWORD: postgres
         run: |
-          git checkout --detach "$HEAD_SHA"
-          target/scale-head/release/hubuum-admin \
-            --migrate --legacy-single-role-migration \
-            --database-url "$HEAD_DATABASE_URL"
+          reset_measure_database() {
+            dropdb --host localhost --username postgres --if-exists --force hubuum_scale_measure
+            createdb --host localhost --username postgres hubuum_scale_measure
+            target/scale-head/release/hubuum-admin \
+              --migrate --legacy-single-role-migration \
+              --database-url "$SCALE_DATABASE_URL"
+          }
+
+          target/scale-head/release/hubuum-scale-benchmark sensitivity-plan \
+            --profile "${{ matrix.profile }}" \
+            --output "$REPORT_ROOT/sensitivity-plan.json"
+
+          reset_measure_database
+          dropdb --host localhost --username postgres --if-exists --force hubuum_scale_verify
+          createdb --host localhost --username postgres hubuum_scale_verify
           target/scale-head/release/hubuum-scale-benchmark run \
             --backend "${{ matrix.backend }}" \
             --profile "${{ matrix.profile }}" \
             --limit-mode "${{ matrix.mode }}" \
             --server-binary target/scale-head/release/hubuum-server \
             --admin-binary target/scale-head/release/hubuum-admin \
-            --database-url "$HEAD_DATABASE_URL" \
-            --restore-test-database-url "$HEAD_VERIFY_DATABASE_URL" \
-            --label "$HEAD_SHA" \
-            --manifest-output "$REPORT_ROOT/head-manifest.json" \
-            --load-report-output "$REPORT_ROOT/head-load.json" \
-            --output "$REPORT_ROOT/head.json" \
-            --artifact-directory "$REPORT_ROOT/head-artifacts"
-      - name: Assess correctness and summarize timing
-        if: always()
-        run: |
-          {
-            echo "## Scale operational benchmark: ${{ matrix.backend }} / ${{ matrix.profile }} / ${{ matrix.mode }}"
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
-          base_args=()
-          if [[ -f "$REPORT_ROOT/base.json" ]]; then
-            base_args=(--base "$REPORT_ROOT/base.json")
-          fi
-          target/scale-head/release/hubuum-scale-benchmark assess \
-            --head "$REPORT_ROOT/head.json" \
-            "${base_args[@]}" \
-            --markdown-output "$REPORT_ROOT/assessment.md" \
+            --database-url "$SCALE_DATABASE_URL" \
+            --restore-test-database-url "$SCALE_VERIFY_DATABASE_URL" \
+            --label "$HEAD_SHA-baseline" \
+            --manifest-output "$REPORT_ROOT/baseline-manifest.json" \
+            --load-report-output "$REPORT_ROOT/baseline-load.json" \
+            --output "$REPORT_ROOT/baseline.json" \
+            --artifact-directory "$REPORT_ROOT/baseline-artifacts"
+
+          while IFS=$'\t' read -r axis percent amount; do
+            case "$axis" in
+              objects)
+                increment_args=(--add-objects "$amount")
+                ;;
+              object_relations)
+                increment_args=(--add-object-relations "$amount")
+                ;;
+              *)
+                echo "Unsupported sensitivity axis: $axis" >&2
+                exit 1
+                ;;
+            esac
+            point="$axis-p$percent"
+            reset_measure_database
+            target/scale-head/release/hubuum-scale-benchmark run \
+              --backend "${{ matrix.backend }}" \
+              --profile "${{ matrix.profile }}" \
+              "${increment_args[@]}" \
+              --limit-mode "${{ matrix.mode }}" \
+              --server-binary target/scale-head/release/hubuum-server \
+              --admin-binary target/scale-head/release/hubuum-admin \
+              --database-url "$SCALE_DATABASE_URL" \
+              --label "$HEAD_SHA-$point" \
+              --manifest-output "$REPORT_ROOT/points/$point-manifest.json" \
+              --load-report-output "$REPORT_ROOT/points/$point-load.json" \
+              --output "$REPORT_ROOT/points/$point.json" \
+              --artifact-directory "$REPORT_ROOT/points/$point-artifacts" \
+              --skip-lifecycle
+            target/scale-head/release/hubuum-scale-benchmark impact \
+              --baseline "$REPORT_ROOT/baseline.json" \
+              --comparison "$REPORT_ROOT/points/$point.json" \
+              --axis "$axis" \
+              --output "$REPORT_ROOT/impacts/$point.json"
+          done < <(jq --raw-output \
+            '.points[] | [.axis, (.added_percent | tostring), (.added_count | tostring)] | @tsv' \
+            "$REPORT_ROOT/sensitivity-plan.json")
+
+          target/scale-head/release/hubuum-scale-benchmark summarize-sensitivity \
+            --baseline "$REPORT_ROOT/baseline.json" \
+            --impacts "$REPORT_ROOT"/impacts/*.json \
+            --output "$REPORT_ROOT/sensitivity.json" \
+            --markdown-output "$REPORT_ROOT/sensitivity.md" \
             >> "$GITHUB_STEP_SUMMARY"
       - name: Upload sanitized reports and lifecycle artifacts
         if: always()
@@ -249,7 +257,7 @@ jobs:
           retention-days: 14
 
   report:
-    name: Scale PR report
+    name: Scale growth report
     needs:
       - select
       - scale
@@ -267,7 +275,6 @@ jobs:
       COMMENT_PATH: target/scale-pr-comment.md
       DOWNLOAD_ROOT: target/scale-pr-reports
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Download scale reports
@@ -282,7 +289,7 @@ jobs:
         run: |
           mkdir -p "$(dirname "$COMMENT_PATH")"
           reports=()
-          for candidate in "$DOWNLOAD_ROOT"/scale-*/assessment.md; do
+          for candidate in "$DOWNLOAD_ROOT"/scale-*/sensitivity.md; do
             if [[ -f "$candidate" ]]; then
               reports+=("$candidate")
             fi
@@ -290,14 +297,14 @@ jobs:
 
           {
             echo '<!-- hubuum-scale-pr-bench -->'
-            echo '# Scale PR Bench Report'
+            echo '# Scale Growth Report'
             echo
-            echo "PR #$PR_NUMBER • Base: $PR_BASE_REF • Head: ${HEAD_SHA:0:7} • Latest: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "PR #$PR_NUMBER • Fixed binary: ${HEAD_SHA:0:7} • Latest: $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo
-            echo 'These production-shaped base/PR comparisons are informational. Correctness failures fail the scale job; timing from one paired run does not.'
+            echo "This report measures how performance changes as one corpus axis grows; \`rust-pr-bench\` owns base/PR code-regression comparisons. Correctness failures fail the scale job, while timing from one trial remains informational."
             echo
             if [[ "${#reports[@]}" -eq 0 ]]; then
-              echo 'No completed assessment was available. Open the workflow run for the failing job and any partial artifacts.'
+              echo 'No completed scale-growth report was available. Open the workflow run for the failing job and any partial artifacts.'
               echo
             else
               for report in "${reports[@]}"; do

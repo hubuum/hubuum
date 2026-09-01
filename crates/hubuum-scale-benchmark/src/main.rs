@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use hubuum_scale_core::{
     BackendComparisonReport, DatasetManifest, LimitMode, LoadReport, ProfileName, ScaleAssessment,
     ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile,
-    WorkloadSpec,
+    ScaleSensitivityReport, SensitivitySpec, WorkloadSpec,
 };
 use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
 
@@ -39,6 +39,10 @@ enum Command {
     Assess(AssessArgs),
     /// Compare reports that differ along exactly one controlled scale axis.
     Impact(ImpactArgs),
+    /// Expand the calibrated sensitivity matrix into exact corpus increments.
+    SensitivityPlan(SensitivityPlanArgs),
+    /// Summarize every controlled corpus-growth impact in one report.
+    SummarizeSensitivity(SummarizeSensitivityArgs),
     /// Render matching reports from each selected storage backend side by side.
     CompareBackends(CompareBackendsArgs),
 }
@@ -171,6 +175,30 @@ struct ImpactArgs {
 }
 
 #[derive(Debug, Args)]
+struct SensitivityPlanArgs {
+    #[command(flatten)]
+    profile: ProfileArgs,
+    #[arg(long)]
+    sensitivity_spec: Option<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct SummarizeSensitivityArgs {
+    #[arg(long)]
+    baseline: PathBuf,
+    #[arg(long)]
+    sensitivity_spec: Option<PathBuf>,
+    #[arg(long, required = true, num_args = 1..)]
+    impacts: Vec<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    markdown_output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 struct CompareBackendsArgs {
     #[arg(long, required = true, num_args = 1..)]
     reports: Vec<PathBuf>,
@@ -189,6 +217,8 @@ async fn main() -> Result<()> {
         Command::Run(args) => run(args).await,
         Command::Assess(args) => assess(args),
         Command::Impact(args) => impact(args),
+        Command::SensitivityPlan(args) => sensitivity_plan(args),
+        Command::SummarizeSensitivity(args) => summarize_sensitivity(args),
         Command::CompareBackends(args) => compare_backends(args),
     }
 }
@@ -355,6 +385,37 @@ fn impact(args: ImpactArgs) -> Result<()> {
     Ok(())
 }
 
+fn sensitivity_plan(args: SensitivityPlanArgs) -> Result<()> {
+    let profile = load_profile(&args.profile)?;
+    let spec = load_sensitivity_spec(args.sensitivity_spec.as_deref())?;
+    let plan = spec.plan(&profile)?;
+    plan.write(&args.output)?;
+    println!(
+        "Wrote {} calibrated scale sensitivity points to {}",
+        plan.points.len(),
+        args.output.display()
+    );
+    Ok(())
+}
+
+fn summarize_sensitivity(args: SummarizeSensitivityArgs) -> Result<()> {
+    let baseline = ScaleBenchmarkReport::read(&args.baseline)?;
+    let impacts = args
+        .impacts
+        .iter()
+        .map(|path| ScaleImpactReport::read(path))
+        .collect::<hubuum_scale_core::Result<Vec<_>>>()?;
+    let spec = load_sensitivity_spec(args.sensitivity_spec.as_deref())?;
+    let summary = ScaleSensitivityReport::summarize(&baseline, &impacts, &spec)?;
+    summary.write(&args.output)?;
+    let markdown = summary.markdown();
+    print!("{markdown}");
+    if let Some(path) = args.markdown_output.as_deref() {
+        summary.append_markdown(path)?;
+    }
+    Ok(())
+}
+
 fn compare_backends(args: CompareBackendsArgs) -> Result<()> {
     let reports = args
         .reports
@@ -394,6 +455,13 @@ fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
         (Some(_), Some(_)) => Err(io_error(
             "only one scale axis may be changed in a controlled experiment",
         )),
+    }
+}
+
+fn load_sensitivity_spec(path: Option<&Path>) -> Result<SensitivitySpec> {
+    match path {
+        Some(path) => Ok(SensitivitySpec::read(path)?),
+        None => Ok(SensitivitySpec::bundled()?),
     }
 }
 

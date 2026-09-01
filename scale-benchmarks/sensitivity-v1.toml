@@ -1,0 +1,15 @@
+schema_version = 1
+experiment_version = 1
+
+[[axes]]
+axis = "objects"
+percent_steps = [20, 50, 100]
+scenario = "unified-search"
+phase = "warm_single_client"
+
+[[axes]]
+axis = "object_relations"
+percent_steps = [20, 50, 100]
+scenario = "relations-balanced-spread-class-relation"
+phase = "warm_single_client"
+traversal_phase = "complete_cursor_traversal"

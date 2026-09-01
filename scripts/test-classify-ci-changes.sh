@@ -224,6 +224,7 @@ scale_benchmark_output="$(bash "$classifier" \
   .github/workflows/scale-benchmarks.yml \
   scale-benchmarks/profiles/large.toml \
   scale-benchmarks/profiles/huge.toml \
+  scale-benchmarks/sensitivity-v1.toml \
   scale-benchmarks/workloads/v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
   crates/hubuum-scale-core/src/lib.rs \
@@ -247,9 +248,11 @@ required = [
     "schedule:",
     "17 3 * * 2",
     "43 3 1 * *",
-    "base.json",
-    "head.json",
-    "Scale operational benchmark:",
+    "sensitivity-plan",
+    "summarize-sensitivity",
+    "baseline.json",
+    "Scale Growth Report",
+    "rust-pr-bench",
     "hubuum-scale-pr-bench",
     "pull-requests: write",
     "cancel-in-progress: true",
@@ -260,6 +263,11 @@ if missing:
 for generic_label in ("ci:full", "ci:benchmarks"):
     if generic_label in workflow:
         raise SystemExit(f"{generic_label} must not enable the scale workflow")
+for regression_control in ("BASE_SHA", "target/scale-base"):
+    if regression_control in workflow:
+        raise SystemExit(
+            f"{regression_control} belongs to code-regression CI, not scale-growth CI"
+        )
 PY
 
 storage_benchmark_output="$(

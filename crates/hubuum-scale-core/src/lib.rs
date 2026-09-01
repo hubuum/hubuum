@@ -18,9 +18,11 @@ use sha2::{Digest, Sha256};
 const LARGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/large.toml");
 const HUGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/huge.toml");
 const WORKLOAD_V1: &str = include_str!("../../../scale-benchmarks/workloads/v1.toml");
+const SENSITIVITY_V1: &str = include_str!("../../../scale-benchmarks/sensitivity-v1.toml");
 const DATASET_SCHEMA_VERSION: u32 = 1;
 const REPORT_SCHEMA_VERSION: u32 = 2;
-const IMPACT_REPORT_SCHEMA_VERSION: u32 = 2;
+const IMPACT_REPORT_SCHEMA_VERSION: u32 = 3;
+const SENSITIVITY_REPORT_SCHEMA_VERSION: u32 = 1;
 const BACKEND_COMPARISON_SCHEMA_VERSION: u32 = 1;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -56,7 +58,7 @@ impl FromStr for ProfileName {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ScaleAxis {
     Objects,
@@ -1209,6 +1211,144 @@ impl WorkloadSpec {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SensitivitySpec {
+    pub schema_version: u32,
+    pub experiment_version: u32,
+    pub axes: Vec<SensitivityAxisSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SensitivityAxisSpec {
+    pub axis: ScaleAxis,
+    pub percent_steps: Vec<u64>,
+    pub scenario: String,
+    pub phase: String,
+    pub traversal_phase: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SensitivityPlan {
+    pub schema_version: u32,
+    pub experiment_version: u32,
+    pub profile: ProfileName,
+    pub baseline_totals: ResourceTotals,
+    pub points: Vec<SensitivityPlanPoint>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SensitivityPlanPoint {
+    pub axis: ScaleAxis,
+    pub added_percent: u64,
+    pub added_count: u64,
+    pub comparison_total: u64,
+}
+
+impl SensitivitySpec {
+    pub fn bundled() -> Result<Self> {
+        let spec = toml::from_str::<Self>(SENSITIVITY_V1)?;
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    pub fn read(path: &Path) -> Result<Self> {
+        let spec = toml::from_str::<Self>(&fs::read_to_string(path)?)?;
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != 1 || self.experiment_version == 0 || self.axes.is_empty() {
+            return Err(invalid_data(
+                "unsupported or incomplete scale sensitivity specification",
+            ));
+        }
+        let mut axes = BTreeSet::new();
+        for axis in &self.axes {
+            if !axes.insert(axis.axis) {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' appears more than once",
+                    axis.axis.as_str()
+                )));
+            }
+            if axis.scenario.trim().is_empty() || axis.phase.trim().is_empty() {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' requires a scenario and phase",
+                    axis.axis.as_str()
+                )));
+            }
+            if axis
+                .traversal_phase
+                .as_ref()
+                .is_some_and(|phase| phase.trim().is_empty())
+            {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' has an empty traversal phase",
+                    axis.axis.as_str()
+                )));
+            }
+            if axis.percent_steps.is_empty()
+                || axis.percent_steps.iter().any(|step| *step == 0)
+                || axis
+                    .percent_steps
+                    .windows(2)
+                    .any(|steps| steps[0] >= steps[1])
+            {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' requires increasing non-zero percentage steps",
+                    axis.axis.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn plan(&self, profile: &ScaleProfile) -> Result<SensitivityPlan> {
+        self.validate()?;
+        profile.validate()?;
+        let mut points = Vec::new();
+        for axis_spec in &self.axes {
+            let baseline_total = axis_spec.axis.total(&profile.totals);
+            for added_percent in &axis_spec.percent_steps {
+                let scaled = baseline_total
+                    .checked_mul(*added_percent)
+                    .ok_or_else(|| invalid_data("scale sensitivity increment overflowed"))?;
+                if scaled % 100 != 0 {
+                    return Err(invalid_data(format!(
+                        "{}% of the {} baseline {} is not an exact object count",
+                        added_percent,
+                        axis_spec.axis.as_str(),
+                        baseline_total
+                    )));
+                }
+                let added_count = scaled / 100;
+                let comparison = profile
+                    .clone()
+                    .with_increment(axis_spec.axis, added_count)?;
+                points.push(SensitivityPlanPoint {
+                    axis: axis_spec.axis,
+                    added_percent: *added_percent,
+                    added_count,
+                    comparison_total: axis_spec.axis.total(&comparison.totals),
+                });
+            }
+        }
+        Ok(SensitivityPlan {
+            schema_version: self.schema_version,
+            experiment_version: self.experiment_version,
+            profile: profile.name,
+            baseline_totals: profile.totals.clone(),
+            points,
+        })
+    }
+}
+
+impl SensitivityPlan {
+    pub fn write(&self, path: &Path) -> Result<()> {
+        write_json(path, self)
+    }
+}
+
 fn render_template(template: &str, values: &BTreeMap<String, String>) -> Result<String> {
     let mut output = String::with_capacity(template.len());
     let mut remaining = template;
@@ -1657,6 +1797,17 @@ impl ScaleImpactReport {
         write_json(path, self)
     }
 
+    pub fn read(path: &Path) -> Result<Self> {
+        let report = serde_json::from_slice::<Self>(&fs::read(path)?)?;
+        if report.schema_version != IMPACT_REPORT_SCHEMA_VERSION {
+            return Err(invalid_data(format!(
+                "unsupported scale impact report schema version {}",
+                report.schema_version
+            )));
+        }
+        Ok(report)
+    }
+
     pub fn markdown(&self) -> String {
         let mut output = String::from("## Hubuum scale sensitivity\n\n");
         output.push_str(&format!(
@@ -1872,6 +2023,15 @@ fn compare_scenarios(
                     unit,
                 ),
             ),
+            (
+                "pages".to_string(),
+                MetricDelta::between(
+                    baseline_scenario.pages as f64,
+                    scenario.pages as f64,
+                    axis_delta,
+                    unit,
+                ),
+            ),
         ]);
         insert_optional_metric(
             &mut metrics,
@@ -2076,6 +2236,372 @@ fn insert_optional_u64_metric(
         axis_delta,
         unit,
     );
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ScaleSensitivityReport {
+    pub schema_version: u32,
+    pub experiment_version: u32,
+    pub baseline_label: String,
+    pub baseline_manifest_digest: String,
+    pub baseline_totals: ResourceTotals,
+    pub profile: ProfileName,
+    pub seed: u64,
+    pub workload_digest: String,
+    pub limit_mode: LimitMode,
+    pub runtime: RuntimeIdentity,
+    pub axes: Vec<AxisSensitivityReport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct AxisSensitivityReport {
+    pub axis: ScaleAxis,
+    pub topology: String,
+    pub scenario: String,
+    pub phase: String,
+    pub traversal_phase: Option<String>,
+    pub baseline_total: u64,
+    pub points: Vec<SensitivityPointReport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SensitivityPointReport {
+    pub added_percent: u64,
+    pub added_count: u64,
+    pub comparison_total: u64,
+    pub latency_p95_ms: MetricDelta,
+    pub requests_per_second: MetricDelta,
+    pub traversal_pages: Option<MetricDelta>,
+    pub traversal_ms: Option<MetricDelta>,
+    pub storage_bytes: MetricDelta,
+    pub index_bytes: Option<MetricDelta>,
+}
+
+impl ScaleSensitivityReport {
+    pub fn summarize(
+        baseline: &ScaleBenchmarkReport,
+        impacts: &[ScaleImpactReport],
+        spec: &SensitivitySpec,
+    ) -> Result<Self> {
+        spec.validate()?;
+        if !baseline.correctness.passed() {
+            return Err(invalid_data(
+                "scale sensitivity summary requires a correctness-passing baseline",
+            ));
+        }
+        let mut impacts_by_point = BTreeMap::new();
+        for impact in impacts {
+            if impact.baseline_manifest_digest != baseline.manifest.semantic_digest
+                || impact.profile != baseline.manifest.profile
+                || impact.seed != baseline.manifest.seed
+                || impact.workload_digest != baseline.workload_digest
+                || impact.limit_mode != baseline.limit_mode
+                || impact.runtime != baseline.runtime
+            {
+                return Err(invalid_data(
+                    "scale sensitivity impact does not match the controlled baseline",
+                ));
+            }
+            if impacts_by_point
+                .insert((impact.axis, impact.axis_delta), impact)
+                .is_some()
+            {
+                return Err(invalid_data(format!(
+                    "duplicate scale sensitivity impact for {} +{}",
+                    impact.axis.as_str(),
+                    impact.axis_delta
+                )));
+            }
+        }
+
+        let mut axes = Vec::with_capacity(spec.axes.len());
+        for axis_spec in &spec.axes {
+            let baseline_total = axis_spec.axis.total(&baseline.manifest.totals);
+            let mut points = Vec::with_capacity(axis_spec.percent_steps.len());
+            for added_percent in &axis_spec.percent_steps {
+                let added_count =
+                    sensitivity_increment(baseline_total, *added_percent, axis_spec.axis)?;
+                let impact = impacts_by_point
+                    .remove(&(axis_spec.axis, added_count))
+                    .ok_or_else(|| {
+                        invalid_data(format!(
+                            "missing {} +{}% (+{}) scale sensitivity impact",
+                            axis_spec.axis.as_str(),
+                            added_percent,
+                            added_count
+                        ))
+                    })?;
+                let expected_total = baseline_total
+                    .checked_add(added_count)
+                    .ok_or_else(|| invalid_data("scale sensitivity total overflowed"))?;
+                if impact.baseline_total != baseline_total
+                    || impact.comparison_total != expected_total
+                {
+                    return Err(invalid_data(format!(
+                        "{} +{}% impact has unexpected corpus totals",
+                        axis_spec.axis.as_str(),
+                        added_percent
+                    )));
+                }
+                let primary = sensitivity_scenario(impact, &axis_spec.scenario, &axis_spec.phase)?;
+                let traversal = axis_spec
+                    .traversal_phase
+                    .as_deref()
+                    .map(|phase| sensitivity_scenario(impact, &axis_spec.scenario, phase))
+                    .transpose()?;
+                points.push(SensitivityPointReport {
+                    added_percent: *added_percent,
+                    added_count,
+                    comparison_total: expected_total,
+                    latency_p95_ms: sensitivity_metric(primary, "latency_p95_ms")?.clone(),
+                    requests_per_second: sensitivity_metric(primary, "requests_per_second")?
+                        .clone(),
+                    traversal_pages: traversal
+                        .map(|scenario| sensitivity_metric(scenario, "pages").cloned())
+                        .transpose()?,
+                    traversal_ms: traversal
+                        .map(|scenario| sensitivity_metric(scenario, "traversal_ms").cloned())
+                        .transpose()?,
+                    storage_bytes: sensitivity_resource(impact, "storage_bytes")?.clone(),
+                    index_bytes: impact.resources.get("index_bytes").cloned(),
+                });
+            }
+            axes.push(AxisSensitivityReport {
+                axis: axis_spec.axis,
+                topology: axis_spec.axis.topology().to_string(),
+                scenario: axis_spec.scenario.clone(),
+                phase: axis_spec.phase.clone(),
+                traversal_phase: axis_spec.traversal_phase.clone(),
+                baseline_total,
+                points,
+            });
+        }
+        if let Some(((axis, delta), _)) = impacts_by_point.first_key_value() {
+            return Err(invalid_data(format!(
+                "unexpected scale sensitivity impact for {} +{}",
+                axis.as_str(),
+                delta
+            )));
+        }
+
+        Ok(Self {
+            schema_version: SENSITIVITY_REPORT_SCHEMA_VERSION,
+            experiment_version: spec.experiment_version,
+            baseline_label: baseline.label.clone(),
+            baseline_manifest_digest: baseline.manifest.semantic_digest.clone(),
+            baseline_totals: baseline.manifest.totals.clone(),
+            profile: baseline.manifest.profile,
+            seed: baseline.manifest.seed,
+            workload_digest: baseline.workload_digest.clone(),
+            limit_mode: baseline.limit_mode,
+            runtime: baseline.runtime.clone(),
+            axes,
+        })
+    }
+
+    pub fn write(&self, path: &Path) -> Result<()> {
+        write_json(path, self)
+    }
+
+    pub fn markdown(&self) -> String {
+        let mode = match self.limit_mode {
+            LimitMode::Standard => "standard",
+            LimitMode::Extended => "extended",
+        };
+        let mut output = format!(
+            "## {} / {} / {mode} scale growth\n\n",
+            self.runtime.backend.name,
+            self.profile.as_str()
+        );
+        output.push_str(&format!(
+            "Fixed binary `{}`; {} {} backend; dataset `{}`; workload `{}`; page limit {}. Every point starts from a fresh copy of the baseline and changes only the named balanced-region axis.\n\n",
+            short_report_label(&self.baseline_label),
+            self.runtime.backend.name,
+            self.runtime.backend.version,
+            &self.baseline_manifest_digest[..12],
+            &self.workload_digest[..12],
+            self.limit_mode.page_limit()
+        ));
+        output.push_str("| Baseline collections | Classes | Objects | Class relations | Object relations | Principals | Groups | Memberships | Grants |\n");
+        output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n\n",
+            format_count(self.baseline_totals.collections),
+            format_count(self.baseline_totals.classes),
+            format_count(self.baseline_totals.objects),
+            format_count(self.baseline_totals.class_relations),
+            format_count(self.baseline_totals.object_relations),
+            format_count(self.baseline_totals.principals),
+            format_count(self.baseline_totals.groups),
+            format_count(self.baseline_totals.memberships),
+            format_count(self.baseline_totals.permission_grants)
+        ));
+        for axis in &self.axes {
+            match axis.axis {
+                ScaleAxis::Objects => render_object_sensitivity(&mut output, axis),
+                ScaleAxis::ObjectRelations => render_relation_sensitivity(&mut output, axis),
+            }
+        }
+        output.push_str(
+            "Each percentage is relative to the stated baseline, not the preceding row. Positive latency and storage changes and negative throughput changes are costs. These single-run measurements are informational; repeat trials before drawing a performance conclusion.\n\n",
+        );
+        output
+    }
+
+    pub fn append_markdown(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = OpenOptions::new().create(true).append(true).open(path)?;
+        output.write_all(self.markdown().as_bytes())?;
+        Ok(())
+    }
+}
+
+fn sensitivity_increment(baseline: u64, percent: u64, axis: ScaleAxis) -> Result<u64> {
+    let scaled = baseline
+        .checked_mul(percent)
+        .ok_or_else(|| invalid_data("scale sensitivity increment overflowed"))?;
+    if percent == 0 || scaled % 100 != 0 {
+        return Err(invalid_data(format!(
+            "{}% of the {} baseline {} is not a positive exact object count",
+            percent,
+            axis.as_str(),
+            baseline
+        )));
+    }
+    Ok(scaled / 100)
+}
+
+fn sensitivity_scenario<'a>(
+    impact: &'a ScaleImpactReport,
+    name: &str,
+    phase: &str,
+) -> Result<&'a ScenarioImpact> {
+    impact
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.name == name && scenario.phase == phase)
+        .ok_or_else(|| {
+            invalid_data(format!(
+                "scale sensitivity impact has no '{name}'/'{phase}' scenario"
+            ))
+        })
+}
+
+fn sensitivity_metric<'a>(scenario: &'a ScenarioImpact, name: &str) -> Result<&'a MetricDelta> {
+    scenario.metrics.get(name).ok_or_else(|| {
+        invalid_data(format!(
+            "scale sensitivity scenario '{}'/{} has no '{name}' metric",
+            scenario.name, scenario.phase
+        ))
+    })
+}
+
+fn sensitivity_resource<'a>(impact: &'a ScaleImpactReport, name: &str) -> Result<&'a MetricDelta> {
+    impact.resources.get(name).ok_or_else(|| {
+        invalid_data(format!(
+            "scale sensitivity impact has no '{name}' resource metric"
+        ))
+    })
+}
+
+fn render_object_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
+    output.push_str(&format!(
+        "### Object growth (`{}` / `{}`)\n\n",
+        axis.scenario, axis.phase
+    ));
+    output.push_str(&format!(
+        "| Added objects vs {} | Expanded objects | Search p95 ms | Search throughput/s | Database bytes | Index bytes |\n",
+        format_count(axis.baseline_total)
+    ));
+    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for point in &axis.points {
+        output.push_str(&format!(
+            "| +{}% (+{}) | {} | {} | {} | {} | {} |\n",
+            point.added_percent,
+            format_count(point.added_count),
+            format_count(point.comparison_total),
+            format_delta(&point.latency_p95_ms, ""),
+            format_delta(&point.requests_per_second, ""),
+            format_bytes_delta(&point.storage_bytes),
+            point
+                .index_bytes
+                .as_ref()
+                .map(format_bytes_delta)
+                .unwrap_or_else(|| "-".to_string())
+        ));
+    }
+    output.push('\n');
+}
+
+fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
+    output.push_str(&format!(
+        "### Object-relation growth (`{}` / `{}`)\n\n",
+        axis.scenario, axis.phase
+    ));
+    output.push_str(&format!(
+        "| Added relations vs {} | Expanded relations | Warm p95 ms | Warm throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n",
+        format_count(axis.baseline_total)
+    ));
+    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for point in &axis.points {
+        output.push_str(&format!(
+            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} |\n",
+            point.added_percent,
+            format_count(point.added_count),
+            format_count(point.comparison_total),
+            format_delta(&point.latency_p95_ms, ""),
+            format_delta(&point.requests_per_second, ""),
+            point
+                .traversal_pages
+                .as_ref()
+                .map(|delta| format!("{:.0} → {:.0}", delta.baseline, delta.comparison))
+                .unwrap_or_else(|| "-".to_string()),
+            point
+                .traversal_ms
+                .as_ref()
+                .map(|delta| format_delta(delta, ""))
+                .unwrap_or_else(|| "-".to_string()),
+            format_bytes_delta(&point.storage_bytes),
+            point
+                .index_bytes
+                .as_ref()
+                .map(format_bytes_delta)
+                .unwrap_or_else(|| "-".to_string())
+        ));
+    }
+    output.push('\n');
+}
+
+fn format_delta(delta: &MetricDelta, suffix: &str) -> String {
+    format!(
+        "{:.2}{suffix} → {:.2}{suffix} ({})",
+        delta.baseline,
+        delta.comparison,
+        format_percent(delta.percent)
+    )
+}
+
+fn format_bytes_delta(delta: &MetricDelta) -> String {
+    format!(
+        "{} → {} ({})",
+        format_bytes(delta.baseline),
+        format_bytes(delta.comparison),
+        format_percent(delta.percent)
+    )
+}
+
+fn format_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut output = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, character) in digits.chars().enumerate() {
+        if index != 0 && (digits.len() - index).is_multiple_of(3) {
+            output.push(',');
+        }
+        output.push(character);
+    }
+    output
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -2684,6 +3210,37 @@ mod tests {
     }
 
     #[test]
+    fn calibrated_sensitivity_plan_uses_signal_bearing_independent_steps() {
+        let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let spec = SensitivitySpec::bundled().unwrap();
+        let plan = spec.plan(&profile).unwrap();
+
+        assert_eq!(plan.points.len(), 6);
+        assert_eq!(
+            plan.points[0],
+            SensitivityPlanPoint {
+                axis: ScaleAxis::Objects,
+                added_percent: 20,
+                added_count: 50_000,
+                comparison_total: 300_000,
+            }
+        );
+        assert_eq!(plan.points[2].comparison_total, 500_000);
+        assert_eq!(plan.points[3].added_count, 200_000);
+        assert_eq!(plan.points[5].comparison_total, 2_000_000);
+    }
+
+    #[test]
+    fn sensitivity_spec_rejects_non_increasing_steps() {
+        let mut spec = SensitivitySpec::bundled().unwrap();
+        spec.axes[0].percent_steps = vec![20, 20];
+
+        let error = spec.validate().unwrap_err();
+
+        assert!(error.to_string().contains("increasing non-zero"));
+    }
+
+    #[test]
     fn relation_manifest_models_eligible_pairs_and_rejects_saturation() {
         let baseline = ScaleProfile::bundled(ProfileName::Large).unwrap();
         let classes = baseline.class_plan();
@@ -2787,6 +3344,14 @@ mod tests {
                 }
             }
         }
+        assert!(
+            workload
+                .scenarios
+                .iter()
+                .find(|scenario| scenario.name == "relations-balanced-spread-class-relation")
+                .unwrap()
+                .traverse
+        );
     }
 
     #[test]
@@ -2885,6 +3450,21 @@ mod tests {
         .unwrap()
     }
 
+    fn report_for_sensitivity(label: &str, profile: &ScaleProfile) -> ScaleBenchmarkReport {
+        let mut report = report(label);
+        report.manifest = profile.manifest().unwrap();
+        let mut search = report.scenarios[0].clone();
+        search.name = "unified-search".to_string();
+        search.phase = "warm_single_client".to_string();
+        let mut relation = search.clone();
+        relation.name = "relations-balanced-spread-class-relation".to_string();
+        let mut traversal = relation.clone();
+        traversal.phase = "complete_cursor_traversal".to_string();
+        traversal.traversal_ms = Some(10.0);
+        report.scenarios = vec![search, relation, traversal];
+        report
+    }
+
     #[test]
     fn assessment_keeps_performance_informational() {
         let base = report("base");
@@ -2943,7 +3523,78 @@ mod tests {
         assert_eq!(latency.absolute, 2.0);
         assert_eq!(latency.percent, Some(40.0));
         assert_eq!(latency.per_normalization_unit, 2.0);
+        assert_eq!(impact.scenarios[0].metrics["pages"].comparison, 1.0);
         assert!(impact.markdown().contains("Repeat paired trials"));
+    }
+
+    #[test]
+    fn sensitivity_summary_validates_the_calibrated_matrix_and_states_exact_growth() {
+        let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let baseline = report_for_sensitivity("fixed-binary-baseline", &profile);
+        let spec = SensitivitySpec::bundled().unwrap();
+        let plan = spec.plan(&profile).unwrap();
+        let mut impacts = Vec::new();
+        for point in plan.points {
+            let comparison_profile = profile
+                .clone()
+                .with_increment(point.axis, point.added_count)
+                .unwrap();
+            let mut comparison = report_for_sensitivity(
+                &format!("{}-{}", point.axis.as_str(), point.added_percent),
+                &comparison_profile,
+            );
+            comparison.resources.backend.storage_bytes += point.added_count;
+            comparison.resources.backend.index_bytes = Some(5 + point.added_count / 2);
+            let scenario_name = match point.axis {
+                ScaleAxis::Objects => "unified-search",
+                ScaleAxis::ObjectRelations => "relations-balanced-spread-class-relation",
+            };
+            let primary = comparison
+                .scenarios
+                .iter_mut()
+                .find(|scenario| {
+                    scenario.name == scenario_name && scenario.phase == "warm_single_client"
+                })
+                .unwrap();
+            primary.latency =
+                LatencyDistribution::from_samples(&[5.0 + point.added_percent as f64 / 10.0]);
+            if point.axis == ScaleAxis::ObjectRelations {
+                let traversal = comparison
+                    .scenarios
+                    .iter_mut()
+                    .find(|scenario| scenario.phase == "complete_cursor_traversal")
+                    .unwrap();
+                traversal.pages = match point.added_percent {
+                    20 => 1,
+                    50 => 2,
+                    _ => 3,
+                };
+                traversal.traversal_ms = Some(10.0 + point.added_percent as f64 / 10.0);
+            }
+            impacts.push(
+                ScaleImpactReport::compare(&baseline, &comparison, point.axis, None).unwrap(),
+            );
+        }
+
+        let summary = ScaleSensitivityReport::summarize(&baseline, &impacts, &spec).unwrap();
+        let markdown = summary.markdown();
+
+        assert_eq!(summary.axes.len(), 2);
+        assert_eq!(
+            summary.axes[1].points[1]
+                .traversal_pages
+                .as_ref()
+                .unwrap()
+                .comparison,
+            2.0
+        );
+        assert!(markdown.contains("Baseline collections"));
+        assert!(markdown.contains("250,000"));
+        assert!(markdown.contains("+20% (+50,000)"));
+        assert!(markdown.contains("300,000"));
+        assert!(markdown.contains("+100% (+1,000,000)"));
+        assert!(markdown.contains("1 → 2"));
+        assert!(markdown.contains("Each percentage is relative to the stated baseline"));
     }
 
     #[test]
