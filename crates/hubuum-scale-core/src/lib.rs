@@ -1288,7 +1288,7 @@ impl SensitivitySpec {
                 )));
             }
             if axis.percent_steps.is_empty()
-                || axis.percent_steps.iter().any(|step| *step == 0)
+                || axis.percent_steps.contains(&0)
                 || axis
                     .percent_steps
                     .windows(2)
