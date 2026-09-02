@@ -9,8 +9,31 @@
       "labels": [
         {
           "name": "class",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "unauthorized",
+            "internal_server_error",
+            "forbidden",
+            "not_acceptable",
+            "unsupported_media_type",
+            "payload_too_large",
+            "database_error",
+            "conflict",
+            "precondition_failed",
+            "revision_conflict",
+            "too_many_requests",
+            "service_unavailable",
+            "not_implemented",
+            "permission_backend_unavailable",
+            "not_found",
+            "gone",
+            "db_connection_error",
+            "hash_error",
+            "bad_request",
+            "operator_mismatch",
+            "invalid_integer_range",
+            "validation_error"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -46,8 +69,11 @@
       "labels": [
         {
           "name": "reason",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "disallowed_ip",
+            "missing_ip"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -62,13 +88,25 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "shared",
+            "personal",
+            "preview"
+          ]
         },
         {
           "name": "code",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "input_too_large",
+            "non_numeric_operand",
+            "non_integer_result",
+            "result_type_mismatch",
+            "numeric_out_of_range",
+            "evaluation_limit_exceeded",
+            "result_too_large"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -83,13 +121,20 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "shared",
+            "personal",
+            "preview"
+          ]
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "field_error"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -114,8 +159,11 @@
       "labels": [
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -130,8 +178,11 @@
       "labels": [
         {
           "name": "items",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "empty",
+            "non_empty"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -146,8 +197,12 @@
       "labels": [
         {
           "name": "status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -162,8 +217,12 @@
       "labels": [
         {
           "name": "status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -196,8 +255,21 @@
       "labels": [
         {
           "name": "caller",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "event_delivery",
+            "event_fanout",
+            "event_retention",
+            "http_request",
+            "metrics_refresh",
+            "readiness",
+            "request_maintenance",
+            "restore_coordinator",
+            "task_lease",
+            "task_worker",
+            "token_retention",
+            "unattributed"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -228,8 +300,21 @@
       "labels": [
         {
           "name": "caller",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "event_delivery",
+            "event_fanout",
+            "event_retention",
+            "http_request",
+            "metrics_refresh",
+            "readiness",
+            "request_maintenance",
+            "restore_coordinator",
+            "task_lease",
+            "task_worker",
+            "token_retention",
+            "unattributed"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -244,18 +329,51 @@
       "labels": [
         {
           "name": "caller",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "event_delivery",
+            "event_fanout",
+            "event_retention",
+            "http_request",
+            "metrics_refresh",
+            "readiness",
+            "request_maintenance",
+            "restore_coordinator",
+            "task_lease",
+            "task_worker",
+            "token_retention",
+            "unattributed"
+          ]
         },
         {
           "name": "operation",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "connection",
+            "task_lease_connection",
+            "transaction"
+          ]
         },
         {
           "name": "result",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "authorization_unavailable",
+            "invalid_input",
+            "conflict",
+            "backend",
+            "permission_denied",
+            "internal",
+            "not_found",
+            "input_too_large",
+            "revision_conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "authentication_required",
+            "validation_failed"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -286,18 +404,51 @@
       "labels": [
         {
           "name": "caller",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "event_delivery",
+            "event_fanout",
+            "event_retention",
+            "http_request",
+            "metrics_refresh",
+            "readiness",
+            "request_maintenance",
+            "restore_coordinator",
+            "task_lease",
+            "task_worker",
+            "token_retention",
+            "unattributed"
+          ]
         },
         {
           "name": "operation",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "connection",
+            "task_lease_connection",
+            "transaction"
+          ]
         },
         {
           "name": "result",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "authorization_unavailable",
+            "invalid_input",
+            "conflict",
+            "backend",
+            "permission_denied",
+            "internal",
+            "not_found",
+            "input_too_large",
+            "revision_conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "authentication_required",
+            "validation_failed"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -360,8 +511,16 @@
         },
         {
           "name": "state",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "total",
+            "pending",
+            "in_flight",
+            "succeeded",
+            "failed",
+            "dead",
+            "retryable"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -499,8 +658,15 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "collections",
+            "classes",
+            "objects_in_class",
+            "class_relations",
+            "object_relations",
+            "related_objects"
+          ]
         },
         {
           "name": "content_type",
@@ -530,8 +696,12 @@
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "error",
+            "timeout"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -574,8 +744,12 @@
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "error",
+            "timeout"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -629,8 +803,15 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "collections",
+            "classes",
+            "objects_in_class",
+            "class_relations",
+            "object_relations",
+            "related_objects"
+          ]
         },
         {
           "name": "content_type",
@@ -655,8 +836,15 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "collections",
+            "classes",
+            "objects_in_class",
+            "class_relations",
+            "object_relations",
+            "related_objects"
+          ]
         },
         {
           "name": "content_type",
@@ -681,8 +869,11 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "json",
+            "path"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -699,13 +890,15 @@
           "name": "method",
           "bounded_by": "enumerated values",
           "values": [
+            "CONNECT",
             "DELETE",
             "GET",
             "HEAD",
             "OPTIONS",
             "PATCH",
             "POST",
-            "PUT"
+            "PUT",
+            "TRACE"
           ]
         },
         {
@@ -718,6 +911,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "none",
+            "unknown",
             "1xx",
             "2xx",
             "3xx",
@@ -772,13 +966,15 @@
           "name": "method",
           "bounded_by": "enumerated values",
           "values": [
+            "CONNECT",
             "DELETE",
             "GET",
             "HEAD",
             "OPTIONS",
             "PATCH",
             "POST",
-            "PUT"
+            "PUT",
+            "TRACE"
           ]
         },
         {
@@ -796,6 +992,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "none",
+            "unknown",
             "1xx",
             "2xx",
             "3xx",
@@ -835,8 +1032,13 @@
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failed",
+            "partially_succeeded",
+            "error"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -889,8 +1091,16 @@
       "labels": [
         {
           "name": "entity_type",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "collections",
+            "classes",
+            "objects",
+            "users",
+            "groups",
+            "service_accounts",
+            "remote_targets"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -905,8 +1115,13 @@
       "labels": [
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "bad_credentials",
+            "rate_limited",
+            "internal_error"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -921,13 +1136,21 @@
       "labels": [
         {
           "name": "backend",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "valkey"
+          ]
         },
         {
           "name": "operation",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "begin",
+            "finish",
+            "snapshot",
+            "release",
+            "clear"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -961,8 +1184,13 @@
       "labels": [
         {
           "name": "scope",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "principal_ip",
+            "ip",
+            "subnet",
+            "unknown"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1062,8 +1290,10 @@
         },
         {
           "name": "reason",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "concurrent"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1092,11 +1322,8 @@
           "values": [
             "DELETE",
             "GET",
-            "HEAD",
-            "OPTIONS",
             "PATCH",
-            "POST",
-            "PUT"
+            "POST"
           ]
         },
         {
@@ -1104,6 +1331,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "none",
+            "unknown",
             "1xx",
             "2xx",
             "3xx",
@@ -1113,8 +1341,14 @@
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure",
+            "timeout",
+            "private_target_rejected",
+            "validation_rejected"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -1147,11 +1381,8 @@
           "values": [
             "DELETE",
             "GET",
-            "HEAD",
-            "OPTIONS",
             "PATCH",
-            "POST",
-            "PUT"
+            "POST"
           ]
         },
         {
@@ -1159,6 +1390,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "none",
+            "unknown",
             "1xx",
             "2xx",
             "3xx",
@@ -1168,8 +1400,14 @@
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure",
+            "timeout",
+            "private_target_rejected",
+            "validation_rejected"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1236,13 +1474,28 @@
         },
         {
           "name": "consumer",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "event_sink",
+            "remote_target",
+            "ldap",
+            "token_hash"
+          ]
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "not_found",
+            "permission_denied",
+            "too_large",
+            "unsafe_path",
+            "changed_during_read",
+            "invalid",
+            "unavailable"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -1281,13 +1534,28 @@
         },
         {
           "name": "consumer",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "database",
+            "event_sink",
+            "remote_target",
+            "ldap",
+            "token_hash"
+          ]
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "not_found",
+            "permission_denied",
+            "too_large",
+            "unsafe_path",
+            "changed_during_read",
+            "invalid",
+            "unavailable"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1348,18 +1616,327 @@
         },
         {
           "name": "capability",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "audit_event",
+            "authentication",
+            "authorization_data",
+            "backup_snapshot",
+            "catalog",
+            "class",
+            "class_relation",
+            "collection_authorization_query",
+            "collection",
+            "computed_field",
+            "computed_object",
+            "event_configuration",
+            "event_delivery_administration",
+            "event_delivery_worker",
+            "event_fanout",
+            "event_health",
+            "event_retention",
+            "export_template",
+            "external_identity",
+            "group",
+            "history",
+            "group_membership",
+            "identity_scope",
+            "import",
+            "inventory",
+            "local_identity_credential",
+            "metrics",
+            "object_aggregate",
+            "object_relation",
+            "object",
+            "operational_state",
+            "principal",
+            "relation_query",
+            "remote_target",
+            "restore",
+            "service_account",
+            "task_execution",
+            "task_queue",
+            "token_retention",
+            "token",
+            "transaction",
+            "unified_search",
+            "user"
+          ]
         },
         {
           "name": "operation",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "add_group_member",
+            "aggregate_objects",
+            "anonymize_user",
+            "append_task_event",
+            "apply_import_best_effort",
+            "apply_import_strict",
+            "apply_local_collection_grant",
+            "apply_restore",
+            "authenticate_bearer_token",
+            "authorize_local_collection",
+            "authorize_local_collections",
+            "bootstrap_default_admin",
+            "capture_backup_snapshot",
+            "claim_event_delivery_batch",
+            "claim_event_retention_batch",
+            "claim_next_task",
+            "complete_event_retention_batch",
+            "complete_task",
+            "count_enabled_event_sinks",
+            "create_class",
+            "create_class_relation",
+            "create_collection",
+            "create_event_sink",
+            "create_event_subscription",
+            "create_export_template",
+            "create_group",
+            "create_object",
+            "create_object_relation",
+            "create_personal_computed_field",
+            "create_remote_target",
+            "create_service_account",
+            "create_shared_computed_field",
+            "create_task",
+            "create_token",
+            "create_user",
+            "delete_class",
+            "delete_class_relation",
+            "delete_collection",
+            "delete_event_sink",
+            "delete_event_subscription",
+            "delete_export_template",
+            "delete_group",
+            "delete_object",
+            "delete_object_relation",
+            "delete_personal_computed_field",
+            "delete_remote_target",
+            "delete_service_account",
+            "delete_shared_computed_field",
+            "delete_user",
+            "disable_service_account",
+            "enrich_objects_with_computed",
+            "ensure_identity_scope",
+            "execute_computed_field_rebuild",
+            "expire_restore_stage",
+            "fail_restore_and_resume",
+            "fail_task",
+            "get_authentication_identity",
+            "get_authentication_token_scope",
+            "get_authorization_policy_snapshot",
+            "get_authorization_principal",
+            "get_backup_output",
+            "get_backup_output_summary",
+            "get_class_history_as_of",
+            "get_collection",
+            "get_collection_history_as_of",
+            "get_computed_field",
+            "get_computed_field_state",
+            "get_event_delivery",
+            "get_event_delivery_health",
+            "get_event_metrics_snapshot",
+            "get_event_sink",
+            "get_event_subscription",
+            "get_export_output",
+            "get_export_output_summary",
+            "get_export_template",
+            "get_export_template_history_as_of",
+            "get_external_principal_state",
+            "get_group",
+            "get_import_class_by_name",
+            "get_import_collection_by_id",
+            "get_import_collection_by_key",
+            "get_import_collection_child_by_name",
+            "get_import_object_by_name",
+            "get_import_root_collection",
+            "get_inventory_counts",
+            "get_inventory_metrics_snapshot",
+            "get_local_collection_grant",
+            "get_local_collection_permission_set",
+            "get_maintenance_state",
+            "get_object",
+            "get_object_history_as_of",
+            "get_principal",
+            "get_principal_group",
+            "get_principal_settings",
+            "get_readiness_snapshot",
+            "get_remote_target",
+            "get_remote_target_history_as_of",
+            "get_restore_coordinator_snapshot",
+            "get_restore_drain_state",
+            "get_restore_job",
+            "get_restore_status",
+            "get_service_account",
+            "get_service_account_details",
+            "get_task_access",
+            "get_task_metrics_snapshot",
+            "get_task_queue_snapshot",
+            "get_token_metadata",
+            "get_user",
+            "get_user_by_name",
+            "get_user_details",
+            "has_group_collection_permission",
+            "has_import_class_relation",
+            "has_import_group",
+            "has_import_object_relation",
+            "is_authorization_principal_group_member",
+            "is_default_admin_bootstrap_required",
+            "is_human_owner_group_member",
+            "is_service_account_disabled",
+            "list_all_principal_collection_permissions",
+            "list_audit_events",
+            "list_authorization_classes",
+            "list_authorization_objects",
+            "list_backup_output_summaries",
+            "list_bidirectionally_related_objects_for_roots",
+            "list_class_history",
+            "list_class_relations",
+            "list_class_relations_between_ids",
+            "list_class_relations_touching",
+            "list_class_relations_touching_ids",
+            "list_classes",
+            "list_collection_ancestors",
+            "list_collection_children",
+            "list_collection_history",
+            "list_collections",
+            "list_computed_objects",
+            "list_effective_group_collection_permissions",
+            "list_effective_principal_collection_permissions",
+            "list_event_deliveries",
+            "list_event_sinks",
+            "list_event_subscriptions",
+            "list_export_output_summaries",
+            "list_export_template_history",
+            "list_export_templates",
+            "list_export_templates_in_collection",
+            "list_group_members",
+            "list_groups",
+            "list_groups_with_collection_permission",
+            "list_import_classes_by_names",
+            "list_import_collections_by_name",
+            "list_import_objects_by_names",
+            "list_import_task_results",
+            "list_local_authorized_collections",
+            "list_local_collection_grants",
+            "list_manageable_service_accounts",
+            "list_object_history",
+            "list_object_relations",
+            "list_object_relations_between_ids",
+            "list_object_relations_touching",
+            "list_object_relations_touching_ids",
+            "list_objects",
+            "list_personal_computed_fields",
+            "list_principal_collection_permissions",
+            "list_principal_groups",
+            "list_related_classes",
+            "list_related_objects",
+            "list_related_objects_for_roots",
+            "list_remote_target_history",
+            "list_remote_targets",
+            "list_retained_tokens",
+            "list_shared_computed_fields",
+            "list_task_events",
+            "list_tasks",
+            "list_users",
+            "list_visible_collections",
+            "load_authorization_collection_candidates",
+            "load_authorization_group_candidates",
+            "load_export_template_health",
+            "load_export_templates_for_audit",
+            "load_group_member_principals",
+            "load_groups_with_collection_permission",
+            "load_principal_collection_permissions",
+            "load_token_metadata_by_ids",
+            "mark_event_delivery_dead",
+            "mark_event_delivery_failed",
+            "mark_event_delivery_succeeded",
+            "mark_external_sync_attempted",
+            "move_collection",
+            "patch_object_data",
+            "preflight_import",
+            "prepare_class_relation",
+            "prepare_object_relation",
+            "process_event_fanout_batch",
+            "purge_expired_backup_outputs",
+            "purge_expired_export_outputs",
+            "purge_expired_tokens",
+            "record_import_results",
+            "record_remote_target_invocation",
+            "recover_expired_task_leases",
+            "release_event_delivery_for_retry",
+            "remove_group_member",
+            "remove_restore_instance",
+            "renew_task_lease",
+            "renew_token",
+            "replace_export_template",
+            "request_computed_field_rebuild",
+            "reset_local_password",
+            "resolve_class",
+            "resolve_class_names",
+            "resolve_class_relation",
+            "resolve_group_identity_scope_name",
+            "resolve_history_principal_names",
+            "resolve_identity_scope_name",
+            "resolve_identity_scope_names",
+            "resolve_object",
+            "resolve_object_relation",
+            "resume_maintenance_without_restore",
+            "resume_terminal_restore",
+            "revoke_all_local_collection_grants",
+            "revoke_all_principal_tokens",
+            "revoke_local_collection_grant",
+            "revoke_token",
+            "revoke_token_by_hash",
+            "search_classes",
+            "search_collections",
+            "search_objects",
+            "set_user_password",
+            "stage_restore",
+            "start_restore_draining",
+            "sync_external_user",
+            "tick_restore_coordinator",
+            "token_key_usage",
+            "update_class",
+            "update_collection",
+            "update_event_sink",
+            "update_event_subscription",
+            "update_group",
+            "update_object",
+            "update_personal_computed_field",
+            "update_principal_settings",
+            "update_remote_target",
+            "update_service_account",
+            "update_shared_computed_field",
+            "update_task_state",
+            "update_user",
+            "validate_object",
+            "validate_object_create",
+            "validate_object_update",
+            "with_transaction"
+          ]
         },
         {
           "name": "result",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "authorization_unavailable",
+            "invalid_input",
+            "conflict",
+            "backend",
+            "permission_denied",
+            "internal",
+            "not_found",
+            "input_too_large",
+            "revision_conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "authentication_required",
+            "validation_failed"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -1398,18 +1975,327 @@
         },
         {
           "name": "capability",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "audit_event",
+            "authentication",
+            "authorization_data",
+            "backup_snapshot",
+            "catalog",
+            "class",
+            "class_relation",
+            "collection_authorization_query",
+            "collection",
+            "computed_field",
+            "computed_object",
+            "event_configuration",
+            "event_delivery_administration",
+            "event_delivery_worker",
+            "event_fanout",
+            "event_health",
+            "event_retention",
+            "export_template",
+            "external_identity",
+            "group",
+            "history",
+            "group_membership",
+            "identity_scope",
+            "import",
+            "inventory",
+            "local_identity_credential",
+            "metrics",
+            "object_aggregate",
+            "object_relation",
+            "object",
+            "operational_state",
+            "principal",
+            "relation_query",
+            "remote_target",
+            "restore",
+            "service_account",
+            "task_execution",
+            "task_queue",
+            "token_retention",
+            "token",
+            "transaction",
+            "unified_search",
+            "user"
+          ]
         },
         {
           "name": "operation",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "add_group_member",
+            "aggregate_objects",
+            "anonymize_user",
+            "append_task_event",
+            "apply_import_best_effort",
+            "apply_import_strict",
+            "apply_local_collection_grant",
+            "apply_restore",
+            "authenticate_bearer_token",
+            "authorize_local_collection",
+            "authorize_local_collections",
+            "bootstrap_default_admin",
+            "capture_backup_snapshot",
+            "claim_event_delivery_batch",
+            "claim_event_retention_batch",
+            "claim_next_task",
+            "complete_event_retention_batch",
+            "complete_task",
+            "count_enabled_event_sinks",
+            "create_class",
+            "create_class_relation",
+            "create_collection",
+            "create_event_sink",
+            "create_event_subscription",
+            "create_export_template",
+            "create_group",
+            "create_object",
+            "create_object_relation",
+            "create_personal_computed_field",
+            "create_remote_target",
+            "create_service_account",
+            "create_shared_computed_field",
+            "create_task",
+            "create_token",
+            "create_user",
+            "delete_class",
+            "delete_class_relation",
+            "delete_collection",
+            "delete_event_sink",
+            "delete_event_subscription",
+            "delete_export_template",
+            "delete_group",
+            "delete_object",
+            "delete_object_relation",
+            "delete_personal_computed_field",
+            "delete_remote_target",
+            "delete_service_account",
+            "delete_shared_computed_field",
+            "delete_user",
+            "disable_service_account",
+            "enrich_objects_with_computed",
+            "ensure_identity_scope",
+            "execute_computed_field_rebuild",
+            "expire_restore_stage",
+            "fail_restore_and_resume",
+            "fail_task",
+            "get_authentication_identity",
+            "get_authentication_token_scope",
+            "get_authorization_policy_snapshot",
+            "get_authorization_principal",
+            "get_backup_output",
+            "get_backup_output_summary",
+            "get_class_history_as_of",
+            "get_collection",
+            "get_collection_history_as_of",
+            "get_computed_field",
+            "get_computed_field_state",
+            "get_event_delivery",
+            "get_event_delivery_health",
+            "get_event_metrics_snapshot",
+            "get_event_sink",
+            "get_event_subscription",
+            "get_export_output",
+            "get_export_output_summary",
+            "get_export_template",
+            "get_export_template_history_as_of",
+            "get_external_principal_state",
+            "get_group",
+            "get_import_class_by_name",
+            "get_import_collection_by_id",
+            "get_import_collection_by_key",
+            "get_import_collection_child_by_name",
+            "get_import_object_by_name",
+            "get_import_root_collection",
+            "get_inventory_counts",
+            "get_inventory_metrics_snapshot",
+            "get_local_collection_grant",
+            "get_local_collection_permission_set",
+            "get_maintenance_state",
+            "get_object",
+            "get_object_history_as_of",
+            "get_principal",
+            "get_principal_group",
+            "get_principal_settings",
+            "get_readiness_snapshot",
+            "get_remote_target",
+            "get_remote_target_history_as_of",
+            "get_restore_coordinator_snapshot",
+            "get_restore_drain_state",
+            "get_restore_job",
+            "get_restore_status",
+            "get_service_account",
+            "get_service_account_details",
+            "get_task_access",
+            "get_task_metrics_snapshot",
+            "get_task_queue_snapshot",
+            "get_token_metadata",
+            "get_user",
+            "get_user_by_name",
+            "get_user_details",
+            "has_group_collection_permission",
+            "has_import_class_relation",
+            "has_import_group",
+            "has_import_object_relation",
+            "is_authorization_principal_group_member",
+            "is_default_admin_bootstrap_required",
+            "is_human_owner_group_member",
+            "is_service_account_disabled",
+            "list_all_principal_collection_permissions",
+            "list_audit_events",
+            "list_authorization_classes",
+            "list_authorization_objects",
+            "list_backup_output_summaries",
+            "list_bidirectionally_related_objects_for_roots",
+            "list_class_history",
+            "list_class_relations",
+            "list_class_relations_between_ids",
+            "list_class_relations_touching",
+            "list_class_relations_touching_ids",
+            "list_classes",
+            "list_collection_ancestors",
+            "list_collection_children",
+            "list_collection_history",
+            "list_collections",
+            "list_computed_objects",
+            "list_effective_group_collection_permissions",
+            "list_effective_principal_collection_permissions",
+            "list_event_deliveries",
+            "list_event_sinks",
+            "list_event_subscriptions",
+            "list_export_output_summaries",
+            "list_export_template_history",
+            "list_export_templates",
+            "list_export_templates_in_collection",
+            "list_group_members",
+            "list_groups",
+            "list_groups_with_collection_permission",
+            "list_import_classes_by_names",
+            "list_import_collections_by_name",
+            "list_import_objects_by_names",
+            "list_import_task_results",
+            "list_local_authorized_collections",
+            "list_local_collection_grants",
+            "list_manageable_service_accounts",
+            "list_object_history",
+            "list_object_relations",
+            "list_object_relations_between_ids",
+            "list_object_relations_touching",
+            "list_object_relations_touching_ids",
+            "list_objects",
+            "list_personal_computed_fields",
+            "list_principal_collection_permissions",
+            "list_principal_groups",
+            "list_related_classes",
+            "list_related_objects",
+            "list_related_objects_for_roots",
+            "list_remote_target_history",
+            "list_remote_targets",
+            "list_retained_tokens",
+            "list_shared_computed_fields",
+            "list_task_events",
+            "list_tasks",
+            "list_users",
+            "list_visible_collections",
+            "load_authorization_collection_candidates",
+            "load_authorization_group_candidates",
+            "load_export_template_health",
+            "load_export_templates_for_audit",
+            "load_group_member_principals",
+            "load_groups_with_collection_permission",
+            "load_principal_collection_permissions",
+            "load_token_metadata_by_ids",
+            "mark_event_delivery_dead",
+            "mark_event_delivery_failed",
+            "mark_event_delivery_succeeded",
+            "mark_external_sync_attempted",
+            "move_collection",
+            "patch_object_data",
+            "preflight_import",
+            "prepare_class_relation",
+            "prepare_object_relation",
+            "process_event_fanout_batch",
+            "purge_expired_backup_outputs",
+            "purge_expired_export_outputs",
+            "purge_expired_tokens",
+            "record_import_results",
+            "record_remote_target_invocation",
+            "recover_expired_task_leases",
+            "release_event_delivery_for_retry",
+            "remove_group_member",
+            "remove_restore_instance",
+            "renew_task_lease",
+            "renew_token",
+            "replace_export_template",
+            "request_computed_field_rebuild",
+            "reset_local_password",
+            "resolve_class",
+            "resolve_class_names",
+            "resolve_class_relation",
+            "resolve_group_identity_scope_name",
+            "resolve_history_principal_names",
+            "resolve_identity_scope_name",
+            "resolve_identity_scope_names",
+            "resolve_object",
+            "resolve_object_relation",
+            "resume_maintenance_without_restore",
+            "resume_terminal_restore",
+            "revoke_all_local_collection_grants",
+            "revoke_all_principal_tokens",
+            "revoke_local_collection_grant",
+            "revoke_token",
+            "revoke_token_by_hash",
+            "search_classes",
+            "search_collections",
+            "search_objects",
+            "set_user_password",
+            "stage_restore",
+            "start_restore_draining",
+            "sync_external_user",
+            "tick_restore_coordinator",
+            "token_key_usage",
+            "update_class",
+            "update_collection",
+            "update_event_sink",
+            "update_event_subscription",
+            "update_group",
+            "update_object",
+            "update_personal_computed_field",
+            "update_principal_settings",
+            "update_remote_target",
+            "update_service_account",
+            "update_shared_computed_field",
+            "update_task_state",
+            "update_user",
+            "validate_object",
+            "validate_object_create",
+            "validate_object_update",
+            "with_transaction"
+          ]
         },
         {
           "name": "result",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "ok",
+            "authorization_unavailable",
+            "invalid_input",
+            "conflict",
+            "backend",
+            "permission_denied",
+            "internal",
+            "not_found",
+            "input_too_large",
+            "revision_conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "authentication_required",
+            "validation_failed"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1424,8 +2310,14 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1440,13 +2332,24 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         },
         {
           "name": "final_status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "succeeded",
+            "failed",
+            "partially_succeeded",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1461,13 +2364,24 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         },
         {
           "name": "final_status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "succeeded",
+            "failed",
+            "partially_succeeded",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -1500,13 +2414,24 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         },
         {
           "name": "status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "succeeded",
+            "failed",
+            "partially_succeeded",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1521,8 +2446,14 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1537,13 +2468,22 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         },
         {
           "name": "state",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "queued",
+            "active"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1558,8 +2498,11 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "export",
+            "backup"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1574,8 +2517,11 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "export",
+            "backup"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1590,8 +2536,11 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "export",
+            "backup"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1616,8 +2565,14 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         }
       ],
       "histogram_buckets": [
@@ -1680,13 +2635,27 @@
       "labels": [
         {
           "name": "kind",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call"
+          ]
         },
         {
           "name": "status",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "queued",
+            "validating",
+            "running",
+            "succeeded",
+            "failed",
+            "partially_succeeded",
+            "cancelled"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1701,18 +2670,32 @@
       "labels": [
         {
           "name": "format",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "legacy",
+            "version1",
+            "versioned_unknown"
+          ]
         },
         {
           "name": "key_state",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "active",
+            "previous",
+            "legacy",
+            "unknown"
+          ]
         },
         {
           "name": "outcome",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "migrated",
+            "migration_conflict",
+            "rejected"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1727,8 +2710,11 @@
       "labels": [
         {
           "name": "mode",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "stable",
+            "ephemeral"
+          ]
         },
         {
           "name": "active_key_id",
@@ -1753,8 +2739,11 @@
       "labels": [
         {
           "name": "state",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "active",
+            "previous"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -1769,13 +2758,22 @@
       "labels": [
         {
           "name": "key_state",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "active",
+            "previous",
+            "legacy",
+            "unconfigured"
+          ]
         },
         {
           "name": "lifecycle",
-          "bounded_by": "closed Rust enums or fixed call sites",
-          "values": []
+          "bounded_by": "enumerated values",
+          "values": [
+            "active",
+            "revoked",
+            "expired"
+          ]
         }
       ],
       "histogram_buckets": [],
@@ -2144,7 +3142,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2166,7 +3165,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2216,7 +3216,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2256,7 +3257,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2276,7 +3278,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2342,7 +3345,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2951,7 +3955,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -2995,7 +4000,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -3347,7 +4353,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -3636,7 +4643,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -3726,7 +4734,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -3751,7 +4760,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -3776,7 +4786,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -3987,7 +4998,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -4007,7 +5019,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -4048,7 +5061,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "process",
@@ -4070,7 +5084,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -4457,26 +5472,40 @@
     "HUBUUM_TLS_CERT_PATH and HUBUUM_TLS_KEY_PATH must be configured together",
     "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL",
     "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
-    "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT"
+    "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT",
+    "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+    "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material"
   ],
   "events": {
     "schema_version": 1,
     "envelope_fields": [
       {
-        "name": "id",
+        "name": "action",
         "nullable": false
       },
       {
-        "name": "event_id",
+        "name": "actor_kind",
         "nullable": false
       },
       {
-        "name": "occurred_at",
-        "nullable": false
+        "name": "actor_user_id",
+        "nullable": true
       },
       {
-        "name": "entity_type",
-        "nullable": false
+        "name": "after",
+        "nullable": true
+      },
+      {
+        "name": "before",
+        "nullable": true
+      },
+      {
+        "name": "collection_id",
+        "nullable": true
+      },
+      {
+        "name": "correlation_id",
+        "nullable": true
       },
       {
         "name": "entity_id",
@@ -4487,19 +5516,23 @@
         "nullable": true
       },
       {
-        "name": "collection_id",
-        "nullable": true
-      },
-      {
-        "name": "action",
+        "name": "entity_type",
         "nullable": false
       },
       {
-        "name": "actor_user_id",
-        "nullable": true
+        "name": "event_id",
+        "nullable": false
       },
       {
-        "name": "actor_kind",
+        "name": "id",
+        "nullable": false
+      },
+      {
+        "name": "metadata",
+        "nullable": false
+      },
+      {
+        "name": "occurred_at",
         "nullable": false
       },
       {
@@ -4511,27 +5544,11 @@
         "nullable": true
       },
       {
-        "name": "correlation_id",
-        "nullable": true
+        "name": "schema_version",
+        "nullable": false
       },
       {
         "name": "summary",
-        "nullable": false
-      },
-      {
-        "name": "before",
-        "nullable": true
-      },
-      {
-        "name": "after",
-        "nullable": true
-      },
-      {
-        "name": "metadata",
-        "nullable": false
-      },
-      {
-        "name": "schema_version",
         "nullable": false
       }
     ],
@@ -4542,10 +5559,14 @@
       },
       {
         "name": "actor.kind",
-        "nullable": true
+        "nullable": false
       },
       {
         "name": "actor.principal",
+        "nullable": true
+      },
+      {
+        "name": "actor.principal.name",
         "nullable": true
       },
       {
@@ -4553,20 +5574,16 @@
         "nullable": false
       },
       {
-        "name": "actor.principal.name",
+        "name": "initiator",
         "nullable": true
       },
       {
-        "name": "initiator",
+        "name": "initiator.name",
         "nullable": true
       },
       {
         "name": "initiator.principal_id",
         "nullable": false
-      },
-      {
-        "name": "initiator.name",
-        "nullable": true
       },
       {
         "name": "task_id",
@@ -4575,20 +5592,32 @@
     ],
     "sink_payload_fields": [
       {
-        "name": "id",
+        "name": "action",
         "nullable": false
       },
       {
-        "name": "event_id",
+        "name": "actor_kind",
         "nullable": false
       },
       {
-        "name": "occurred_at",
-        "nullable": false
+        "name": "actor_user_id",
+        "nullable": true
       },
       {
-        "name": "entity_type",
-        "nullable": false
+        "name": "after",
+        "nullable": true
+      },
+      {
+        "name": "before",
+        "nullable": true
+      },
+      {
+        "name": "collection_id",
+        "nullable": true
+      },
+      {
+        "name": "correlation_id",
+        "nullable": true
       },
       {
         "name": "entity_id",
@@ -4599,19 +5628,23 @@
         "nullable": true
       },
       {
-        "name": "collection_id",
-        "nullable": true
-      },
-      {
-        "name": "action",
+        "name": "entity_type",
         "nullable": false
       },
       {
-        "name": "actor_user_id",
-        "nullable": true
+        "name": "event_id",
+        "nullable": false
       },
       {
-        "name": "actor_kind",
+        "name": "id",
+        "nullable": false
+      },
+      {
+        "name": "metadata",
+        "nullable": false
+      },
+      {
+        "name": "occurred_at",
         "nullable": false
       },
       {
@@ -4623,27 +5656,11 @@
         "nullable": true
       },
       {
-        "name": "correlation_id",
-        "nullable": true
+        "name": "schema_version",
+        "nullable": false
       },
       {
         "name": "summary",
-        "nullable": false
-      },
-      {
-        "name": "before",
-        "nullable": true
-      },
-      {
-        "name": "after",
-        "nullable": true
-      },
-      {
-        "name": "metadata",
-        "nullable": false
-      },
-      {
-        "name": "schema_version",
         "nullable": false
       }
     ],

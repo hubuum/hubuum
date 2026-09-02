@@ -193,7 +193,7 @@ domains and aggregation semantics that are not part of each metric's structural
 signature.
 
 The bounded refresh `source` values are `database`, `events`, `inventory`,
-`login_limiter`, `process`, and `tasks`.
+`login_limiter`, `process`, `tasks`, and `token_keys`.
 
 The bounded database `caller` values are `event_delivery`, `event_fanout`,
 `event_retention`, `http_request`, `metrics_refresh`, `readiness`,
@@ -329,7 +329,7 @@ limited to `total`, `planning`, and `execution`; their outcomes are `success`,
 | `hubuum_event_worker_batch_size` | `worker` | Configured event-worker batch size |
 | `hubuum_event_worker_poll_interval_seconds` | `worker` | Configured event-worker poll interval |
 | `hubuum_event_worker_lock_timeout_seconds` | `worker` | Configured event-worker claim lock timeout |
-| `hubuum_event_worker_wakeups_total` | `worker`, `kind` | Notification, poll, and notification-send wakeups observed by this process |
+| `hubuum_event_worker_wakeups_total` | `worker`, `kind` | Notification, poll, and notifications-sent wakeups observed by this process |
 | `hubuum_inventory_entities` | `entity_type` | Database-wide collections, classes, objects, users, groups, service accounts, and remote targets |
 
 ## Alert Starting Points

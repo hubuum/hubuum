@@ -145,7 +145,34 @@ class Comparator:
             if old.get("exposure") != new.get("exposure"):
                 classification = "breaking" if exposure_rank.get(new.get("exposure"), -1) < exposure_rank.get(old.get("exposure"), -1) else "behavioral"
                 self.add(classification, "configuration-exposure-changed", f"{path}.exposure", old.get("exposure"), new.get("exposure"), "configuration secret classification changed")
-            for field in ("owner", "runtime_roles", "appears_in_running_configuration", "source"):
+            self.compare_set(
+                f"{path}.runtime_roles",
+                old.get("runtime_roles", []),
+                new.get("runtime_roles", []),
+                "configuration-runtime-role",
+                added_classification="behavioral",
+                removed_classification="breaking",
+            )
+            if old.get("appears_in_running_configuration") != new.get("appears_in_running_configuration"):
+                classification = "breaking" if old.get("appears_in_running_configuration") else "additive"
+                self.add(
+                    classification,
+                    "configuration-running-visibility-changed",
+                    f"{path}.appears_in_running_configuration",
+                    old.get("appears_in_running_configuration"),
+                    new.get("appears_in_running_configuration"),
+                    "configuration visibility in the running configuration changed",
+                )
+            if old.get("dynamic_prefix") != new.get("dynamic_prefix"):
+                self.add(
+                    "breaking",
+                    "configuration-dynamic-prefix-changed",
+                    f"{path}.dynamic_prefix",
+                    old.get("dynamic_prefix"),
+                    new.get("dynamic_prefix"),
+                    "configuration dynamic-prefix behavior changed",
+                )
+            for field in ("owner", "source"):
                 if old.get(field) != new.get(field):
                     self.add("behavioral", f"configuration-{field}-changed", f"{path}.{field}", old.get(field), new.get(field), f"configuration {field} changed")
 
@@ -206,9 +233,18 @@ class Comparator:
             self.add("breaking", "event-entity-removed", f"events.entities.{name}", old_entities[name], None, "removed an event entity")
         for name in sorted(old_entities.keys() & new_entities.keys()):
             self.compare_set(f"events.entities.{name}.actions", old_entities[name]["actions"], new_entities[name]["actions"], "event-action")
-        self.compare_set("events.redaction_rules", old["redaction_rules"], new["redaction_rules"], "event-redaction-rule")
+        self.compare_set(
+            "events.redaction_rules",
+            old["redaction_rules"],
+            new["redaction_rules"],
+            "event-redaction-rule",
+            added_classification="breaking",
+            removed_classification="breaking",
+        )
         self.compare_set("events.audit_document_versions", old.get("audit_document_versions", []), new.get("audit_document_versions", []), "event-audit-document-version")
-        if shape_changed and new["schema_version"] <= old["schema_version"]:
+        if new["schema_version"] < old["schema_version"]:
+            self.add("breaking", "event-schema-version-decreased", "events.schema_version", old["schema_version"], new["schema_version"], "event schema version decreased")
+        elif shape_changed and new["schema_version"] == old["schema_version"]:
             self.add("breaking", "event-schema-version-not-increased", "events.schema_version", old["schema_version"], new["schema_version"], "event shape changed without increasing schema_version")
         elif old["schema_version"] != new["schema_version"]:
             self.add("behavioral", "event-schema-version-changed", "events.schema_version", old["schema_version"], new["schema_version"], "event schema version changed")
@@ -221,7 +257,18 @@ class Comparator:
             for field in ("required_fields", "optional_fields", "sections"):
                 self.compare_set(f"documents.{family}.{field}", old[family][field], new[family][field], f"{family}-{field}")
             shape_changed = len(self.changes) != shape_before
-            if shape_changed and new[family]["version"] <= old[family]["version"]:
+            if old[family].get("rejection_policy") != new[family].get("rejection_policy"):
+                self.add(
+                    "breaking",
+                    f"{family}-rejection-policy-changed",
+                    f"documents.{family}.rejection_policy",
+                    old[family].get("rejection_policy"),
+                    new[family].get("rejection_policy"),
+                    f"{family} rejection policy changed",
+                )
+            if new[family]["version"] < old[family]["version"]:
+                self.add("breaking", f"{family}-version-decreased", f"documents.{family}.version", old[family]["version"], new[family]["version"], f"{family} document version decreased")
+            elif shape_changed and new[family]["version"] == old[family]["version"]:
                 self.add("breaking", f"{family}-version-not-increased", f"documents.{family}.version", old[family]["version"], new[family]["version"], f"{family} shape changed without increasing its version")
             elif old[family]["version"] != new[family]["version"]:
                 self.add("behavioral", f"{family}-version-changed", f"documents.{family}.version", old[family]["version"], new[family]["version"], f"{family} document version changed")

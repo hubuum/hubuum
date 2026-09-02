@@ -14,7 +14,10 @@ use crate::models::{
     CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION, ExportContentType, ExportMissingDataPolicy,
     ExportScopeKind, ExportTemplateKind, IMPORT_GRAPH_SECTIONS,
 };
-use crate::storage::{StorageBackupHistorySection, StorageBackupStateSection};
+use crate::storage::{
+    StorageBackupHistorySection, StorageBackupStateSection, StorageCallSite, StorageCapability,
+    StorageErrorKind, StorageTaskKind, StorageTaskStatus,
+};
 
 const CONTRACT_SCHEMA_VERSION: u32 = 1;
 const LATENCY_BUCKETS_SECONDS: &[f64] = &[
@@ -26,6 +29,21 @@ const OUTBOUND_BUCKETS_SECONDS: &[f64] = &[
 const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
     0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0,
     1800.0, 3600.0,
+];
+const STORAGE_OPERATION_SOURCES: &[&str] = &[
+    include_str!("storage/observed.rs"),
+    include_str!("storage/context/api.rs"),
+    include_str!("storage/context/computed_fields.rs"),
+    include_str!("storage/context/events.rs"),
+    include_str!("storage/context/execution.rs"),
+    include_str!("storage/context/identity.rs"),
+    include_str!("storage/context/identity_queries.rs"),
+    include_str!("storage/context/operational.rs"),
+    include_str!("storage/context/queries.rs"),
+    include_str!("storage/context/relations.rs"),
+    include_str!("storage/context/tasks.rs"),
+    include_str!("storage/context/transaction.rs"),
+    include_str!("storage/context/workflows.rs"),
 ];
 
 #[derive(Clone, Copy, Serialize)]
@@ -846,7 +864,7 @@ struct ConfigurationContract {
     allowed_values: Vec<String>,
     minimum: Option<i64>,
     maximum: Option<i64>,
-    runtime_roles: &'static [&'static str],
+    runtime_roles: Vec<&'static str>,
     appears_in_running_configuration: bool,
     source: &'static str,
     dynamic_prefix: bool,
@@ -890,18 +908,18 @@ struct CliContract {
     exit_codes: BTreeMap<&'static str, i32>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct FieldContract {
-    name: &'static str,
+    name: String,
     nullable: bool,
 }
 
 #[derive(Serialize)]
 struct EventContract {
     schema_version: i32,
-    envelope_fields: &'static [FieldContract],
-    provenance_fields: &'static [FieldContract],
-    sink_payload_fields: &'static [FieldContract],
+    envelope_fields: Vec<FieldContract>,
+    provenance_fields: Vec<FieldContract>,
+    sink_payload_fields: Vec<FieldContract>,
     schema_version_semantics: &'static [&'static str],
     actors: Vec<&'static str>,
     entities: Vec<EventEntityContract>,
@@ -952,120 +970,6 @@ struct OperationalContract {
     compatibility_policy: BTreeMap<&'static str, &'static str>,
 }
 
-const EVENT_FIELDS: &[FieldContract] = &[
-    FieldContract {
-        name: "id",
-        nullable: false,
-    },
-    FieldContract {
-        name: "event_id",
-        nullable: false,
-    },
-    FieldContract {
-        name: "occurred_at",
-        nullable: false,
-    },
-    FieldContract {
-        name: "entity_type",
-        nullable: false,
-    },
-    FieldContract {
-        name: "entity_id",
-        nullable: true,
-    },
-    FieldContract {
-        name: "entity_name",
-        nullable: true,
-    },
-    FieldContract {
-        name: "collection_id",
-        nullable: true,
-    },
-    FieldContract {
-        name: "action",
-        nullable: false,
-    },
-    FieldContract {
-        name: "actor_user_id",
-        nullable: true,
-    },
-    FieldContract {
-        name: "actor_kind",
-        nullable: false,
-    },
-    FieldContract {
-        name: "provenance",
-        nullable: false,
-    },
-    FieldContract {
-        name: "request_id",
-        nullable: true,
-    },
-    FieldContract {
-        name: "correlation_id",
-        nullable: true,
-    },
-    FieldContract {
-        name: "summary",
-        nullable: false,
-    },
-    FieldContract {
-        name: "before",
-        nullable: true,
-    },
-    FieldContract {
-        name: "after",
-        nullable: true,
-    },
-    FieldContract {
-        name: "metadata",
-        nullable: false,
-    },
-    FieldContract {
-        name: "schema_version",
-        nullable: false,
-    },
-];
-
-const PROVENANCE_FIELDS: &[FieldContract] = &[
-    FieldContract {
-        name: "actor",
-        nullable: false,
-    },
-    FieldContract {
-        name: "actor.kind",
-        nullable: true,
-    },
-    FieldContract {
-        name: "actor.principal",
-        nullable: true,
-    },
-    FieldContract {
-        name: "actor.principal.principal_id",
-        nullable: false,
-    },
-    FieldContract {
-        name: "actor.principal.name",
-        nullable: true,
-    },
-    FieldContract {
-        name: "initiator",
-        nullable: true,
-    },
-    FieldContract {
-        name: "initiator.principal_id",
-        nullable: false,
-    },
-    FieldContract {
-        name: "initiator.name",
-        nullable: true,
-    },
-    FieldContract {
-        name: "task_id",
-        nullable: true,
-    },
-];
-
 const CONFIGURATION_CONSTRAINTS: &[&str] = &[
     "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT",
     "HUBUUM_TASK_HEARTBEAT_SECONDS must be less than HUBUUM_TASK_LEASE_SECONDS",
@@ -1079,6 +983,8 @@ const CONFIGURATION_CONSTRAINTS: &[&str] = &[
     "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL",
     "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
     "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT",
+    "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+    "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material",
 ];
 
 pub(crate) fn generate_json() -> String {
@@ -1187,12 +1093,207 @@ fn metric_contracts() -> Vec<MetricContract> {
 }
 
 fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContract {
-    let values: &[&str] = match (metric, label) {
-        (_, "role") => &["all", "api", "worker"],
-        (_, "backend") if metric.starts_with("hubuum_storage") => &["memory", "postgresql"],
-        (_, "provider") => &["environment", "file"],
-        ("hubuum_db_pool_connections", "state") => &["configured", "open", "idle", "checked_out"],
-        (name, "source") if name.starts_with("hubuum_metrics_refresh") => &[
+    let strings = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>()
+    };
+    let storage_results = || {
+        std::iter::once("ok".to_string())
+            .chain(
+                StorageErrorKind::ALL
+                    .iter()
+                    .map(|kind| kind.as_str().to_string()),
+            )
+            .collect::<Vec<_>>()
+    };
+    let values = match (metric, label) {
+        ("hubuum_api_errors_total", "class") => strings(&[
+            "unauthorized",
+            "internal_server_error",
+            "forbidden",
+            "not_acceptable",
+            "unsupported_media_type",
+            "payload_too_large",
+            "database_error",
+            "conflict",
+            "precondition_failed",
+            "revision_conflict",
+            "too_many_requests",
+            "service_unavailable",
+            "not_implemented",
+            "permission_backend_unavailable",
+            "not_found",
+            "gone",
+            "db_connection_error",
+            "hash_error",
+            "bad_request",
+            "operator_mismatch",
+            "invalid_integer_range",
+            "validation_error",
+        ]),
+        ("hubuum_client_allowlist_rejections_total", "reason") => {
+            strings(&["disallowed_ip", "missing_ip"])
+        }
+        (name, "scope") if name.starts_with("hubuum_computed_field") => {
+            strings(&["shared", "personal", "preview"])
+        }
+        ("hubuum_computed_field_errors_total", "code") => strings(&[
+            "input_too_large",
+            "non_numeric_operand",
+            "non_integer_result",
+            "result_type_mismatch",
+            "numeric_out_of_range",
+            "evaluation_limit_exceeded",
+            "result_too_large",
+        ]),
+        ("hubuum_computed_field_evaluations_total", "outcome") => {
+            strings(&["success", "field_error"])
+        }
+        ("hubuum_computed_field_read_repairs_total", "outcome") => strings(&["success", "failure"]),
+        ("hubuum_computed_field_rebuild_batches_total", "items") => {
+            strings(&["empty", "non_empty"])
+        }
+        (name, "status") if name.starts_with("hubuum_computed_field_rebuild") => {
+            strings(&["succeeded", "failed", "cancelled"])
+        }
+        (name, "caller") if name.starts_with("hubuum_db_") => StorageCallSite::ALL
+            .iter()
+            .map(|call_site| call_site.as_str().to_string())
+            .collect(),
+        (name, "operation") if name.starts_with("hubuum_db_operation") => {
+            strings(&["connection", "task_lease_connection", "transaction"])
+        }
+        (name, "result") if name.starts_with("hubuum_db_operation") => storage_results(),
+        ("hubuum_db_pool_connections", "state") => {
+            strings(&["configured", "open", "idle", "checked_out"])
+        }
+        ("hubuum_event_queue_items", "state") => strings(&[
+            "total",
+            "pending",
+            "in_flight",
+            "succeeded",
+            "failed",
+            "dead",
+            "retryable",
+        ]),
+        (name, "scope") if name.starts_with("hubuum_export") => ExportScopeKind::ALL
+            .iter()
+            .copied()
+            .map(ExportScopeKind::as_str)
+            .map(str::to_string)
+            .collect(),
+        (name, "outcome") if name.starts_with("hubuum_export") => {
+            strings(&["success", "error", "timeout"])
+        }
+        (name, "outcome") if name.starts_with("hubuum_import") => {
+            strings(&["success", "failed", "partially_succeeded", "error"])
+        }
+        ("hubuum_extraction_failures_total", "kind") => strings(&["json", "path"]),
+        ("hubuum_inventory_entities", "entity_type") => strings(&[
+            "collections",
+            "classes",
+            "objects",
+            "users",
+            "groups",
+            "service_accounts",
+            "remote_targets",
+        ]),
+        ("hubuum_login_attempts_total", "outcome") => strings(&[
+            "success",
+            "bad_credentials",
+            "rate_limited",
+            "internal_error",
+        ]),
+        ("hubuum_login_limiter_backend_failures_total", "backend") => strings(&["valkey"]),
+        ("hubuum_login_limiter_backend_failures_total", "operation") => {
+            strings(&["begin", "finish", "snapshot", "release", "clear"])
+        }
+        ("hubuum_login_lockouts_total", "scope") => {
+            strings(&["principal_ip", "ip", "subnet", "unknown"])
+        }
+        ("hubuum_metrics_refresh_skipped_total", "reason") => strings(&["concurrent"]),
+        (name, "outcome") if name.starts_with("hubuum_remote_call") => strings(&[
+            "success",
+            "failure",
+            "timeout",
+            "private_target_rejected",
+            "validation_rejected",
+        ]),
+        (name, "method") if name.starts_with("hubuum_remote_call") => {
+            strings(&["DELETE", "GET", "PATCH", "POST"])
+        }
+        (name, "consumer") if name.starts_with("hubuum_secret_resolution") => strings(&[
+            "database",
+            "event_sink",
+            "remote_target",
+            "ldap",
+            "token_hash",
+        ]),
+        (name, "outcome") if name.starts_with("hubuum_secret_resolution") => strings(&[
+            "ok",
+            "not_found",
+            "permission_denied",
+            "too_large",
+            "unsafe_path",
+            "changed_during_read",
+            "invalid",
+            "unavailable",
+        ]),
+        (name, "capability") if name.starts_with("hubuum_storage_operation") => {
+            StorageCapability::ALL
+                .iter()
+                .map(|capability| capability.as_str().to_string())
+                .collect()
+        }
+        (name, "operation") if name.starts_with("hubuum_storage_operation") => {
+            storage_operation_values()
+        }
+        (name, "result") if name.starts_with("hubuum_storage_operation") => storage_results(),
+        (name, "kind") if name.starts_with("hubuum_task_output_cleanup") => {
+            strings(&["export", "backup"])
+        }
+        (name, "kind") if name.starts_with("hubuum_task") || name == "hubuum_tasks" => {
+            StorageTaskKind::ALL
+                .iter()
+                .map(|kind| kind.as_str().to_string())
+                .collect()
+        }
+        (name, "final_status") if name.starts_with("hubuum_task_") => StorageTaskStatus::TERMINAL
+            .iter()
+            .map(|status| status.as_str().to_string())
+            .collect(),
+        ("hubuum_task_last_terminal_timestamp_seconds", "status") => StorageTaskStatus::TERMINAL
+            .iter()
+            .map(|status| status.as_str().to_string())
+            .collect(),
+        ("hubuum_tasks", "status") => StorageTaskStatus::ALL
+            .iter()
+            .map(|status| status.as_str().to_string())
+            .collect(),
+        ("hubuum_task_oldest_age_seconds", "state") => strings(&["queued", "active"]),
+        ("hubuum_token_authentications_total", "format") => {
+            strings(&["legacy", "version1", "versioned_unknown"])
+        }
+        ("hubuum_token_authentications_total", "key_state") => {
+            strings(&["active", "previous", "legacy", "unknown"])
+        }
+        ("hubuum_token_authentications_total", "outcome") => {
+            strings(&["success", "migrated", "migration_conflict", "rejected"])
+        }
+        ("hubuum_token_hash_key_info", "mode") => strings(&["stable", "ephemeral"]),
+        ("hubuum_token_hash_keys", "state") => strings(&["active", "previous"]),
+        ("hubuum_token_hash_stored", "key_state") => {
+            strings(&["active", "previous", "legacy", "unconfigured"])
+        }
+        ("hubuum_token_hash_stored", "lifecycle") => strings(&["active", "revoked", "expired"]),
+        (_, "role") => strings(&["all", "api", "worker"]),
+        (_, "backend") if metric.starts_with("hubuum_storage") => {
+            strings(&["memory", "postgresql"])
+        }
+        (_, "provider") => strings(&["environment", "file"]),
+        (name, "source") if name.starts_with("hubuum_metrics_refresh") => [
             "database",
             "events",
             "inventory",
@@ -1200,20 +1301,27 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "process",
             "tasks",
             "token_keys",
-        ],
-        (name, "worker") if name.starts_with("hubuum_event_worker") => &["delivery", "fanout"],
-        (name, "queue") if name.starts_with("hubuum_event") => &["delivery", "fanout"],
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        (name, "worker") if name.starts_with("hubuum_event_worker") => {
+            strings(&["delivery", "fanout"])
+        }
+        (name, "queue") if name.starts_with("hubuum_event") => strings(&["delivery", "fanout"]),
         ("hubuum_event_worker_wakeups_total", "kind") => {
-            &["notification", "notifications_sent", "poll"]
+            strings(&["notification", "notifications_sent", "poll"])
         }
         (name, "phase") if name.starts_with("hubuum_export") => {
-            &["total", "query", "hydration", "render"]
+            strings(&["total", "query", "hydration", "render"])
         }
-        (name, "phase") if name.starts_with("hubuum_import") => &["total", "planning", "execution"],
+        (name, "phase") if name.starts_with("hubuum_import") => {
+            strings(&["total", "planning", "execution"])
+        }
         (name, "content_type") if name.starts_with("hubuum_export") => {
-            &["application/json", "text/plain", "text/html", "text/csv"]
+            strings(&["application/json", "text/plain", "text/html", "text/csv"])
         }
-        ("hubuum_revision_conditions_total", "outcome") => &[
+        ("hubuum_revision_conditions_total", "outcome") => strings(&[
             "matched",
             "wildcard",
             "stale",
@@ -1221,12 +1329,16 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "malformed",
             "async_stale",
             "invariant_failure",
-        ],
-        ("hubuum_login_limiter_entries", "state") => &["active", "locked"],
-        ("hubuum_task_worker_iterations_total", "outcome") => &["claimed", "idle", "error"],
-        (_, "status_family") => &["none", "1xx", "2xx", "3xx", "4xx", "5xx"],
-        (_, "method") => &["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
-        _ => &[],
+        ]),
+        ("hubuum_login_limiter_entries", "state") => strings(&["active", "locked"]),
+        ("hubuum_task_worker_iterations_total", "outcome") => {
+            strings(&["claimed", "idle", "error"])
+        }
+        (_, "status_family") => strings(&["none", "unknown", "1xx", "2xx", "3xx", "4xx", "5xx"]),
+        (_, "method") => strings(&[
+            "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
+        ]),
+        _ => Vec::new(),
     };
     let bounded_by = match (metric, label) {
         ("hubuum_export_template_info", "template_id" | "template_name")
@@ -1238,14 +1350,41 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         (_, "git_sha" | "version" | "active_key_id" | "ring_identity") => {
             "one configured process identity"
         }
-        _ if values.is_empty() => "closed Rust enums or fixed call sites",
         _ => "enumerated values",
     };
+    assert!(
+        !values.is_empty() || bounded_by != "enumerated values",
+        "metric {metric} label {label} claims an enumerated domain without values"
+    );
     MetricLabelContract {
         name: label,
         bounded_by,
-        values: values.iter().map(|value| (*value).to_string()).collect(),
+        values,
     }
+}
+
+fn storage_operation_values() -> Vec<String> {
+    STORAGE_OPERATION_SOURCES
+        .iter()
+        .flat_map(|source| {
+            first_quoted_strings_after(source, "self.observe_storage_call(")
+                .chain(first_quoted_strings_after(source, "self.call("))
+        })
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn first_quoted_strings_after<'a>(
+    source: &'a str,
+    marker: &'a str,
+) -> impl Iterator<Item = &'a str> {
+    source.match_indices(marker).filter_map(move |(index, _)| {
+        let remainder = &source[index + marker.len()..];
+        let start = remainder.find('"')? + 1;
+        remainder[start..].split('"').next()
+    })
 }
 
 fn validate_metrics(metrics: &[MetricDefinition]) -> Result<(), String> {
@@ -1292,13 +1431,25 @@ fn configuration_contracts() -> Vec<ConfigurationContract> {
     let mut contracts = APP_CONFIG_ENVIRONMENT
         .iter()
         .map(|variable| {
-            configuration_contract(variable, server.get(variable.name), "server", false)
+            configuration_contract(
+                variable,
+                server.get(variable.name),
+                "server",
+                false,
+                admin.contains_key(variable.name),
+            )
         })
         .chain(PROCESS_ENVIRONMENT.iter().map(|variable| {
             let argument = server
                 .get(variable.name)
                 .or_else(|| admin.get(variable.name));
-            configuration_contract(variable, argument, "process", false)
+            configuration_contract(
+                variable,
+                argument,
+                "process",
+                false,
+                admin.contains_key(variable.name) || admin_process_environment(variable.name),
+            )
         }))
         .collect::<Vec<_>>();
     contracts.extend(
@@ -1315,7 +1466,7 @@ fn configuration_contracts() -> Vec<ConfigurationContract> {
                 allowed_values: Vec::new(),
                 minimum: None,
                 maximum: None,
-                runtime_roles: &["all", "api", "worker", "admin"],
+                runtime_roles: vec!["all", "api", "worker", "admin"],
                 appears_in_running_configuration: false,
                 source: "dynamic secret namespace",
                 dynamic_prefix: true,
@@ -1330,6 +1481,7 @@ fn configuration_contract(
     argument: Option<&CliArgumentMetadata>,
     source: &'static str,
     dynamic_prefix: bool,
+    admin_applicable: bool,
 ) -> ConfigurationContract {
     let (minimum, maximum) = configuration_bounds(variable.name);
     let dynamic_default = dynamic_default(variable.name);
@@ -1361,7 +1513,7 @@ fn configuration_contract(
             .unwrap_or_default(),
         minimum,
         maximum,
-        runtime_roles: runtime_roles(variable.name),
+        runtime_roles: runtime_roles(variable.name, admin_applicable),
         appears_in_running_configuration: appears_in_running_configuration(variable.name),
         source,
         dynamic_prefix,
@@ -1654,14 +1806,26 @@ fn exposure_name(exposure: Exposure) -> &'static str {
     }
 }
 
-fn runtime_roles(name: &str) -> &'static [&'static str] {
+fn admin_process_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "HUBUUM_TOKEN_HASH_KEY"
+            | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
+            | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
+            | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
+            | "HUBUUM_SECRET_SOURCE"
+            | "HUBUUM_SECRET_FILE_ROOT"
+    )
+}
+
+fn runtime_roles(name: &str, admin_applicable: bool) -> Vec<&'static str> {
     if name.contains("_TEST_") || name.ends_with("_TESTS") {
-        return &["test"];
+        return vec!["test"];
     }
     if name == "HUBUUM_MIGRATION_DATABASE_URL" {
-        return &["admin"];
+        return vec!["admin"];
     }
-    match name {
+    let mut roles = match name {
         "HUBUUM_TASK_WORKERS"
         | "HUBUUM_TASK_POLL_INTERVAL_MS"
         | "HUBUUM_TASK_LEASE_SECONDS"
@@ -1670,9 +1834,13 @@ fn runtime_roles(name: &str) -> &'static [&'static str] {
         | "HUBUUM_EVENT_FANOUT_WORKERS"
         | "HUBUUM_EVENT_DELIVERY_WORKERS"
         | "HUBUUM_EVENT_RETENTION_PURGE_ENABLED"
-        | "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS" => &["all", "worker"],
-        _ => &["all", "api", "worker"],
+        | "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS" => vec!["all", "worker"],
+        _ => vec!["all", "api", "worker"],
+    };
+    if admin_applicable {
+        roles.push("admin");
     }
+    roles
 }
 
 fn appears_in_running_configuration(name: &str) -> bool {
@@ -1691,11 +1859,19 @@ fn appears_in_running_configuration(name: &str) -> bool {
 }
 
 fn event_contract() -> EventContract {
+    let minimal_envelope = serialized_event_envelope(false);
+    let populated_envelope = serialized_event_envelope(true);
+    let envelope_fields = direct_field_contracts(&minimal_envelope);
+    let provenance_fields = nested_field_contracts(
+        "",
+        &minimal_envelope["provenance"],
+        &populated_envelope["provenance"],
+    );
     EventContract {
         schema_version: CURRENT_EVENT_SCHEMA_VERSION,
-        envelope_fields: EVENT_FIELDS,
-        provenance_fields: PROVENANCE_FIELDS,
-        sink_payload_fields: EVENT_FIELDS,
+        sink_payload_fields: envelope_fields.clone(),
+        envelope_fields,
+        provenance_fields,
         schema_version_semantics: &[
             "positive integer",
             "omitted builder value defaults to the current event schema version",
@@ -1728,6 +1904,119 @@ fn event_contract() -> EventContract {
             hubuum_events_core::REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
         ],
     }
+}
+
+fn serialized_event_envelope(populated: bool) -> serde_json::Value {
+    use crate::events::{
+        EventEnvelope, EventSequence, PrincipalId, Provenance, ProvenanceActor,
+        ProvenancePrincipal, TaskId,
+    };
+
+    let actor_id = PrincipalId::new(1).expect("positive sample principal id");
+    let initiator_id = PrincipalId::new(2).expect("positive sample principal id");
+    let task_id = TaskId::new(3).expect("positive sample task id");
+    let provenance = if populated {
+        Provenance {
+            actor: ProvenanceActor {
+                kind: Some(ActorKind::User.as_str().to_string()),
+                principal: Some(ProvenancePrincipal {
+                    principal_id: actor_id,
+                    name: None,
+                }),
+            },
+            initiator: Some(ProvenancePrincipal {
+                principal_id: initiator_id,
+                name: None,
+            }),
+            task_id: Some(task_id),
+        }
+    } else {
+        Provenance::default()
+    };
+    let mut builder = EventEnvelope::builder()
+        .id(EventSequence::new(1).expect("positive sample event sequence"))
+        .event_id(uuid::Uuid::nil())
+        .occurred_at(
+            chrono::DateTime::from_timestamp(0, 0).expect("Unix epoch is a valid timestamp"),
+        )
+        .entity_type(EntityType::Collection)
+        .action(Action::Created)
+        .actor_kind(if populated {
+            ActorKind::User
+        } else {
+            ActorKind::System
+        })
+        .provenance(provenance)
+        .summary("operational contract sample".to_string());
+    if populated {
+        builder = builder
+            .entity_id(Some(
+                crate::events::EventEntityId::new(1).expect("positive sample entity id"),
+            ))
+            .entity_name(Some("sample".to_string()))
+            .collection_id(Some(
+                crate::events::CollectionId::new(1).expect("positive sample collection id"),
+            ))
+            .actor_user_id(Some(actor_id))
+            .request_id(Some(uuid::Uuid::nil()))
+            .correlation_id(Some("sample".to_string()))
+            .before(Some(serde_json::json!({})))
+            .after(Some(serde_json::json!({})));
+    }
+    serde_json::to_value(
+        builder
+            .try_build()
+            .expect("sample event envelope must satisfy runtime invariants"),
+    )
+    .expect("event envelope must serialize")
+}
+
+fn direct_field_contracts(value: &serde_json::Value) -> Vec<FieldContract> {
+    let mut fields = value
+        .as_object()
+        .expect("serialized event envelope must be an object")
+        .iter()
+        .map(|(name, value)| FieldContract {
+            name: name.clone(),
+            nullable: value.is_null(),
+        })
+        .collect::<Vec<_>>();
+    fields.sort_by(|left, right| left.name.cmp(&right.name));
+    fields
+}
+
+fn nested_field_contracts(
+    prefix: &str,
+    minimal: &serde_json::Value,
+    populated: &serde_json::Value,
+) -> Vec<FieldContract> {
+    let populated = populated
+        .as_object()
+        .expect("populated event provenance must be an object");
+    let minimal = minimal.as_object();
+    let mut fields = Vec::new();
+    for (name, populated_value) in populated {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        let minimal_value = minimal.and_then(|object| object.get(name));
+        fields.push(FieldContract {
+            name: path.clone(),
+            nullable: minimal_value
+                .map_or_else(|| populated_value.is_null(), serde_json::Value::is_null),
+        });
+        if populated_value.is_object() {
+            fields.extend(nested_field_contracts(
+                &path,
+                minimal_value.unwrap_or(&serde_json::Value::Null),
+                populated_value,
+            ));
+        }
+    }
+    fields.sort_by(|left, right| left.name.cmp(&right.name));
+    fields
 }
 
 fn document_contracts() -> DocumentContracts {
@@ -1972,6 +2261,78 @@ mod tests {
         assert!(
             CONFIGURATION_CONSTRAINTS
                 .contains(&"HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT")
+        );
+    }
+
+    #[test]
+    fn configuration_constraints_include_token_key_startup_requirements() {
+        assert!(CONFIGURATION_CONSTRAINTS.contains(
+            &"HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
+        ));
+        assert!(CONFIGURATION_CONSTRAINTS.contains(
+            &"HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material"
+        ));
+    }
+
+    #[test]
+    fn administrator_configuration_includes_shared_database_and_token_settings() {
+        let inventory = configuration_contracts();
+        for name in [
+            "HUBUUM_DATABASE_URL",
+            "HUBUUM_DATABASE_ROLE_MODE",
+            "HUBUUM_TOKEN_HASH_KEY",
+            "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+            "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
+            "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY",
+            "HUBUUM_SECRET_SOURCE",
+            "HUBUUM_SECRET_FILE_ROOT",
+        ] {
+            let setting = inventory.iter().find(|item| item.name == name).unwrap();
+            assert!(
+                setting.runtime_roles.contains(&"admin"),
+                "{name} is consumed by hubuum-admin"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_metric_label_domains_are_enumerated() {
+        for metric in metric_contracts() {
+            for label in metric.labels {
+                if label.bounded_by == "enumerated values" {
+                    assert!(
+                        !label.values.is_empty(),
+                        "{} label {} has no enumerated values",
+                        metric.name,
+                        label.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn event_contract_uses_serialized_envelope_shape() {
+        let contract = event_contract();
+        let serialized = serialized_event_envelope(false);
+        let serialized_fields = serialized
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let contract_fields = contract
+            .envelope_fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(contract_fields, serialized_fields);
+        assert_eq!(contract.envelope_fields, contract.sink_payload_fields);
+        assert!(
+            contract
+                .provenance_fields
+                .iter()
+                .any(|field| field.name == "actor.kind" && !field.nullable)
         );
     }
 

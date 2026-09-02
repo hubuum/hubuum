@@ -252,6 +252,55 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(change["kind"], "configuration-constraint-removed")
         self.assertEqual(change["classification"], "additive")
 
+    def test_removed_configuration_runtime_role_fails(self) -> None:
+        candidate = contract()
+        candidate["configuration"][0]["runtime_roles"].remove("worker")
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "configuration-runtime-role-removed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_added_configuration_runtime_role_is_behavioral(self) -> None:
+        baseline = contract()
+        baseline["configuration"][0]["runtime_roles"].remove("worker")
+        self.write_case(baseline, contract())
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "configuration-runtime-role-added")
+        self.assertEqual(change["classification"], "behavioral")
+
+    def test_removing_running_configuration_visibility_fails(self) -> None:
+        candidate = contract()
+        candidate["configuration"][0]["appears_in_running_configuration"] = False
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "configuration-running-visibility-changed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_adding_running_configuration_visibility_is_additive(self) -> None:
+        baseline = contract()
+        baseline["configuration"][0]["appears_in_running_configuration"] = False
+        self.write_case(baseline, contract())
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["classification"], "additive")
+
+    def test_changed_dynamic_prefix_fails(self) -> None:
+        candidate = contract()
+        candidate["configuration"][0]["dynamic_prefix"] = True
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "configuration-dynamic-prefix-changed")
+        self.assertEqual(change["classification"], "breaking")
+
     def test_new_required_cli_option_fails(self) -> None:
         candidate = contract()
         required = copy.deepcopy(candidate["cli"][0]["options"][0])
@@ -335,6 +384,25 @@ class PolicyTests(unittest.TestCase):
         kinds = {change["kind"] for change in self.report_json()["changes"]}
         self.assertNotIn("event-schema-version-not-increased", kinds)
 
+    def test_event_schema_version_decrease_fails_without_shape_change(self) -> None:
+        baseline = contract()
+        baseline["events"]["schema_version"] = 2
+        self.write_case(baseline, contract())
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        kinds = {change["kind"] for change in self.report_json()["changes"]}
+        self.assertIn("event-schema-version-decreased", kinds)
+
+    def test_added_event_redaction_rule_fails(self) -> None:
+        candidate = contract()
+        candidate["events"]["redaction_rules"].append("redact actor")
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "event-redaction-rule-added")
+        self.assertEqual(change["classification"], "breaking")
+
     def test_document_shape_passes_with_version_bump(self) -> None:
         candidate = contract()
         candidate["documents"]["backup"]["sections"].append("groups")
@@ -342,6 +410,24 @@ class PolicyTests(unittest.TestCase):
         self.write_case(contract(), candidate)
         result = self.run_checker()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_document_version_decrease_fails_without_shape_change(self) -> None:
+        baseline = contract()
+        baseline["documents"]["backup"]["version"] = 2
+        self.write_case(baseline, contract())
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        kinds = {change["kind"] for change in self.report_json()["changes"]}
+        self.assertIn("backup-version-decreased", kinds)
+
+    def test_document_rejection_policy_change_fails(self) -> None:
+        candidate = contract()
+        candidate["documents"]["import"]["rejection_policy"] = "accept unknown versions"
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        kinds = {change["kind"] for change in self.report_json()["changes"]}
+        self.assertIn("import-rejection-policy-changed", kinds)
 
     def test_narrow_exception_accepts_one_break(self) -> None:
         candidate = contract()
