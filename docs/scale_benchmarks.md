@@ -251,12 +251,13 @@ Use `sensitivity-plan --limit-mode standard` (or `extended`) to turn the
 relative matrix into exact increments for a profile, then produce one `impact`
 report per fresh-database point. After all points complete,
 `summarize-sensitivity` validates that the expected mode-specific matrix is
-complete. Its first table makes relative p95 curves and pagination knees easy
-to scan; the detailed tables retain exact baseline and expanded corpus sizes,
-absolute measurements, and relative costs. Once repeated trials are available,
-a line chart with uncertainty bands will communicate trends better than a
-single-run line. Until then, connecting three informational points would imply
-more certainty than the measurements support.
+complete. Its short signal list makes relative p95 curves, pagination knees,
+and relation saturation easy to scan. Exact corpus and performance tables are
+collapsed by default under each axis, and the machine-readable report retains
+every absolute measurement and relative cost. Once repeated trials are
+available, a line chart with uncertainty bands will communicate trends better
+than a single-run line. Until then, connecting three informational points would
+imply more certainty than the measurements support.
 
 Treat a repeatable corpus-size slope in a bounded, fixed-result operation as
 an optimization target unless the operation intentionally examines a

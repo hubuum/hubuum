@@ -2744,10 +2744,8 @@ impl ScaleSensitivityReport {
             &self.workload_digest[..12],
             self.limit_mode.page_limit()
         ));
-        output.push_str("| Baseline collections | Classes | Objects | Class relations | Object relations | Principals | Groups | Memberships | Grants |\n");
-        output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n\n",
+            "Baseline corpus: {} collections · {} classes · {} objects · {} class relations · {} object relations.\n\nAuthorization overlay: {} principals · {} groups · {} memberships · {} grants.\n\n",
             format_count(self.baseline_totals.collections),
             format_count(self.baseline_totals.classes),
             format_count(self.baseline_totals.objects),
@@ -2789,31 +2787,28 @@ impl ScaleSensitivityReport {
 }
 
 fn render_curve_summary(output: &mut String, axes: &[AxisSensitivityReport]) {
-    output.push_str("### Growth curves at a glance\n\n");
-    output.push_str("Relative p95 changes identify slopes and knees; the detailed tables below retain absolute measurements and storage costs.\n\n");
-    output.push_str("| Placement | Primary operation | Relative p95 curve | Traversal pages |\n");
-    output.push_str("| --- | --- | --- | --- |\n");
+    output.push_str("### Signals at a glance\n\n");
+    output.push_str("Each sequence follows independent growth steps and shows p95 change from the same baseline. Expand an axis for exact corpus, latency, throughput, traversal, and storage measurements.\n\n");
     for axis in axes {
+        let growth_steps = axis
+            .points
+            .iter()
+            .map(|point| format!("+{}%", point.added_percent))
+            .collect::<Vec<_>>()
+            .join(" / ");
         let latency_curve = axis
             .points
             .iter()
-            .map(|point| {
-                format!(
-                    "+{}%: {}",
-                    point.added_percent,
-                    format_percent(point.latency_p95_ms.percent)
-                )
-            })
+            .map(|point| format_percent(point.latency_p95_ms.percent))
             .collect::<Vec<_>>()
-            .join(" · ");
+            .join(" / ");
         output.push_str(&format!(
-            "| {} | `{}` / `{}` | {} |",
+            "- **{}** (`{}`) — p95 `{}`",
             axis.axis.section_title(),
-            axis.scenario,
-            axis.phase,
+            growth_steps,
             latency_curve
         ));
-        let pages = axis
+        let page_deltas = axis
             .points
             .iter()
             .filter_map(|point| {
@@ -2823,11 +2818,30 @@ fn render_curve_summary(output: &mut String, axes: &[AxisSensitivityReport]) {
                     .map(|pages| format!("{:.0}", pages.comparison))
             })
             .collect::<Vec<_>>();
-        if pages.is_empty() {
-            output.push_str(" - |\n");
-        } else {
-            output.push_str(&format!(" {} |\n", pages.join(" → ")));
+        if let Some(baseline) = axis
+            .points
+            .iter()
+            .find_map(|point| point.traversal_pages.as_ref().map(|pages| pages.baseline))
+        {
+            output.push_str(&format!(
+                "; pages `{baseline:.0} → {}`",
+                page_deltas.join(" / ")
+            ));
         }
+        let saturations = axis
+            .points
+            .iter()
+            .filter_map(|point| point.comparison_relation_shape.as_ref())
+            .map(|shape| format_saturation(shape.saturation_basis_points))
+            .collect::<Vec<_>>();
+        if let Some(baseline) = &axis.baseline_relation_shape {
+            output.push_str(&format!(
+                "; pair saturation `{} → {}`",
+                format_saturation(baseline.saturation_basis_points),
+                saturations.join(" / ")
+            ));
+        }
+        output.push_str(".\n");
     }
     output.push('\n');
 }
@@ -2881,96 +2895,59 @@ fn sensitivity_resource<'a>(impact: &'a ScaleImpactReport, name: &str) -> Result
 }
 
 fn render_object_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
+    open_axis_details(output, axis);
     output.push_str(&format!(
-        "### {} (`{}` / `{}`)\n\n",
-        axis.axis.section_title(),
-        axis.scenario,
-        axis.phase
-    ));
-    output.push_str(&format!(
-        "Growth is placed in the `{}` region, which starts with {} objects; the baseline maximum is {} objects in one class.\n\n| Added objects vs {} | Expanded objects | Target-region objects | Max objects/class | p95 ms | Throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n",
+        "Growth is placed in the `{}` region. It starts with {} of the corpus's {} objects; the largest class has {} objects.\n\n| Growth | Total objects | Target region | Maximum/class |\n",
         axis.target_region,
         format_count(axis.baseline_target_region_total),
-        format_count(axis.baseline_objects_per_class.maximum),
         format_count(axis.baseline_total),
+        format_count(axis.baseline_objects_per_class.maximum),
     ));
-    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| ---: | ---: | ---: | ---: |\n");
     for point in &axis.points {
         output.push_str(&format!(
-            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| +{}% (+{}) | {} | {} | {} |\n",
             point.added_percent,
             format_count(point.added_count),
             format_count(point.comparison_total),
             format_count(point.comparison_target_region_total),
             format_count(point.comparison_objects_per_class.maximum),
-            format_delta(&point.latency_p95_ms, ""),
-            format_delta(&point.requests_per_second, ""),
-            point
-                .traversal_pages
-                .as_ref()
-                .map(|delta| format!("{:.0} → {:.0}", delta.baseline, delta.comparison))
-                .unwrap_or_else(|| "-".to_string()),
-            point
-                .traversal_ms
-                .as_ref()
-                .map(|delta| format_delta(delta, ""))
-                .unwrap_or_else(|| "-".to_string()),
-            format_bytes_delta(&point.storage_bytes),
-            point
-                .index_bytes
-                .as_ref()
-                .map(format_bytes_delta)
-                .unwrap_or_else(|| "-".to_string())
         ));
     }
-    output.push('\n');
+    render_measurement_baseline(output, axis);
+    render_performance_table(output, axis);
+    close_axis_details(output);
 }
 
 fn render_class_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
+    open_axis_details(output, axis);
     output.push_str(&format!(
-        "### {} (`{}` / `{}`)\n\n",
-        axis.axis.section_title(),
-        axis.scenario,
-        axis.phase
-    ));
-    output.push_str(&format!(
-        "Objects and relations remain fixed while classes are added to the `{}` region, which starts with {} classes. The baseline objects/class distribution has median {} and maximum {}.\n\n| Added classes vs {} | Expanded classes | Target-region classes | Objects/class median | Objects/class max | p95 ms | Throughput/s | Database bytes | Index bytes |\n",
+        "Objects and relations remain fixed while classes are added to the `{}` region. It starts with {} of the corpus's {} classes; objects/class starts at median {} and maximum {}.\n\n| Growth | Total classes | Target region | Objects/class median | Maximum |\n",
         axis.target_region,
         format_count(axis.baseline_target_region_total),
+        format_count(axis.baseline_total),
         format_count(axis.baseline_objects_per_class.median),
         format_count(axis.baseline_objects_per_class.maximum),
-        format_count(axis.baseline_total),
     ));
-    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| ---: | ---: | ---: | ---: | ---: |\n");
     for point in &axis.points {
         output.push_str(&format!(
-            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| +{}% (+{}) | {} | {} | {} | {} |\n",
             point.added_percent,
             format_count(point.added_count),
             format_count(point.comparison_total),
             format_count(point.comparison_target_region_total),
             format_count(point.comparison_objects_per_class.median),
             format_count(point.comparison_objects_per_class.maximum),
-            format_delta(&point.latency_p95_ms, ""),
-            format_delta(&point.requests_per_second, ""),
-            format_bytes_delta(&point.storage_bytes),
-            point
-                .index_bytes
-                .as_ref()
-                .map(format_bytes_delta)
-                .unwrap_or_else(|| "-".to_string())
         ));
     }
-    output.push('\n');
+    render_measurement_baseline(output, axis);
+    render_performance_table(output, axis);
+    close_axis_details(output);
 }
 
 fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
-    output.push_str(&format!(
-        "### {} (`{}` / `{}`)\n\n",
-        axis.axis.section_title(),
-        axis.scenario,
-        axis.phase
-    ));
+    open_axis_details(output, axis);
     if let Some(shape) = &axis.baseline_relation_shape {
         output.push_str(&format!(
             "The measured class pair starts with {} edges across {} possible unique source/target combinations ({} saturation).\n\n",
@@ -2980,7 +2957,7 @@ fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport
         ));
     }
     output.push_str(&format!(
-        "Growth is placed in the `{}` region, which starts with {} object relations.\n\n| Added relations vs {} | Expanded relations | Target-region relations | Measured pair edges | Pair saturation |\n",
+        "Growth is placed in the `{}` region, which starts with {} of the corpus's {} object relations.\n\n| Growth | Total relations | Target region | Measured pair edges | Pair saturation |\n",
         axis.target_region,
         format_count(axis.baseline_target_region_total),
         format_count(axis.baseline_total),
@@ -3007,40 +2984,124 @@ fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport
             saturation,
         ));
     }
-    output.push_str("\n| Added relations | Warm p95 ms | Warm throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n");
-    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    render_measurement_baseline(output, axis);
+    render_performance_table(output, axis);
+    close_axis_details(output);
+}
+
+fn open_axis_details(output: &mut String, axis: &AxisSensitivityReport) {
+    output.push_str(&format!(
+        "<details>\n<summary><strong>{}</strong> — exact evidence</summary>\n\nPrimary operation: `{}` / `{}`.\n\n",
+        axis.axis.section_title(),
+        axis.scenario,
+        axis.phase
+    ));
+}
+
+fn close_axis_details(output: &mut String) {
+    output.push_str("</details>\n\n");
+}
+
+fn render_measurement_baseline(output: &mut String, axis: &AxisSensitivityReport) {
+    let Some(first) = axis.points.first() else {
+        return;
+    };
+    let mut values = vec![
+        format!("p95 {:.2} ms", first.latency_p95_ms.baseline),
+        format!("throughput {:.2}/s", first.requests_per_second.baseline),
+    ];
+    if let Some(pages) = &first.traversal_pages {
+        let unit = if pages.baseline == 1.0 {
+            "page"
+        } else {
+            "pages"
+        };
+        values.push(format!("traversal {:.0} {unit}", pages.baseline));
+    }
+    if let Some(traversal_ms) = &first.traversal_ms {
+        values.push(format!("traversal {:.2} ms", traversal_ms.baseline));
+    }
+    values.push(format!(
+        "database {}",
+        format_bytes(first.storage_bytes.baseline)
+    ));
+    if let Some(index_bytes) = &first.index_bytes {
+        values.push(format!("index {}", format_bytes(index_bytes.baseline)));
+    }
+    output.push_str(&format!(
+        "\nMeasurement baseline: {}.\n\n",
+        values.join(" · ")
+    ));
+}
+
+fn render_performance_table(output: &mut String, axis: &AxisSensitivityReport) {
+    let has_traversal = axis
+        .points
+        .iter()
+        .any(|point| point.traversal_pages.is_some() || point.traversal_ms.is_some());
+    if has_traversal {
+        output.push_str(
+            "| Growth | p95 ms | Requests/s | Pages | Traversal ms | Database | Index |\n",
+        );
+        output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    } else {
+        output.push_str("| Growth | p95 ms | Requests/s | Database | Index |\n");
+        output.push_str("| ---: | ---: | ---: | ---: | ---: |\n");
+    }
     for point in &axis.points {
-        output.push_str(&format!(
-            "| +{}% | {} | {} | {} | {} | {} | {} |\n",
-            point.added_percent,
-            format_delta(&point.latency_p95_ms, ""),
-            format_delta(&point.requests_per_second, ""),
-            point
-                .traversal_pages
-                .as_ref()
-                .map(|delta| format!("{:.0} → {:.0}", delta.baseline, delta.comparison))
-                .unwrap_or_else(|| "-".to_string()),
-            point
-                .traversal_ms
-                .as_ref()
-                .map(|delta| format_delta(delta, ""))
-                .unwrap_or_else(|| "-".to_string()),
-            format_bytes_delta(&point.storage_bytes),
-            point
-                .index_bytes
-                .as_ref()
-                .map(format_bytes_delta)
-                .unwrap_or_else(|| "-".to_string())
-        ));
+        if has_traversal {
+            output.push_str(&format!(
+                "| +{}% | {} | {} | {} | {} | {} | {} |\n",
+                point.added_percent,
+                format_comparison_delta(&point.latency_p95_ms, ""),
+                format_comparison_delta(&point.requests_per_second, ""),
+                point
+                    .traversal_pages
+                    .as_ref()
+                    .map(|delta| format!("{:.0}", delta.comparison))
+                    .unwrap_or_else(|| "-".to_string()),
+                point
+                    .traversal_ms
+                    .as_ref()
+                    .map(|delta| format_comparison_delta(delta, ""))
+                    .unwrap_or_else(|| "-".to_string()),
+                format_bytes_comparison(&point.storage_bytes),
+                point
+                    .index_bytes
+                    .as_ref()
+                    .map(format_bytes_comparison)
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+        } else {
+            output.push_str(&format!(
+                "| +{}% | {} | {} | {} | {} |\n",
+                point.added_percent,
+                format_comparison_delta(&point.latency_p95_ms, ""),
+                format_comparison_delta(&point.requests_per_second, ""),
+                format_bytes_comparison(&point.storage_bytes),
+                point
+                    .index_bytes
+                    .as_ref()
+                    .map(format_bytes_comparison)
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+        }
     }
     output.push('\n');
 }
 
-fn format_delta(delta: &MetricDelta, suffix: &str) -> String {
+fn format_comparison_delta(delta: &MetricDelta, suffix: &str) -> String {
     format!(
-        "{:.2}{suffix} → {:.2}{suffix} ({})",
-        delta.baseline,
+        "{:.2}{suffix} ({})",
         delta.comparison,
+        format_percent(delta.percent)
+    )
+}
+
+fn format_bytes_comparison(delta: &MetricDelta) -> String {
+    format!(
+        "{} ({})",
+        format_bytes(delta.comparison),
         format_percent(delta.percent)
     )
 }
@@ -3051,15 +3112,6 @@ fn format_saturation(basis_points: u64) -> String {
     } else {
         format!("{:.1}%", basis_points as f64 / 100.0)
     }
-}
-
-fn format_bytes_delta(delta: &MetricDelta) -> String {
-    format!(
-        "{} → {} ({})",
-        format_bytes(delta.baseline),
-        format_bytes(delta.comparison),
-        format_percent(delta.percent)
-    )
 }
 
 fn format_count(value: u64) -> String {
@@ -4142,8 +4194,12 @@ mod tests {
                 .comparison,
             2.0
         );
-        assert!(markdown.contains("Baseline collections"));
-        assert!(markdown.contains("Growth curves at a glance"));
+        assert!(markdown.contains("Baseline corpus:"));
+        assert!(markdown.contains("Signals at a glance"));
+        assert_eq!(markdown.matches("<details>").count(), 6);
+        assert_eq!(markdown.matches("</details>").count(), 6);
+        assert!(markdown.contains("Measurement baseline:"));
+        assert!(markdown.contains("| Growth | p95 ms | Requests/s |"));
         assert!(markdown.contains("## postgres / large / page limit 250 scale growth"));
         assert!(markdown.contains("Class-count growth"));
         assert!(markdown.contains("Object-heavy growth"));
@@ -4155,7 +4211,7 @@ mod tests {
         assert!(markdown.contains("+20% (+50,000)"));
         assert!(markdown.contains("300,000"));
         assert!(markdown.contains("+100% (+1,000,000)"));
-        assert!(markdown.contains("1 → 2"));
+        assert!(markdown.contains("pages `1 → 1 / 2 / 3`"));
         assert!(markdown.contains("Each percentage is relative to the stated baseline"));
 
         let mut extended_summary = summary.clone();
