@@ -68,10 +68,18 @@ struct ProfileArgs {
     profile_spec: Option<PathBuf>,
     #[arg(long)]
     seed: Option<u64>,
-    #[arg(long, conflicts_with = "add_object_relations")]
+    #[arg(long)]
+    add_classes: Option<u64>,
+    #[arg(long)]
     add_objects: Option<u64>,
-    #[arg(long, conflicts_with = "add_objects")]
+    #[arg(long)]
+    add_object_heavy_objects: Option<u64>,
+    #[arg(long)]
     add_object_relations: Option<u64>,
+    #[arg(long)]
+    add_concentrated_object_relations: Option<u64>,
+    #[arg(long)]
+    add_dense_object_relations: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -180,6 +188,8 @@ struct SensitivityPlanArgs {
     profile: ProfileArgs,
     #[arg(long)]
     sensitivity_spec: Option<PathBuf>,
+    #[arg(long, value_parser = parse_limit_mode)]
+    limit_mode: LimitMode,
     #[arg(long)]
     output: PathBuf,
 }
@@ -388,7 +398,7 @@ fn impact(args: ImpactArgs) -> Result<()> {
 fn sensitivity_plan(args: SensitivityPlanArgs) -> Result<()> {
     let profile = load_profile(&args.profile)?;
     let spec = load_sensitivity_spec(args.sensitivity_spec.as_deref())?;
-    let plan = spec.plan(&profile)?;
+    let plan = spec.plan(&profile, args.limit_mode)?;
     plan.write(&args.output)?;
     println!(
         "Wrote {} calibrated scale sensitivity points to {}",
@@ -448,11 +458,27 @@ fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
         Some(seed) => profile.with_seed(seed),
         None => Ok(profile),
     }?;
-    match (args.add_objects, args.add_object_relations) {
-        (Some(amount), None) => profile.with_increment(ScaleAxis::Objects, amount),
-        (None, Some(amount)) => profile.with_increment(ScaleAxis::ObjectRelations, amount),
-        (None, None) => Ok(profile),
-        (Some(_), Some(_)) => Err(io_error(
+    let increments = [
+        (ScaleAxis::Classes, args.add_classes),
+        (ScaleAxis::Objects, args.add_objects),
+        (ScaleAxis::ObjectHeavyObjects, args.add_object_heavy_objects),
+        (ScaleAxis::ObjectRelations, args.add_object_relations),
+        (
+            ScaleAxis::ConcentratedObjectRelations,
+            args.add_concentrated_object_relations,
+        ),
+        (
+            ScaleAxis::DenseObjectRelations,
+            args.add_dense_object_relations,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(axis, amount)| amount.map(|amount| (axis, amount)))
+    .collect::<Vec<_>>();
+    match increments.as_slice() {
+        [] => Ok(profile),
+        [(axis, amount)] => profile.with_increment(*axis, *amount),
+        _ => Err(io_error(
             "only one scale axis may be changed in a controlled experiment",
         )),
     }

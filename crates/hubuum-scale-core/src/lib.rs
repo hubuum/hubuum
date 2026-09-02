@@ -19,10 +19,11 @@ const LARGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/lar
 const HUGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/huge.toml");
 const WORKLOAD_V1: &str = include_str!("../../../scale-benchmarks/workloads/v1.toml");
 const SENSITIVITY_V1: &str = include_str!("../../../scale-benchmarks/sensitivity-v1.toml");
-const DATASET_SCHEMA_VERSION: u32 = 1;
+const PROFILE_SCHEMA_VERSION: u32 = 1;
+const DATASET_SCHEMA_VERSION: u32 = 2;
 const REPORT_SCHEMA_VERSION: u32 = 2;
-const IMPACT_REPORT_SCHEMA_VERSION: u32 = 3;
-const SENSITIVITY_REPORT_SCHEMA_VERSION: u32 = 1;
+const IMPACT_REPORT_SCHEMA_VERSION: u32 = 4;
+const SENSITIVITY_REPORT_SCHEMA_VERSION: u32 = 2;
 const BACKEND_COMPARISON_SCHEMA_VERSION: u32 = 1;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -61,70 +62,138 @@ impl FromStr for ProfileName {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ScaleAxis {
+    Classes,
     Objects,
+    ObjectHeavyObjects,
     ObjectRelations,
+    ConcentratedObjectRelations,
+    DenseObjectRelations,
 }
 
 impl ScaleAxis {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Classes => "classes",
             Self::Objects => "objects",
+            Self::ObjectHeavyObjects => "object_heavy_objects",
             Self::ObjectRelations => "object_relations",
+            Self::ConcentratedObjectRelations => "concentrated_object_relations",
+            Self::DenseObjectRelations => "dense_object_relations",
         }
     }
 
     pub const fn topology(self) -> &'static str {
         match self {
+            Self::Classes => {
+                "balanced-region classes added while object and relation totals remain fixed"
+            }
             Self::Objects => "balanced-region objects distributed across existing classes",
+            Self::ObjectHeavyObjects => {
+                "object-heavy-region objects concentrated into its existing classes"
+            }
             Self::ObjectRelations => {
                 "balanced-region spread relations across existing class relations"
+            }
+            Self::ConcentratedObjectRelations => {
+                "object-heavy-region relations concentrated under one class relation"
+            }
+            Self::DenseObjectRelations => {
+                "class-heavy-region relations approaching unique class-pair capacity"
             }
         }
     }
 
     const fn target_region_name(self) -> &'static str {
-        "balanced"
+        match self {
+            Self::Classes | Self::Objects | Self::ObjectRelations => "balanced",
+            Self::ObjectHeavyObjects | Self::ConcentratedObjectRelations => "object_heavy",
+            Self::DenseObjectRelations => "class_heavy",
+        }
     }
 
     const fn total(self, totals: &ResourceTotals) -> u64 {
         match self {
-            Self::Objects => totals.objects,
-            Self::ObjectRelations => totals.object_relations,
+            Self::Classes => totals.classes,
+            Self::Objects | Self::ObjectHeavyObjects => totals.objects,
+            Self::ObjectRelations
+            | Self::ConcentratedObjectRelations
+            | Self::DenseObjectRelations => totals.object_relations,
         }
     }
 
     const fn set_total(self, totals: &mut ResourceTotals, value: u64) {
         match self {
-            Self::Objects => totals.objects = value,
-            Self::ObjectRelations => totals.object_relations = value,
+            Self::Classes => totals.classes = value,
+            Self::Objects | Self::ObjectHeavyObjects => totals.objects = value,
+            Self::ObjectRelations
+            | Self::ConcentratedObjectRelations
+            | Self::DenseObjectRelations => {
+                totals.object_relations = value;
+            }
         }
     }
 
     const fn region_total(self, regions: &RegionSpecs) -> u64 {
         match self {
+            Self::Classes => regions.balanced.classes,
             Self::Objects => regions.balanced.objects,
+            Self::ObjectHeavyObjects => regions.object_heavy.objects,
             Self::ObjectRelations => regions.balanced.object_relations,
+            Self::ConcentratedObjectRelations => regions.object_heavy.object_relations,
+            Self::DenseObjectRelations => regions.class_heavy.object_relations,
         }
     }
 
     const fn set_region_total(self, regions: &mut RegionSpecs, value: u64) {
         match self {
+            Self::Classes => regions.balanced.classes = value,
             Self::Objects => regions.balanced.objects = value,
+            Self::ObjectHeavyObjects => regions.object_heavy.objects = value,
             Self::ObjectRelations => regions.balanced.object_relations = value,
+            Self::ConcentratedObjectRelations => regions.object_heavy.object_relations = value,
+            Self::DenseObjectRelations => regions.class_heavy.object_relations = value,
         }
     }
 
     const fn set_manifest_region_total(self, region: &mut RegionSpec, value: u64) {
         match self {
-            Self::Objects => region.objects = value,
-            Self::ObjectRelations => region.object_relations = value,
+            Self::Classes => region.classes = value,
+            Self::Objects | Self::ObjectHeavyObjects => region.objects = value,
+            Self::ObjectRelations
+            | Self::ConcentratedObjectRelations
+            | Self::DenseObjectRelations => {
+                region.object_relations = value;
+            }
         }
     }
 
     const fn manifest_region_total(self, region: &RegionSpec) -> u64 {
         match self {
-            Self::Objects => region.objects,
-            Self::ObjectRelations => region.object_relations,
+            Self::Classes => region.classes,
+            Self::Objects | Self::ObjectHeavyObjects => region.objects,
+            Self::ObjectRelations
+            | Self::ConcentratedObjectRelations
+            | Self::DenseObjectRelations => region.object_relations,
+        }
+    }
+
+    const fn section_title(self) -> &'static str {
+        match self {
+            Self::Classes => "Class-count growth",
+            Self::Objects => "Balanced object growth",
+            Self::ObjectHeavyObjects => "Object-heavy growth",
+            Self::ObjectRelations => "Spread object-relation growth",
+            Self::ConcentratedObjectRelations => "Concentrated object-relation growth",
+            Self::DenseObjectRelations => "Dense class-pair relation growth",
+        }
+    }
+
+    const fn relation_shape_name(self) -> Option<&'static str> {
+        match self {
+            Self::ObjectRelations => Some("balanced_spread_class_relation"),
+            Self::ConcentratedObjectRelations => Some("concentrated_class_relation"),
+            Self::DenseObjectRelations => Some("spread_class_relation"),
+            Self::Classes | Self::Objects | Self::ObjectHeavyObjects => None,
         }
     }
 }
@@ -134,16 +203,22 @@ impl FromStr for ScaleAxis {
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         match value {
+            "classes" => Ok(Self::Classes),
             "objects" => Ok(Self::Objects),
+            "object-heavy-objects" | "object_heavy_objects" => Ok(Self::ObjectHeavyObjects),
             "object-relations" | "object_relations" => Ok(Self::ObjectRelations),
+            "concentrated-object-relations" | "concentrated_object_relations" => {
+                Ok(Self::ConcentratedObjectRelations)
+            }
+            "dense-object-relations" | "dense_object_relations" => Ok(Self::DenseObjectRelations),
             _ => Err(format!(
-                "unknown scale axis '{value}'; expected objects or object-relations"
+                "unknown scale axis '{value}'; expected classes, objects, object-heavy-objects, object-relations, concentrated-object-relations, or dense-object-relations"
             )),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitMode {
     Standard,
@@ -343,7 +418,7 @@ impl ScaleProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.schema_version != DATASET_SCHEMA_VERSION {
+        if self.schema_version != PROFILE_SCHEMA_VERSION {
             return Err(invalid_data(format!(
                 "unsupported scale profile schema version {}",
                 self.schema_version
@@ -488,8 +563,11 @@ impl ScaleProfile {
                 .collect::<Vec<_>>(),
         );
         let classes_per_collection = class_collection_distribution(self, &plans);
-        let relations_per_class_relation = relation_distribution(self, &plans, &relation_plans)?;
+        let relation_counts = object_relation_counts(self, &plans, &relation_plans)?;
+        let relations_per_class_relation = Distribution::from_values(&relation_counts);
         let anchors = manifest_anchors(self, &plans)?;
+        let relation_shapes =
+            relation_shape_summaries(&plans, &relation_plans, &relation_counts, &anchors)?;
         let sparse_collection_count = (self.totals.collections / 100).max(1);
         let sparse_visibility =
             sparse_collection_count as f64 * 100.0 / self.totals.collections as f64;
@@ -593,6 +671,7 @@ impl ScaleProfile {
             classes_per_collection,
             object_relation_degree,
             object_relations_per_class_relation: relations_per_class_relation,
+            relation_shapes,
             graph_shapes,
             history_revisions,
             json_payload_bytes,
@@ -719,15 +798,6 @@ fn class_collection_distribution(profile: &ScaleProfile, plans: &[ClassPlan]) ->
     Distribution::from_values(&counts)
 }
 
-fn relation_distribution(
-    profile: &ScaleProfile,
-    classes: &[ClassPlan],
-    relations: &[ClassRelationPlan],
-) -> Result<Distribution> {
-    let counts = object_relation_counts(profile, classes, relations)?;
-    Ok(Distribution::from_values(&counts))
-}
-
 fn object_relation_counts(
     profile: &ScaleProfile,
     classes: &[ClassPlan],
@@ -797,6 +867,68 @@ fn object_relation_counts(
         }
     }
     Ok(counts)
+}
+
+fn relation_shape_summaries(
+    classes: &[ClassPlan],
+    relations: &[ClassRelationPlan],
+    counts: &[u64],
+    anchors: &BTreeMap<String, i64>,
+) -> Result<BTreeMap<String, RelationShapeSummary>> {
+    let mut summaries = BTreeMap::new();
+    for name in [
+        "concentrated_class_relation_id",
+        "spread_class_relation_id",
+        "balanced_spread_class_relation_id",
+    ] {
+        let relation_id = u64::try_from(
+            *anchors
+                .get(name)
+                .ok_or_else(|| invalid_data(format!("manifest has no '{name}' anchor")))?,
+        )
+        .map_err(|_| invalid_data(format!("manifest anchor '{name}' is not positive")))?;
+        let relation_index = relation_id
+            .checked_sub(1)
+            .ok_or_else(|| invalid_data(format!("manifest anchor '{name}' is not positive")))?
+            as usize;
+        let relation = relations
+            .get(relation_index)
+            .ok_or_else(|| invalid_data(format!("manifest anchor '{name}' is out of range")))?;
+        let source_objects = classes
+            .get((relation.from_class_id - 1) as usize)
+            .ok_or_else(|| invalid_data("relation source class is out of range"))?
+            .object_count;
+        let target_objects = classes
+            .get((relation.to_class_id - 1) as usize)
+            .ok_or_else(|| invalid_data("relation target class is out of range"))?
+            .object_count;
+        let pair_capacity = source_objects
+            .checked_mul(target_objects)
+            .ok_or_else(|| invalid_data("relation class-pair capacity overflowed"))?;
+        if pair_capacity == 0 {
+            return Err(invalid_data(format!(
+                "manifest anchor '{name}' has zero class-pair capacity"
+            )));
+        }
+        let edge_count = *counts
+            .get(relation_index)
+            .ok_or_else(|| invalid_data(format!("manifest anchor '{name}' has no edge count")))?;
+        let saturation_basis_points =
+            u64::try_from(u128::from(edge_count) * 10_000 / u128::from(pair_capacity))
+                .map_err(|_| invalid_data("relation saturation overflowed"))?;
+        summaries.insert(
+            name.trim_end_matches("_id").to_string(),
+            RelationShapeSummary {
+                class_relation_id: relation_id,
+                source_objects,
+                target_objects,
+                edge_count,
+                pair_capacity,
+                saturation_basis_points,
+            },
+        );
+    }
+    Ok(summaries)
 }
 
 pub fn class_relation_plan(profile: &ScaleProfile) -> Result<Vec<ClassRelationPlan>> {
@@ -988,6 +1120,16 @@ pub struct PrincipalVisibility {
     pub distribution: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RelationShapeSummary {
+    pub class_relation_id: u64,
+    pub source_objects: u64,
+    pub target_objects: u64,
+    pub edge_count: u64,
+    pub pair_capacity: u64,
+    pub saturation_basis_points: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct DatasetManifest {
     pub schema_version: u32,
@@ -1002,6 +1144,7 @@ pub struct DatasetManifest {
     pub classes_per_collection: Distribution,
     pub object_relation_degree: Distribution,
     pub object_relations_per_class_relation: Distribution,
+    pub relation_shapes: BTreeMap<String, RelationShapeSummary>,
     pub graph_shapes: GraphShapeSummary,
     pub history_revisions: Distribution,
     pub json_payload_bytes: Distribution,
@@ -1041,6 +1184,25 @@ impl DatasetManifest {
             return Err(invalid_data(
                 "manifest has no required concentrated class relation",
             ));
+        }
+        for name in [
+            "concentrated_class_relation",
+            "spread_class_relation",
+            "balanced_spread_class_relation",
+        ] {
+            let shape = self
+                .relation_shapes
+                .get(name)
+                .ok_or_else(|| invalid_data(format!("manifest has no '{name}' relation shape")))?;
+            if shape.class_relation_id == 0
+                || shape.pair_capacity == 0
+                || shape.edge_count > shape.pair_capacity
+                || shape.saturation_basis_points > 10_000
+            {
+                return Err(invalid_data(format!(
+                    "manifest relation shape '{name}' is invalid"
+                )));
+            }
         }
         if self.history_revisions.maximum < profile.invariants.minimum_heavy_history_revisions {
             return Err(invalid_data("manifest has no history-heavy resource"));
@@ -1222,6 +1384,8 @@ pub struct SensitivitySpec {
 pub struct SensitivityAxisSpec {
     pub axis: ScaleAxis,
     pub percent_steps: Vec<u64>,
+    #[serde(default = "all_limit_modes")]
+    pub limit_modes: Vec<LimitMode>,
     pub scenario: String,
     pub phase: String,
     pub traversal_phase: Option<String>,
@@ -1232,6 +1396,7 @@ pub struct SensitivityPlan {
     pub schema_version: u32,
     pub experiment_version: u32,
     pub profile: ProfileName,
+    pub limit_mode: LimitMode,
     pub baseline_totals: ResourceTotals,
     pub points: Vec<SensitivityPlanPoint>,
 }
@@ -1277,6 +1442,13 @@ impl SensitivitySpec {
                     axis.axis.as_str()
                 )));
             }
+            let limit_modes = axis.limit_modes.iter().copied().collect::<BTreeSet<_>>();
+            if limit_modes.is_empty() || limit_modes.len() != axis.limit_modes.len() {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' requires distinct limit modes",
+                    axis.axis.as_str()
+                )));
+            }
             if axis
                 .traversal_phase
                 .as_ref()
@@ -1303,11 +1475,17 @@ impl SensitivitySpec {
         Ok(())
     }
 
-    pub fn plan(&self, profile: &ScaleProfile) -> Result<SensitivityPlan> {
+    pub fn plan(&self, profile: &ScaleProfile, limit_mode: LimitMode) -> Result<SensitivityPlan> {
         self.validate()?;
         profile.validate()?;
+        let applicable_axes = self.axes_for(limit_mode).collect::<Vec<_>>();
+        if applicable_axes.is_empty() {
+            return Err(invalid_data(format!(
+                "scale sensitivity specification has no axes for the {limit_mode:?} limit mode"
+            )));
+        }
         let mut points = Vec::new();
-        for axis_spec in &self.axes {
+        for axis_spec in applicable_axes {
             let baseline_total = axis_spec.axis.total(&profile.totals);
             for added_percent in &axis_spec.percent_steps {
                 let scaled = baseline_total
@@ -1315,7 +1493,7 @@ impl SensitivitySpec {
                     .ok_or_else(|| invalid_data("scale sensitivity increment overflowed"))?;
                 if scaled % 100 != 0 {
                     return Err(invalid_data(format!(
-                        "{}% of the {} baseline {} is not an exact object count",
+                        "{}% of the {} baseline {} is not an exact resource count",
                         added_percent,
                         axis_spec.axis.as_str(),
                         baseline_total
@@ -1337,10 +1515,21 @@ impl SensitivitySpec {
             schema_version: self.schema_version,
             experiment_version: self.experiment_version,
             profile: profile.name,
+            limit_mode,
             baseline_totals: profile.totals.clone(),
             points,
         })
     }
+
+    fn axes_for(&self, limit_mode: LimitMode) -> impl Iterator<Item = &SensitivityAxisSpec> {
+        self.axes
+            .iter()
+            .filter(move |axis| axis.limit_modes.contains(&limit_mode))
+    }
+}
+
+fn all_limit_modes() -> Vec<LimitMode> {
+    vec![LimitMode::Standard, LimitMode::Extended]
 }
 
 impl SensitivityPlan {
@@ -1710,6 +1899,13 @@ pub struct ScaleImpactReport {
     pub baseline_total: u64,
     pub comparison_total: u64,
     pub axis_delta: u64,
+    pub target_region: String,
+    pub baseline_target_region_total: u64,
+    pub comparison_target_region_total: u64,
+    pub baseline_relation_shape: Option<RelationShapeSummary>,
+    pub comparison_relation_shape: Option<RelationShapeSummary>,
+    pub baseline_objects_per_class: Distribution,
+    pub comparison_objects_per_class: Distribution,
     pub profile: ProfileName,
     pub seed: u64,
     pub workload_digest: String,
@@ -1769,6 +1965,43 @@ impl ScaleImpactReport {
             axis_delta,
             normalization_unit,
         );
+        let target_region = axis.target_region_name();
+        let baseline_target_region_total =
+            axis.manifest_region_total(baseline.manifest.regions.get(target_region).ok_or_else(
+                || invalid_data(format!("baseline manifest has no {target_region} region")),
+            )?);
+        let comparison_target_region_total =
+            axis.manifest_region_total(comparison.manifest.regions.get(target_region).ok_or_else(
+                || invalid_data(format!("comparison manifest has no {target_region} region")),
+            )?);
+        let baseline_relation_shape = axis
+            .relation_shape_name()
+            .map(|name| {
+                baseline
+                    .manifest
+                    .relation_shapes
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        invalid_data(format!("baseline manifest has no '{name}' relation shape"))
+                    })
+            })
+            .transpose()?;
+        let comparison_relation_shape = axis
+            .relation_shape_name()
+            .map(|name| {
+                comparison
+                    .manifest
+                    .relation_shapes
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        invalid_data(format!(
+                            "comparison manifest has no '{name}' relation shape"
+                        ))
+                    })
+            })
+            .transpose()?;
 
         Ok(Self {
             schema_version: IMPACT_REPORT_SCHEMA_VERSION,
@@ -1782,6 +2015,13 @@ impl ScaleImpactReport {
             baseline_total,
             comparison_total,
             axis_delta,
+            target_region: target_region.to_string(),
+            baseline_target_region_total,
+            comparison_target_region_total,
+            baseline_relation_shape,
+            comparison_relation_shape,
+            baseline_objects_per_class: baseline.manifest.objects_per_class.clone(),
+            comparison_objects_per_class: comparison.manifest.objects_per_class.clone(),
             profile: baseline.manifest.profile,
             seed: baseline.manifest.seed,
             workload_digest: baseline.workload_digest.clone(),
@@ -1811,15 +2051,31 @@ impl ScaleImpactReport {
     pub fn markdown(&self) -> String {
         let mut output = String::from("## Hubuum scale sensitivity\n\n");
         output.push_str(&format!(
-            "Changed only `{}` from {} to {} ({:+}); topology: {}. Deltas are normalized per +{} {} and remain informational.\n\n",
+            "Changed only `{}` from {} to {} ({:+}); `{}` region {} → {}; topology: {}. Deltas are normalized per +{} {} and remain informational.\n\n",
             self.axis.as_str(),
             self.baseline_total,
             self.comparison_total,
             self.axis_delta,
+            self.target_region,
+            self.baseline_target_region_total,
+            self.comparison_target_region_total,
             self.topology,
             self.normalization_unit,
             self.axis.as_str()
         ));
+        if let (Some(baseline), Some(comparison)) = (
+            &self.baseline_relation_shape,
+            &self.comparison_relation_shape,
+        ) {
+            output.push_str(&format!(
+                "Measured class pair: {} → {} edges; {} → {} of {} unique source/target combinations.\n\n",
+                format_count(baseline.edge_count),
+                format_count(comparison.edge_count),
+                format_saturation(baseline.saturation_basis_points),
+                format_saturation(comparison.saturation_basis_points),
+                format_count(comparison.pair_capacity)
+            ));
+        }
         output.push_str(
             "| Scenario | Phase | Baseline p95 ms | Comparison p95 ms | p95 change | p95 per unit | Throughput change |\n",
         );
@@ -1925,11 +2181,19 @@ fn validate_impact_controls(
     }
     axis.set_manifest_region_total(baseline_target, 0);
     axis.set_manifest_region_total(comparison_target, 0);
+    let mut baseline_anchors = baseline.manifest.anchors.clone();
+    let mut comparison_anchors = comparison.manifest.anchors.clone();
+    if axis == ScaleAxis::ObjectHeavyObjects {
+        baseline_anchors.remove("secondary_object_id");
+        comparison_anchors.remove("secondary_object_id");
+    }
     if baseline_regions != comparison_regions
         || baseline.manifest.overlays != comparison.manifest.overlays
-        || baseline.manifest.anchors != comparison.manifest.anchors
+        || baseline_anchors != comparison_anchors
         || baseline.manifest.provisioning != comparison.manifest.provisioning
-        || baseline.manifest.classes_per_collection != comparison.manifest.classes_per_collection
+        || (axis != ScaleAxis::Classes
+            && baseline.manifest.classes_per_collection
+                != comparison.manifest.classes_per_collection)
         || baseline.manifest.history_revisions != comparison.manifest.history_revisions
         || baseline.manifest.json_payload_bytes != comparison.manifest.json_payload_bytes
         || baseline.manifest.principals != comparison.manifest.principals
@@ -2261,6 +2525,10 @@ pub struct AxisSensitivityReport {
     pub phase: String,
     pub traversal_phase: Option<String>,
     pub baseline_total: u64,
+    pub target_region: String,
+    pub baseline_target_region_total: u64,
+    pub baseline_relation_shape: Option<RelationShapeSummary>,
+    pub baseline_objects_per_class: Distribution,
     pub points: Vec<SensitivityPointReport>,
 }
 
@@ -2269,6 +2537,9 @@ pub struct SensitivityPointReport {
     pub added_percent: u64,
     pub added_count: u64,
     pub comparison_total: u64,
+    pub comparison_target_region_total: u64,
+    pub comparison_relation_shape: Option<RelationShapeSummary>,
+    pub comparison_objects_per_class: Distribution,
     pub latency_p95_ms: MetricDelta,
     pub requests_per_second: MetricDelta,
     pub traversal_pages: Option<MetricDelta>,
@@ -2314,8 +2585,15 @@ impl ScaleSensitivityReport {
             }
         }
 
-        let mut axes = Vec::with_capacity(spec.axes.len());
-        for axis_spec in &spec.axes {
+        let applicable_axes = spec.axes_for(baseline.limit_mode).collect::<Vec<_>>();
+        if applicable_axes.is_empty() {
+            return Err(invalid_data(format!(
+                "scale sensitivity specification has no axes for the {:?} limit mode",
+                baseline.limit_mode
+            )));
+        }
+        let mut axes = Vec::with_capacity(applicable_axes.len());
+        for axis_spec in applicable_axes {
             let baseline_total = axis_spec.axis.total(&baseline.manifest.totals);
             let mut points = Vec::with_capacity(axis_spec.percent_steps.len());
             for added_percent in &axis_spec.percent_steps {
@@ -2336,6 +2614,20 @@ impl ScaleSensitivityReport {
                     .ok_or_else(|| invalid_data("scale sensitivity total overflowed"))?;
                 if impact.baseline_total != baseline_total
                     || impact.comparison_total != expected_total
+                    || impact.target_region != axis_spec.axis.target_region_name()
+                    || impact.baseline_target_region_total
+                        != axis_spec.axis.manifest_region_total(
+                            baseline
+                                .manifest
+                                .regions
+                                .get(axis_spec.axis.target_region_name())
+                                .ok_or_else(|| {
+                                    invalid_data(format!(
+                                        "baseline manifest has no {} region",
+                                        axis_spec.axis.target_region_name()
+                                    ))
+                                })?,
+                        )
                 {
                     return Err(invalid_data(format!(
                         "{} +{}% impact has unexpected corpus totals",
@@ -2353,6 +2645,9 @@ impl ScaleSensitivityReport {
                     added_percent: *added_percent,
                     added_count,
                     comparison_total: expected_total,
+                    comparison_target_region_total: impact.comparison_target_region_total,
+                    comparison_relation_shape: impact.comparison_relation_shape.clone(),
+                    comparison_objects_per_class: impact.comparison_objects_per_class.clone(),
                     latency_p95_ms: sensitivity_metric(primary, "latency_p95_ms")?.clone(),
                     requests_per_second: sensitivity_metric(primary, "requests_per_second")?
                         .clone(),
@@ -2373,6 +2668,36 @@ impl ScaleSensitivityReport {
                 phase: axis_spec.phase.clone(),
                 traversal_phase: axis_spec.traversal_phase.clone(),
                 baseline_total,
+                target_region: axis_spec.axis.target_region_name().to_string(),
+                baseline_target_region_total: axis_spec.axis.manifest_region_total(
+                    baseline
+                        .manifest
+                        .regions
+                        .get(axis_spec.axis.target_region_name())
+                        .ok_or_else(|| {
+                            invalid_data(format!(
+                                "baseline manifest has no {} region",
+                                axis_spec.axis.target_region_name()
+                            ))
+                        })?,
+                ),
+                baseline_relation_shape: axis_spec
+                    .axis
+                    .relation_shape_name()
+                    .map(|name| {
+                        baseline
+                            .manifest
+                            .relation_shapes
+                            .get(name)
+                            .cloned()
+                            .ok_or_else(|| {
+                                invalid_data(format!(
+                                    "baseline manifest has no '{name}' relation shape"
+                                ))
+                            })
+                    })
+                    .transpose()?,
+                baseline_objects_per_class: baseline.manifest.objects_per_class.clone(),
                 points,
             });
         }
@@ -2411,7 +2736,7 @@ impl ScaleSensitivityReport {
             self.limit_mode.page_limit()
         );
         output.push_str(&format!(
-            "Fixed binary `{}`; {} {} backend; dataset `{}`; workload `{}`; page limit {}. Every point starts from a fresh copy of the baseline and changes only the named balanced-region axis.\n\n",
+            "Fixed binary `{}`; {} {} backend; dataset `{}`; workload `{}`; page limit {}. Every point starts from a fresh copy of the baseline and changes only its named axis and target region.\n\n",
             short_report_label(&self.baseline_label),
             self.runtime.backend.name,
             self.runtime.backend.version,
@@ -2433,10 +2758,18 @@ impl ScaleSensitivityReport {
             format_count(self.baseline_totals.memberships),
             format_count(self.baseline_totals.permission_grants)
         ));
+        render_curve_summary(&mut output, &self.axes);
         for axis in &self.axes {
             match axis.axis {
-                ScaleAxis::Objects => render_object_sensitivity(&mut output, axis),
-                ScaleAxis::ObjectRelations => render_relation_sensitivity(&mut output, axis),
+                ScaleAxis::Classes => render_class_sensitivity(&mut output, axis),
+                ScaleAxis::Objects | ScaleAxis::ObjectHeavyObjects => {
+                    render_object_sensitivity(&mut output, axis);
+                }
+                ScaleAxis::ObjectRelations
+                | ScaleAxis::ConcentratedObjectRelations
+                | ScaleAxis::DenseObjectRelations => {
+                    render_relation_sensitivity(&mut output, axis);
+                }
             }
         }
         output.push_str(
@@ -2455,13 +2788,57 @@ impl ScaleSensitivityReport {
     }
 }
 
+fn render_curve_summary(output: &mut String, axes: &[AxisSensitivityReport]) {
+    output.push_str("### Growth curves at a glance\n\n");
+    output.push_str("Relative p95 changes identify slopes and knees; the detailed tables below retain absolute measurements and storage costs.\n\n");
+    output.push_str("| Placement | Primary operation | Relative p95 curve | Traversal pages |\n");
+    output.push_str("| --- | --- | --- | --- |\n");
+    for axis in axes {
+        let latency_curve = axis
+            .points
+            .iter()
+            .map(|point| {
+                format!(
+                    "+{}%: {}",
+                    point.added_percent,
+                    format_percent(point.latency_p95_ms.percent)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        output.push_str(&format!(
+            "| {} | `{}` / `{}` | {} |",
+            axis.axis.section_title(),
+            axis.scenario,
+            axis.phase,
+            latency_curve
+        ));
+        let pages = axis
+            .points
+            .iter()
+            .filter_map(|point| {
+                point
+                    .traversal_pages
+                    .as_ref()
+                    .map(|pages| format!("{:.0}", pages.comparison))
+            })
+            .collect::<Vec<_>>();
+        if pages.is_empty() {
+            output.push_str(" - |\n");
+        } else {
+            output.push_str(&format!(" {} |\n", pages.join(" → ")));
+        }
+    }
+    output.push('\n');
+}
+
 fn sensitivity_increment(baseline: u64, percent: u64, axis: ScaleAxis) -> Result<u64> {
     let scaled = baseline
         .checked_mul(percent)
         .ok_or_else(|| invalid_data("scale sensitivity increment overflowed"))?;
     if percent == 0 || scaled % 100 != 0 {
         return Err(invalid_data(format!(
-            "{}% of the {} baseline {} is not a positive exact object count",
+            "{}% of the {} baseline {} is not a positive exact resource count",
             percent,
             axis.as_str(),
             baseline
@@ -2505,20 +2882,75 @@ fn sensitivity_resource<'a>(impact: &'a ScaleImpactReport, name: &str) -> Result
 
 fn render_object_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
     output.push_str(&format!(
-        "### Object growth (`{}` / `{}`)\n\n",
-        axis.scenario, axis.phase
+        "### {} (`{}` / `{}`)\n\n",
+        axis.axis.section_title(),
+        axis.scenario,
+        axis.phase
     ));
     output.push_str(&format!(
-        "| Added objects vs {} | Expanded objects | Search p95 ms | Search throughput/s | Database bytes | Index bytes |\n",
-        format_count(axis.baseline_total)
+        "Growth is placed in the `{}` region, which starts with {} objects; the baseline maximum is {} objects in one class.\n\n| Added objects vs {} | Expanded objects | Target-region objects | Max objects/class | p95 ms | Throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n",
+        axis.target_region,
+        format_count(axis.baseline_target_region_total),
+        format_count(axis.baseline_objects_per_class.maximum),
+        format_count(axis.baseline_total),
     ));
-    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for point in &axis.points {
         output.push_str(&format!(
-            "| +{}% (+{}) | {} | {} | {} | {} | {} |\n",
+            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             point.added_percent,
             format_count(point.added_count),
             format_count(point.comparison_total),
+            format_count(point.comparison_target_region_total),
+            format_count(point.comparison_objects_per_class.maximum),
+            format_delta(&point.latency_p95_ms, ""),
+            format_delta(&point.requests_per_second, ""),
+            point
+                .traversal_pages
+                .as_ref()
+                .map(|delta| format!("{:.0} → {:.0}", delta.baseline, delta.comparison))
+                .unwrap_or_else(|| "-".to_string()),
+            point
+                .traversal_ms
+                .as_ref()
+                .map(|delta| format_delta(delta, ""))
+                .unwrap_or_else(|| "-".to_string()),
+            format_bytes_delta(&point.storage_bytes),
+            point
+                .index_bytes
+                .as_ref()
+                .map(format_bytes_delta)
+                .unwrap_or_else(|| "-".to_string())
+        ));
+    }
+    output.push('\n');
+}
+
+fn render_class_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
+    output.push_str(&format!(
+        "### {} (`{}` / `{}`)\n\n",
+        axis.axis.section_title(),
+        axis.scenario,
+        axis.phase
+    ));
+    output.push_str(&format!(
+        "Objects and relations remain fixed while classes are added to the `{}` region, which starts with {} classes. The baseline objects/class distribution has median {} and maximum {}.\n\n| Added classes vs {} | Expanded classes | Target-region classes | Objects/class median | Objects/class max | p95 ms | Throughput/s | Database bytes | Index bytes |\n",
+        axis.target_region,
+        format_count(axis.baseline_target_region_total),
+        format_count(axis.baseline_objects_per_class.median),
+        format_count(axis.baseline_objects_per_class.maximum),
+        format_count(axis.baseline_total),
+    ));
+    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for point in &axis.points {
+        output.push_str(&format!(
+            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            point.added_percent,
+            format_count(point.added_count),
+            format_count(point.comparison_total),
+            format_count(point.comparison_target_region_total),
+            format_count(point.comparison_objects_per_class.median),
+            format_count(point.comparison_objects_per_class.maximum),
             format_delta(&point.latency_p95_ms, ""),
             format_delta(&point.requests_per_second, ""),
             format_bytes_delta(&point.storage_bytes),
@@ -2534,20 +2966,53 @@ fn render_object_sensitivity(output: &mut String, axis: &AxisSensitivityReport) 
 
 fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
     output.push_str(&format!(
-        "### Object-relation growth (`{}` / `{}`)\n\n",
-        axis.scenario, axis.phase
+        "### {} (`{}` / `{}`)\n\n",
+        axis.axis.section_title(),
+        axis.scenario,
+        axis.phase
     ));
-    output.push_str(&format!(
-        "| Added relations vs {} | Expanded relations | Warm p95 ms | Warm throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n",
-        format_count(axis.baseline_total)
-    ));
-    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    for point in &axis.points {
+    if let Some(shape) = &axis.baseline_relation_shape {
         output.push_str(&format!(
-            "| +{}% (+{}) | {} | {} | {} | {} | {} | {} | {} |\n",
+            "The measured class pair starts with {} edges across {} possible unique source/target combinations ({} saturation).\n\n",
+            format_count(shape.edge_count),
+            format_count(shape.pair_capacity),
+            format_saturation(shape.saturation_basis_points)
+        ));
+    }
+    output.push_str(&format!(
+        "Growth is placed in the `{}` region, which starts with {} object relations.\n\n| Added relations vs {} | Expanded relations | Target-region relations | Measured pair edges | Pair saturation |\n",
+        axis.target_region,
+        format_count(axis.baseline_target_region_total),
+        format_count(axis.baseline_total),
+    ));
+    output.push_str("| ---: | ---: | ---: | ---: | ---: |\n");
+    for point in &axis.points {
+        let edge_count = point
+            .comparison_relation_shape
+            .as_ref()
+            .map(|shape| format_count(shape.edge_count))
+            .unwrap_or_else(|| "-".to_string());
+        let saturation = point
+            .comparison_relation_shape
+            .as_ref()
+            .map(|shape| format_saturation(shape.saturation_basis_points))
+            .unwrap_or_else(|| "-".to_string());
+        output.push_str(&format!(
+            "| +{}% (+{}) | {} | {} | {} | {} |\n",
             point.added_percent,
             format_count(point.added_count),
             format_count(point.comparison_total),
+            format_count(point.comparison_target_region_total),
+            edge_count,
+            saturation,
+        ));
+    }
+    output.push_str("\n| Added relations | Warm p95 ms | Warm throughput/s | Traversal pages | Traversal ms | Database bytes | Index bytes |\n");
+    output.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for point in &axis.points {
+        output.push_str(&format!(
+            "| +{}% | {} | {} | {} | {} | {} | {} |\n",
+            point.added_percent,
             format_delta(&point.latency_p95_ms, ""),
             format_delta(&point.requests_per_second, ""),
             point
@@ -2578,6 +3043,14 @@ fn format_delta(delta: &MetricDelta, suffix: &str) -> String {
         delta.comparison,
         format_percent(delta.percent)
     )
+}
+
+fn format_saturation(basis_points: u64) -> String {
+    if basis_points < 100 {
+        format!("{:.2}%", basis_points as f64 / 100.0)
+    } else {
+        format!("{:.1}%", basis_points as f64 / 100.0)
+    }
 }
 
 fn format_bytes_delta(delta: &MetricDelta) -> String {
@@ -3159,6 +3632,7 @@ mod tests {
         let second = large.manifest().unwrap();
 
         assert_eq!(first, second);
+        assert_eq!(first.schema_version, 2);
         assert_eq!(first.semantic_digest.len(), 64);
         assert_eq!(huge.totals.objects, large.totals.objects * 4);
         assert_eq!(
@@ -3179,21 +3653,52 @@ mod tests {
     #[test]
     fn scale_increments_are_arbitrary_and_change_one_declared_region() {
         let baseline = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let classes = baseline
+            .clone()
+            .with_increment(ScaleAxis::Classes, 400)
+            .unwrap();
         let objects = baseline
             .clone()
             .with_increment(ScaleAxis::Objects, 2_500)
+            .unwrap();
+        let object_heavy = baseline
+            .clone()
+            .with_increment(ScaleAxis::ObjectHeavyObjects, 2_500)
             .unwrap();
         let relations = baseline
             .clone()
             .with_increment(ScaleAxis::ObjectRelations, 125_000)
             .unwrap();
+        let concentrated = baseline
+            .clone()
+            .with_increment(ScaleAxis::ConcentratedObjectRelations, 125_000)
+            .unwrap();
+        let dense = baseline
+            .clone()
+            .with_increment(ScaleAxis::DenseObjectRelations, 100_000)
+            .unwrap();
 
+        assert_eq!(classes.totals.classes, baseline.totals.classes + 400);
+        assert_eq!(
+            classes.regions.balanced.classes,
+            baseline.regions.balanced.classes + 400
+        );
+        assert_eq!(classes.totals.objects, baseline.totals.objects);
+        assert_eq!(
+            classes.totals.object_relations,
+            baseline.totals.object_relations
+        );
         assert_eq!(objects.totals.objects, baseline.totals.objects + 2_500);
         assert_eq!(
             objects.regions.balanced.objects,
             baseline.regions.balanced.objects + 2_500
         );
         assert_eq!(objects.regions.class_heavy, baseline.regions.class_heavy);
+        assert_eq!(
+            object_heavy.regions.object_heavy.objects,
+            baseline.regions.object_heavy.objects + 2_500
+        );
+        assert_eq!(object_heavy.regions.balanced, baseline.regions.balanced);
         assert_eq!(
             relations.totals.object_relations,
             baseline.totals.object_relations + 125_000
@@ -3203,28 +3708,56 @@ mod tests {
             baseline.regions.balanced.object_relations + 125_000
         );
         assert_eq!(relations.regions.class_heavy, baseline.regions.class_heavy);
+        assert_eq!(
+            concentrated.regions.object_heavy.object_relations,
+            baseline.regions.object_heavy.object_relations + 125_000
+        );
+        assert_eq!(concentrated.regions.balanced, baseline.regions.balanced);
+        assert_eq!(
+            dense.regions.class_heavy.object_relations,
+            baseline.regions.class_heavy.object_relations + 100_000
+        );
+        assert_eq!(dense.regions.balanced, baseline.regions.balanced);
+        classes.manifest().unwrap();
+        object_heavy.manifest().unwrap();
         relations.manifest().unwrap();
+        concentrated.manifest().unwrap();
+        dense.manifest().unwrap();
     }
 
     #[test]
     fn calibrated_sensitivity_plan_uses_signal_bearing_independent_steps() {
         let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
         let spec = SensitivitySpec::bundled().unwrap();
-        let plan = spec.plan(&profile).unwrap();
+        let plan = spec.plan(&profile, LimitMode::Standard).unwrap();
+        let extended = spec.plan(&profile, LimitMode::Extended).unwrap();
 
-        assert_eq!(plan.points.len(), 6);
+        assert_eq!(plan.points.len(), 18);
+        assert_eq!(plan.limit_mode, LimitMode::Standard);
         assert_eq!(
             plan.points[0],
             SensitivityPlanPoint {
-                axis: ScaleAxis::Objects,
+                axis: ScaleAxis::Classes,
                 added_percent: 20,
-                added_count: 50_000,
-                comparison_total: 300_000,
+                added_count: 800,
+                comparison_total: 4_800,
             }
         );
-        assert_eq!(plan.points[2].comparison_total, 500_000);
-        assert_eq!(plan.points[3].added_count, 200_000);
-        assert_eq!(plan.points[5].comparison_total, 2_000_000);
+        assert_eq!(plan.points[5].comparison_total, 500_000);
+        assert_eq!(plan.points[6].axis, ScaleAxis::ObjectHeavyObjects);
+        assert_eq!(plan.points[9].added_count, 200_000);
+        assert_eq!(plan.points[14].comparison_total, 2_000_000);
+        assert_eq!(plan.points[15].axis, ScaleAxis::DenseObjectRelations);
+        assert_eq!(plan.points[15].added_count, 100_000);
+        assert_eq!(plan.points[17].added_count, 550_000);
+        assert_eq!(extended.limit_mode, LimitMode::Extended);
+        assert_eq!(extended.points.len(), 6);
+        assert!(
+            extended
+                .points
+                .iter()
+                .all(|point| matches!(point.axis, ScaleAxis::Objects | ScaleAxis::ObjectRelations))
+        );
     }
 
     #[test]
@@ -3250,6 +3783,10 @@ mod tests {
             Distribution::from_values(&counts),
             manifest.object_relations_per_class_relation
         );
+        let spread = &manifest.relation_shapes["spread_class_relation"];
+        assert_eq!(spread.edge_count, 45);
+        assert_eq!(spread.pair_capacity, 196);
+        assert_eq!(spread.saturation_basis_points, 2_295);
 
         let mut saturated = baseline;
         saturated.totals.object_relations += 1_000_000;
@@ -3450,15 +3987,32 @@ mod tests {
     fn report_for_sensitivity(label: &str, profile: &ScaleProfile) -> ScaleBenchmarkReport {
         let mut report = report(label);
         report.manifest = profile.manifest().unwrap();
-        let mut search = report.scenarios[0].clone();
-        search.name = "unified-search".to_string();
-        search.phase = "warm_single_client".to_string();
-        let mut relation = search.clone();
-        relation.name = "relations-balanced-spread-class-relation".to_string();
-        let mut traversal = relation.clone();
-        traversal.phase = "complete_cursor_traversal".to_string();
-        traversal.traversal_ms = Some(10.0);
-        report.scenarios = vec![search, relation, traversal];
+        let prototype = &report.scenarios[0];
+        let mut scenarios = Vec::new();
+        for name in [
+            "classes-fragmented-global",
+            "unified-search",
+            "objects-hot-class",
+            "relations-balanced-spread-class-relation",
+            "relations-concentrated-class-relation",
+            "relations-spread-class-relation",
+        ] {
+            let mut scenario = prototype.clone();
+            scenario.name = name.to_string();
+            scenario.phase = "warm_single_client".to_string();
+            scenarios.push(scenario);
+        }
+        for name in [
+            "objects-hot-class",
+            "relations-balanced-spread-class-relation",
+        ] {
+            let mut traversal = prototype.clone();
+            traversal.name = name.to_string();
+            traversal.phase = "complete_cursor_traversal".to_string();
+            traversal.traversal_ms = Some(10.0);
+            scenarios.push(traversal);
+        }
+        report.scenarios = scenarios;
         report
     }
 
@@ -3529,7 +4083,7 @@ mod tests {
         let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
         let baseline = report_for_sensitivity("fixed-binary-baseline", &profile);
         let spec = SensitivitySpec::bundled().unwrap();
-        let plan = spec.plan(&profile).unwrap();
+        let plan = spec.plan(&profile, LimitMode::Standard).unwrap();
         let mut impacts = Vec::new();
         for point in plan.points {
             let comparison_profile = profile
@@ -3542,24 +4096,27 @@ mod tests {
             );
             comparison.resources.backend.storage_bytes += point.added_count;
             comparison.resources.backend.index_bytes = Some(5 + point.added_count / 2);
-            let scenario_name = match point.axis {
-                ScaleAxis::Objects => "unified-search",
-                ScaleAxis::ObjectRelations => "relations-balanced-spread-class-relation",
-            };
+            let axis_spec = spec
+                .axes
+                .iter()
+                .find(|axis| axis.axis == point.axis)
+                .unwrap();
             let primary = comparison
                 .scenarios
                 .iter_mut()
                 .find(|scenario| {
-                    scenario.name == scenario_name && scenario.phase == "warm_single_client"
+                    scenario.name == axis_spec.scenario && scenario.phase == axis_spec.phase
                 })
                 .unwrap();
             primary.latency =
                 LatencyDistribution::from_samples(&[5.0 + point.added_percent as f64 / 10.0]);
-            if point.axis == ScaleAxis::ObjectRelations {
+            if let Some(traversal_phase) = axis_spec.traversal_phase.as_deref() {
                 let traversal = comparison
                     .scenarios
                     .iter_mut()
-                    .find(|scenario| scenario.phase == "complete_cursor_traversal")
+                    .find(|scenario| {
+                        scenario.name == axis_spec.scenario && scenario.phase == traversal_phase
+                    })
                     .unwrap();
                 traversal.pages = match point.added_percent {
                     20 => 1,
@@ -3576,9 +4133,9 @@ mod tests {
         let summary = ScaleSensitivityReport::summarize(&baseline, &impacts, &spec).unwrap();
         let markdown = summary.markdown();
 
-        assert_eq!(summary.axes.len(), 2);
+        assert_eq!(summary.axes.len(), 6);
         assert_eq!(
-            summary.axes[1].points[1]
+            summary.axes[3].points[1]
                 .traversal_pages
                 .as_ref()
                 .unwrap()
@@ -3586,7 +4143,14 @@ mod tests {
             2.0
         );
         assert!(markdown.contains("Baseline collections"));
+        assert!(markdown.contains("Growth curves at a glance"));
         assert!(markdown.contains("## postgres / large / page limit 250 scale growth"));
+        assert!(markdown.contains("Class-count growth"));
+        assert!(markdown.contains("Object-heavy growth"));
+        assert!(markdown.contains("Concentrated object-relation growth"));
+        assert!(markdown.contains("Dense class-pair relation growth"));
+        assert!(markdown.contains("Pair saturation"));
+        assert!(markdown.contains("85.2%"));
         assert!(markdown.contains("250,000"));
         assert!(markdown.contains("+20% (+50,000)"));
         assert!(markdown.contains("300,000"));

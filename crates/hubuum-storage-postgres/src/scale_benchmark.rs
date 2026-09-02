@@ -999,6 +999,22 @@ async fn verify_loaded_dataset(
             "loaded relation concentration invariant failed",
         ));
     }
+    for (name, shape) in &manifest.relation_shapes {
+        let actual = scalar(
+            pool,
+            &format!(
+                "SELECT count(*)::BIGINT AS value FROM hubuumobject_relation WHERE class_relation_id = {}",
+                shape.class_relation_id
+            ),
+        )
+        .await? as u64;
+        if actual != shape.edge_count {
+            return Err(invalid_data(format!(
+                "loaded relation shape '{name}' has {actual} edges, expected {}",
+                shape.edge_count
+            )));
+        }
+    }
     let history_max = scalar(
         pool,
         "SELECT coalesce(max(value), 0)::BIGINT AS value FROM (\n\

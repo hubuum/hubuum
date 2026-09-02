@@ -185,6 +185,7 @@ jobs:
 
           target/scale-head/release/hubuum-scale-benchmark sensitivity-plan \
             --profile "${{ matrix.profile }}" \
+            --limit-mode "${{ matrix.mode }}" \
             --output "$REPORT_ROOT/sensitivity-plan.json"
 
           reset_measure_database
@@ -206,11 +207,23 @@ jobs:
 
           while IFS=$'\t' read -r axis percent amount; do
             case "$axis" in
+              classes)
+                increment_args=(--add-classes "$amount")
+                ;;
               objects)
                 increment_args=(--add-objects "$amount")
                 ;;
+              object_heavy_objects)
+                increment_args=(--add-object-heavy-objects "$amount")
+                ;;
               object_relations)
                 increment_args=(--add-object-relations "$amount")
+                ;;
+              concentrated_object_relations)
+                increment_args=(--add-concentrated-object-relations "$amount")
+                ;;
+              dense_object_relations)
+                increment_args=(--add-dense-object-relations "$amount")
                 ;;
               *)
                 echo "Unsupported sensitivity axis: $axis" >&2
@@ -288,12 +301,21 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
         run: |
           mkdir -p "$(dirname "$COMMENT_PATH")"
-          reports=()
+          standard_reports=()
+          extended_reports=()
           for candidate in "$DOWNLOAD_ROOT"/scale-*/sensitivity.md; do
             if [[ -f "$candidate" ]]; then
-              reports+=("$candidate")
+              case "$candidate" in
+                *-standard/*)
+                  standard_reports+=("$candidate")
+                  ;;
+                *)
+                  extended_reports+=("$candidate")
+                  ;;
+              esac
             fi
           done
+          reports=("${standard_reports[@]}" "${extended_reports[@]}")
 
           {
             echo '<!-- hubuum-scale-pr-bench -->'
@@ -301,7 +323,7 @@ jobs:
             echo
             echo "PR #$PR_NUMBER • Fixed binary: ${HEAD_SHA:0:7} • Latest: $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo
-            echo "This report measures how performance changes as one corpus axis grows; \`rust-pr-bench\` owns base/PR code-regression comparisons. Correctness failures fail the scale job, while timing from one trial remains informational."
+            echo "This report measures how performance changes as corpus volume and placement skew grow; \`rust-pr-bench\` owns base/PR code-regression comparisons. Page limit 250 includes the shape matrix, while page limit 1,500 is the focused pagination control. Correctness failures fail the scale job, while timing from one trial remains informational."
             echo
             if [[ "${#reports[@]}" -eq 0 ]]; then
               echo 'No completed scale-growth report was available. Open the workflow run for the failing job and any partial artifacts.'

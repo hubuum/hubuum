@@ -1,15 +1,46 @@
 schema_version = 1
-experiment_version = 1
+experiment_version = 2
+
+[[axes]]
+axis = "classes"
+percent_steps = [20, 50, 100]
+limit_modes = ["standard"]
+scenario = "classes-fragmented-global"
+phase = "warm_single_client"
 
 [[axes]]
 axis = "objects"
 percent_steps = [20, 50, 100]
+limit_modes = ["standard", "extended"]
 scenario = "unified-search"
 phase = "warm_single_client"
 
 [[axes]]
+axis = "object_heavy_objects"
+percent_steps = [20, 50, 100]
+limit_modes = ["standard"]
+scenario = "objects-hot-class"
+phase = "warm_single_client"
+traversal_phase = "complete_cursor_traversal"
+
+[[axes]]
 axis = "object_relations"
 percent_steps = [20, 50, 100]
+limit_modes = ["standard", "extended"]
 scenario = "relations-balanced-spread-class-relation"
 phase = "warm_single_client"
 traversal_phase = "complete_cursor_traversal"
+
+[[axes]]
+axis = "concentrated_object_relations"
+percent_steps = [20, 50, 100]
+limit_modes = ["standard"]
+scenario = "relations-concentrated-class-relation"
+phase = "warm_single_client"
+
+[[axes]]
+axis = "dense_object_relations"
+percent_steps = [10, 30, 55]
+limit_modes = ["standard"]
+scenario = "relations-spread-class-relation"
+phase = "warm_single_client"

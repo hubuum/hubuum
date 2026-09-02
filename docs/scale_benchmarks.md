@@ -27,10 +27,10 @@ Every selected backend runs the same logical manifest and versioned HTTP
 workload. Common measurements use neutral names such as storage bytes, while
 optional data, index, write-ahead, resident-memory, CPU, and named custom
 metrics are reported only when an adapter can measure them honestly. This lets
-the suite measure one-axis corpus growth within a backend and compare how
-different backends react to the same corpus sizes. Ordinary `rust-pr-bench`
-jobs own base-versus-pull-request code-regression comparisons at a fixed
-corpus.
+the suite measure one-axis corpus growth and placement skew within a backend,
+then compare how different backends react to the same logical corpus shapes.
+Ordinary `rust-pr-bench` jobs own base-versus-pull-request code-regression
+comparisons at a fixed corpus.
 
 ## Dataset Profiles
 
@@ -172,12 +172,24 @@ target/release/hubuum-scale-benchmark run \
   --artifact-directory target/scale/objects/artifacts
 ```
 
-The baseline uses the same command without `--add-objects`. Use
-`--add-object-relations` for the relation-volume axis. Object increments are
-distributed through existing balanced classes. Relation increments are spread
-through existing balanced class relations, whose source and target classes
-have enough pair capacity for useful volume experiments. The increment has no
-default; it is an experimental input, not a benchmark constant.
+The baseline uses the same command without an increment. The available
+controlled axes are:
+
+| CLI option | Placement | Other domain totals |
+| ---------- | --------- | ------------------- |
+| `--add-classes` | Existing balanced collections | Objects and relations remain fixed |
+| `--add-objects` | Existing balanced classes | Unchanged |
+| `--add-object-heavy-objects` | Existing object-heavy classes, strengthening the hot-class skew | Unchanged |
+| `--add-object-relations` | Existing balanced class relations | Unchanged |
+| `--add-concentrated-object-relations` | The object-heavy region's concentrated class relation | Unchanged |
+| `--add-dense-object-relations` | Small class-heavy pairs, increasing unique-pair saturation | Unchanged |
+
+Balanced relation increments use source and target classes with enough pair
+capacity for useful raw-volume experiments. Concentrated increments exercise a
+large local relation bucket; they do not claim to be a near-capacity saturation
+test. Dense increments distribute edges through small class-heavy pairs and
+preflight every pair's finite unique source/target capacity. Every increment
+has no default and only one may be supplied per run.
 
 Compare the two sanitized reports:
 
@@ -216,20 +228,35 @@ that adding edges to small class pairs can exhaust the finite set of unique
 source/target pairs. That is a density or saturation experiment, not the same
 question as raw relation-table volume.
 
-The versioned CI experiment in `scale-benchmarks/sensitivity-v1.toml` therefore
-uses independent +20%, +50%, and +100% points for objects and object relations.
-In the pilot, +1% and +5% object changes stayed inside repeated-baseline
-endpoint variance; +20% was the first useful object-volume signal, +50%
-captured the observed relation-pagination boundary, and +100% tested whether
-the trend continued. These percentages are calibration choices, not permanent
+The versioned CI experiment in `scale-benchmarks/sensitivity-v1.toml` uses
+independent +20%, +50%, and +100% points. In the volume pilot, +1% and +5%
+object changes stayed inside repeated-baseline endpoint variance; +20% was the
+first useful object-volume signal, +50% captured the observed
+relation-pagination boundary, and +100% tested whether the trend continued.
+The initial class-count, object-heavy, and concentrated-relation curves use the
+same exact global increments so placement effects can be compared at matching
+corpus sizes. The separately calibrated dense-pair curve uses +10%, +30%, and
++55% total relations. In the large profile those points move the measured small
+class pair from 23.0% baseline saturation to 34.2%, 56.6%, and 85.2%; a +60%
+point is impossible because at least one generated pair would exceed its
+unique-edge capacity. These percentages are calibration choices, not permanent
 thresholds. Revise the versioned experiment after repeated measurements show
 that different points carry more information.
 
-Use `sensitivity-plan` to turn the relative matrix into exact increments for a
-profile, then produce one `impact` report per fresh-database point. After all
-points complete, `summarize-sensitivity` validates that the expected matrix is
-complete and renders exact baseline and expanded corpus sizes, absolute
-measurements, and relative costs in one report.
+Page limit 250 runs all six curves. Page limit 1,500 repeats only balanced
+object and spread-relation growth, where it provides a useful pagination
+control. This avoids multiplying every shape by every operational setting.
+
+Use `sensitivity-plan --limit-mode standard` (or `extended`) to turn the
+relative matrix into exact increments for a profile, then produce one `impact`
+report per fresh-database point. After all points complete,
+`summarize-sensitivity` validates that the expected mode-specific matrix is
+complete. Its first table makes relative p95 curves and pagination knees easy
+to scan; the detailed tables retain exact baseline and expanded corpus sizes,
+absolute measurements, and relative costs. Once repeated trials are available,
+a line chart with uncertainty bands will communicate trends better than a
+single-run line. Until then, connecting three informational points would imply
+more certainty than the measurements support.
 
 Treat a repeatable corpus-size slope in a bounded, fixed-result operation as
 an optimization target unless the operation intentionally examines a
