@@ -8,8 +8,8 @@ use futures_util::{StreamExt, stream};
 use hubuum_scale_core::{
     BackendResourceReport, BenchmarkPrincipal, CorrectnessReport, DatasetManifest,
     LatencyDistribution, LifecycleReport, LimitMode, ResourceReport, Result, RuntimeIdentity,
-    ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleProfile, ScenarioReport, WorkloadScenario,
-    WorkloadSpec, invalid_data,
+    ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleProfile, ScenarioReport,
+    WorkloadScenario, WorkloadSpec, invalid_data,
 };
 use reqwest::{Client, StatusCode, Url, header};
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ pub struct MeasureOptions {
     pub label: String,
     pub port: u16,
     pub limit_mode: LimitMode,
+    pub scale_axis: Option<ScaleAxis>,
     pub run_lifecycle: bool,
     pub startup_timeout: Duration,
 }
@@ -142,6 +143,8 @@ struct RequestOutcome {
     status: Option<u16>,
     bytes: u64,
     items: u64,
+    graph_nodes: Option<u64>,
+    graph_edges: Option<u64>,
     pages: u64,
     traversal_ms: Option<f64>,
     page_latencies_ms: Vec<f64>,
@@ -201,7 +204,11 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         lifecycle_failures: 0,
     };
 
-    for scenario in &workload.scenarios {
+    for scenario in workload
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.applies_to(options.scale_axis))
+    {
         let path = workload.render_path(scenario, &manifest, options.limit_mode)?;
         let outcome = execute_request(&context, scenario, &path).await;
         merge_correctness(&mut correctness, &outcome);
@@ -215,18 +222,29 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
     }
 
     backend.mark_computed_ready().await?;
-    for scenario in &workload.scenarios {
+    for scenario in workload
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.applies_to(options.scale_axis))
+    {
         let path = workload.render_path(scenario, &manifest, options.limit_mode)?;
-        for _ in 0..workload.warmup_requests {
+        for _ in 0..scenario.warmup_requests.unwrap_or(workload.warmup_requests) {
             let _ = execute_request(&context, scenario, &path).await;
         }
     }
 
-    for scenario in &workload.scenarios {
+    for scenario in workload
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.applies_to(options.scale_axis))
+    {
         let path = workload.render_path(scenario, &manifest, options.limit_mode)?;
+        let sample_count = scenario
+            .single_client_samples
+            .unwrap_or(workload.single_client_samples);
         let started = Instant::now();
-        let mut outcomes = Vec::with_capacity(workload.single_client_samples);
-        for _ in 0..workload.single_client_samples {
+        let mut outcomes = Vec::with_capacity(sample_count);
+        for _ in 0..sample_count {
             outcomes.push(execute_request(&context, scenario, &path).await);
         }
         for outcome in &outcomes {
@@ -265,6 +283,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
             options.limit_mode,
             workload.concurrent_samples,
             concurrency,
+            options.scale_axis,
         )
         .await?;
         for outcome in &outcomes {
@@ -287,6 +306,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         options.limit_mode,
         workload.mixed_samples,
         1,
+        options.scale_axis,
     )
     .await?;
     for outcome in &mixed {
@@ -377,6 +397,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         manifest,
         &workload,
         options.limit_mode,
+        options.scale_axis,
         runtime,
         scenarios,
         correctness,
@@ -507,7 +528,8 @@ async fn response_outcome(
         }
     };
     let value = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-    let (items, ids, unauthorized_rows) = inspect_response(&value, allowed_sparse_collections);
+    let (items, ids, unauthorized_rows, graph_nodes, graph_edges) =
+        inspect_response(&value, allowed_sparse_collections);
     let latency_ms = started.elapsed().as_secs_f64() * 1_000.0;
     RequestOutcome {
         latency_ms,
@@ -516,6 +538,8 @@ async fn response_outcome(
         status: Some(status.as_u16()),
         bytes: body.len() as u64,
         items,
+        graph_nodes,
+        graph_edges,
         pages: 1,
         ids,
         total,
@@ -528,7 +552,7 @@ async fn response_outcome(
 fn inspect_response(
     value: &Value,
     allowed_sparse_collections: Option<&BTreeSet<i64>>,
-) -> (u64, Vec<i64>, u64) {
+) -> (u64, Vec<i64>, u64, Option<u64>, Option<u64>) {
     let values = match value {
         Value::Array(values) => values.as_slice(),
         Value::Object(_) => std::slice::from_ref(value),
@@ -547,7 +571,22 @@ fn inspect_response(
     } else {
         0
     };
-    (values.len() as u64, ids, unauthorized)
+    let graph_nodes = value
+        .get("objects")
+        .or_else(|| value.get("classes"))
+        .and_then(Value::as_array)
+        .map(|nodes| nodes.len() as u64);
+    let graph_edges = value
+        .get("relations")
+        .and_then(Value::as_array)
+        .map(|edges| edges.len() as u64);
+    (
+        values.len() as u64,
+        ids,
+        unauthorized,
+        graph_nodes,
+        graph_edges,
+    )
 }
 
 async fn execute_traversal(
@@ -632,10 +671,13 @@ async fn execute_traversal(
             let allowed_sparse_collections = scenario
                 .verify_sparse_visibility
                 .then_some(&context.sparse_collection_ids);
-            let (items, ids, unauthorized) = inspect_response(&value, allowed_sparse_collections);
+            let (items, ids, unauthorized, graph_nodes, graph_edges) =
+                inspect_response(&value, allowed_sparse_collections);
             outcome.items += items;
             outcome.ids.extend(ids);
             outcome.unauthorized_rows += unauthorized;
+            outcome.graph_nodes = graph_nodes.or(outcome.graph_nodes);
+            outcome.graph_edges = graph_edges.or(outcome.graph_edges);
         }
         if next_cursor.is_none() {
             break;
@@ -658,10 +700,12 @@ async fn run_mixed(
     limit_mode: LimitMode,
     samples: usize,
     concurrency: usize,
+    scale_axis: Option<ScaleAxis>,
 ) -> Result<(Vec<RequestOutcome>, Duration)> {
     let total_weight = workload
         .scenarios
         .iter()
+        .filter(|scenario| scenario.include_in_mixed && scenario.applies_to(scale_axis))
         .map(|scenario| scenario.weight)
         .sum::<u64>();
     let mut state = workload.seed;
@@ -672,6 +716,7 @@ async fn run_mixed(
         let scenario = workload
             .scenarios
             .iter()
+            .filter(|scenario| scenario.include_in_mixed && scenario.applies_to(scale_axis))
             .find(|scenario| {
                 if choice < scenario.weight {
                     true
@@ -981,6 +1026,14 @@ fn report_named_outcomes(
         latency: LatencyDistribution::from_samples(&latencies),
         response_bytes: outcomes.iter().map(|outcome| outcome.bytes).sum(),
         response_items: outcomes.iter().map(|outcome| outcome.items).sum(),
+        graph_nodes: outcomes
+            .iter()
+            .filter_map(|outcome| outcome.graph_nodes)
+            .max(),
+        graph_edges: outcomes
+            .iter()
+            .filter_map(|outcome| outcome.graph_edges)
+            .max(),
         pages: outcomes.iter().map(|outcome| outcome.pages).sum(),
         traversal_ms: outcomes.iter().find_map(|outcome| outcome.traversal_ms),
         traversal_first_page_ms: outcomes
@@ -1269,4 +1322,25 @@ fn mix(mut value: u64) -> u64 {
 
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_response_inspection_reports_returned_work_shape() {
+        let value = json!({
+            "objects": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "relations": [{"id": 10}, {"id": 11}],
+        });
+
+        let (items, ids, unauthorized, nodes, edges) = inspect_response(&value, None);
+
+        assert_eq!(items, 1);
+        assert!(ids.is_empty());
+        assert_eq!(unauthorized, 0);
+        assert_eq!(nodes, Some(3));
+        assert_eq!(edges, Some(2));
+    }
 }

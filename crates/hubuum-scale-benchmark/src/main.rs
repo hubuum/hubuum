@@ -316,6 +316,7 @@ async fn measure_common(
     generation_ms: u64,
     loading_ms: u64,
 ) -> Result<()> {
+    let scale_axis = selected_increment(&args.profile)?.map(|(axis, _)| axis);
     let workload = match args.workload_spec.as_deref() {
         Some(path) => WorkloadSpec::read(path)?,
         None => WorkloadSpec::bundled()?,
@@ -334,6 +335,7 @@ async fn measure_common(
             label: args.label,
             port: args.port,
             limit_mode: args.limit_mode,
+            scale_axis,
             run_lifecycle: !args.skip_lifecycle,
             startup_timeout: Duration::from_secs(args.startup_timeout_seconds),
         },
@@ -458,6 +460,13 @@ fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
         Some(seed) => profile.with_seed(seed),
         None => Ok(profile),
     }?;
+    match selected_increment(args)? {
+        None => Ok(profile),
+        Some((axis, amount)) => profile.with_increment(axis, amount),
+    }
+}
+
+fn selected_increment(args: &ProfileArgs) -> Result<Option<(ScaleAxis, u64)>> {
     let increments = [
         (ScaleAxis::Classes, args.add_classes),
         (ScaleAxis::Objects, args.add_objects),
@@ -476,8 +485,8 @@ fn load_profile(args: &ProfileArgs) -> Result<ScaleProfile> {
     .filter_map(|(axis, amount)| amount.map(|amount| (axis, amount)))
     .collect::<Vec<_>>();
     match increments.as_slice() {
-        [] => Ok(profile),
-        [(axis, amount)] => profile.with_increment(*axis, *amount),
+        [] => Ok(None),
+        [(axis, amount)] => Ok(Some((*axis, *amount))),
         _ => Err(io_error(
             "only one scale axis may be changed in a controlled experiment",
         )),

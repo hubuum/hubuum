@@ -243,6 +243,18 @@ unique-edge capacity. These percentages are calibration choices, not permanent
 thresholds. Revise the versioned experiment after repeated measurements show
 that different points carry more information.
 
+Relation-growth points also run object-graph searches from one bounded,
+eight-class chain. Spread and concentrated growth place new edges outside that
+chain, so maximum depths 1, 2, 4, and 7 isolate the effect of a larger global
+relation corpus while the reachable graph stays fixed. Dense-pair growth places
+new edges inside the chain and reports depths 1 and 2 together with returned
+node and edge counts, separating corpus-size cost from added fan-out. A focused
+pilot found that depth 4 at the +55% dense point exceeded the 30-second request
+timeout and left recursive database work running, so deeper dense probes would
+produce timeout backlog rather than a useful recurring curve. The diagnostic
+depth scenarios use one warm-up and three measured requests and are excluded
+from the mixed workload.
+
 Page limit 250 runs all six curves. Page limit 1,500 repeats only balanced
 object and spread-relation growth, where it provides a useful pagination
 control. This avoids multiplying every shape by every operational setting.
@@ -252,9 +264,10 @@ relative matrix into exact increments for a profile, then produce one `impact`
 report per fresh-database point. After all points complete,
 `summarize-sensitivity` validates that the expected mode-specific matrix is
 complete. Its short signal list makes relative p95 curves, pagination knees,
-and relation saturation easy to scan. Exact corpus and performance tables are
-collapsed by default under each axis, and the machine-readable report retains
-every absolute measurement and relative cost. Once repeated trials are
+relation saturation, and deepest graph-search changes easy to scan. Exact
+corpus, performance, and depth-by-growth matrices are collapsed by default
+under each axis. The machine-readable report retains every absolute
+measurement, relative cost, and returned graph shape. Once repeated trials are
 available, a line chart with uncertainty bands will communicate trends better
 than a single-run line. Until then, connecting three informational points would
 imply more certainty than the measurements support.
@@ -274,7 +287,7 @@ High-value questions include:
 | Object volume | Classes, relations, authorization, payload shape | Which search, count, filter, aggregation, and pagination paths grow with object count? |
 | Relation volume | Objects, classes, graph topology | What are the latency, throughput, index, WAL, and traversal slopes for spread edges? |
 | Relation density | Object and class counts | Where do class pairs approach unique-edge capacity, and how does high density affect writes and reads? |
-| Graph shape | Total edge count | How do hub degree, component width, and traversal depth change cost independently of volume? |
+| Graph shape | Total edge count | How do hub degree and component width change cost beyond the bounded depth curves? |
 | Tenant skew | Global totals | How do hot classes, empty classes, sparse visibility, and authorization backfill affect tail latency? |
 | Authorization size | Domain corpus | How do principals, groups, memberships, grants, and candidate rejection affect each principal shape? |
 | History and operations | Live domain rows | How do revision depth, audit events, tasks, and delivery history affect current reads and retention work? |
@@ -304,12 +317,13 @@ operations. It runs these phases in order:
    mutations cannot alter earlier read samples.
 
 Reports contain per-scenario request counts, p50/p95/p99/max latency,
-throughput, bytes, pages, traversal time, timeouts, failures, resource use,
-first/middle/final traversal-page latency, authorization candidate and returned
-counts, storage and index size, write-ahead growth, storage and pool metric
-deltas, backend identity and effective settings, and lifecycle durations. The
-runner starts and stops the server itself, and its artifacts never contain
-bearer tokens, password hashes, database URLs, or environment dumps.
+throughput, bytes, returned graph nodes and edges, pages, traversal time,
+timeouts, failures, resource use, first/middle/final traversal-page latency,
+authorization candidate and returned counts, storage and index size,
+write-ahead growth, storage and pool metric deltas, backend identity and
+effective settings, and lifecycle durations. The runner starts and stops the
+server itself, and its artifacts never contain bearer tokens, password hashes,
+database URLs, or environment dumps.
 
 ## Backup and Restore Lifecycle
 

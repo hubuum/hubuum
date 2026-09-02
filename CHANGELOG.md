@@ -19,7 +19,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   matrix changes objects or object relations independently by +20%, +50%, and
   +100%, and reports exact baseline and expanded corpus sizes with absolute and
   relative search, relation, traversal, database, and index costs. The scale
-  workflow leaves base/head code-regression detection to `rust-pr-bench`.
+  report also measures object-graph searches across calibrated depths, reports
+  returned nodes and edges, and distinguishes fixed-local-graph volume cost
+  from growing-density fan-out. The scale workflow leaves base/head
+  code-regression detection to `rust-pr-bench`.
   Machine-readable impact reports support arbitrary controlled increments
   without treating simultaneous large-to-huge changes as causal. A shared
   benchmark frontend consumes adapter-owned scale traits, records neutral and

@@ -1,5 +1,5 @@
 schema_version = 1
-experiment_version = 2
+experiment_version = 3
 
 [[axes]]
 axis = "classes"
@@ -30,6 +30,13 @@ limit_modes = ["standard", "extended"]
 scenario = "relations-balanced-spread-class-relation"
 phase = "warm_single_client"
 traversal_phase = "complete_cursor_traversal"
+depth_probe_scope = "fixed_local_graph"
+depth_probes = [
+  { depth = 1, scenario = "object-graph-depth-1" },
+  { depth = 2, scenario = "object-graph-depth-2" },
+  { depth = 4, scenario = "object-graph-depth-4" },
+  { depth = 7, scenario = "object-graph-depth-7" },
+]
 
 [[axes]]
 axis = "concentrated_object_relations"
@@ -37,6 +44,13 @@ percent_steps = [20, 50, 100]
 limit_modes = ["standard"]
 scenario = "relations-concentrated-class-relation"
 phase = "warm_single_client"
+depth_probe_scope = "fixed_local_graph"
+depth_probes = [
+  { depth = 1, scenario = "object-graph-depth-1" },
+  { depth = 2, scenario = "object-graph-depth-2" },
+  { depth = 4, scenario = "object-graph-depth-4" },
+  { depth = 7, scenario = "object-graph-depth-7" },
+]
 
 [[axes]]
 axis = "dense_object_relations"
@@ -44,3 +58,8 @@ percent_steps = [10, 30, 55]
 limit_modes = ["standard"]
 scenario = "relations-spread-class-relation"
 phase = "warm_single_client"
+depth_probe_scope = "growing_local_density"
+depth_probes = [
+  { depth = 1, scenario = "object-graph-depth-1" },
+  { depth = 2, scenario = "object-graph-depth-2" },
+]

@@ -20,10 +20,10 @@ const HUGE_PROFILE: &str = include_str!("../../../scale-benchmarks/profiles/huge
 const WORKLOAD_V1: &str = include_str!("../../../scale-benchmarks/workloads/v1.toml");
 const SENSITIVITY_V1: &str = include_str!("../../../scale-benchmarks/sensitivity-v1.toml");
 const PROFILE_SCHEMA_VERSION: u32 = 1;
-const DATASET_SCHEMA_VERSION: u32 = 2;
-const REPORT_SCHEMA_VERSION: u32 = 2;
-const IMPACT_REPORT_SCHEMA_VERSION: u32 = 4;
-const SENSITIVITY_REPORT_SCHEMA_VERSION: u32 = 2;
+const DATASET_SCHEMA_VERSION: u32 = 3;
+const REPORT_SCHEMA_VERSION: u32 = 3;
+const IMPACT_REPORT_SCHEMA_VERSION: u32 = 5;
+const SENSITIVITY_REPORT_SCHEMA_VERSION: u32 = 3;
 const BACKEND_COMPARISON_SCHEMA_VERSION: u32 = 1;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -1005,6 +1005,12 @@ fn manifest_anchors(profile: &ScaleProfile, plans: &[ClassPlan]) -> Result<BTree
     let hot = &plans[0];
     let secondary = &plans[1];
     let class_heavy = &plans[profile.regions.object_heavy.classes as usize];
+    let deep_graph = plans
+        .get(
+            (profile.regions.object_heavy.classes + profile.invariants.class_component_size)
+                as usize,
+        )
+        .ok_or_else(|| invalid_data("class-heavy region has no deep graph component"))?;
     let empty_class_heavy = &plans[(profile.regions.object_heavy.classes
         + profile.regions.class_heavy.classes * 3 / 4) as usize];
     let balanced = &plans
@@ -1015,6 +1021,9 @@ fn manifest_anchors(profile: &ScaleProfile, plans: &[ClassPlan]) -> Result<BTree
     let secondary_first = secondary
         .first_object_id
         .ok_or_else(|| invalid_data("secondary object-heavy class has no anchor"))?;
+    let deep_graph_first = deep_graph
+        .first_object_id
+        .ok_or_else(|| invalid_data("deep graph class has no object anchor"))?;
     Ok(BTreeMap::from([
         ("root_collection_id".to_string(), 1),
         ("nested_collection_id".to_string(), 3),
@@ -1037,6 +1046,8 @@ fn manifest_anchors(profile: &ScaleProfile, plans: &[ClassPlan]) -> Result<BTree
         ("medium_class_id".to_string(), balanced.id as i64),
         ("computed_class_id".to_string(), (balanced.id + 9) as i64),
         ("adversarial_class_id".to_string(), class_heavy.id as i64),
+        ("deep_graph_class_id".to_string(), deep_graph.id as i64),
+        ("deep_graph_object_id".to_string(), deep_graph_first as i64),
         ("history_class_id".to_string(), hot.id as i64),
         ("hub_object_id".to_string(), hot_first as i64),
         ("ordinary_object_id".to_string(), (hot_first + 1) as i64),
@@ -1291,10 +1302,28 @@ pub struct WorkloadScenario {
     pub principal: String,
     pub path: String,
     pub weight: u64,
+    #[serde(default = "enabled")]
+    pub include_in_mixed: bool,
+    #[serde(default)]
+    pub scale_axes: Vec<ScaleAxis>,
+    pub warmup_requests: Option<usize>,
+    pub single_client_samples: Option<usize>,
     #[serde(default)]
     pub traverse: bool,
     #[serde(default)]
     pub verify_sparse_visibility: bool,
+}
+
+impl WorkloadScenario {
+    pub fn applies_to(&self, scale_axis: Option<ScaleAxis>) -> bool {
+        self.scale_axes.is_empty()
+            || scale_axis.is_none()
+            || scale_axis.is_some_and(|axis| self.scale_axes.contains(&axis))
+    }
+}
+
+const fn enabled() -> bool {
+    true
 }
 
 impl WorkloadSpec {
@@ -1315,6 +1344,10 @@ impl WorkloadSpec {
             return Err(invalid_data("unsupported or incomplete workload identity"));
         }
         if self.scenarios.is_empty()
+            || !self
+                .scenarios
+                .iter()
+                .any(|scenario| scenario.include_in_mixed)
             || self.single_client_samples == 0
             || self.moderate_concurrency == 0
             || self.higher_concurrency < self.moderate_concurrency
@@ -1325,9 +1358,13 @@ impl WorkloadSpec {
         }
         let mut names = BTreeSet::new();
         for scenario in &self.scenarios {
+            let scale_axes = scenario.scale_axes.iter().copied().collect::<BTreeSet<_>>();
             if scenario.name.is_empty()
                 || !names.insert(&scenario.name)
                 || scenario.weight == 0
+                || scale_axes.len() != scenario.scale_axes.len()
+                || scenario.warmup_requests == Some(0)
+                || scenario.single_client_samples == Some(0)
                 || !["admin", "tenant", "sparse"].contains(&scenario.principal.as_str())
                 || !scenario.path.starts_with("/api/")
             {
@@ -1389,6 +1426,22 @@ pub struct SensitivityAxisSpec {
     pub scenario: String,
     pub phase: String,
     pub traversal_phase: Option<String>,
+    #[serde(default)]
+    pub depth_probes: Vec<DepthProbeSpec>,
+    pub depth_probe_scope: Option<DepthProbeScope>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DepthProbeSpec {
+    pub depth: u64,
+    pub scenario: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DepthProbeScope {
+    FixedLocalGraph,
+    GrowingLocalDensity,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1456,6 +1509,36 @@ impl SensitivitySpec {
             {
                 return Err(invalid_data(format!(
                     "scale sensitivity axis '{}' has an empty traversal phase",
+                    axis.axis.as_str()
+                )));
+            }
+            if axis.depth_probes.is_empty() != axis.depth_probe_scope.is_none() {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' must set both depth probes and their scope",
+                    axis.axis.as_str()
+                )));
+            }
+            let mut depths = BTreeSet::new();
+            let mut depth_scenarios = BTreeSet::new();
+            for probe in &axis.depth_probes {
+                if probe.depth == 0
+                    || probe.scenario.trim().is_empty()
+                    || !depths.insert(probe.depth)
+                    || !depth_scenarios.insert(probe.scenario.as_str())
+                {
+                    return Err(invalid_data(format!(
+                        "scale sensitivity axis '{}' requires distinct positive depth probes and scenarios",
+                        axis.axis.as_str()
+                    )));
+                }
+            }
+            if axis
+                .depth_probes
+                .windows(2)
+                .any(|probes| probes[0].depth >= probes[1].depth)
+            {
+                return Err(invalid_data(format!(
+                    "scale sensitivity axis '{}' requires increasing depth probes",
                     axis.axis.as_str()
                 )));
             }
@@ -1620,6 +1703,8 @@ pub struct ScenarioReport {
     pub latency: LatencyDistribution,
     pub response_bytes: u64,
     pub response_items: u64,
+    pub graph_nodes: Option<u64>,
+    pub graph_edges: Option<u64>,
     pub pages: u64,
     pub traversal_ms: Option<f64>,
     pub traversal_first_page_ms: Option<f64>,
@@ -1801,6 +1886,7 @@ pub struct ScaleBenchmarkReport {
     pub workload_seed: u64,
     pub workload_digest: String,
     pub limit_mode: LimitMode,
+    pub scale_axis: Option<ScaleAxis>,
     pub effective_limits: EffectiveWorkloadLimits,
     pub runtime: RuntimeIdentity,
     pub scenarios: Vec<ScenarioReport>,
@@ -1816,6 +1902,7 @@ impl ScaleBenchmarkReport {
         manifest: DatasetManifest,
         workload: &WorkloadSpec,
         limit_mode: LimitMode,
+        scale_axis: Option<ScaleAxis>,
         runtime: RuntimeIdentity,
         scenarios: Vec<ScenarioReport>,
         correctness: CorrectnessReport,
@@ -1830,6 +1917,7 @@ impl ScaleBenchmarkReport {
             workload_seed: workload.seed,
             workload_digest: workload.digest()?,
             limit_mode,
+            scale_axis,
             effective_limits: limit_mode.settings(),
             runtime,
             scenarios,
@@ -2143,9 +2231,11 @@ fn validate_impact_controls(
         || baseline.limit_mode != comparison.limit_mode
         || baseline.effective_limits != comparison.effective_limits
         || baseline.runtime != comparison.runtime
+        || baseline.scale_axis.is_some()
+        || comparison.scale_axis != Some(axis)
     {
         return Err(invalid_data(
-            "scale impact reports differ in profile, seed, workload, limits, or runtime",
+            "scale impact reports differ in profile, seed, workload, limits, runtime, or controlled axis",
         ));
     }
     let mut baseline_totals = baseline.manifest.totals.clone();
@@ -2186,6 +2276,8 @@ fn validate_impact_controls(
     if axis == ScaleAxis::ObjectHeavyObjects {
         baseline_anchors.remove("secondary_object_id");
         comparison_anchors.remove("secondary_object_id");
+        baseline_anchors.remove("deep_graph_object_id");
+        comparison_anchors.remove("deep_graph_object_id");
     }
     if baseline_regions != comparison_regions
         || baseline.manifest.overlays != comparison.manifest.overlays
@@ -2305,6 +2397,22 @@ fn compare_scenarios(
             axis_delta,
             unit,
         );
+        insert_optional_u64_metric(
+            &mut metrics,
+            "graph_nodes",
+            baseline_scenario.graph_nodes,
+            scenario.graph_nodes,
+            axis_delta,
+            unit,
+        );
+        insert_optional_u64_metric(
+            &mut metrics,
+            "graph_edges",
+            baseline_scenario.graph_edges,
+            scenario.graph_edges,
+            axis_delta,
+            unit,
+        );
         impacts.push(ScenarioImpact {
             name: scenario.name.clone(),
             phase: scenario.phase.clone(),
@@ -2313,11 +2421,9 @@ fn compare_scenarios(
             metrics,
         });
     }
-    if !baseline_by_key.is_empty() {
-        return Err(invalid_data(
-            "baseline report contains scenarios missing from the comparison",
-        ));
-    }
+    // A shared baseline may contain probes that are intentionally inapplicable
+    // to one comparison axis. Every comparison scenario must still have an
+    // exact controlled-baseline match.
     Ok(impacts)
 }
 
@@ -2529,7 +2635,25 @@ pub struct AxisSensitivityReport {
     pub baseline_target_region_total: u64,
     pub baseline_relation_shape: Option<RelationShapeSummary>,
     pub baseline_objects_per_class: Distribution,
+    pub depth_probe_scope: Option<DepthProbeScope>,
+    pub depth_probes: Vec<DepthProbeSensitivityReport>,
     pub points: Vec<SensitivityPointReport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct DepthProbeSensitivityReport {
+    pub depth: u64,
+    pub scenario: String,
+    pub phase: String,
+    pub points: Vec<DepthProbePointReport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct DepthProbePointReport {
+    pub added_percent: u64,
+    pub latency_p95_ms: MetricDelta,
+    pub graph_nodes: MetricDelta,
+    pub graph_edges: MetricDelta,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -2596,6 +2720,16 @@ impl ScaleSensitivityReport {
         for axis_spec in applicable_axes {
             let baseline_total = axis_spec.axis.total(&baseline.manifest.totals);
             let mut points = Vec::with_capacity(axis_spec.percent_steps.len());
+            let mut depth_probes = axis_spec
+                .depth_probes
+                .iter()
+                .map(|probe| DepthProbeSensitivityReport {
+                    depth: probe.depth,
+                    scenario: probe.scenario.clone(),
+                    phase: axis_spec.phase.clone(),
+                    points: Vec::with_capacity(axis_spec.percent_steps.len()),
+                })
+                .collect::<Vec<_>>();
             for added_percent in &axis_spec.percent_steps {
                 let added_count =
                     sensitivity_increment(baseline_total, *added_percent, axis_spec.axis)?;
@@ -2641,6 +2775,18 @@ impl ScaleSensitivityReport {
                     .as_deref()
                     .map(|phase| sensitivity_scenario(impact, &axis_spec.scenario, phase))
                     .transpose()?;
+                for (probe_spec, probe_report) in
+                    axis_spec.depth_probes.iter().zip(&mut depth_probes)
+                {
+                    let scenario =
+                        sensitivity_scenario(impact, &probe_spec.scenario, &axis_spec.phase)?;
+                    probe_report.points.push(DepthProbePointReport {
+                        added_percent: *added_percent,
+                        latency_p95_ms: sensitivity_metric(scenario, "latency_p95_ms")?.clone(),
+                        graph_nodes: sensitivity_metric(scenario, "graph_nodes")?.clone(),
+                        graph_edges: sensitivity_metric(scenario, "graph_edges")?.clone(),
+                    });
+                }
                 points.push(SensitivityPointReport {
                     added_percent: *added_percent,
                     added_count,
@@ -2698,6 +2844,8 @@ impl ScaleSensitivityReport {
                     })
                     .transpose()?,
                 baseline_objects_per_class: baseline.manifest.objects_per_class.clone(),
+                depth_probe_scope: axis_spec.depth_probe_scope,
+                depth_probes,
                 points,
             });
         }
@@ -2841,6 +2989,18 @@ fn render_curve_summary(output: &mut String, axes: &[AxisSensitivityReport]) {
                 saturations.join(" / ")
             ));
         }
+        if let Some(probe) = axis.depth_probes.last() {
+            let latency_curve = probe
+                .points
+                .iter()
+                .map(|point| format_percent(point.latency_p95_ms.percent))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            output.push_str(&format!(
+                "; depth {} graph p95 `{latency_curve}`",
+                probe.depth
+            ));
+        }
         output.push_str(".\n");
     }
     output.push('\n');
@@ -2919,6 +3079,90 @@ fn render_object_sensitivity(output: &mut String, axis: &AxisSensitivityReport) 
     close_axis_details(output);
 }
 
+fn render_depth_probes(output: &mut String, axis: &AxisSensitivityReport) {
+    let Some(scope) = axis.depth_probe_scope else {
+        return;
+    };
+    let Some(first_probe) = axis.depth_probes.first() else {
+        return;
+    };
+    let scope_description = match scope {
+        DepthProbeScope::FixedLocalGraph => {
+            "Added relations are outside the probed chain, so its reachable graph stays fixed. This isolates the cost of searching through a larger global relation corpus."
+        }
+        DepthProbeScope::GrowingLocalDensity => {
+            "Added relations enter the probed chain's region. Returned nodes and edges are shown so global volume cost is not confused with the extra work caused by local fan-out."
+        }
+    };
+    output.push_str(&format!(
+        "Multi-hop object graph: {scope_description}\n\n| Maximum depth | Baseline p95"
+    ));
+    for point in &first_probe.points {
+        output.push_str(&format!(" | +{}%", point.added_percent));
+    }
+    output.push_str(" |\n| ---: | ---: ");
+    for _ in &first_probe.points {
+        output.push_str("| ---: ");
+    }
+    output.push_str("|\n");
+    for probe in &axis.depth_probes {
+        let baseline = probe
+            .points
+            .first()
+            .map(|point| point.latency_p95_ms.baseline)
+            .unwrap_or_default();
+        output.push_str(&format!("| {} | {baseline:.2} ms ", probe.depth));
+        for point in &probe.points {
+            output.push_str(&format!(
+                "| {} ",
+                format_comparison_delta(&point.latency_p95_ms, " ms")
+            ));
+        }
+        output.push_str("|\n");
+    }
+    output.push('\n');
+    output.push_str("Returned nodes/edges by maximum depth:\n\n");
+    render_depth_graph_shape(output, "Baseline", &axis.depth_probes, None);
+    for (point_index, point) in first_probe.points.iter().enumerate() {
+        render_depth_graph_shape(
+            output,
+            &format!("+{}%", point.added_percent),
+            &axis.depth_probes,
+            Some(point_index),
+        );
+        if point_index + 1 == first_probe.points.len() {
+            output.push('\n');
+        }
+    }
+}
+
+fn render_depth_graph_shape(
+    output: &mut String,
+    label: &str,
+    probes: &[DepthProbeSensitivityReport],
+    point_index: Option<usize>,
+) {
+    let shape = probes
+        .iter()
+        .filter_map(|probe| probe.points.get(point_index.unwrap_or_default()))
+        .map(|point| {
+            if point_index.is_none() {
+                format!(
+                    "{:.0}/{:.0}",
+                    point.graph_nodes.baseline, point.graph_edges.baseline
+                )
+            } else {
+                format!(
+                    "{:.0}/{:.0}",
+                    point.graph_nodes.comparison, point.graph_edges.comparison
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    output.push_str(&format!("- {label}: `{shape}`\n"));
+}
+
 fn render_class_sensitivity(output: &mut String, axis: &AxisSensitivityReport) {
     open_axis_details(output, axis);
     output.push_str(&format!(
@@ -2986,6 +3230,7 @@ fn render_relation_sensitivity(output: &mut String, axis: &AxisSensitivityReport
     }
     render_measurement_baseline(output, axis);
     render_performance_table(output, axis);
+    render_depth_probes(output, axis);
     close_axis_details(output);
 }
 
@@ -3172,6 +3417,7 @@ impl BackendComparisonReport {
                 || report.workload_seed != reference.workload_seed
                 || report.workload_digest != reference.workload_digest
                 || report.limit_mode != reference.limit_mode
+                || report.scale_axis != reference.scale_axis
                 || report.effective_limits != reference.effective_limits
                 || report.runtime.runner != reference.runtime.runner
                 || report.runtime.process_fresh != reference.runtime.process_fresh
@@ -3319,6 +3565,7 @@ impl ScaleAssessment {
                 || head.workload_seed != base.workload_seed
                 || head.workload_digest != base.workload_digest
                 || head.limit_mode != base.limit_mode
+                || head.scale_axis != base.scale_axis
             {
                 failures.push(
                     "base and head workload specifications or limit modes differ".to_string(),
@@ -3684,7 +3931,7 @@ mod tests {
         let second = large.manifest().unwrap();
 
         assert_eq!(first, second);
-        assert_eq!(first.schema_version, 2);
+        assert_eq!(first.schema_version, 3);
         assert_eq!(first.semantic_digest.len(), 64);
         assert_eq!(huge.totals.objects, large.totals.objects * 4);
         assert_eq!(
@@ -3886,6 +4133,8 @@ mod tests {
             "hub_object_id",
             "heavy_history_object_id",
             "adversarial_class_id",
+            "deep_graph_class_id",
+            "deep_graph_object_id",
             "balanced_spread_class_relation_id",
         ] {
             assert!(manifest.anchors.contains_key(anchor));
@@ -3938,6 +4187,24 @@ mod tests {
                 .unwrap()
                 .traverse
         );
+        for depth in [1, 2, 4, 7] {
+            let scenario = workload
+                .scenarios
+                .iter()
+                .find(|scenario| scenario.name == format!("object-graph-depth-{depth}"))
+                .unwrap();
+            assert!(!scenario.include_in_mixed);
+            assert_eq!(scenario.warmup_requests, Some(1));
+            assert_eq!(scenario.single_client_samples, Some(3));
+            assert!(scenario.path.ends_with(&format!("depth__lte={depth}")));
+            assert!(scenario.applies_to(None));
+            assert!(scenario.applies_to(Some(ScaleAxis::ObjectRelations)));
+            assert_eq!(
+                scenario.applies_to(Some(ScaleAxis::DenseObjectRelations)),
+                depth <= 2
+            );
+            assert!(!scenario.applies_to(Some(ScaleAxis::Objects)));
+        }
     }
 
     #[test]
@@ -3959,6 +4226,7 @@ mod tests {
             profile.manifest().unwrap(),
             &workload,
             LimitMode::Standard,
+            None,
             RuntimeIdentity {
                 runner: "test".to_string(),
                 backend: BackendIdentity {
@@ -3984,6 +4252,8 @@ mod tests {
                 latency: LatencyDistribution::from_samples(&[5.0]),
                 response_bytes: 100,
                 response_items: 1,
+                graph_nodes: None,
+                graph_edges: None,
                 pages: 1,
                 traversal_ms: None,
                 traversal_first_page_ms: None,
@@ -4064,6 +4334,14 @@ mod tests {
             traversal.traversal_ms = Some(10.0);
             scenarios.push(traversal);
         }
+        for depth in [1_u64, 2, 4, 7] {
+            let mut graph = prototype.clone();
+            graph.name = format!("object-graph-depth-{depth}");
+            graph.phase = "warm_single_client".to_string();
+            graph.graph_nodes = Some(depth * 3 + 1);
+            graph.graph_edges = Some(depth * 3);
+            scenarios.push(graph);
+        }
         report.scenarios = scenarios;
         report
     }
@@ -4116,6 +4394,7 @@ mod tests {
         comparison.scenarios[0].latency = LatencyDistribution::from_samples(&[7.0]);
         comparison.scenarios[0].requests_per_second = 8.0;
         comparison.resources.backend.storage_bytes = 30;
+        comparison.scale_axis = Some(ScaleAxis::Objects);
 
         let impact =
             ScaleImpactReport::compare(&baseline, &comparison, ScaleAxis::Objects, None).unwrap();
@@ -4146,6 +4425,7 @@ mod tests {
                 &format!("{}-{}", point.axis.as_str(), point.added_percent),
                 &comparison_profile,
             );
+            comparison.scale_axis = Some(point.axis);
             comparison.resources.backend.storage_bytes += point.added_count;
             comparison.resources.backend.index_bytes = Some(5 + point.added_count / 2);
             let axis_spec = spec
@@ -4177,6 +4457,14 @@ mod tests {
                 };
                 traversal.traversal_ms = Some(10.0 + point.added_percent as f64 / 10.0);
             }
+            let workload = WorkloadSpec::bundled().unwrap();
+            comparison.scenarios.retain(|report| {
+                workload
+                    .scenarios
+                    .iter()
+                    .find(|scenario| scenario.name == report.name)
+                    .is_none_or(|scenario| scenario.applies_to(Some(point.axis)))
+            });
             impacts.push(
                 ScaleImpactReport::compare(&baseline, &comparison, point.axis, None).unwrap(),
             );
@@ -4186,6 +4474,8 @@ mod tests {
         let markdown = summary.markdown();
 
         assert_eq!(summary.axes.len(), 6);
+        assert_eq!(summary.axes[3].depth_probes.len(), 4);
+        assert_eq!(summary.axes[5].depth_probes.len(), 2);
         assert_eq!(
             summary.axes[3].points[1]
                 .traversal_pages
@@ -4212,6 +4502,10 @@ mod tests {
         assert!(markdown.contains("300,000"));
         assert!(markdown.contains("+100% (+1,000,000)"));
         assert!(markdown.contains("pages `1 → 1 / 2 / 3`"));
+        assert!(markdown.contains("depth 7 graph p95"));
+        assert!(markdown.contains("Returned nodes/edges by maximum depth"));
+        assert!(markdown.contains("reachable graph stays fixed"));
+        assert!(markdown.contains("extra work caused by local fan-out"));
         assert!(markdown.contains("Each percentage is relative to the stated baseline"));
 
         let mut extended_summary = summary.clone();
@@ -4235,6 +4529,7 @@ mod tests {
             .unwrap()
             .manifest()
             .unwrap();
+        comparison.scale_axis = Some(ScaleAxis::Objects);
 
         let error = ScaleImpactReport::compare(&baseline, &comparison, ScaleAxis::Objects, None)
             .unwrap_err();

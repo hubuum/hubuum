@@ -1,5 +1,5 @@
 schema_version = 1
-workload_version = 1
+workload_version = 2
 seed = 36520260901
 warmup_requests = 3
 single_client_samples = 12
@@ -161,8 +161,48 @@ traverse = true
 [[scenarios]]
 name = "bounded-transitive-graph"
 principal = "admin"
-path = "/api/v1/classes/{adversarial_class_id}/related/graph?limit={page_limit}"
+path = "/api/v1/classes/{adversarial_class_id}/related/graph?limit={page_limit}&depth__lte={graph_depth}"
 weight = 2
+
+[[scenarios]]
+name = "object-graph-depth-1"
+principal = "admin"
+path = "/api/v1/classes/{deep_graph_class_id}/objects/{deep_graph_object_id}/related/graph?limit={page_limit}&depth__lte=1"
+weight = 1
+include_in_mixed = false
+scale_axes = ["object_relations", "concentrated_object_relations", "dense_object_relations"]
+warmup_requests = 1
+single_client_samples = 3
+
+[[scenarios]]
+name = "object-graph-depth-2"
+principal = "admin"
+path = "/api/v1/classes/{deep_graph_class_id}/objects/{deep_graph_object_id}/related/graph?limit={page_limit}&depth__lte=2"
+weight = 1
+include_in_mixed = false
+scale_axes = ["object_relations", "concentrated_object_relations", "dense_object_relations"]
+warmup_requests = 1
+single_client_samples = 3
+
+[[scenarios]]
+name = "object-graph-depth-4"
+principal = "admin"
+path = "/api/v1/classes/{deep_graph_class_id}/objects/{deep_graph_object_id}/related/graph?limit={page_limit}&depth__lte=4"
+weight = 1
+include_in_mixed = false
+scale_axes = ["object_relations", "concentrated_object_relations"]
+warmup_requests = 1
+single_client_samples = 3
+
+[[scenarios]]
+name = "object-graph-depth-7"
+principal = "admin"
+path = "/api/v1/classes/{deep_graph_class_id}/objects/{deep_graph_object_id}/related/graph?limit={page_limit}&depth__lte=7"
+weight = 1
+include_in_mixed = false
+scale_axes = ["object_relations", "concentrated_object_relations"]
+warmup_requests = 1
+single_client_samples = 3
 
 [[scenarios]]
 name = "typical-history"
