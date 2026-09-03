@@ -3,6 +3,7 @@
 use chrono::NaiveDateTime;
 use diesel::{Queryable, Selectable};
 use hubuum_domain::{PrincipalId, TaskId, TokenId};
+use hubuum_events_core::TraceLink;
 use hubuum_storage_core::{
     StorageTask, StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
@@ -40,6 +41,10 @@ pub(crate) struct TaskRow {
     pub(super) lease_expires_at: Option<NaiveDateTime>,
     pub(super) attempt_count: i32,
     pub(super) initiator_user_id: Option<i32>,
+    pub(super) trace_id: Option<String>,
+    pub(super) trace_span_id: Option<String>,
+    pub(super) trace_flags: Option<i16>,
+    pub(super) trace_context_version: Option<i16>,
 }
 
 impl TaskRow {
@@ -59,6 +64,12 @@ impl TaskRow {
                 self.success_items,
                 self.failed_items,
             ),
+        )?;
+        let trace_link = task_trace_link(
+            self.trace_id,
+            self.trace_span_id,
+            self.trace_flags,
+            self.trace_context_version,
         )?;
         let task = StorageTask::builder(
             TaskId::new(self.id)?,
@@ -90,8 +101,36 @@ impl TaskRow {
         )
         .lease_expires_at(lease_expires_at)
         .attempt_count(self.attempt_count)
-        .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?);
+        .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
+        .trace_link(trace_link);
         crate::validate_persisted("task projection", task.try_build())
+    }
+}
+
+fn task_trace_link(
+    trace_id: Option<String>,
+    span_id: Option<String>,
+    trace_flags: Option<i16>,
+    version: Option<i16>,
+) -> Result<Option<TraceLink>, PostgresStorageError> {
+    match (trace_id, span_id, trace_flags, version) {
+        (None, None, None, None) => Ok(None),
+        (Some(trace_id), Some(span_id), Some(trace_flags), Some(version)) => {
+            let trace_flags = u8::try_from(trace_flags).map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("task trace link", error)
+            })?;
+            let version = u8::try_from(version).map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("task trace link", error)
+            })?;
+            TraceLink::new(trace_id, span_id, trace_flags, version)
+                .map(Some)
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value("task trace link", error)
+                })
+        }
+        _ => Err(PostgresStorageError::database(
+            "Persisted task trace link must contain either all fields or no fields",
+        )),
     }
 }
 
@@ -143,6 +182,10 @@ mod tests {
             lease_expires_at: None,
             attempt_count: 0,
             initiator_user_id: None,
+            trace_id: None,
+            trace_span_id: None,
+            trace_flags: None,
+            trace_context_version: None,
         }
     }
 
@@ -206,5 +249,20 @@ mod tests {
             .expect_err("a partial persisted lease must be rejected");
 
         assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn task_projection_reconstructs_a_valid_trace_link() {
+        let mut row = valid_task_row();
+        row.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
+        row.trace_span_id = Some("00f067aa0ba902b7".to_string());
+        row.trace_flags = Some(1);
+        row.trace_context_version = Some(0);
+
+        let task = row.into_storage().unwrap();
+        assert_eq!(
+            task.trace_link().map(TraceLink::trace_id),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
     }
 }

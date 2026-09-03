@@ -8,6 +8,7 @@
 
 use actix_web::{HttpMessage, HttpRequest};
 use hubuum_domain::PrincipalId;
+use hubuum_events_core::{CorrelationId, TraceLink};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -18,24 +19,27 @@ pub use hubuum_events_core::EventContext;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestProvenance {
     request_id: Uuid,
-    correlation_id: Option<String>,
+    correlation_id: Option<CorrelationId>,
     client_ip: Option<IpAddr>,
+    #[serde(skip)]
+    trace_link: Option<TraceLink>,
 }
 
 impl RequestProvenance {
-    pub fn new(request_id: Uuid, correlation_id: Option<String>) -> Self {
+    pub fn new(request_id: Uuid, correlation_id: Option<CorrelationId>) -> Self {
         Self::new_with_client_ip(request_id, correlation_id, None)
     }
 
     pub fn new_with_client_ip(
         request_id: Uuid,
-        correlation_id: Option<String>,
+        correlation_id: Option<CorrelationId>,
         client_ip: Option<IpAddr>,
     ) -> Self {
         Self {
             request_id,
             correlation_id,
             client_ip,
+            trace_link: None,
         }
     }
 
@@ -44,11 +48,17 @@ impl RequestProvenance {
     }
 
     pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_deref()
+        self.correlation_id.as_ref().map(CorrelationId::as_str)
     }
 
     pub fn client_ip(&self) -> Option<IpAddr> {
         self.client_ip
+    }
+
+    #[must_use]
+    pub fn with_trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
+        self.trace_link = trace_link;
+        self
     }
 
     pub fn user_event_context(&self, actor_user_id: i32) -> EventContext {
@@ -57,6 +67,7 @@ impl RequestProvenance {
             Some(self.request_id),
             self.correlation_id.clone(),
         )
+        .with_trace_link(self.trace_link.clone())
     }
 
     /// Read provenance previously inserted by [`crate::middlewares::TracingMiddleware`].

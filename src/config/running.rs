@@ -23,6 +23,7 @@ pub struct RunningConfig {
     pub permissions: PermissionConfig,
     pub pagination: PaginationConfig,
     pub network: NetworkConfig,
+    pub tracing: TracingConfig,
 }
 
 /// Public configuration values that API consumers need to use the service correctly.
@@ -250,6 +251,29 @@ pub struct NetworkConfig {
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct TracingConfig {
+    pub enabled: bool,
+    pub protocol: String,
+    pub endpoint: SecretStatus,
+    pub static_headers: SecretStatus,
+    pub ca_certificate_configured: bool,
+    pub client_certificate_configured: bool,
+    pub client_private_key: SecretStatus,
+    pub connect_timeout_ms: u64,
+    pub export_timeout_ms: u64,
+    pub flush_timeout_ms: u64,
+    pub queue_capacity: usize,
+    pub batch_size: usize,
+    pub sampling_mode: String,
+    pub sampling_ratio: f64,
+    pub service_name: String,
+    pub service_namespace: String,
+    pub deployment_environment: String,
+    pub trust_incoming_sampling: bool,
+    pub propagate_outbound: bool,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ClientAllowlistStatus {
     pub allows_any: bool,
     pub network_count: usize,
@@ -463,6 +487,33 @@ impl RunningConfig {
                 trusted_proxy_networks: config.trusted_proxies.nets().len(),
                 client_allowlist,
             },
+            tracing: TracingConfig {
+                enabled: config.tracing_enabled,
+                protocol: "http/protobuf".to_string(),
+                endpoint: SecretStatus {
+                    configured: config.tracing_otlp_endpoint.is_some(),
+                },
+                static_headers: SecretStatus {
+                    configured: config.tracing_otlp_headers.is_some(),
+                },
+                ca_certificate_configured: config.tracing_otlp_ca_cert.is_some(),
+                client_certificate_configured: config.tracing_otlp_client_cert.is_some(),
+                client_private_key: SecretStatus {
+                    configured: config.tracing_otlp_client_key.is_some(),
+                },
+                connect_timeout_ms: config.tracing_connect_timeout_ms,
+                export_timeout_ms: config.tracing_export_timeout_ms,
+                flush_timeout_ms: config.tracing_flush_timeout_ms,
+                queue_capacity: config.tracing_queue_capacity,
+                batch_size: config.tracing_batch_size,
+                sampling_mode: config.tracing_sampling_mode.as_str().to_string(),
+                sampling_ratio: config.tracing_sample_ratio,
+                service_name: config.tracing_service_name.clone(),
+                service_namespace: config.tracing_service_namespace.clone(),
+                deployment_environment: config.tracing_deployment_environment.clone(),
+                trust_incoming_sampling: config.tracing_trust_incoming_sampling,
+                propagate_outbound: config.tracing_propagate_outbound,
+            },
         }
     }
 }
@@ -492,6 +543,12 @@ mod tests {
         config.login_rate_limit_valkey_url =
             Some("redis://secret-user:secret-password@valkey.example/".to_string());
         config.treetop_url = Some("https://treetop-token@example.invalid".to_string());
+        config.tracing_otlp_endpoint =
+            Some("https://collector-token@collector.example.invalid".to_string());
+        config.tracing_otlp_headers = Some("authorization=collector-secret".to_string());
+        config.tracing_otlp_ca_cert = Some("/secret/collector-ca.pem".to_string());
+        config.tracing_otlp_client_cert = Some("/secret/collector-client.pem".to_string());
+        config.tracing_otlp_client_key = Some("/secret/collector-client-key.pem".to_string());
 
         let json = serde_json::to_string(&RunningConfig::from(&config)).unwrap();
         let debug = format!("{config:?}");
@@ -503,6 +560,12 @@ mod tests {
         assert!(!json.contains("providers.toml"));
         assert!(!json.contains("valkey.example"));
         assert!(!json.contains("treetop-token"));
+        assert!(!json.contains("collector-token"));
+        assert!(!json.contains("collector-secret"));
+        assert!(!json.contains("collector.example.invalid"));
+        assert!(!json.contains("collector-ca.pem"));
+        assert!(!json.contains("collector-client.pem"));
+        assert!(!json.contains("collector-client-key.pem"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
         assert!(json.contains(&format!(
@@ -515,5 +578,7 @@ mod tests {
         assert!(!json.contains("capabilities"));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
+        assert!(!debug.contains("collector-secret"));
+        assert!(!debug.contains("collector-client-key.pem"));
     }
 }

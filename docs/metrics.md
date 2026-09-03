@@ -226,6 +226,26 @@ metrics describe logical use cases, while `hubuum_db_*` metrics describe the
 PostgreSQL implementation. Do not sum the two as though they were the same
 operation count.
 
+### Distributed Tracing
+
+| Metric | Labels | Description |
+| --- | --- | --- |
+| `hubuum_tracing_info` | `sampling_mode` | Effective bounded sampling mode; value is `1` |
+| `hubuum_tracing_sample_ratio` | none | Effective root trace sampling ratio |
+| `hubuum_tracing_queue_capacity` | none | Configured bounded batch-processor queue capacity |
+| `hubuum_tracing_queue_utilization` | none | Current spans admitted and waiting for export |
+| `hubuum_trace_spans_total` | `category`, `state` | Sampled allowlisted spans observed at the processor's actual `started` or `ended` lifecycle callback |
+| `hubuum_trace_spans_dropped_total` | `reason` | Spans dropped for `classification` or `queue_saturation` |
+| `hubuum_trace_export_batches_total` | `outcome` | OTLP export batches by `success` or `failure` |
+| `hubuum_trace_export_spans_total` | `outcome` | Spans submitted in OTLP batches by `success` or `failure` |
+| `hubuum_trace_flushes_total` | `outcome` | Graceful-shutdown flushes by `success` or `failure` |
+
+Trace labels come only from fixed categories and outcomes. They never contain
+trace IDs, span IDs, endpoints, resource identities, or error messages. Alert on
+a sustained nonzero `queue_saturation` rate and export `failure` rate. Queue
+utilization is process-local and should be compared with that process's capacity.
+See [Distributed Tracing](tracing.md) for configuration and data policy.
+
 Storage capability labels follow the singular capability trait vocabulary: the
 trait's `Storage` suffix is removed and its remaining stem becomes snake case.
 The bounded values are `audit_event`, `authentication`, `authorization_data`,

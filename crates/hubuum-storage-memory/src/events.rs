@@ -741,7 +741,7 @@ impl EventFanoutStorage for MemoryStorage {
     async fn process_event_fanout_batch(
         &self,
         settings: EventFanoutSettings,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<StorageEventFanoutOutcome, StorageError> {
         let mut state = self.state.write().await;
         let events = state
             .events
@@ -753,7 +753,7 @@ impl EventFanoutStorage for MemoryStorage {
             .take(settings.batch_size())
             .collect::<Vec<_>>();
         if events.is_empty() {
-            return Ok(0);
+            return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
         }
         let subscriptions = state
             .event_subscriptions
@@ -799,7 +799,11 @@ impl EventFanoutStorage for MemoryStorage {
             .last()
             .map(|event| event.id().get())
             .unwrap_or(state.fanout_event_cursor);
-        Ok(events.len())
+        let trace_links = events
+            .iter()
+            .filter_map(|event| event.trace_link().cloned())
+            .collect();
+        Ok(StorageEventFanoutOutcome::new(events.len(), trace_links))
     }
 }
 

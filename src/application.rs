@@ -85,7 +85,14 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             EXIT_CODE_CONFIG_ERROR,
         );
     }
-    if let Err(err) = logger::init_json_logging(&config.log_level) {
+    let tracing_settings = observability::tracing::TracingSettings::from_config(&config)
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    let mut trace_runtime = observability::tracing::initialize(&tracing_settings)
+        .await
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
+    if let Err(err) =
+        logger::init_json_logging_with_tracer(&config.log_level, trace_runtime.tracer())
+    {
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 
@@ -117,6 +124,15 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             );
         }
         observability::metrics::runtime_identity(config.runtime_role);
+        observability::metrics::tracing_config(
+            if tracing_settings.enabled() {
+                tracing_settings.sampling_mode().as_str()
+            } else {
+                "off"
+            },
+            tracing_settings.sample_ratio(),
+            config.tracing_queue_capacity,
+        );
         observability::metrics::token_hash_key_ring(
             if token_hash_key_ring.is_stable() {
                 "stable"
@@ -317,6 +333,12 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
+        if let Err(error) = trace_runtime.shutdown().await {
+            warn!(
+                message = "OpenTelemetry shutdown did not complete cleanly",
+                error
+            );
+        }
         supervision_result?;
         return Ok(());
     }
@@ -454,6 +476,12 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(app_context);
+    if let Err(error) = trace_runtime.shutdown().await {
+        warn!(
+            message = "OpenTelemetry shutdown did not complete cleanly",
+            error
+        );
+    }
     result
 }
 

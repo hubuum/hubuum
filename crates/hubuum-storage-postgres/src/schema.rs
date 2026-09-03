@@ -189,6 +189,12 @@ diesel::table! {
         task_id -> Nullable<Int4>,
         before_revision -> Nullable<Int8>,
         after_revision -> Nullable<Int8>,
+        #[max_length = 32]
+        trace_id -> Nullable<Varchar>,
+        #[max_length = 16]
+        trace_span_id -> Nullable<Varchar>,
+        trace_flags -> Nullable<Int2>,
+        trace_context_version -> Nullable<Int2>,
     }
 }
 
@@ -726,6 +732,12 @@ diesel::table! {
         lease_expires_at -> Nullable<Timestamp>,
         attempt_count -> Int4,
         initiator_user_id -> Nullable<Int4>,
+        #[max_length = 32]
+        trace_id -> Nullable<Varchar>,
+        #[max_length = 16]
+        trace_span_id -> Nullable<Varchar>,
+        trace_flags -> Nullable<Int2>,
+        trace_context_version -> Nullable<Int2>,
     }
 }
 

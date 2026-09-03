@@ -75,7 +75,10 @@ futures = "0.3"
 futures-util = "0.3"
 json-patch = { version = "4.2", default-features = false, features = ["utoipa"] }
 rand = "0.10"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# The OpenTelemetry SDK's default BatchSpanProcessor exports on a dedicated
+# non-Tokio thread, so its custom OTLP client must use reqwest's blocking API;
+# provider construction and shutdown are moved onto blocking workers too.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 redis = { version = "1.3.0", default-features = false, features = ["connection-manager", "tokio-rustls-comp"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
@@ -100,11 +103,23 @@ hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
-opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "http-proto",
+    # Required by the default thread-based BatchSpanProcessor; the async client
+    # expects a Tokio reactor that is not present on the exporter thread. The
+    # blocking client lifecycle is kept off Hubuum's async runtime.
+    "reqwest-blocking-client",
+    "trace",
+] }
 opentelemetry-prometheus = "0.32"
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = [
+    "metrics",
+    "trace",
+] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "signal"] }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-serde = "0"
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
@@ -285,6 +300,10 @@ harness = false
 
 [[bench]]
 name = "password_hashing_criterion"
+harness = false
+
+[[bench]]
+name = "tracing_criterion"
 harness = false
 
 [[bench]]

@@ -7,7 +7,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use hubuum_events_core::{
     Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence, Provenance,
-    ProvenanceActor, ProvenancePrincipal,
+    ProvenanceActor, ProvenancePrincipal, TraceLink,
 };
 use hubuum_storage_core::StorageAuditEvent;
 use serde_json::Value;
@@ -44,6 +44,10 @@ pub(super) struct StoredEventProjection {
     task_id: Option<i32>,
     before_revision: Option<PostgresRevision>,
     after_revision: Option<PostgresRevision>,
+    trace_id: Option<String>,
+    trace_span_id: Option<String>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 impl StoredEventProjection {
@@ -93,6 +97,12 @@ impl StoredEventProjection {
                 .transpose()
                 .map_err(invalid_event_envelope)?,
         };
+        let trace_link = trace_link_from_columns(
+            self.trace_id,
+            self.trace_span_id,
+            self.trace_flags,
+            self.trace_context_version,
+        )?;
         EventEnvelope::builder()
             .id(EventSequence::new(self.id).map_err(invalid_event_envelope)?)
             .event_id(self.event_id)
@@ -117,6 +127,7 @@ impl StoredEventProjection {
             .provenance(provenance)
             .request_id(self.request_id)
             .correlation_id(self.correlation_id)
+            .trace_link(trace_link)
             .summary(self.summary)
             .before(self.before)
             .after(self.after)
@@ -144,6 +155,27 @@ impl StoredEventProjection {
             before_revision,
             after_revision,
         ))
+    }
+}
+
+pub(crate) fn trace_link_from_columns(
+    trace_id: Option<String>,
+    span_id: Option<String>,
+    trace_flags: Option<i16>,
+    version: Option<i16>,
+) -> Result<Option<TraceLink>, PostgresStorageError> {
+    match (trace_id, span_id, trace_flags, version) {
+        (None, None, None, None) => Ok(None),
+        (Some(trace_id), Some(span_id), Some(trace_flags), Some(version)) => {
+            let trace_flags = u8::try_from(trace_flags).map_err(invalid_event_envelope)?;
+            let version = u8::try_from(version).map_err(invalid_event_envelope)?;
+            TraceLink::new(trace_id, span_id, trace_flags, version)
+                .map(Some)
+                .map_err(invalid_event_envelope)
+        }
+        _ => Err(PostgresStorageError::database(
+            "Persisted trace link must contain either all fields or no fields",
+        )),
     }
 }
 
@@ -249,6 +281,10 @@ mod tests {
             task_id: None,
             before_revision: None,
             after_revision: None,
+            trace_id: None,
+            trace_span_id: None,
+            trace_flags: None,
+            trace_context_version: None,
         }
     }
 
@@ -261,6 +297,39 @@ mod tests {
         let error = projection
             .into_envelope(&HashMap::new())
             .expect_err("invalid catalog pair must fail decoding");
+
+        assert_eq!(error.kind(), StorageErrorKind::Backend);
+    }
+
+    #[test]
+    fn persisted_event_trace_link_is_revalidated_and_hidden_from_json() {
+        let mut projection = projection();
+        projection.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
+        projection.trace_span_id = Some("00f067aa0ba902b7".to_string());
+        projection.trace_flags = Some(1);
+        projection.trace_context_version = Some(0);
+
+        let envelope = projection.into_envelope(&HashMap::new()).unwrap();
+        assert_eq!(
+            envelope.trace_link().map(TraceLink::trace_id),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+        assert!(
+            !serde_json::to_string(&envelope)
+                .unwrap()
+                .contains("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+    }
+
+    #[test]
+    fn partial_persisted_event_trace_link_is_backend_corruption() {
+        let error = trace_link_from_columns(
+            Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind(), StorageErrorKind::Backend);
     }

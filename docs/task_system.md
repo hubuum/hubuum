@@ -56,6 +56,12 @@ Each row stores:
 - request storage: `request_payload`, `request_redacted_at`
 - progress counters: `total_items`, `processed_items`, `success_items`, `failed_items`
 - terminal summary: `summary`
+- optional validated OpenTelemetry trace link captured at admission; this is
+  internal provenance and is not part of the public task response
+
+The worker starts `task.execute` with the admission link rather than treating a
+delayed queue claim as a child in the current process. See
+[Distributed Tracing](tracing.md#propagation-and-crate-boundaries).
 
 ### Task lifecycle events
 

@@ -7,7 +7,7 @@
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use hubuum_storage_core::{StorageCallSite, StorageNotification};
 use hubuum_storage_postgres::{
@@ -19,6 +19,10 @@ use hubuum_storage_postgres::{
 };
 use serde::Serialize;
 use tracing::{error, info};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+use opentelemetry::trace::{Span as _, Status, Tracer as _};
+use opentelemetry::{KeyValue, global};
 
 use super::{
     DatabaseDiagnosticsProvider, DatabasePoolAcquisitions, DatabasePoolCapacity,
@@ -150,10 +154,18 @@ struct ApplicationPostgresObserver;
 impl PostgresObserver for ApplicationPostgresObserver {
     fn connection_acquired(&self, call_site: StorageCallSite, duration: Duration) {
         crate::observability::metrics::db_connection_acquired(call_site.as_str(), duration);
+        record_completed_database_span("db.connection", call_site, "pool_acquire", duration, "ok");
     }
 
     fn connection_acquisition_failed(&self, call_site: StorageCallSite, duration: Duration) {
         crate::observability::metrics::db_connection_acquire_failed(call_site.as_str(), duration);
+        record_completed_database_span(
+            "db.connection",
+            call_site,
+            "pool_acquire",
+            duration,
+            "error",
+        );
     }
 
     fn operation_finished(
@@ -171,6 +183,13 @@ impl PostgresObserver for ApplicationPostgresObserver {
             operation,
             duration,
             &result,
+        );
+        record_completed_database_span(
+            "db.operation",
+            call_site,
+            operation,
+            duration,
+            error.map_or("ok", StorageErrorKind::as_str),
         );
     }
 
@@ -201,6 +220,37 @@ impl PostgresObserver for ApplicationPostgresObserver {
     fn computed_rebuild_batch(&self, object_count: usize) {
         crate::observability::metrics::computed_rebuild_batch(object_count);
     }
+}
+
+fn record_completed_database_span(
+    name: &'static str,
+    call_site: StorageCallSite,
+    operation: &'static str,
+    duration: Duration,
+    result: &'static str,
+) {
+    let tracer = global::tracer("hubuum");
+    let ended_at = SystemTime::now();
+    let started_at = ended_at.checked_sub(duration).unwrap_or(ended_at);
+    let parent = tracing::Span::current().context();
+    let mut span = tracer
+        .span_builder(name)
+        .with_start_time(started_at)
+        .with_attributes([
+            KeyValue::new("db.caller", call_site.as_str()),
+            KeyValue::new("db.operation.category", operation),
+            KeyValue::new("db.connection.mode", "pooled"),
+            KeyValue::new(
+                "db.duration_ms",
+                i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            ),
+            KeyValue::new("db.result", result),
+        ])
+        .start_with_context(&tracer, &parent);
+    if result != "ok" {
+        span.set_status(Status::error(result));
+    }
+    span.end_with_timestamp(ended_at);
 }
 
 pub(super) fn compose_postgres(pool: PostgresPool) -> PostgresStorage {

@@ -167,11 +167,15 @@ resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so attack
   `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` (default `1000`) control its cadence
   and batch size. The batch size must be at least `10`.
 
-### Logging
+### Observability
 
 Hubuum writes newline-delimited JSON logs. Set `HUBUUM_LOG_LEVEL` to control verbosity; see
 [docs/logging.md](docs/logging.md) for fields, request correlation, authorization events, and
 `jq` recipes.
+
+Optional OpenTelemetry tracing exports a bounded span catalog through OTLP/HTTP
+over verified HTTPS. See [docs/tracing.md](docs/tracing.md) for configuration,
+propagation, sampling, TLS, security, and failure behavior.
 
 ### Login Rate Limiting
 

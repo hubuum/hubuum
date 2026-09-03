@@ -21,9 +21,12 @@
 //! `_us` field, but the operational signal we care about — slow
 //! authorize batches, slow reverse queries — is well above that floor.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use opentelemetry::trace::{Span as _, Tracer as _};
+use opentelemetry::{KeyValue, global};
 use tracing::debug;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 const TARGET: &str = "hubuum::permissions";
 
@@ -51,6 +54,14 @@ pub fn record_authorize_many(
         latency_ms = elapsed.as_millis() as u64,
         "authorize_many"
     );
+    record_authorization_span(
+        "authz.permission_backend",
+        backend,
+        "authorize_many",
+        request_count,
+        if deny_count > 0 { "deny" } else { "allow" },
+        elapsed,
+    );
 }
 
 /// Emit an event for `PermissionBackend::is_admin`.
@@ -61,6 +72,14 @@ pub fn record_is_admin(backend: &'static str, allowed: bool, elapsed: Duration) 
         allowed,
         latency_ms = elapsed.as_millis() as u64,
         "is_admin"
+    );
+    record_authorization_span(
+        "authz.permission_backend",
+        backend,
+        "is_admin",
+        1,
+        if allowed { "allow" } else { "deny" },
+        elapsed,
     );
 }
 
@@ -95,6 +114,14 @@ pub fn record_reverse_query(
         latency_ms = elapsed.as_millis() as u64,
         "reverse_query"
     );
+    record_authorization_span(
+        "authz.scope_intersection",
+        backend,
+        query,
+        candidate_count,
+        "complete",
+        elapsed,
+    );
 }
 
 /// Emit an event for the `paginate_authorized` helper.
@@ -124,4 +151,44 @@ pub fn record_paginate_authorized(
         latency_ms = elapsed.as_millis() as u64,
         "paginate_authorized"
     );
+    record_authorization_span(
+        "authz.scope_intersection",
+        backend,
+        "paginate_authorized",
+        candidate_count,
+        "complete",
+        elapsed,
+    );
+}
+
+fn record_authorization_span(
+    name: &'static str,
+    backend: &'static str,
+    operation: &'static str,
+    request_count: usize,
+    result: &'static str,
+    duration: Duration,
+) {
+    let tracer = global::tracer("hubuum");
+    let ended_at = SystemTime::now();
+    let started_at = ended_at.checked_sub(duration).unwrap_or(ended_at);
+    let parent = tracing::Span::current().context();
+    let mut span = tracer
+        .span_builder(name)
+        .with_start_time(started_at)
+        .with_attributes([
+            KeyValue::new("authorization.backend", backend),
+            KeyValue::new("authorization.operation", operation),
+            KeyValue::new(
+                "authorization.request.count",
+                i64::try_from(request_count).unwrap_or(i64::MAX),
+            ),
+            KeyValue::new("authorization.result", result),
+            KeyValue::new(
+                "authorization.duration_ms",
+                i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            ),
+        ])
+        .start_with_context(&tracer, &parent);
+    span.end_with_timestamp(ended_at);
 }

@@ -426,6 +426,42 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_event_worker_wakeups")
             .with_description("Event worker wakeups")
             .build(),
+        tracing_info: meter
+            .u64_gauge("hubuum_tracing_info")
+            .with_description("Configured OpenTelemetry sampling mode")
+            .build(),
+        tracing_sample_ratio: meter
+            .f64_gauge("hubuum_tracing_sample_ratio")
+            .with_description("Configured OpenTelemetry trace sampling ratio")
+            .build(),
+        tracing_queue_capacity: meter
+            .u64_gauge("hubuum_tracing_queue_capacity")
+            .with_description("Configured OpenTelemetry export queue capacity")
+            .build(),
+        tracing_queue_utilization: meter
+            .u64_gauge("hubuum_tracing_queue_utilization")
+            .with_description("OpenTelemetry spans waiting for export")
+            .build(),
+        trace_spans: meter
+            .u64_counter("hubuum_trace_spans")
+            .with_description("Sampled OpenTelemetry spans by closed category and lifecycle state")
+            .build(),
+        trace_spans_dropped: meter
+            .u64_counter("hubuum_trace_spans_dropped")
+            .with_description("OpenTelemetry spans dropped by bounded reason")
+            .build(),
+        trace_export_batches: meter
+            .u64_counter("hubuum_trace_export_batches")
+            .with_description("OpenTelemetry export batches by outcome")
+            .build(),
+        trace_export_spans: meter
+            .u64_counter("hubuum_trace_export_spans")
+            .with_description("OpenTelemetry spans submitted in export batches by outcome")
+            .build(),
+        trace_flushes: meter
+            .u64_counter("hubuum_trace_flushes")
+            .with_description("OpenTelemetry shutdown flushes by outcome")
+            .build(),
         inventory_entities: meter
             .i64_gauge("hubuum_inventory_entities")
             .with_description("Low-cardinality domain inventory counts")

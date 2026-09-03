@@ -5,7 +5,7 @@ use std::time::Duration;
 use actix_rt::time::sleep;
 use futures_util::StreamExt;
 use tokio::sync::Notify;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::config::{
     DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
@@ -18,7 +18,7 @@ use crate::events::EventDeliverySettings;
 use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
-use crate::observability::metrics;
+use crate::observability::{metrics, tracing as telemetry};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
 use crate::storage::{
@@ -119,40 +119,61 @@ pub(crate) async fn process_event_delivery_work_item(
     work_item: StorageEventDeliveryWorkItem,
 ) -> Result<(), ApiError> {
     let (claim, envelope, subscription, sink) = work_item.into_parts();
-    let result = tokio::time::timeout(
-        settings.transport_timeout(),
-        deliver_one(resolver, &envelope, &subscription, &sink),
-    )
-    .await
-    .map_err(|_| {
-        SinkError::new(format!(
-            "Event delivery transport timed out after {} ms",
-            settings.transport_timeout_ms()
-        ))
-    })
-    .and_then(|result| result);
+    let sink_kind = match sink.kind() {
+        "amqp" => "amqp",
+        "email" => "email",
+        "valkey_stream" => "valkey_stream",
+        "webhook" => "webhook",
+        _ => "unsupported",
+    };
+    let span = info_span!(
+        "event.delivery",
+        otel.kind = "consumer",
+        sink.kind = sink_kind,
+        delivery.attempt = claim.attempts(),
+        delivery.outcome = field::Empty,
+    );
+    telemetry::add_link(&span, envelope.trace_link());
+    async move {
+        let result = tokio::time::timeout(
+            settings.transport_timeout(),
+            deliver_one(resolver, &envelope, &subscription, &sink),
+        )
+        .await
+        .map_err(|_| {
+            SinkError::new(format!(
+                "Event delivery transport timed out after {} ms",
+                settings.transport_timeout_ms()
+            ))
+        })
+        .and_then(|result| result);
 
-    match result {
-        Ok(()) => {
-            storage.mark_event_delivery_succeeded(&claim).await?;
+        match result {
+            Ok(()) => {
+                tracing::Span::current().record("delivery.outcome", "succeeded");
+                storage.mark_event_delivery_succeeded(&claim).await?;
+            }
+            Err(error) => {
+                tracing::Span::current().record("delivery.outcome", "failed");
+                warn!(
+                    message = "Event sink delivery failed",
+                    event_delivery_id = claim.delivery_id().id(),
+                    event_id = %envelope.event_id(),
+                    event_sink_id = sink.id().id(),
+                    event_subscription_id = subscription.id().id(),
+                    sink_kind = sink.kind(),
+                    error = %error,
+                );
+                storage
+                    .mark_event_delivery_failed(&claim, settings, &error.to_string())
+                    .await?;
+            }
         }
-        Err(error) => {
-            warn!(
-                message = "Event sink delivery failed",
-                event_delivery_id = claim.delivery_id().id(),
-                event_id = %envelope.event_id(),
-                event_sink_id = sink.id().id(),
-                event_subscription_id = subscription.id().id(),
-                sink_kind = sink.kind(),
-                error = %error,
-            );
-            storage
-                .mark_event_delivery_failed(&claim, settings, &error.to_string())
-                .await?;
-        }
+
+        Ok(())
     }
-
-    Ok(())
+    .instrument(span)
+    .await
 }
 
 async fn deliver_one(

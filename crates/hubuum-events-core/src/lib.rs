@@ -21,6 +21,213 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+pub const MAX_CORRELATION_ID_BYTES: usize = 128;
+pub const TRACE_ID_HEX_BYTES: usize = 32;
+pub const SPAN_ID_HEX_BYTES: usize = 16;
+
+/// A bounded application correlation identifier shared by every event producer.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct CorrelationId(String);
+
+impl CorrelationId {
+    pub fn new(value: impl Into<String>) -> Result<Self, CorrelationIdError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(CorrelationIdError::Empty);
+        }
+        if value.len() > MAX_CORRELATION_ID_BYTES {
+            return Err(CorrelationIdError::TooLong {
+                actual: value.len(),
+            });
+        }
+        if !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(CorrelationIdError::InvalidCharacter);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CorrelationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("CorrelationId")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+impl TryFrom<String> for CorrelationId {
+    type Error = CorrelationIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<CorrelationId> for String {
+    fn from(value: CorrelationId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorrelationIdError {
+    Empty,
+    TooLong { actual: usize },
+    InvalidCharacter,
+}
+
+impl fmt::Display for CorrelationIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("correlation ID must not be empty"),
+            Self::TooLong { actual } => write!(
+                formatter,
+                "correlation ID is {actual} bytes; the maximum is {MAX_CORRELATION_ID_BYTES} bytes"
+            ),
+            Self::InvalidCharacter => formatter.write_str(
+                "correlation ID must contain visible ASCII characters without whitespace",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CorrelationIdError {}
+
+/// Minimal, vendor-neutral trace linkage safe for durable asynchronous storage.
+///
+/// Baggage, `tracestate`, raw headers, and exporter-specific values are
+/// intentionally excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct TraceLink {
+    trace_id: String,
+    span_id: String,
+    trace_flags: u8,
+    version: u8,
+}
+
+#[derive(Deserialize)]
+struct TraceLinkRepresentation {
+    trace_id: String,
+    span_id: String,
+    trace_flags: u8,
+    version: u8,
+}
+
+impl<'de> Deserialize<'de> for TraceLink {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = TraceLinkRepresentation::deserialize(deserializer)?;
+        Self::new(
+            value.trace_id,
+            value.span_id,
+            value.trace_flags,
+            value.version,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+impl TraceLink {
+    pub fn new(
+        trace_id: impl Into<String>,
+        span_id: impl Into<String>,
+        trace_flags: u8,
+        version: u8,
+    ) -> Result<Self, TraceLinkError> {
+        let trace_id = trace_id.into();
+        let span_id = span_id.into();
+        validate_lower_hex_identifier("trace ID", &trace_id, TRACE_ID_HEX_BYTES)?;
+        validate_lower_hex_identifier("span ID", &span_id, SPAN_ID_HEX_BYTES)?;
+        if trace_flags & !1 != 0 {
+            return Err(TraceLinkError::UnsupportedTraceFlags(trace_flags));
+        }
+        if version != 0 {
+            return Err(TraceLinkError::UnsupportedVersion(version));
+        }
+        Ok(Self {
+            trace_id,
+            span_id,
+            trace_flags,
+            version,
+        })
+    }
+
+    #[must_use]
+    pub fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+
+    #[must_use]
+    pub fn span_id(&self) -> &str {
+        &self.span_id
+    }
+
+    #[must_use]
+    pub const fn trace_flags(&self) -> u8 {
+        self.trace_flags
+    }
+
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+}
+
+fn validate_lower_hex_identifier(
+    name: &'static str,
+    value: &str,
+    expected: usize,
+) -> Result<(), TraceLinkError> {
+    if value.len() != expected
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(TraceLinkError::InvalidIdentifier { name, expected });
+    }
+    if value.bytes().all(|byte| byte == b'0') {
+        return Err(TraceLinkError::ZeroIdentifier(name));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TraceLinkError {
+    InvalidIdentifier { name: &'static str, expected: usize },
+    ZeroIdentifier(&'static str),
+    UnsupportedTraceFlags(u8),
+    UnsupportedVersion(u8),
+}
+
+impl fmt::Display for TraceLinkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidIdentifier { name, expected } => write!(
+                formatter,
+                "{name} must contain exactly {expected} lowercase hexadecimal characters"
+            ),
+            Self::ZeroIdentifier(name) => write!(formatter, "{name} must not be all zeroes"),
+            Self::UnsupportedTraceFlags(flags) => {
+                write!(formatter, "unsupported trace flags: {flags}")
+            }
+            Self::UnsupportedVersion(version) => {
+                write!(formatter, "unsupported trace context version: {version}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TraceLinkError {}
+
 /// The kind of actor that originated an event.
 ///
 /// Stored as text on the `events.actor_kind` column. System actors cover
@@ -94,6 +301,8 @@ pub struct MutationProvenance {
     actor_user_id: Option<PrincipalId>,
     initiator_user_id: Option<PrincipalId>,
     task_id: Option<TaskId>,
+    #[serde(skip)]
+    trace_link: Option<TraceLink>,
 }
 
 impl MutationProvenance {
@@ -142,6 +351,17 @@ impl MutationProvenance {
         self.task_id
     }
 
+    #[must_use]
+    pub fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
+        self.trace_link = trace_link;
+        self
+    }
+
     fn new(
         actor_kind: ActorKind,
         actor_user_id: Option<PrincipalId>,
@@ -153,6 +373,7 @@ impl MutationProvenance {
             actor_user_id,
             initiator_user_id,
             task_id,
+            trace_link: None,
         }
     }
 }
@@ -165,7 +386,7 @@ impl MutationProvenance {
 pub struct EventContext {
     mutation: MutationProvenance,
     request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+    correlation_id: Option<CorrelationId>,
 }
 
 impl EventContext {
@@ -177,7 +398,7 @@ impl EventContext {
     pub fn user(
         actor_user_id: PrincipalId,
         request_id: Option<Uuid>,
-        correlation_id: Option<String>,
+        correlation_id: Option<CorrelationId>,
     ) -> Self {
         Self::new(
             MutationProvenance::user(actor_user_id),
@@ -211,13 +432,24 @@ impl EventContext {
     }
 
     pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_deref()
+        self.correlation_id.as_ref().map(CorrelationId::as_str)
+    }
+
+    #[must_use]
+    pub fn trace_link(&self) -> Option<&TraceLink> {
+        self.mutation.trace_link()
+    }
+
+    #[must_use]
+    pub fn with_trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
+        self.mutation = self.mutation.with_trace_link(trace_link);
+        self
     }
 
     fn new(
         mutation: MutationProvenance,
         request_id: Option<Uuid>,
-        correlation_id: Option<String>,
+        correlation_id: Option<CorrelationId>,
     ) -> Self {
         Self {
             mutation,
@@ -555,6 +787,9 @@ pub struct EventEnvelope {
     provenance: Provenance,
     request_id: Option<Uuid>,
     correlation_id: Option<String>,
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schema(ignore))]
+    trace_link: Option<TraceLink>,
     summary: String,
     before: Option<serde_json::Value>,
     after: Option<serde_json::Value>,
@@ -654,6 +889,7 @@ pub struct EventEnvelopeBuilder {
     provenance: Provenance,
     request_id: Option<Uuid>,
     correlation_id: Option<String>,
+    trace_link: Option<TraceLink>,
     summary: Option<String>,
     before: Option<serde_json::Value>,
     after: Option<serde_json::Value>,
@@ -703,6 +939,12 @@ impl EventEnvelopeBuilder {
     #[must_use]
     pub fn provenance(mut self, value: Provenance) -> Self {
         self.provenance = value;
+        self
+    }
+
+    #[must_use]
+    pub fn trace_link(mut self, value: Option<TraceLink>) -> Self {
+        self.trace_link = value;
         self
     }
 
@@ -757,6 +999,11 @@ impl EventEnvelopeBuilder {
             _ => {}
         }
 
+        if let Some(correlation_id) = self.correlation_id.as_ref() {
+            CorrelationId::new(correlation_id.clone())
+                .map_err(|error| EventEnvelopeError::new(error.to_string()))?;
+        }
+
         let metadata = self
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -800,6 +1047,7 @@ impl EventEnvelopeBuilder {
             provenance,
             request_id: self.request_id,
             correlation_id: self.correlation_id,
+            trace_link: self.trace_link,
             summary: self
                 .summary
                 .ok_or_else(|| EventEnvelopeError::new("event envelope is missing summary"))?,
@@ -828,6 +1076,7 @@ impl fmt::Debug for EventEnvelope {
             .field("provenance", &self.provenance)
             .field("request_id", &self.request_id)
             .field("correlation_id", &self.correlation_id)
+            .field("has_trace_link", &self.trace_link.is_some())
             .field("summary", &self.summary)
             .field("before", &self.before.as_ref().map(|_| "<redacted>"))
             .field("after", &self.after.as_ref().map(|_| "<redacted>"))
@@ -906,6 +1155,11 @@ impl EventEnvelope {
     #[must_use]
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
     }
 
     #[must_use]
@@ -1412,7 +1666,8 @@ pub struct NewEvent {
     initiator_user_id: Option<PrincipalId>,
     task_id: Option<TaskId>,
     request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+    correlation_id: Option<CorrelationId>,
+    trace_link: Option<TraceLink>,
     document: AuditDocument,
 }
 
@@ -1432,6 +1687,7 @@ impl fmt::Debug for NewEvent {
             .field("task_id", &self.task_id)
             .field("request_id", &self.request_id)
             .field("correlation_id", &self.correlation_id)
+            .field("has_trace_link", &self.trace_link.is_some())
             .field("document", &self.document)
             .finish()
     }
@@ -1479,6 +1735,7 @@ impl NewEvent {
             task_id: None,
             request_id: None,
             correlation_id: None,
+            trace_link: None,
             document,
         })
     }
@@ -1514,7 +1771,8 @@ impl NewEvent {
         self.initiator_user_id = context.initiator_user_id();
         self.task_id = context.task_id();
         self.request_id = context.request_id();
-        self.correlation_id = context.correlation_id().map(ToOwned::to_owned);
+        self.correlation_id = context.correlation_id.clone();
+        self.trace_link = context.trace_link().cloned();
         self
     }
 
@@ -1524,6 +1782,7 @@ impl NewEvent {
         self.actor_user_id = provenance.actor_user_id();
         self.initiator_user_id = provenance.initiator_user_id();
         self.task_id = provenance.task_id();
+        self.trace_link = provenance.trace_link().cloned();
         self
     }
 
@@ -1534,8 +1793,14 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
-        self.correlation_id = Some(correlation_id.into());
+    pub fn with_correlation_id(mut self, correlation_id: CorrelationId) -> Self {
+        self.correlation_id = Some(correlation_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_trace_link(mut self, trace_link: TraceLink) -> Self {
+        self.trace_link = Some(trace_link);
         self
     }
 
@@ -1596,7 +1861,12 @@ impl NewEvent {
 
     #[must_use]
     pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_deref()
+        self.correlation_id.as_ref().map(CorrelationId::as_str)
+    }
+
+    #[must_use]
+    pub fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
     }
 
     #[must_use]
@@ -2104,6 +2374,82 @@ mod tests {
         assert_eq!(value["occurred_at"], "2026-01-01T00:00:00");
         let decoded: EventEnvelope = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.occurred_at(), event.occurred_at());
+    }
+
+    #[test]
+    fn correlation_id_enforces_the_shared_boundary() {
+        assert!(CorrelationId::new("request-123").is_ok());
+        assert!(matches!(
+            CorrelationId::new(""),
+            Err(CorrelationIdError::Empty)
+        ));
+        assert!(matches!(
+            CorrelationId::new("contains whitespace"),
+            Err(CorrelationIdError::InvalidCharacter)
+        ));
+        assert!(matches!(
+            CorrelationId::new("x".repeat(MAX_CORRELATION_ID_BYTES + 1)),
+            Err(CorrelationIdError::TooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn trace_link_accepts_only_bounded_w3c_identifiers() {
+        let link =
+            TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0).unwrap();
+        assert_eq!(link.trace_flags(), 1);
+        assert!(TraceLink::new("0".repeat(32), "00f067aa0ba902b7", 0, 0).is_err());
+        assert!(TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "xyz", 0, 0).is_err());
+        assert!(
+            TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 2, 0,).is_err()
+        );
+
+        let serialized = serde_json::to_value(&link).unwrap();
+        assert_eq!(
+            serde_json::from_value::<TraceLink>(serialized).unwrap(),
+            link
+        );
+        assert!(
+            serde_json::from_value::<TraceLink>(serde_json::json!({
+                "trace_id": "not-a-trace-id",
+                "span_id": "00f067aa0ba902b7",
+                "trace_flags": 1,
+                "version": 0
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn event_envelope_keeps_trace_link_out_of_public_json() {
+        let link =
+            TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0).unwrap();
+        let event = envelope_builder()
+            .trace_link(Some(link.clone()))
+            .try_build()
+            .unwrap();
+
+        assert_eq!(event.trace_link(), Some(&link));
+        let value = serde_json::to_value(&event).unwrap();
+        assert!(value.get("trace_link").is_none());
+        assert!(!value.to_string().contains(link.trace_id()));
+    }
+
+    #[test]
+    fn mutation_provenance_keeps_trace_link_out_of_serde_representations() {
+        let link =
+            TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0).unwrap();
+        let provenance = MutationProvenance::system().with_trace_link(Some(link.clone()));
+
+        let value = serde_json::to_value(&provenance).unwrap();
+
+        assert!(!value.to_string().contains(link.trace_id()));
+        assert!(
+            serde_json::from_value::<MutationProvenance>(value)
+                .unwrap()
+                .trace_link()
+                .is_none()
+        );
     }
 
     #[test]

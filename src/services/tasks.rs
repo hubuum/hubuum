@@ -1,6 +1,7 @@
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
 use std::time::Duration;
+use tracing::{Instrument, field, info_span};
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
@@ -10,6 +11,7 @@ use crate::models::{
     PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
     TokenID, TokenScope,
 };
+use crate::observability::tracing as telemetry;
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PermissionDecision, PrincipalRef, ResourceAttrs,
@@ -323,8 +325,15 @@ pub(crate) async fn submit_task(
     backend: &impl StorageContext,
     submission: TaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
+    let task_kind = task_kind_to_storage(submission.kind);
+    let span = info_span!(
+        "task.admission",
+        otel.kind = "producer",
+        task.kind = task_kind.as_str(),
+        task.outcome = field::Empty,
+    );
     let request = StorageTaskCreateRequest::builder(
-        task_kind_to_storage(submission.kind),
+        task_kind,
         principal_id_to_storage(submission.submitted_by.id()),
         submission.payload,
         submission.total_items,
@@ -332,12 +341,26 @@ pub(crate) async fn submit_task(
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
+    .trace_link(telemetry::trace_link_from_span(&span))
     .try_build(submission.maximum_active_tasks)?;
-    storage_handle(backend)
-        .create_task(request)
-        .await
-        .map_err(ApiError::from)
-        .and_then(task_from_storage)
+    async move {
+        let result = storage_handle(backend)
+            .create_task(request)
+            .await
+            .map_err(ApiError::from)
+            .and_then(task_from_storage);
+        tracing::Span::current().record(
+            "task.outcome",
+            if result.is_ok() {
+                "accepted"
+            } else {
+                "rejected"
+            },
+        );
+        result
+    }
+    .instrument(span)
+    .await
 }
 
 pub(crate) async fn find_task(
@@ -693,6 +716,7 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
             .map(|timestamp| timestamp.naive_utc()),
         attempt_count: task.attempt_count(),
         initiator_user_id: task.initiator_principal_id().map(|id| id.id()),
+        trace_link: task.trace_link().cloned(),
     })
 }
 

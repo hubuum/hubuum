@@ -1086,7 +1086,7 @@ impl EventFanoutStorage for CompleteExternalAdapter {
     async fn process_event_fanout_batch(
         &self,
         settings: EventFanoutSettings,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<StorageEventFanoutOutcome, StorageError> {
         fixture_result()
     }
 }

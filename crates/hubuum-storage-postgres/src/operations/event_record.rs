@@ -36,6 +36,10 @@ struct NewEventRow<'event> {
     after: Option<&'event serde_json::Value>,
     metadata: &'event serde_json::Value,
     schema_version: i32,
+    trace_id: Option<&'event str>,
+    trace_span_id: Option<&'event str>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
@@ -58,6 +62,10 @@ impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
             after: event.after(),
             metadata: event.metadata(),
             schema_version: event.schema_version(),
+            trace_id: event.trace_link().map(|link| link.trace_id()),
+            trace_span_id: event.trace_link().map(|link| link.span_id()),
+            trace_flags: event.trace_link().map(|link| i16::from(link.trace_flags())),
+            trace_context_version: event.trace_link().map(|link| i16::from(link.version())),
         }
     }
 }

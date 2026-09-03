@@ -17,6 +17,7 @@ mod storage;
 mod task;
 mod timer;
 mod token;
+mod tracing;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -65,6 +66,10 @@ pub use self::task::{
     task_worker_config, task_worker_iteration,
 };
 pub(crate) use self::token::{token_authentication, token_hash_key_ring};
+pub(crate) use self::tracing::{
+    trace_export_batch, trace_flush, trace_queue_utilization, trace_span_lifecycle,
+    trace_spans_dropped, tracing_config,
+};
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
@@ -163,6 +168,15 @@ struct Metrics {
     event_worker_poll_interval: Gauge<f64>,
     event_worker_lock_timeout: Gauge<f64>,
     event_worker_wakeups: Counter<u64>,
+    tracing_info: Gauge<u64>,
+    tracing_sample_ratio: Gauge<f64>,
+    tracing_queue_capacity: Gauge<u64>,
+    tracing_queue_utilization: Gauge<u64>,
+    trace_spans: Counter<u64>,
+    trace_spans_dropped: Counter<u64>,
+    trace_export_batches: Counter<u64>,
+    trace_export_spans: Counter<u64>,
+    trace_flushes: Counter<u64>,
     inventory_entities: Gauge<i64>,
     refresh_failures: Counter<u64>,
     refresh_duration: Gauge<f64>,

@@ -28482,7 +28482,8 @@
           "authentication",
           "permissions",
           "pagination",
-          "network"
+          "network",
+          "tracing"
         ],
         "properties": {
           "authentication": {
@@ -28523,6 +28524,9 @@
           },
           "tasks": {
             "$ref": "#/components/schemas/TaskConfig"
+          },
+          "tracing": {
+            "$ref": "#/components/schemas/TracingConfig"
           }
         }
       },
@@ -30110,6 +30114,98 @@
           }
         },
         "additionalProperties": false
+      },
+      "TracingConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "protocol",
+          "endpoint",
+          "static_headers",
+          "ca_certificate_configured",
+          "client_certificate_configured",
+          "client_private_key",
+          "connect_timeout_ms",
+          "export_timeout_ms",
+          "flush_timeout_ms",
+          "queue_capacity",
+          "batch_size",
+          "sampling_mode",
+          "sampling_ratio",
+          "service_name",
+          "service_namespace",
+          "deployment_environment",
+          "trust_incoming_sampling",
+          "propagate_outbound"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ca_certificate_configured": {
+            "type": "boolean"
+          },
+          "client_certificate_configured": {
+            "type": "boolean"
+          },
+          "client_private_key": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
+          "connect_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deployment_environment": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
+          "export_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "flush_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "propagate_outbound": {
+            "type": "boolean"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "queue_capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sampling_mode": {
+            "type": "string"
+          },
+          "sampling_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "service_name": {
+            "type": "string"
+          },
+          "service_namespace": {
+            "type": "string"
+          },
+          "static_headers": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
+          "trust_incoming_sampling": {
+            "type": "boolean"
+          }
+        }
       },
       "UnifiedSearchBatchResponse": {
         "type": "object",

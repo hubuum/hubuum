@@ -12,6 +12,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, OnceLock, Weak};
 use tokio::sync::Mutex;
+use tracing::{Instrument, field, info_span};
 
 use crate::errors::ApiError;
 use crate::models::user::{LoginUser, User, auth_failure};
@@ -400,11 +401,35 @@ pub async fn login(
         .as_deref()
         .unwrap_or(LOCAL_IDENTITY_SCOPE)
         .to_string();
-    auth_provider_registry()?
-        .provider(&scope)?
+    let provider = auth_provider_registry()?.provider(&scope)?;
+    let span = info_span!(
+        "auth.provider",
+        auth.provider.kind = bounded_provider_kind(&provider.kind),
+        auth.operation = "login",
+        auth.result = field::Empty,
+    );
+    let result = provider
         .backend
         .authenticate(&storage, login)
-        .await
+        .instrument(span.clone())
+        .await;
+    span.record(
+        "auth.result",
+        if result.is_ok() {
+            "authenticated"
+        } else {
+            "rejected"
+        },
+    );
+    result
+}
+
+fn bounded_provider_kind(kind: &str) -> &'static str {
+    match kind {
+        LOCAL_PROVIDER_KIND => "local",
+        LDAP_PROVIDER_KIND => "ldap",
+        _ => "unknown",
+    }
 }
 
 pub async fn refresh_principal_if_needed(
@@ -436,37 +461,58 @@ pub async fn refresh_principal_if_needed(
                     .and_then(|registry| registry.provider(&state.identity_scope))
                 {
                     Err(err) => Err(err),
-                    Ok(configured) => match configured.backend.refresh(&storage, &state).await {
-                        Ok(()) => Ok(()),
-                        Err(AuthProviderRefreshError::Internal(err)) => Err(err),
-                        Err(AuthProviderRefreshError::Provider(err)) => {
-                            match mark_external_sync_attempted(&storage, principal_id).await {
-                                Err(mark_err) => Err(mark_err),
-                                Ok(()) => {
-                                    if within_max_stale(
-                                        state.last_sync_success_at,
-                                        state.refresh_policy.max_stale,
-                                    ) {
-                                        tracing::warn!(
-                                            principal_id,
-                                            identity_scope = state.identity_scope,
-                                            error = %err,
-                                            "External identity refresh failed; using cached memberships inside max-stale window"
-                                        );
-                                        Ok(())
-                                    } else {
-                                        tracing::error!(
-                                            principal_id,
-                                            identity_scope = state.identity_scope,
-                                            error = %err,
-                                            "External identity refresh failed; cached memberships exceed max-stale window"
-                                        );
-                                        stale_external_state_error()
+                    Ok(configured) => {
+                        let span = info_span!(
+                            "auth.identity_refresh",
+                            auth.provider.kind = bounded_provider_kind(&configured.kind),
+                            auth.operation = "identity_refresh",
+                            auth.result = field::Empty,
+                        );
+                        let refresh_result = configured
+                            .backend
+                            .refresh(&storage, &state)
+                            .instrument(span.clone())
+                            .await;
+                        span.record(
+                            "auth.result",
+                            match &refresh_result {
+                                Ok(()) => "refreshed",
+                                Err(AuthProviderRefreshError::Provider(_)) => "provider_error",
+                                Err(AuthProviderRefreshError::Internal(_)) => "internal_error",
+                            },
+                        );
+                        match refresh_result {
+                            Ok(()) => Ok(()),
+                            Err(AuthProviderRefreshError::Internal(err)) => Err(err),
+                            Err(AuthProviderRefreshError::Provider(err)) => {
+                                match mark_external_sync_attempted(&storage, principal_id).await {
+                                    Err(mark_err) => Err(mark_err),
+                                    Ok(()) => {
+                                        if within_max_stale(
+                                            state.last_sync_success_at,
+                                            state.refresh_policy.max_stale,
+                                        ) {
+                                            tracing::warn!(
+                                                principal_id,
+                                                identity_scope = state.identity_scope,
+                                                error = %err,
+                                                "External identity refresh failed; using cached memberships inside max-stale window"
+                                            );
+                                            Ok(())
+                                        } else {
+                                            tracing::error!(
+                                                principal_id,
+                                                identity_scope = state.identity_scope,
+                                                error = %err,
+                                                "External identity refresh failed; cached memberships exceed max-stale window"
+                                            );
+                                            stale_external_state_error()
+                                        }
                                     }
                                 }
                             }
                         }
-                    },
+                    }
                 },
             },
         }

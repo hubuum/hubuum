@@ -85,6 +85,10 @@ struct RetentionEventRow {
     task_id: Option<i32>,
     before_revision: Option<PostgresRevision>,
     after_revision: Option<PostgresRevision>,
+    trace_id: Option<String>,
+    trace_span_id: Option<String>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 /// Try to become the event-retention coordinator for the current transaction.

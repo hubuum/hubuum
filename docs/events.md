@@ -8,6 +8,11 @@ The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
 
+New events can also carry an internal validated OpenTelemetry trace link. It is
+not serialized in audit API responses. Fan-out and delivery workers use it as a
+span link so delayed work remains connected without persisting baggage or raw
+headers. See [Distributed Tracing](tracing.md#propagation-and-crate-boundaries).
+
 New event bodies are constructed as backend-neutral `AuditDocument` values.
 The type validates object-shaped snapshots and metadata and owns schema-version
 selection: version 1 has no numeric resource revision, while version 2 carries

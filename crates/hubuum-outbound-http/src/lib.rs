@@ -17,14 +17,18 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use ipnet::IpNet;
+use opentelemetry::global;
+use opentelemetry::propagation::Injector;
 use reqwest::Url;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use tracing::warn;
+use tracing::{Instrument, Span, info_span, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 const MAX_CACHED_CLIENTS: usize = 128;
 
@@ -43,6 +47,11 @@ struct CachedClient {
 static CLIENT_CACHE: LazyLock<Mutex<HashMap<ClientCacheKey, CachedClient>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static CLIENT_CACHE_CLOCK: AtomicU64 = AtomicU64::new(0);
+static TRACE_PROPAGATION_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_trace_propagation_enabled(enabled: bool) {
+    TRACE_PROPAGATION_ENABLED.store(enabled, Ordering::Relaxed);
+}
 
 #[derive(Debug)]
 pub enum OutboundHttpError {
@@ -118,6 +127,15 @@ impl OutboundMethod {
             OutboundMethod::Post => reqwest::Method::POST,
             OutboundMethod::Patch => reqwest::Method::PATCH,
             OutboundMethod::Delete => reqwest::Method::DELETE,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
         }
     }
 }
@@ -315,6 +333,9 @@ fn transport_controls_header(name: &HeaderName) -> bool {
             | "trailer"
             | "transfer-encoding"
             | "upgrade"
+            | "traceparent"
+            | "tracestate"
+            | "baggage"
     )
 }
 
@@ -415,7 +436,20 @@ impl OutboundRequest {
     }
 
     pub async fn send(self) -> Result<OutboundResponse, OutboundHttpError> {
-        execute(self).await
+        let span = info_span!(
+            "http.client.request",
+            otel.kind = "client",
+            http.request.method = self.method.as_str(),
+            http.response.status_code = tracing::field::Empty,
+            http.response.body.size = tracing::field::Empty,
+            server.address.category = "screened",
+            error.type = tracing::field::Empty,
+        );
+        let result = execute(self).instrument(span.clone()).await;
+        if let Err(error) = &result {
+            span.record("error.type", outbound_error_category(error));
+        }
+        result
     }
 }
 
@@ -492,10 +526,12 @@ async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundH
         request.dangerous_accept_invalid_certs,
     )?;
 
+    let mut headers = request.headers.into_inner();
+    inject_trace_context(&mut headers);
     let mut request_builder = client
         .request(request.method.as_reqwest(), url_parts.url.clone())
         .timeout(request.timeout)
-        .headers(request.headers.into_inner());
+        .headers(headers);
     if let Some(body) = request.body {
         request_builder = request_builder.body(body);
     }
@@ -503,8 +539,10 @@ async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundH
     let start = Instant::now();
     let response = request_builder.send().await.map_err(map_reqwest_error)?;
     let status = response.status();
+    Span::current().record("http.response.status_code", status.as_u16());
     let headers = headers_to_json(response.headers());
     let body_preview = read_capped_body(response, request.max_response_bytes).await?;
+    Span::current().record("http.response.body.size", body_preview.len());
     let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
 
     Ok(OutboundResponse {
@@ -516,6 +554,56 @@ async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundH
         duration_ms,
         url: url_parts.url.to_string(),
     })
+}
+
+fn outbound_error_category(error: &OutboundHttpError) -> &'static str {
+    match error {
+        OutboundHttpError::InvalidUrl
+        | OutboundHttpError::NonHttpsUrl
+        | OutboundHttpError::EmbeddedCredentials
+        | OutboundHttpError::MissingHost
+        | OutboundHttpError::MissingKnownPort
+        | OutboundHttpError::InvalidHeaderName { .. }
+        | OutboundHttpError::TransportControlledHeader { .. }
+        | OutboundHttpError::InvalidHeaderValue { .. } => "configuration",
+        OutboundHttpError::DnsResolution { .. } | OutboundHttpError::EmptyDnsResolution { .. } => {
+            "dns"
+        }
+        OutboundHttpError::DisallowedAddress { .. } => "address_policy",
+        OutboundHttpError::ClientBuild => "client",
+        OutboundHttpError::ResponseRead => "response_read",
+        OutboundHttpError::Timeout => "timeout",
+        OutboundHttpError::Connect => "connect",
+        OutboundHttpError::Request => "request",
+    }
+}
+
+struct TraceHeaderInjector<'a>(&'a mut HeaderMap);
+
+impl Injector for TraceHeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+        let Ok(value) = HeaderValue::from_str(&value) else {
+            return;
+        };
+        self.0.insert(name, value);
+    }
+}
+
+fn inject_trace_context(headers: &mut HeaderMap) {
+    if !TRACE_PROPAGATION_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let context = Span::current().context();
+    inject_context(headers, &context);
+}
+
+fn inject_context(headers: &mut HeaderMap, context: &opentelemetry::Context) {
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(context, &mut TraceHeaderInjector(headers));
+    });
 }
 
 fn cached_client(
@@ -663,6 +751,11 @@ fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
 
 #[cfg(test)]
 mod tests {
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
+    };
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+
     use super::*;
 
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -808,6 +901,9 @@ mod tests {
             "trailer",
             "transfer-encoding",
             "upgrade",
+            "traceparent",
+            "tracestate",
+            "baggage",
         ] {
             assert!(matches!(
                 OutboundHeaderName::new(name),
@@ -821,6 +917,27 @@ mod tests {
         let name = OutboundHeaderName::new("X-Integration-Request").unwrap();
 
         assert_eq!(name.as_str(), "x-integration-request");
+    }
+
+    #[test]
+    fn w3c_context_is_injected_without_baggage() {
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let context = opentelemetry::Context::new().with_remote_span_context(SpanContext::new(
+            TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").unwrap(),
+            SpanId::from_hex("00f067aa0ba902b7").unwrap(),
+            TraceFlags::SAMPLED,
+            true,
+            TraceState::default(),
+        ));
+        let mut headers = HeaderMap::new();
+
+        inject_context(&mut headers, &context);
+
+        assert_eq!(
+            headers.get("traceparent").unwrap(),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        );
+        assert!(!headers.contains_key("baggage"));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use actix_rt::time::{Instant as TokioInstant, sleep, sleep_until};
 use chrono::Utc;
 use tokio::sync::{Notify, oneshot};
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::backups::{BackupSettings, execute_backup_task};
 use crate::config::{
@@ -19,7 +19,7 @@ use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
 use crate::models::{NewTaskEventRecord, TaskKind};
-use crate::observability::metrics;
+use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
@@ -312,16 +312,27 @@ async fn process_one_task_with_settings(
     metrics::task_worker_iteration("claimed");
     metrics::task_claimed(&task.kind, duration_since(task.created_at));
 
-    info!(
-        message = "Task picked up by worker",
-        task_id = task.id,
-        task_kind = task.kind.as_str(),
-        status = task.status.as_str(),
-        worker = std::thread::current().name().unwrap_or("task-worker")
+    let execution_span = info_span!(
+        "task.execute",
+        otel.kind = "consumer",
+        task.kind = task.kind.as_str(),
+        task.outcome = field::Empty,
+        task.attempt = task.attempt_count,
     );
+    telemetry::add_link(&execution_span, task.trace_link.as_ref());
+    async {
+        info!(
+            message = "Task picked up by worker",
+            task_id = task.id,
+            task_kind = task.kind.as_str(),
+            status = task.status.as_str(),
+            worker = std::thread::current().name().unwrap_or("task-worker")
+        );
 
-    let provenance = task.worker_provenance();
-    with_mutation_provenance(context, Some(provenance), async {
+        let provenance = task
+            .worker_provenance()
+            .with_trace_link(telemetry::current_trace_link());
+        with_mutation_provenance(context, Some(provenance), async {
         let mut heartbeat = start_task_lease_heartbeat(
             context.backend().clone(),
             &task,
@@ -370,8 +381,16 @@ async fn process_one_task_with_settings(
             heartbeat.stop().await;
         }
 
+        tracing::Span::current().record(
+            "task.outcome",
+            if result.is_ok() { "succeeded" } else { "failed" },
+        );
+
         Ok(true)
-    })
+        })
+        .await
+    }
+    .instrument(execution_span)
     .await
 }
 
