@@ -277,7 +277,6 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
     ] {
         let (outcomes, elapsed) = run_mixed(
             &context,
-            &profile,
             &manifest,
             &workload,
             options.limit_mode,
@@ -300,7 +299,6 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
     }
     let (mixed, elapsed) = run_mixed(
         &context,
-        &profile,
         &manifest,
         &workload,
         options.limit_mode,
@@ -694,7 +692,6 @@ async fn execute_traversal(
 
 async fn run_mixed(
     context: &RequestContext,
-    _profile: &ScaleProfile,
     manifest: &DatasetManifest,
     workload: &WorkloadSpec,
     limit_mode: LimitMode,
