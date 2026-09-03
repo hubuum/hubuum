@@ -237,6 +237,47 @@ struct ExplainPlanRow {
     query_plan: Value,
 }
 
+#[derive(QueryableByName)]
+struct FunctionSourceRow {
+    #[diesel(sql_type = Text)]
+    function_name: String,
+    #[diesel(sql_type = Text)]
+    source: String,
+}
+
+#[actix_web::test]
+async fn object_graph_functions_keep_edge_lookup_predicates_pushable() {
+    let scope = TestScope::new();
+    let functions = with_connection(&scope.pool, async |conn| {
+        diesel::sql_query(
+            "SELECT procedure.proname::text AS function_name, \
+                    procedure.prosrc::text AS source \
+             FROM pg_catalog.pg_proc procedure \
+             JOIN pg_catalog.pg_namespace namespace \
+               ON namespace.oid = procedure.pronamespace \
+             WHERE namespace.nspname = 'public' \
+               AND procedure.proname = ANY(ARRAY[ \
+                   'get_bidirectionally_related_objects', \
+                   'get_transitively_linked_objects' \
+               ]::text[]) \
+             ORDER BY procedure.proname",
+        )
+        .load::<FunctionSourceRow>(conn)
+        .await
+    })
+    .await
+    .expect("object graph function definitions should load");
+
+    assert_eq!(functions.len(), 2);
+    for function in functions {
+        assert!(
+            function.source.contains("object_edges AS NOT MATERIALIZED"),
+            "{} materializes the global object-relation corpus",
+            function.function_name
+        );
+    }
+}
+
 fn plan_uses_index(plan: &Value, index_name_prefix: &str) -> bool {
     match plan {
         Value::Array(values) => values

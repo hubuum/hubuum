@@ -92,7 +92,7 @@ The relation endpoints do not all support the same fields:
 - connected-class listings support both descendant class aliases like `id`, `name`, `class_id`, `collection_id` and explicit closure fields like `from_name`, `to_name`, `from_classes`, `to_classes`, `depth`, and `path`
 - connected-object listings support both descendant object aliases like `id`, `name`, `class_id`, `collection_id` and explicit closure/object-join fields like `from_name`, `to_name`, `from_json_data`, `to_json_data`, `depth`, and `path`
 - direct relation listings support relation-centric fields such as `id`, `from_*`, `to_*`, `class_relation`, `created_at`, and `updated_at`
-- graph responses return classes/objects plus direct relations for the included neighborhood and do not use cursor pagination
+- graph responses return classes/objects plus direct relations for the included neighborhood in one response and do not use cursor pagination; `limit` is a maximum related-node safety bound rather than a page size, `include_total` has no effect, and `X-Total-Count` is never returned
 
 ### Related-object result filters
 

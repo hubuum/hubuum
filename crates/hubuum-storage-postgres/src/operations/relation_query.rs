@@ -1275,11 +1275,18 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> RawSqlQuerySpec {
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
     let valid_scope_objects_sql = scoped_objects_sql(spec.visibility, &mut bind_variables);
     let root_array_sql = sql_integer_array(spec.root_ids, &mut bind_variables);
-    let object_edges_sql = object_edges_sql(spec.edges, &mut bind_variables);
-    bind_variables.extend([
-        SqlValue::Integer(spec.max_depth),
-        SqlValue::Integer(spec.max_depth),
-    ]);
+    let base_object_edges_sql = object_neighbors_sql(
+        spec.edges,
+        "root_objects.root_object_id",
+        &mut bind_variables,
+    );
+    bind_variables.push(SqlValue::Integer(spec.max_depth));
+    let recursive_object_edges_sql = object_neighbors_sql(
+        spec.edges,
+        "graph_walk.descendant_object_id",
+        &mut bind_variables,
+    );
+    bind_variables.push(SqlValue::Integer(spec.max_depth));
 
     let deduplicated_walk_sql = if spec.preserve_alternative_paths {
         r#"    SELECT
@@ -1395,16 +1402,16 @@ WITH RECURSIVE
 valid_collections AS (
     SELECT unnest({collection_array_sql}) AS collection_id
 ),
-valid_scope_objects AS (
+valid_scope_objects AS NOT MATERIALIZED (
     {valid_scope_objects_sql}
 ),
 root_objects AS (
     SELECT scoped_root.root_object_id
     FROM unnest({root_array_sql}) AS scoped_root(root_object_id)
+    JOIN hubuumobject root_object
+      ON root_object.id = scoped_root.root_object_id
     WHERE scoped_root.root_object_id IN (SELECT object_id FROM valid_scope_objects)
-),
-object_edges AS (
-{object_edges_sql}
+      AND root_object.collection_id IN (SELECT collection_id FROM valid_collections)
 ),
 graph_walk AS (
     SELECT
@@ -1414,8 +1421,9 @@ graph_walk AS (
         1 AS depth,
         ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
     FROM root_objects
-    JOIN object_edges
-      ON object_edges.source_object_id = root_objects.root_object_id
+    JOIN LATERAL (
+{base_object_edges_sql}
+    ) object_edges ON TRUE
     JOIN hubuumobject target_object
       ON target_object.id = object_edges.target_object_id
     WHERE ? >= 1
@@ -1431,8 +1439,9 @@ graph_walk AS (
         graph_walk.depth + 1,
         graph_walk.path || object_edges.target_object_id
     FROM graph_walk
-    JOIN object_edges
-      ON object_edges.source_object_id = graph_walk.descendant_object_id
+    JOIN LATERAL (
+{recursive_object_edges_sql}
+    ) object_edges ON TRUE
     JOIN hubuumobject target_object
       ON target_object.id = object_edges.target_object_id
     WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
@@ -1483,16 +1492,23 @@ fn scoped_objects_sql(
     )
 }
 
-fn object_edges_sql(edges: GraphWalkEdges, bind_variables: &mut Vec<SqlValue>) -> String {
+fn object_neighbors_sql(
+    edges: GraphWalkEdges,
+    source_object_sql: &str,
+    bind_variables: &mut Vec<SqlValue>,
+) -> String {
     match edges {
-        GraphWalkEdges::Bidirectional => r#"    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation
+        GraphWalkEdges::Bidirectional => format!(
+            r#"        SELECT hubuumobject_relation.to_hubuum_object_id AS target_object_id
+        FROM hubuumobject_relation
+        WHERE hubuumobject_relation.from_hubuum_object_id = {source_object_sql}
 
-    UNION ALL
+        UNION ALL
 
-    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation"#
-            .to_string(),
+        SELECT hubuumobject_relation.from_hubuum_object_id AS target_object_id
+        FROM hubuumobject_relation
+        WHERE hubuumobject_relation.to_hubuum_object_id = {source_object_sql}"#
+        ),
         GraphWalkEdges::Directional {
             direction,
             class_relation_id,
@@ -1505,6 +1521,7 @@ fn object_edges_sql(edges: GraphWalkEdges, bind_variables: &mut Vec<SqlValue>) -
                 selects.push(directional_edge_sql(
                     "from_hubuum_object_id",
                     "to_hubuum_object_id",
+                    source_object_sql,
                     class_relation_id,
                     bind_variables,
                 ));
@@ -1516,6 +1533,7 @@ fn object_edges_sql(edges: GraphWalkEdges, bind_variables: &mut Vec<SqlValue>) -
                 selects.push(directional_edge_sql(
                     "to_hubuum_object_id",
                     "from_hubuum_object_id",
+                    source_object_sql,
                     class_relation_id,
                     bind_variables,
                 ));
@@ -1528,6 +1546,7 @@ fn object_edges_sql(edges: GraphWalkEdges, bind_variables: &mut Vec<SqlValue>) -
 fn directional_edge_sql(
     source_column: &str,
     target_column: &str,
+    source_object_sql: &str,
     class_relation_id: Option<i32>,
     bind_variables: &mut Vec<SqlValue>,
 ) -> String {
@@ -1538,16 +1557,9 @@ fn directional_edge_sql(
         ""
     };
     format!(
-        r#"    SELECT
-        hubuumobject_relation.{source_column} AS source_object_id,
-        hubuumobject_relation.{target_column} AS target_object_id
-    FROM hubuumobject_relation
-    JOIN hubuumobject source_edge_object
-      ON source_edge_object.id = hubuumobject_relation.{source_column}
-    JOIN hubuumobject target_edge_object
-      ON target_edge_object.id = hubuumobject_relation.{target_column}
-    WHERE source_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
-      AND target_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
+        r#"        SELECT hubuumobject_relation.{target_column} AS target_object_id
+        FROM hubuumobject_relation
+        WHERE hubuumobject_relation.{source_column} = {source_object_sql}
 {relation_filter}"#
     )
 }
@@ -2288,4 +2300,98 @@ fn validate_positive_id(id: i32, label: &str) -> Result<(), PostgresStorageError
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use hubuum_domain::PrincipalId;
+
+    use super::*;
+
+    #[test]
+    fn root_graph_walk_uses_correlated_bidirectional_edge_lookups() {
+        let root_ids = [1];
+        let collection_ids = [2];
+        let visibility = StorageVisibility::new(
+            PrincipalId::new(3).unwrap(),
+            true,
+            None::<Vec<StorageAuthorizationPermission>>,
+            None,
+        );
+
+        let query = build_root_graph_walk_query(RootGraphWalkSpec {
+            root_ids: &root_ids,
+            collection_ids: &collection_ids,
+            visibility: &visibility,
+            max_depth: 4,
+            per_root_limit: 250,
+            edges: GraphWalkEdges::Bidirectional,
+            ranking: GraphWalkRanking::ByDescendant,
+            projection: GraphWalkProjection::DescendantOnly,
+            preserve_alternative_paths: false,
+        });
+
+        assert_eq!(query.sql.matches("JOIN LATERAL").count(), 2);
+        assert!(
+            query.sql.contains(
+                "hubuumobject_relation.from_hubuum_object_id = root_objects.root_object_id"
+            )
+        );
+        assert!(
+            query.sql.contains(
+                "hubuumobject_relation.to_hubuum_object_id = root_objects.root_object_id"
+            )
+        );
+        assert!(query.sql.contains(
+            "hubuumobject_relation.from_hubuum_object_id = graph_walk.descendant_object_id"
+        ));
+        assert!(query.sql.contains(
+            "hubuumobject_relation.to_hubuum_object_id = graph_walk.descendant_object_id"
+        ));
+        assert!(
+            query
+                .sql
+                .contains("valid_scope_objects AS NOT MATERIALIZED")
+        );
+    }
+
+    #[test]
+    fn root_graph_walk_keeps_directional_edge_filters_on_each_lookup() {
+        let root_ids = [1];
+        let collection_ids = [2];
+        let visibility = StorageVisibility::new(
+            PrincipalId::new(3).unwrap(),
+            true,
+            None::<Vec<StorageAuthorizationPermission>>,
+            None,
+        );
+
+        let query = build_root_graph_walk_query(RootGraphWalkSpec {
+            root_ids: &root_ids,
+            collection_ids: &collection_ids,
+            visibility: &visibility,
+            max_depth: 3,
+            per_root_limit: 50,
+            edges: GraphWalkEdges::Directional {
+                direction: StorageRelatedDirection::Any,
+                class_relation_id: Some(11),
+            },
+            ranking: GraphWalkRanking::ByTargetClass {
+                class_id: 4,
+                sort: StorageRelatedSort::Path,
+            },
+            projection: GraphWalkProjection::AncestorAndDescendant,
+            preserve_alternative_paths: false,
+        });
+
+        assert_eq!(query.sql.matches("JOIN LATERAL").count(), 2);
+        assert_eq!(
+            query
+                .sql
+                .matches("hubuumobject_relation.class_relation_id = ?")
+                .count(),
+            4
+        );
+        assert_eq!(query.sql.matches('?').count(), query.bind_variables.len());
+    }
 }

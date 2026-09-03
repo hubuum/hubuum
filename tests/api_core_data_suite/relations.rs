@@ -16,7 +16,7 @@ mod tests {
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
-    use hubuum_storage_postgres::{PostgresPool, with_transaction};
+    use hubuum_storage_postgres::{PostgresPool, capture_queries, with_transaction};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::{
@@ -2154,11 +2154,16 @@ mod tests {
                 .await;
 
         let endpoint = format!(
-            "{}?depth__lte=1",
+            "{}?depth__lte=1&include_total=true",
             related_graph_endpoint(classes[0].id, objects[0].id)
         );
-        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let (resp, queries) =
+            capture_queries(get_request(&context.pool, &context.admin_token, &endpoint)).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        assert!(
+            resp.headers().get(TOTAL_COUNT_HEADER).is_none(),
+            "graph responses must not expose pagination totals"
+        );
         let graph: RelatedObjectGraph = test::read_body_json(resp).await;
 
         let object_ids = graph
@@ -2179,6 +2184,55 @@ mod tests {
         assert_eq!(graph.objects[0].path, vec![objects[0].id]);
         assert_eq!(relation_ids, vec![relation_12.id, relation_15.id]);
         assert!(!relation_ids.contains(&relation_23.id));
+        assert_eq!(
+            queries.queries_matching("get_bidirectionally_related_objects"),
+            1,
+            "graph response must not execute a discarded count traversal: {:#?}",
+            queries.query_counts()
+        );
+        assert_eq!(queries.queries_matching("related_objects_count"), 0);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn related_object_graph_chooses_the_canonical_shortest_path(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "related_object_graph_canonical_path").await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+        let relation_01 = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let relation_02 = create_relation(&context.pool, &classes[0], &classes[2]).await;
+        let relation_13 = create_relation(&context.pool, &classes[1], &classes[3]).await;
+        let relation_23 = create_relation(&context.pool, &classes[2], &classes[3]).await;
+        let _ = create_object_relation(&context.pool, &objects[0], &objects[1], &relation_01).await;
+        let _ = create_object_relation(&context.pool, &objects[0], &objects[2], &relation_02).await;
+        let _ = create_object_relation(&context.pool, &objects[1], &objects[3], &relation_13).await;
+        let _ = create_object_relation(&context.pool, &objects[2], &objects[3], &relation_23).await;
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?depth__lte=2",
+                related_graph_endpoint(classes[0].id, objects[0].id)
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let graph: RelatedObjectGraph = test::read_body_json(response).await;
+        let destination = graph
+            .objects
+            .iter()
+            .find(|object| object.id == objects[3].id)
+            .expect("diamond destination should be reachable");
+
+        assert_eq!(
+            destination.path,
+            vec![objects[0].id, objects[1].id, objects[3].id]
+        );
 
         cleanup(&classes).await;
     }

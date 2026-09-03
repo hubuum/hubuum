@@ -117,6 +117,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Recursive object-relation graph queries now expand through indexed adjacency
+  lookups instead of repeatedly materializing the global relation corpus, and
+  graph responses no longer execute a discarded total-count traversal.
 - Production container builds now normalize `/entrypoint.sh` to mode `0755`
   so the non-root runtime user can read it even when the source checkout uses
   restrictive group-oriented permissions.

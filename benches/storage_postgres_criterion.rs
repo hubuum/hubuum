@@ -28,6 +28,7 @@ static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
 const POSTGRES_DATABASE: &str = "hubuum_bench";
 const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const STRUCTURED_SEARCH_CHAINS: i32 = 128;
+const UNRELATED_HYDRATION_RELATIONS: i32 = 100_000;
 
 fn benchmark_pool(database_url: &str) -> PostgresPool {
     let settings = PostgresPoolSettings::builder(database_url)
@@ -206,6 +207,8 @@ struct StorageFixture {
 struct StructuredSearchFixture {
     source_class_id: HubuumClassID,
     target_class_id: HubuumClassID,
+    hydration_target_class_ids: Vec<HubuumClassID>,
+    source_object_ids: Vec<i32>,
     selective_target_name: String,
     target_name_fragment: String,
 }
@@ -224,7 +227,7 @@ impl StructuredSearchFixture {
         let target_name_fragment = format!("{prefix}-target");
         let selective_target_name = format!("{target_name_fragment}-000");
 
-        let (source_class_id, target_class_id) = runtime
+        let setup = runtime
             .block_on(with_connection(pool, async |connection| {
                 diesel::sql_query(
                     "INSERT INTO hubuumclass \
@@ -333,18 +336,128 @@ impl StructuredSearchFixture {
                     .bind::<Text, _>(&target_class_name)
                     .get_result::<ClassIdRow>(connection)
                     .await?;
-                Ok::<_, hubuum_storage_postgres::PostgresStorageError>((source.id, target.id))
+                let hydration_targets = diesel::sql_query(
+                    "SELECT class.id \
+                     FROM generate_series(1, 3) AS level \
+                     JOIN hubuumclass class \
+                       ON class.name = $1 || '-class-' || lpad(level::text, 2, '0') \
+                     ORDER BY level",
+                )
+                .bind::<Text, _>(&prefix)
+                .load::<ClassIdRow>(connection)
+                .await?;
+                let source_objects = diesel::sql_query(
+                    "SELECT id FROM hubuumobject WHERE hubuum_class_id = $1 ORDER BY id",
+                )
+                .bind::<Integer, _>(source.id)
+                .load::<ClassIdRow>(connection)
+                .await?;
+                Ok::<_, hubuum_storage_postgres::PostgresStorageError>((
+                    source.id,
+                    target.id,
+                    hydration_targets
+                        .into_iter()
+                        .map(|row| row.id)
+                        .collect::<Vec<_>>(),
+                    source_objects
+                        .into_iter()
+                        .map(|row| row.id)
+                        .collect::<Vec<_>>(),
+                ))
             }))
             .expect("structured search benchmark graph should save");
+        let (source_class_id, target_class_id, hydration_target_class_ids, source_object_ids) =
+            setup;
 
         Self {
             source_class_id: HubuumClassID::new(source_class_id)
                 .expect("source class id should be positive"),
             target_class_id: HubuumClassID::new(target_class_id)
                 .expect("target class id should be positive"),
+            hydration_target_class_ids: hydration_target_class_ids
+                .into_iter()
+                .map(|id| {
+                    HubuumClassID::new(id).expect("hydration target class id should be positive")
+                })
+                .collect(),
+            source_object_ids,
             selective_target_name,
             target_name_fragment,
         }
+    }
+
+    fn add_unrelated_hydration_corpus(
+        &self,
+        runtime: &Runtime,
+        pool: &PostgresPool,
+        collection_id: i32,
+    ) {
+        let prefix = unique_name("hydration-unrelated");
+        runtime
+            .block_on(with_connection(pool, async |connection| {
+                diesel::sql_query(
+                    "INSERT INTO hubuumobject \
+                        (name, collection_id, hubuum_class_id, data, description) \
+                     SELECT $1 || '-source-' || slot::text, $2, $3, \
+                            jsonb_build_object('hydration_corpus_slot', slot), \
+                            'unrelated template hydration benchmark source' \
+                     FROM generate_series(1, $4) AS slot",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(collection_id)
+                .bind::<Integer, _>(self.source_class_id.id())
+                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query(
+                    "INSERT INTO hubuumobject \
+                        (name, collection_id, hubuum_class_id, data, description) \
+                     SELECT $1 || '-target-' || slot::text, $2, $3, \
+                            jsonb_build_object('hydration_corpus_slot', slot), \
+                            'unrelated template hydration benchmark target' \
+                     FROM generate_series(1, $4) AS slot",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(collection_id)
+                .bind::<Integer, _>(
+                    self.hydration_target_class_ids
+                        .as_slice()
+                        .first()
+                        .expect("depth-one hydration target class")
+                        .id(),
+                )
+                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query(
+                    "INSERT INTO hubuumobject_relation \
+                        (from_hubuum_object_id, to_hubuum_object_id, class_relation_id) \
+                     SELECT source_object.id, target_object.id, class_relation.id \
+                     FROM generate_series(1, $2) AS slot \
+                     JOIN hubuumobject source_object \
+                       ON source_object.name = $1 || '-source-' || slot::text \
+                     JOIN hubuumobject target_object \
+                       ON target_object.name = $1 || '-target-' || slot::text \
+                     JOIN hubuumclass_relation class_relation \
+                       ON class_relation.from_hubuum_class_id = source_object.hubuum_class_id \
+                      AND class_relation.to_hubuum_class_id = target_object.hubuum_class_id",
+                )
+                .bind::<Text, _>(&prefix)
+                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
+                .execute(connection)
+                .await?;
+
+                diesel::sql_query("ANALYZE hubuumobject")
+                    .execute(connection)
+                    .await?;
+                diesel::sql_query("ANALYZE hubuumobject_relation")
+                    .execute(connection)
+                    .await?;
+                Ok::<_, hubuum_storage_postgres::PostgresStorageError>(())
+            }))
+            .expect("unrelated template hydration corpus should save");
     }
 }
 
@@ -434,17 +547,6 @@ impl StorageFixture {
         runtime
             .block_on(collection.delete_without_events(&self.storage))
             .expect("created benchmark collection should delete");
-    }
-
-    fn cleanup(self, runtime: &Runtime) {
-        for collection in self.collections.iter().rev() {
-            runtime
-                .block_on(collection.delete_without_events(&self.storage))
-                .expect("benchmark collection should delete");
-        }
-        runtime
-            .block_on(self.owner_group.delete_without_events(&self.storage))
-            .expect("benchmark owner group should delete");
     }
 }
 
@@ -589,9 +691,77 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
             measured
         });
     });
-    group.finish();
 
-    fixture.cleanup(&runtime);
+    {
+        let hydration_roots = &fixture.structured_search.source_object_ids;
+        assert_eq!(hydration_roots.len(), STRUCTURED_SEARCH_CHAINS as usize);
+        let mut benchmark_hydration = |corpus_label: &str| {
+            for depth in 1..=3 {
+                let name = format!(
+                    "template_multi_root_bidirectional_{}_roots_depth_{depth}_{corpus_label}",
+                    hydration_roots.len()
+                );
+                group.bench_function(&name, |b| {
+                    b.iter(|| {
+                        let rows = runtime
+                        .block_on(
+                            hubuum::benchmark_support::template_multi_root_bidirectional_objects(
+                                &fixture.storage,
+                                black_box(hydration_roots),
+                                depth,
+                                10,
+                            ),
+                        )
+                        .expect("bidirectional template hydration should succeed");
+                        debug_assert_eq!(rows.len(), hydration_roots.len() * depth as usize);
+                        black_box(rows);
+                    });
+                });
+
+                let name = format!(
+                    "template_related_include_{}_roots_depth_{depth}_{corpus_label}",
+                    hydration_roots.len()
+                );
+                let target_class_id =
+                    fixture.structured_search.hydration_target_class_ids[(depth - 1) as usize];
+                group.bench_function(&name, |b| {
+                    b.iter(|| {
+                        let rows = runtime
+                            .block_on(hubuum::benchmark_support::template_related_include_objects(
+                                &fixture.storage,
+                                black_box(hydration_roots),
+                                target_class_id,
+                                depth,
+                                1,
+                            ))
+                            .expect("related-object template include should succeed");
+                        debug_assert_eq!(rows.len(), hydration_roots.len());
+                        black_box(rows);
+                    });
+                });
+            }
+        };
+
+        benchmark_hydration("base_corpus");
+
+        let scale_setup_pool = {
+            let _runtime_guard = runtime.enter();
+            benchmark_pool(database.url())
+        };
+        fixture.structured_search.add_unrelated_hydration_corpus(
+            &runtime,
+            &scale_setup_pool,
+            fixture.collections[0].id,
+        );
+
+        benchmark_hydration(&format!(
+            "plus_{UNRELATED_HYDRATION_RELATIONS}_unrelated_relations"
+        ));
+    }
+    group.finish();
+    // The benchmark owns the whole disposable database container. Dropping it
+    // is both faster and more representative than timing an unrelated cascade
+    // delete of the synthetic scale corpus.
 }
 
 criterion_group!(benches, benchmark_postgres_storage);

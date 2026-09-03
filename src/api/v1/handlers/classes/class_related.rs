@@ -415,6 +415,7 @@ async fn read_related_class_relations(
     get,
     path = "/api/v1/classes/{class_id}/related/graph",
     tag = "classes",
+    description = "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID")
@@ -447,6 +448,7 @@ async fn get_related_class_graph(
     path = "/api/v1/classes/by-name/{class_name}/related/graph",
     tag = "classes",
     summary = "Get the related-class graph by class name",
+    description = "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
     security(("bearer_auth" = [])),
     params(("class_name" = String, Path, description = "Globally unique class name")),
     responses(
