@@ -2,12 +2,13 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hubuum_computed_fields::Definition;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, TaskId};
 use serde_json::Value;
 
 use crate::{
-    StorageAuthorizationPermission, StorageClass, StorageCollection, StorageError, StorageObject,
-    StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
+    StorageAuthorizationPermission, StorageClass, StorageClassSchemaPolicy, StorageCollection,
+    StorageError, StorageObject, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
 };
 
 macro_rules! import_dto {
@@ -369,8 +370,7 @@ import_dto!(
         reference: Option<String>,
         name: String,
         description: String,
-        json_schema: Option<Value>,
-        validate_schema: bool,
+        schema_policy: StorageClassSchemaPolicy,
         collection_ref: Option<String>,
         collection_key: Option<StorageImportCollectionKey>,
         condition: Option<StorageImportWriteCondition>,
@@ -408,12 +408,7 @@ import_dto!(
         visibility: StorageImportComputedFieldVisibility,
         owner_ref: Option<String>,
         owner_key: Option<StorageImportPrincipalKey>,
-        key: String,
-        label: String,
-        description: String,
-        operation: Value,
-        result_type: String,
-        enabled: bool,
+        definition: Definition,
         condition: Option<StorageImportWriteCondition>,
         timestamps: Option<StorageImportTimestamps>,
     }
@@ -914,9 +909,7 @@ impl StorageImportOperation {
                 if let Some(key) = &parts.class_key {
                     validate_class_key(key)?;
                 }
-                validate_text(&parts.key, "computed-field key")?;
-                validate_text(&parts.label, "computed-field label")?;
-                validate_text(&parts.result_type, "computed-field result type")
+                Ok(())
             }
             Self::CreateClassRelation(input)
             | Self::UpdateClassRelationTimestamps { input, .. }

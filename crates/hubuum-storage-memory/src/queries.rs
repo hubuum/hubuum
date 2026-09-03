@@ -189,7 +189,7 @@ impl ComputedFieldStorage for MemoryStorage {
             metadata,
             class_id,
             StorageComputedFieldVisibility::Shared,
-            StorageComputedFieldDefinitionContent::new(input, 1),
+            StorageComputedFieldDefinitionContent::new(input),
             StorageComputedFieldProvenance::new(Some(actor_id), Some(actor_id)),
         );
         let previous_revision = state
@@ -368,7 +368,7 @@ impl ComputedFieldStorage for MemoryStorage {
             metadata,
             class_id,
             StorageComputedFieldVisibility::Personal { owner_id },
-            StorageComputedFieldDefinitionContent::new(input, 1),
+            StorageComputedFieldDefinitionContent::new(input),
             StorageComputedFieldProvenance::new(Some(owner_id), Some(owner_id)),
         );
         state.computed_fields.insert(id, definition.clone());
@@ -478,15 +478,15 @@ impl ComputedFieldStorage for MemoryStorage {
             .get(&class_id.id())
             .cloned()
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
-        let computation_state = StorageClassComputationState::builder(
+        let computation_state = StorageClassComputationState::try_new(
             class_id,
             previous.evaluation_revision(),
-            StorageComputationRebuildStatus::Rebuilding,
+            StorageComputationRebuildState::Rebuilding {
+                active_task_id: task.id(),
+            },
             previous.created_at(),
             Utc::now(),
         )
-        .active_task(Some(task.id()))
-        .try_build()
         .map_err(invalid_contract_value)?;
         state
             .computed_rebuild_tasks

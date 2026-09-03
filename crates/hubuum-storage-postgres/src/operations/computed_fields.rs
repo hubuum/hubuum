@@ -9,7 +9,6 @@ use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelpe
 use diesel_async::RunQueryDsl;
 use hubuum_computed_fields::{
     Definition, FieldKey, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, Operation, ResultType,
-    SEMANTICS_VERSION,
 };
 use hubuum_domain::{ClassId, PrincipalId, TaskId};
 use hubuum_events_core::{
@@ -17,16 +16,17 @@ use hubuum_events_core::{
 };
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 use hubuum_storage_core::{
-    StorageClassComputationState, StorageComputationRebuildStatus, StorageComputationRevision,
-    StorageComputedFieldDefinition, StorageComputedFieldDefinitionInput,
-    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation,
-    StorageComputedFieldRebuildRequest, StorageMutationOutcome, StoragePage,
-    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StorageClassComputationState, StorageComputationRebuildState, StorageComputationRebuildStatus,
+    StorageComputationRevision, StorageComputedFieldDefinition,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldMutation, StorageComputedFieldRebuildRequest, StorageMutationOutcome,
+    StoragePage, StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskActiveUpdate, StorageTaskCompletion,
-    StorageTaskCompletionArtifact, StorageTaskEventInput, StorageTaskKind, StorageTaskLease,
-    StorageTaskResultCounts, StorageTaskStatus, StorageTaskTerminalUpdate,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskEventInput, StorageTaskKind, StorageTaskLease, StorageTaskResultCounts,
+    StorageTaskStatus, StorageTaskTerminalStatus, StorageTaskTerminalUpdate,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -86,16 +86,21 @@ impl ComputationStateRow {
             .map_err(|error| {
                 PostgresStorageError::invalid_persisted_value("computation rebuild status", error)
             })?;
-        StorageClassComputationState::builder(
+        let rebuild_state = StorageComputationRebuildState::try_from_parts(
+            rebuild_status,
+            self.active_task_id.map(TaskId::new).transpose()?,
+            self.last_error,
+        )
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("computation rebuild state", error)
+        })?;
+        StorageClassComputationState::try_new(
             ClassId::new(self.class_id)?,
             persisted_computation_revision(self.evaluation_revision)?,
-            rebuild_status,
+            rebuild_state,
             self.created_at.and_utc(),
             self.updated_at.and_utc(),
         )
-        .active_task(self.active_task_id.map(TaskId::new).transpose()?)
-        .last_error(self.last_error)
-        .try_build()
         .map_err(|error| PostgresStorageError::invalid_persisted_value("computation state", error))
     }
 }
@@ -134,14 +139,7 @@ impl NewComputedDefinitionRow {
     ) -> Result<Self, PostgresStorageError> {
         validate_positive("class", class_id)?;
         validate_positive("actor", actor_id)?;
-        validate_definition(&input)?;
-        Ok(Self::new(
-            class_id,
-            SHARED_VISIBILITY,
-            None,
-            actor_id,
-            input,
-        ))
+        Self::new(class_id, SHARED_VISIBILITY, None, actor_id, input)
     }
 
     fn personal(
@@ -151,14 +149,13 @@ impl NewComputedDefinitionRow {
     ) -> Result<Self, PostgresStorageError> {
         validate_positive("class", class_id)?;
         validate_positive("owner", owner_id)?;
-        validate_definition(&input)?;
-        Ok(Self::new(
+        Self::new(
             class_id,
             PERSONAL_VISIBILITY,
             Some(owner_id),
             owner_id,
             input,
-        ))
+        )
     }
 
     fn new(
@@ -167,21 +164,23 @@ impl NewComputedDefinitionRow {
         owner_user_id: Option<i32>,
         actor_id: i32,
         input: StorageComputedFieldDefinitionInput,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, PostgresStorageError> {
+        let operation = serde_json::to_value(input.operation())
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+        Ok(Self {
             class_id,
             visibility: visibility.to_string(),
             owner_user_id,
             key: input.key().to_string(),
             label: input.label().to_string(),
             description: input.description().to_string(),
-            operation: input.operation().clone(),
-            result_type: input.result_type().to_string(),
+            operation,
+            result_type: result_type_to_storage(input.result_type()).to_string(),
             enabled: input.enabled(),
-            semantics_version: SEMANTICS_VERSION,
+            semantics_version: input.semantics_version(),
             created_by: Some(actor_id),
             updated_by: Some(actor_id),
-        }
+        })
     }
 }
 
@@ -263,12 +262,7 @@ impl ComputedReindexPayload {
 }
 
 struct ValidatedDefinitionPatch {
-    key: String,
-    label: String,
-    description: String,
-    operation: Value,
-    result_type: String,
-    enabled: bool,
+    definition: Definition,
     value_affecting: bool,
 }
 
@@ -823,21 +817,20 @@ pub async fn execute_computed_field_rebuild(
             ReindexBatch::Superseded => {
                 let completed = task_execution::complete_task(
                     runtime,
-                    StorageTaskCompletion::try_new(
-                        StorageTaskKind::Reindex,
-                        StorageTaskTerminalUpdate::try_new(
+                    StorageTaskCompletion::new(
+                        StorageTaskTerminalUpdate::new(
                             lease,
-                            StorageTaskStatus::Cancelled,
+                            StorageTaskTerminalStatus::Cancelled,
                             successful_counts(processed)?,
-                        )?
+                        )
                         .summary(Some("Computed-field rebuild superseded".to_string()))
                         .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
                         StorageTaskEventInput::new(
                             StorageTaskStatus::Cancelled.as_str(),
                             "Computed-field rebuild superseded",
                         ),
-                        StorageTaskCompletionArtifact::None,
-                    )?,
+                        StorageTaskCompletionPayload::Reindex,
+                    ),
                 )
                 .await?;
                 runtime.record_computed_rebuild_finished("cancelled", started.elapsed());
@@ -856,11 +849,11 @@ pub async fn execute_computed_field_rebuild(
                 processed = processed.saturating_add(count);
                 task_execution::update_task_state(
                     runtime,
-                    StorageTaskActiveUpdate::try_new(
+                    StorageTaskActiveUpdate::new(
                         lease.clone(),
-                        StorageTaskStatus::Running,
+                        StorageTaskActiveStatus::Running,
                         successful_counts(processed)?,
-                    )?
+                    )
                     .summary(Some(format!(
                         "Rebuilt {processed} of {} objects",
                         task.total_items
@@ -897,21 +890,21 @@ pub async fn execute_computed_field_rebuild(
             .await?;
             let (status, summary) = if changed == 1 {
                 (
-                    StorageTaskStatus::Succeeded,
+                    StorageTaskTerminalStatus::Succeeded,
                     format!("Computed-field rebuild completed for {processed} objects"),
                 )
             } else {
                 (
-                    StorageTaskStatus::Cancelled,
+                    StorageTaskTerminalStatus::Cancelled,
                     "Computed-field rebuild superseded before completion".to_string(),
                 )
             };
             let finalized = task_execution::complete_task_on_connection(
                 connection,
-                StorageTaskTerminalUpdate::try_new(lease, status, successful_counts(processed)?)?
+                StorageTaskTerminalUpdate::new(lease, status, successful_counts(processed)?)
                     .summary(Some(summary.clone()))
                     .started_at(task.started_at.map(|timestamp| timestamp.and_utc())),
-                StorageTaskEventInput::new(status.as_str(), summary),
+                StorageTaskEventInput::new(status.as_status().as_str(), summary),
             )
             .await?;
             Ok::<_, PostgresStorageError>((status, finalized))
@@ -1118,19 +1111,6 @@ fn computed_cursor_fields(
         .collect()
 }
 
-fn validate_definition(
-    definition: &StorageComputedFieldDefinitionInput,
-) -> Result<(), PostgresStorageError> {
-    validated_definition(
-        definition.key(),
-        definition.label(),
-        definition.description(),
-        definition.operation(),
-        definition.result_type(),
-        definition.enabled(),
-    )
-}
-
 fn validated_definition(
     key: &str,
     label: &str,
@@ -1138,15 +1118,34 @@ fn validated_definition(
     operation: &Value,
     result_type: &str,
     enabled: bool,
-) -> Result<(), PostgresStorageError> {
+    semantics_version: i16,
+) -> Result<Definition, PostgresStorageError> {
     let operation = serde_json::from_value::<Operation>(operation.clone())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let key = FieldKey::new(key.to_string())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let result_type = result_type_from_storage(result_type)?;
-    Definition::new(key, label, description, operation, result_type, enabled)
-        .map(|_| ())
-        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
+    Definition::try_from_parts(
+        key,
+        label,
+        description,
+        operation,
+        result_type,
+        enabled,
+        semantics_version,
+    )
+    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
+}
+
+const fn result_type_to_storage(value: ResultType) -> &'static str {
+    match value {
+        ResultType::String => "string",
+        ResultType::Number => "number",
+        ResultType::Integer => "integer",
+        ResultType::Boolean => "boolean",
+        ResultType::Object => "object",
+        ResultType::Array => "array",
+    }
 }
 
 fn result_type_from_storage(value: &str) -> Result<ResultType, PostgresStorageError> {
@@ -1167,20 +1166,24 @@ fn validate_patch(
     current: &ComputedDefinitionRow,
     patch: &StorageComputedFieldDefinitionPatch,
 ) -> Result<ValidatedDefinitionPatch, PostgresStorageError> {
+    current.evaluator_definition()?;
     let key = patch.key().unwrap_or(current.key());
     let label = patch.label().unwrap_or(current.label());
     let description = patch.description().unwrap_or(current.description());
     let operation = patch.operation().unwrap_or(current.operation());
     let result_type = patch.result_type().unwrap_or(current.result_type_name());
     let enabled = patch.enabled().unwrap_or(current.enabled());
-    validated_definition(key, label, description, operation, result_type, enabled)?;
-    Ok(ValidatedDefinitionPatch {
-        key: key.to_string(),
-        label: label.to_string(),
-        description: description.to_string(),
-        operation: operation.clone(),
-        result_type: result_type.to_string(),
+    let definition = validated_definition(
+        key,
+        label,
+        description,
+        operation,
+        result_type,
         enabled,
+        current.semantics_version(),
+    )?;
+    Ok(ValidatedDefinitionPatch {
+        definition,
         value_affecting: key != current.key()
             || operation != current.operation()
             || result_type != current.result_type_name()
@@ -1189,12 +1192,13 @@ fn validate_patch(
 }
 
 fn definition_changes(current: &ComputedDefinitionRow, patch: &ValidatedDefinitionPatch) -> bool {
-    patch.key != current.key()
-        || patch.label != current.label()
-        || patch.description != current.description()
-        || patch.operation != *current.operation()
-        || patch.result_type != current.result_type_name()
-        || patch.enabled != current.enabled()
+    let definition = &patch.definition;
+    definition.key().as_str() != current.key()
+        || definition.label() != current.label()
+        || definition.description() != current.description()
+        || serde_json::to_value(definition.operation()).ok().as_ref() != Some(current.operation())
+        || result_type_to_storage(definition.result_type()) != current.result_type_name()
+        || definition.enabled() != current.enabled()
 }
 
 async fn apply_definition_patch(
@@ -1204,14 +1208,17 @@ async fn apply_definition_patch(
     actor_id: i32,
 ) -> Result<ComputedDefinitionRow, PostgresStorageError> {
     use crate::schema::computed_field_definitions::dsl as definitions;
+    let definition = &patch.definition;
+    let operation = serde_json::to_value(definition.operation())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     diesel::update(definitions::computed_field_definitions.filter(definitions::id.eq(current.id())))
         .set((
-            definitions::key.eq(&patch.key),
-            definitions::label.eq(&patch.label),
-            definitions::description.eq(&patch.description),
-            definitions::operation.eq(&patch.operation),
-            definitions::result_type.eq(&patch.result_type),
-            definitions::enabled.eq(patch.enabled),
+            definitions::key.eq(definition.key().as_str()),
+            definitions::label.eq(definition.label()),
+            definitions::description.eq(definition.description()),
+            definitions::operation.eq(&operation),
+            definitions::result_type.eq(result_type_to_storage(definition.result_type())),
+            definitions::enabled.eq(definition.enabled()),
             definitions::updated_by.eq(Some(actor_id)),
             definitions::updated_at.eq(diesel::dsl::now),
         ))

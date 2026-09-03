@@ -333,7 +333,7 @@ impl Operation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
     key: FieldKey,
@@ -346,6 +346,41 @@ pub struct Definition {
     enabled: bool,
     #[serde(default = "default_semantics_version")]
     semantics_version: i16,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefinitionWire {
+    key: FieldKey,
+    label: String,
+    #[serde(default)]
+    description: String,
+    operation: Operation,
+    result_type: ResultType,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+    #[serde(default = "default_semantics_version")]
+    semantics_version: i16,
+}
+
+impl<'de> Deserialize<'de> for Definition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = DefinitionWire::deserialize(deserializer)?;
+        let definition = Self {
+            key: wire.key,
+            label: wire.label,
+            description: wire.description,
+            operation: wire.operation,
+            result_type: wire.result_type,
+            enabled: wire.enabled,
+            semantics_version: wire.semantics_version,
+        };
+        definition.validate().map_err(serde::de::Error::custom)?;
+        Ok(definition)
+    }
 }
 
 const fn default_enabled() -> bool {
@@ -365,6 +400,26 @@ impl Definition {
         result_type: ResultType,
         enabled: bool,
     ) -> Result<Self, DefinitionError> {
+        Self::try_from_parts(
+            key,
+            label,
+            description,
+            operation,
+            result_type,
+            enabled,
+            SEMANTICS_VERSION,
+        )
+    }
+
+    pub fn try_from_parts(
+        key: FieldKey,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        operation: Operation,
+        result_type: ResultType,
+        enabled: bool,
+        semantics_version: i16,
+    ) -> Result<Self, DefinitionError> {
         let definition = Self {
             key,
             label: label.into(),
@@ -372,7 +427,7 @@ impl Definition {
             operation,
             result_type,
             enabled,
-            semantics_version: SEMANTICS_VERSION,
+            semantics_version,
         };
         definition.validate()?;
         Ok(definition)
@@ -955,6 +1010,38 @@ mod tests {
             EvaluationLimits::standard(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn definition_deserialization_rejects_semantically_invalid_state() {
+        let invalid = json!({
+            "key": "result",
+            "label": "Result",
+            "operation": {"type": "sum", "paths": ["/value"]},
+            "result_type": "boolean",
+            "enabled": true,
+            "semantics_version": SEMANTICS_VERSION
+        });
+
+        let error = serde_json::from_value::<Definition>(invalid).unwrap_err();
+
+        assert!(error.to_string().contains("incompatible"));
+    }
+
+    #[test]
+    fn definition_deserialization_rejects_unknown_semantics_version() {
+        let invalid = json!({
+            "key": "result",
+            "label": "Result",
+            "operation": {"type": "first_non_null", "paths": ["/value"]},
+            "result_type": "string",
+            "enabled": true,
+            "semantics_version": SEMANTICS_VERSION + 1
+        });
+
+        let error = serde_json::from_value::<Definition>(invalid).unwrap_err();
+
+        assert!(error.to_string().contains("unsupported semantics version"));
     }
 
     #[rstest]

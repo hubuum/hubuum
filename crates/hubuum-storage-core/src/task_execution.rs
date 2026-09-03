@@ -203,6 +203,76 @@ impl StorageTaskResultCounts {
     }
 }
 
+/// A task status that is valid while a worker still owns an active lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageTaskActiveStatus {
+    Validating,
+    Running,
+}
+
+impl StorageTaskActiveStatus {
+    pub fn try_from_status(status: StorageTaskStatus) -> Result<Self, StorageValidationError> {
+        match status {
+            StorageTaskStatus::Validating => Ok(Self::Validating),
+            StorageTaskStatus::Running => Ok(Self::Running),
+            _ => Err(StorageValidationError::invalid(
+                "Task state updates require an active status",
+            )),
+        }
+    }
+
+    #[must_use]
+    pub const fn as_status(self) -> StorageTaskStatus {
+        match self {
+            Self::Validating => StorageTaskStatus::Validating,
+            Self::Running => StorageTaskStatus::Running,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.as_status().as_str()
+    }
+}
+
+/// A task status that permanently ends worker execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageTaskTerminalStatus {
+    Succeeded,
+    Failed,
+    PartiallySucceeded,
+    Cancelled,
+}
+
+impl StorageTaskTerminalStatus {
+    pub fn try_from_status(status: StorageTaskStatus) -> Result<Self, StorageValidationError> {
+        match status {
+            StorageTaskStatus::Succeeded => Ok(Self::Succeeded),
+            StorageTaskStatus::Failed => Ok(Self::Failed),
+            StorageTaskStatus::PartiallySucceeded => Ok(Self::PartiallySucceeded),
+            StorageTaskStatus::Cancelled => Ok(Self::Cancelled),
+            _ => Err(StorageValidationError::invalid(
+                "Task completion updates require a terminal status",
+            )),
+        }
+    }
+
+    #[must_use]
+    pub const fn as_status(self) -> StorageTaskStatus {
+        match self {
+            Self::Succeeded => StorageTaskStatus::Succeeded,
+            Self::Failed => StorageTaskStatus::Failed,
+            Self::PartiallySucceeded => StorageTaskStatus::PartiallySucceeded,
+            Self::Cancelled => StorageTaskStatus::Cancelled,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.as_status().as_str()
+    }
+}
+
 /// Lifecycle event emitted while a worker owns a task.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageTaskEventInput {
@@ -270,30 +340,26 @@ impl StorageTaskEventAppend {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageTaskActiveUpdate {
     lease: StorageTaskLease,
-    status: StorageTaskStatus,
+    status: StorageTaskActiveStatus,
     summary: Option<String>,
     counts: StorageTaskResultCounts,
     started_at: Option<DateTime<Utc>>,
 }
 
 impl StorageTaskActiveUpdate {
-    pub fn try_new(
+    #[must_use]
+    pub const fn new(
         lease: StorageTaskLease,
-        status: StorageTaskStatus,
+        status: StorageTaskActiveStatus,
         counts: StorageTaskResultCounts,
-    ) -> Result<Self, StorageError> {
-        if !status.is_active() {
-            return Err(StorageError::invalid_input(
-                "Task state updates require an active status",
-            ));
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             lease,
             status,
             summary: None,
             counts,
             started_at: None,
-        })
+        }
     }
 
     #[must_use]
@@ -313,7 +379,7 @@ impl StorageTaskActiveUpdate {
         self,
     ) -> (
         StorageTaskLease,
-        StorageTaskStatus,
+        StorageTaskActiveStatus,
         Option<String>,
         StorageTaskResultCounts,
         Option<DateTime<Utc>>,
@@ -332,30 +398,26 @@ impl StorageTaskActiveUpdate {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageTaskTerminalUpdate {
     lease: StorageTaskLease,
-    status: StorageTaskStatus,
+    status: StorageTaskTerminalStatus,
     summary: Option<String>,
     counts: StorageTaskResultCounts,
     started_at: Option<DateTime<Utc>>,
 }
 
 impl StorageTaskTerminalUpdate {
-    pub fn try_new(
+    #[must_use]
+    pub const fn new(
         lease: StorageTaskLease,
-        status: StorageTaskStatus,
+        status: StorageTaskTerminalStatus,
         counts: StorageTaskResultCounts,
-    ) -> Result<Self, StorageError> {
-        if !status.is_terminal() {
-            return Err(StorageError::invalid_input(
-                "Task completion updates require a terminal status",
-            ));
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             lease,
             status,
             summary: None,
             counts,
             started_at: None,
-        })
+        }
     }
 
     #[must_use]
@@ -375,7 +437,7 @@ impl StorageTaskTerminalUpdate {
         self,
     ) -> (
         StorageTaskLease,
-        StorageTaskStatus,
+        StorageTaskTerminalStatus,
         Option<String>,
         StorageTaskResultCounts,
         Option<DateTime<Utc>>,
@@ -799,70 +861,60 @@ impl StorageRemoteCallTaskArtifact {
     }
 }
 
+/// Completion data whose variant determines the only compatible task kind.
 #[derive(Clone, Debug, PartialEq)]
-pub enum StorageTaskCompletionArtifact {
-    None,
+pub enum StorageTaskCompletionPayload {
+    Import,
+    Reindex,
     Export(StorageExportTaskArtifact),
     Backup(StorageBackupTaskArtifact),
     RemoteCall(StorageRemoteCallTaskArtifact),
 }
 
+impl StorageTaskCompletionPayload {
+    #[must_use]
+    pub const fn task_kind(&self) -> StorageTaskKind {
+        match self {
+            Self::Import => StorageTaskKind::Import,
+            Self::Reindex => StorageTaskKind::Reindex,
+            Self::Export(_) => StorageTaskKind::Export,
+            Self::Backup(_) => StorageTaskKind::Backup,
+            Self::RemoteCall(_) => StorageTaskKind::RemoteCall,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageTaskCompletion {
-    task_kind: StorageTaskKind,
     update: StorageTaskTerminalUpdate,
     event: StorageTaskEventInput,
-    artifact: StorageTaskCompletionArtifact,
+    payload: StorageTaskCompletionPayload,
 }
 
 impl StorageTaskCompletion {
-    /// Construct a terminal task transition with the artifact required by its task kind.
-    pub fn try_new(
-        task_kind: StorageTaskKind,
+    /// Construct a terminal task transition whose payload proves its task kind.
+    #[must_use]
+    pub const fn new(
         update: StorageTaskTerminalUpdate,
         event: StorageTaskEventInput,
-        artifact: StorageTaskCompletionArtifact,
-    ) -> Result<Self, StorageError> {
-        let valid_artifact = matches!(
-            (task_kind, &artifact),
-            (
-                StorageTaskKind::Import | StorageTaskKind::Reindex,
-                StorageTaskCompletionArtifact::None
-            ) | (
-                StorageTaskKind::Export,
-                StorageTaskCompletionArtifact::Export(_)
-            ) | (
-                StorageTaskKind::Backup,
-                StorageTaskCompletionArtifact::Backup(_)
-            ) | (
-                StorageTaskKind::RemoteCall,
-                StorageTaskCompletionArtifact::RemoteCall(_)
-            )
-        );
-        if !valid_artifact {
-            return Err(StorageError::invalid_input(format!(
-                "Task completion artifact does not match task kind {}",
-                task_kind.as_str()
-            )));
-        }
-        Ok(Self {
-            task_kind,
+        payload: StorageTaskCompletionPayload,
+    ) -> Self {
+        Self {
             update,
             event,
-            artifact,
-        })
+            payload,
+        }
     }
 
     #[must_use]
     pub fn into_parts(
         self,
     ) -> (
-        StorageTaskKind,
         StorageTaskTerminalUpdate,
         StorageTaskEventInput,
-        StorageTaskCompletionArtifact,
+        StorageTaskCompletionPayload,
     ) {
-        (self.task_kind, self.update, self.event, self.artifact)
+        (self.update, self.event, self.payload)
     }
 }
 
@@ -1127,9 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn active_task_updates_reject_non_active_statuses() {
-        let task_id = TaskId::new(88_105).unwrap();
-        let counts = StorageTaskResultCounts::try_new(0, 0, 0).unwrap();
+    fn active_task_status_rejects_non_active_statuses() {
         for status in [
             StorageTaskStatus::Queued,
             StorageTaskStatus::Succeeded,
@@ -1137,81 +1187,48 @@ mod tests {
             StorageTaskStatus::PartiallySucceeded,
             StorageTaskStatus::Cancelled,
         ] {
-            let error = StorageTaskActiveUpdate::try_new(
-                StorageTaskLease::new(task_id, StorageTaskClaimToken::new("active-update")),
-                status,
-                counts,
-            )
-            .expect_err("active updates must reject non-active statuses");
+            let error = StorageTaskActiveStatus::try_from_status(status)
+                .expect_err("active status proof must reject non-active statuses");
 
-            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+            assert_eq!(
+                error.kind(),
+                crate::StorageValidationErrorKind::InvalidValue
+            );
         }
     }
 
     #[test]
-    fn terminal_task_updates_reject_non_terminal_statuses() {
-        let task_id = TaskId::new(88_106).unwrap();
-        let counts = StorageTaskResultCounts::try_new(0, 0, 0).unwrap();
+    fn terminal_task_status_rejects_non_terminal_statuses() {
         for status in [
             StorageTaskStatus::Queued,
             StorageTaskStatus::Validating,
             StorageTaskStatus::Running,
         ] {
-            let error = StorageTaskTerminalUpdate::try_new(
-                StorageTaskLease::new(task_id, StorageTaskClaimToken::new("terminal-update")),
-                status,
-                counts,
-            )
-            .expect_err("terminal updates must reject non-terminal statuses");
+            let error = StorageTaskTerminalStatus::try_from_status(status)
+                .expect_err("terminal status proof must reject non-terminal statuses");
 
-            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+            assert_eq!(
+                error.kind(),
+                crate::StorageValidationErrorKind::InvalidValue
+            );
         }
     }
 
     #[test]
-    fn task_completion_rejects_artifacts_that_do_not_match_the_task_kind() {
-        let task_id = TaskId::new(88_107).unwrap();
-        for kind in [
-            StorageTaskKind::Export,
-            StorageTaskKind::Backup,
-            StorageTaskKind::RemoteCall,
-        ] {
-            let update = StorageTaskTerminalUpdate::try_new(
-                StorageTaskLease::new(task_id, StorageTaskClaimToken::new("completion")),
-                StorageTaskStatus::Succeeded,
-                StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
-            )
-            .unwrap();
-            let error = StorageTaskCompletion::try_new(
-                kind,
-                update,
-                StorageTaskEventInput::new("succeeded", "done"),
-                StorageTaskCompletionArtifact::None,
-            )
-            .expect_err("artifact-producing task kinds must require their artifact");
-
-            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-        }
-
-        for kind in [StorageTaskKind::Import, StorageTaskKind::Reindex] {
-            let update = StorageTaskTerminalUpdate::try_new(
-                StorageTaskLease::new(task_id, StorageTaskClaimToken::new("completion")),
-                StorageTaskStatus::Succeeded,
-                StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
-            )
-            .unwrap();
-            let error = StorageTaskCompletion::try_new(
-                kind,
-                update,
-                StorageTaskEventInput::new("succeeded", "done"),
-                StorageTaskCompletionArtifact::Backup(
-                    StorageBackupTaskArtifact::try_new(Vec::new(), chrono::Utc::now()).unwrap(),
-                ),
-            )
-            .expect_err("non-artifact task kinds must reject completion artifacts");
-
-            assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-        }
+    fn task_completion_payload_determines_task_kind() {
+        assert_eq!(
+            StorageTaskCompletionPayload::Import.task_kind(),
+            StorageTaskKind::Import
+        );
+        assert_eq!(
+            StorageTaskCompletionPayload::Reindex.task_kind(),
+            StorageTaskKind::Reindex
+        );
+        let backup = StorageBackupTaskArtifact::try_new(Vec::new(), chrono::Utc::now()).unwrap();
+        assert_eq!(
+            StorageTaskCompletionPayload::Backup(backup).task_kind(),
+            StorageTaskKind::Backup
+        );
     }
 
     #[test]

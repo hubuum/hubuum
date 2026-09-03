@@ -17,12 +17,13 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SortParam};
 use hubuum_storage_core::{
     StorageAuthorizationPermission, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
-    StorageClassRelation, StorageGraphClass, StorageGraphObject, StorageGraphResource,
-    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery,
-    StoragePage, StorageRelatedDirection, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageRelatedObjectsForRootsQuery, StorageRelatedSort,
-    StorageRelationGraphQuery, StorageRelationIdsQuery, StorageRelationListQuery,
-    StorageRelationTouchingQuery, StorageVisibility,
+    StorageClassRelation, StorageClassSchemaPolicy, StorageGraphClass, StorageGraphObject,
+    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StorageObjectRelationsTouchingIdsQuery, StoragePage, StorageRelatedDirection,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
+    StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
+    StorageVisibility,
 };
 
 const CLASS_RELATION_PERMISSION: StorageAuthorizationPermission =
@@ -1671,13 +1672,29 @@ impl ClassGraphQueryRow {
             StorageClassGraphRow::try_new(
                 StorageGraphClass::new(
                     ancestor_resource,
-                    self.ancestor_json_schema,
-                    self.ancestor_validate_schema,
+                    StorageClassSchemaPolicy::try_from_parts(
+                        self.ancestor_json_schema,
+                        self.ancestor_validate_schema,
+                    )
+                    .map_err(|error| {
+                        PostgresStorageError::invalid_persisted_value(
+                            "ancestor class schema policy",
+                            error,
+                        )
+                    })?,
                 ),
                 StorageGraphClass::new(
                     descendant_resource,
-                    self.descendant_json_schema,
-                    self.descendant_validate_schema,
+                    StorageClassSchemaPolicy::try_from_parts(
+                        self.descendant_json_schema,
+                        self.descendant_validate_schema,
+                    )
+                    .map_err(|error| {
+                        PostgresStorageError::invalid_persisted_value(
+                            "descendant class schema policy",
+                            error,
+                        )
+                    })?,
                 ),
                 self.depth,
                 self.path

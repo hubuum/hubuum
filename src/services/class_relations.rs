@@ -80,7 +80,7 @@ impl ClassRelationService {
         prepared: &PreparedClassRelation,
         context: &EventContext,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
-        let prepared = prepared_class_relation_to_storage(prepared);
+        let prepared = prepared_class_relation_to_storage(prepared)?;
         self.storage
             .create_class_relation(&prepared, context)
             .await
@@ -94,7 +94,7 @@ impl ClassRelationService {
         target: &ResolvedClassRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_relation_to_storage(target);
+        let target = resolved_class_relation_to_storage(target)?;
         self.storage
             .delete_class_relation(&target, context)
             .await

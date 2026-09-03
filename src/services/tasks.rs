@@ -19,11 +19,12 @@ use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
     AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
     StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageTask, StorageTaskActiveUpdate, StorageTaskChildListQuery, StorageTaskClaim,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
-    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTask, StorageTaskActiveStatus, StorageTaskActiveUpdate, StorageTaskChildListQuery,
+    StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskResultCounts,
+    StorageTaskScopeSnapshot, StorageTaskStatus, StorageTaskTerminalStatus,
     StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
@@ -110,12 +111,13 @@ fn storage_task_state_update(
     change: TaskStateChange,
 ) -> Result<StorageTaskActiveUpdate, ApiError> {
     let (processed, succeeded, failed) = change.counts.into();
-    Ok(StorageTaskActiveUpdate::try_new(
+    Ok(StorageTaskActiveUpdate::new(
         task.lease.clone(),
-        task_status_to_storage(change.status),
+        StorageTaskActiveStatus::try_from_status(task_status_to_storage(change.status))
+            .map_err(|error| ApiError::from(error.into_request_error()))?,
         StorageTaskResultCounts::try_new(processed, succeeded, failed)
             .map_err(|error| ApiError::from(error.into_request_error()))?,
-    )?
+    )
     .summary(change.summary)
     .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
 }
@@ -125,12 +127,13 @@ fn storage_task_terminal_update(
     change: TaskStateChange,
 ) -> Result<StorageTaskTerminalUpdate, ApiError> {
     let (processed, succeeded, failed) = change.counts.into();
-    Ok(StorageTaskTerminalUpdate::try_new(
+    Ok(StorageTaskTerminalUpdate::new(
         task.lease.clone(),
-        task_status_to_storage(change.status),
+        StorageTaskTerminalStatus::try_from_status(task_status_to_storage(change.status))
+            .map_err(|error| ApiError::from(error.into_request_error()))?,
         StorageTaskResultCounts::try_new(processed, succeeded, failed)
             .map_err(|error| ApiError::from(error.into_request_error()))?,
-    )?
+    )
     .summary(change.summary)
     .started_at(change.started_at.map(|timestamp| timestamp.and_utc())))
 }
@@ -179,12 +182,6 @@ pub(crate) async fn append_task_event(
     task: &ClaimedTask,
     event: NewTaskEventRecord,
 ) -> Result<(), ApiError> {
-    if event.task_id != task.id {
-        return Err(ApiError::InternalServerError(format!(
-            "Task lifecycle event id {} does not match claimed task {}",
-            event.task_id, task.id
-        )));
-    }
     storage_handle(backend)
         .append_task_event(StorageTaskEventAppend::new(
             task.lease.clone(),
@@ -211,20 +208,13 @@ pub(crate) async fn complete_task(
     task: &ClaimedTask,
     change: TaskStateChange,
     event: NewTaskEventRecord,
-    artifact: StorageTaskCompletionArtifact,
+    payload: StorageTaskCompletionPayload,
 ) -> Result<TaskRecord, ApiError> {
-    if event.task_id != task.id {
-        return Err(ApiError::InternalServerError(format!(
-            "Task completion event id {} does not match claimed task {}",
-            event.task_id, task.id
-        )));
-    }
-    let completion = StorageTaskCompletion::try_new(
-        task_kind_to_storage(TaskKind::from_db(&task.kind)?),
+    let completion = StorageTaskCompletion::new(
         storage_task_terminal_update(task, change)?,
         storage_task_event(event),
-        artifact,
-    )?;
+        payload,
+    );
     storage_handle(backend)
         .complete_task(completion)
         .await
@@ -238,12 +228,6 @@ pub(crate) async fn fail_task(
     summary: impl Into<String>,
     event: NewTaskEventRecord,
 ) -> Result<TaskRecord, ApiError> {
-    if event.task_id != task.id {
-        return Err(ApiError::InternalServerError(format!(
-            "Task failure event id {} does not match claimed task {}",
-            event.task_id, task.id
-        )));
-    }
     let summary = summary.into();
     storage_handle(backend)
         .fail_task(StorageTaskFailure::new(

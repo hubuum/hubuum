@@ -57,10 +57,11 @@ impl UpdateResolvedClass for UpdateHubuumClass {
     where
         C: crate::storage::StorageContext,
     {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
+        let changes = class_update_to_storage(self.clone())?;
         storage_handle(backend)
             .class_store()
-            .update_class(&target, class_update_to_storage(self.clone()), context)
+            .update_class(&target, changes, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -87,7 +88,7 @@ impl DeleteResolvedClass for ResolvedClassTarget {
     where
         C: crate::storage::StorageContext,
     {
-        let target = resolved_class_to_storage(self);
+        let target = resolved_class_to_storage(self)?;
         storage_handle(backend)
             .class_store()
             .delete_class(&target, context)
@@ -117,13 +118,10 @@ impl SaveAdapter for HubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id_to_storage(self.id)))
             .await
             .map_err(ApiError::from)?;
+        let update = class_update_to_storage(update)?;
         storage_handle(pool)
             .class_store()
-            .update_class(
-                &target,
-                class_update_to_storage(update),
-                &EventContext::system(),
-            )
+            .update_class(&target, update, &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -148,9 +146,10 @@ impl SaveAdapter for HubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id_to_storage(self.id)))
             .await
             .map_err(ApiError::from)?;
+        let update = class_update_to_storage(update)?;
         storage_handle(pool)
             .class_store()
-            .update_class(&target, class_update_to_storage(update), context)
+            .update_class(&target, update, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -202,12 +201,10 @@ impl SaveAdapter for NewHubuumClass {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClass, ApiError> {
+        let command = class_create_to_storage(self.clone())?;
         storage_handle(pool)
             .class_store()
-            .create_class(
-                class_create_to_storage(self.clone()),
-                &EventContext::system(),
-            )
+            .create_class(command, &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -219,9 +216,10 @@ impl SaveAdapter for NewHubuumClass {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        let command = class_create_to_storage(self.clone())?;
         storage_handle(pool)
             .class_store()
-            .create_class(class_create_to_storage(self.clone()), context)
+            .create_class(command, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -243,13 +241,10 @@ impl UpdateAdapter for UpdateHubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id_to_storage(class_id.id())))
             .await
             .map_err(ApiError::from)?;
+        let changes = class_update_to_storage(self.clone())?;
         storage_handle(pool)
             .class_store()
-            .update_class(
-                &target,
-                class_update_to_storage(self.clone()),
-                &EventContext::system(),
-            )
+            .update_class(&target, changes, &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -267,9 +262,10 @@ impl UpdateAdapter for UpdateHubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id_to_storage(class_id.id())))
             .await
             .map_err(ApiError::from)?;
+        let changes = class_update_to_storage(self.clone())?;
         storage_handle(pool)
             .class_store()
-            .update_class(&target, class_update_to_storage(self.clone()), context)
+            .update_class(&target, changes, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

@@ -319,7 +319,7 @@ impl PatchObjectData for ObjectDataPatchDocument {
     where
         C: StorageContext,
     {
-        let target = resolved_object_to_storage(target);
+        let target = resolved_object_to_storage(target)?;
         storage_handle(backend)
             .object_store()
             .patch_object_data(&target, object_patch_to_storage(self.clone())?, context)
@@ -357,7 +357,7 @@ impl CreateObjectInResolvedClass for NewHubuumObject {
     where
         C: StorageContext,
     {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
         storage_handle(backend)
             .object_store()
             .create_object(&target, object_create_to_storage(self.clone()), context)
@@ -403,7 +403,7 @@ impl UpdateResolvedObject for UpdateHubuumObject {
     where
         C: StorageContext,
     {
-        let target = resolved_object_to_storage(target);
+        let target = resolved_object_to_storage(target)?;
         storage_handle(backend)
             .object_store()
             .update_object(&target, object_update_to_storage(self.clone()), context)
@@ -433,7 +433,7 @@ impl DeleteResolvedObject for ResolvedObjectTarget {
     where
         C: StorageContext,
     {
-        let target = resolved_object_to_storage(self);
+        let target = resolved_object_to_storage(self)?;
         storage_handle(backend)
             .object_store()
             .delete_object(&target, context)

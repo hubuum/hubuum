@@ -10,7 +10,8 @@ use hubuum_query::QueryOptions;
 use serde_json::Value;
 
 use crate::{
-    StorageError, StoragePage, StorageRecordMetadata, StorageValidationError, StorageVisibility,
+    StorageClassSchemaPolicy, StorageError, StoragePage, StorageRecordMetadata,
+    StorageValidationError, StorageVisibility,
 };
 
 fn validate_graph_path<T>(
@@ -327,21 +328,15 @@ impl StorageGraphResource {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageGraphClass {
     resource: StorageGraphResource,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
 }
 
 impl StorageGraphClass {
     #[must_use]
-    pub fn new(
-        resource: StorageGraphResource,
-        json_schema: Option<Value>,
-        validate_schema: bool,
-    ) -> Self {
+    pub fn new(resource: StorageGraphResource, schema_policy: StorageClassSchemaPolicy) -> Self {
         Self {
             resource,
-            json_schema,
-            validate_schema,
+            schema_policy,
         }
     }
 
@@ -367,12 +362,13 @@ impl StorageGraphClass {
     ) {
         let (metadata, name, collection_id, description) = self.resource.into_parts();
         let (id, created_at, updated_at, revision) = metadata.into_parts();
+        let (json_schema, validate_schema) = self.schema_policy.into_parts();
         (
             ClassId::from(id),
             name,
             collection_id,
-            self.json_schema,
-            self.validate_schema,
+            json_schema,
+            validate_schema,
             description,
             created_at,
             updated_at,

@@ -328,8 +328,7 @@ pub(super) fn class_with_collection(
             collection,
             class.description(),
         )
-        .json_schema(class.json_schema().cloned())
-        .validate_schema(class.validates_schema())
+        .schema_policy(class.schema_policy().clone())
         .build(),
     )
 }
@@ -373,8 +372,7 @@ pub(super) fn graph_class(class: &StorageClass) -> Result<StorageGraphClass, Sto
             class.collection_id(),
             class.description().to_string(),
         ),
-        class.json_schema().cloned(),
-        class.validates_schema(),
+        class.schema_policy().clone(),
     ))
 }
 
@@ -403,14 +401,13 @@ pub(super) fn ready_computation_state(
     revision: i64,
     created_at: DateTime<Utc>,
 ) -> Result<StorageClassComputationState, StorageError> {
-    StorageClassComputationState::builder(
+    StorageClassComputationState::try_new(
         class_id,
         StorageComputationRevision::try_new(revision).map_err(invalid_contract_value)?,
-        StorageComputationRebuildStatus::Ready,
+        StorageComputationRebuildState::Ready,
         created_at,
         Utc::now(),
     )
-    .try_build()
     .map_err(invalid_contract_value)
 }
 
@@ -430,30 +427,32 @@ pub(super) fn updated_computed_field(
             .map_err(|error| StorageError::internal(error.to_string()))?,
     )
     .map_err(invalid_contract_value)?;
-    let input = StorageComputedFieldDefinitionInput::new(
-        patch.key().unwrap_or(current.key()).to_string(),
-        patch.label().unwrap_or(current.label()).to_string(),
-        patch
-            .operation()
-            .cloned()
-            .unwrap_or_else(|| current.operation().clone()),
-        patch
-            .result_type()
-            .unwrap_or(current.result_type())
-            .to_string(),
+    let operation = match patch.operation() {
+        Some(operation) => serde_json::from_value::<Operation>(operation.clone())
+            .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+        None => current.operation().clone(),
+    };
+    let result_type = match patch.result_type() {
+        Some(result_type) => computed_result_type(result_type)?,
+        None => current.result_type(),
+    };
+    let definition = Definition::try_from_parts(
+        FieldKey::new(patch.key().unwrap_or(current.key()))
+            .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+        patch.label().unwrap_or(current.label()),
+        patch.description().unwrap_or(current.description()),
+        operation,
+        result_type,
+        patch.enabled().unwrap_or(current.enabled()),
+        current.semantics_version(),
     )
-    .with_description(
-        patch
-            .description()
-            .unwrap_or(current.description())
-            .to_string(),
-    )
-    .with_enabled(patch.enabled().unwrap_or(current.enabled()));
+    .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+    let input = StorageComputedFieldDefinitionInput::new(definition);
     Ok(StorageComputedFieldDefinition::new(
         metadata,
         current.class_id(),
         current.visibility(),
-        StorageComputedFieldDefinitionContent::new(input, current.semantics_version()),
+        StorageComputedFieldDefinitionContent::new(input),
         StorageComputedFieldProvenance::new(current.created_by(), Some(actor_id)),
     ))
 }
@@ -462,15 +461,29 @@ pub(super) fn evaluate_computed_definition(
     definition: &StorageComputedFieldDefinition,
     object: &StorageObject,
 ) -> serde_json::Value {
-    definition
-        .operation()
-        .get("paths")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .find_map(|path| object.data().pointer(path).cloned())
-        .unwrap_or(serde_json::Value::Null)
+    evaluate(
+        object.data(),
+        &[definition.evaluator_definition().clone()],
+        1,
+        EvaluationLimits::standard(),
+    )
+    .ok()
+    .and_then(|result| result.values.get(definition.key()).cloned())
+    .unwrap_or(serde_json::Value::Null)
+}
+
+pub(super) fn computed_result_type(value: &str) -> Result<ResultType, StorageError> {
+    match value {
+        "string" => Ok(ResultType::String),
+        "number" => Ok(ResultType::Number),
+        "integer" => Ok(ResultType::Integer),
+        "boolean" => Ok(ResultType::Boolean),
+        "object" => Ok(ResultType::Object),
+        "array" => Ok(ResultType::Array),
+        _ => Err(StorageError::invalid_input(format!(
+            "Unknown computed result type '{value}'"
+        ))),
+    }
 }
 
 pub(super) fn computed_scope(

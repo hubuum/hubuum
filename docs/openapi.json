@@ -20238,12 +20238,15 @@
         ],
         "properties": {
           "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "Required by the personal preview route and ignored on class-scoped routes."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HubuumClassID",
+                "description": "Required by the personal preview route and ignored on class-scoped routes."
+              }
+            ]
           },
           "data": {
             "type": [
@@ -20255,11 +20258,14 @@
             "$ref": "#/components/schemas/ComputedFieldDefinitionRequest"
           },
           "object_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HubuumObjectID"
+              }
+            ]
           }
         },
         "additionalProperties": false

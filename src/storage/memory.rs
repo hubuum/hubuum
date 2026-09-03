@@ -925,7 +925,7 @@ impl ClassStorage for MemoryStorageModel {
                 ),
                 ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
             },
-            class_record_to_storage(class),
+            class_record_to_storage(class).map_err(map_memory_error)?,
         )
         .map_err(|error| {
             StorageError::backend_failure(format!("Invalid in-memory class projection: {error}"))
@@ -983,7 +983,7 @@ impl ClassStorage for MemoryStorageModel {
         state.classes.insert(id, class.clone());
         state.record_class_event(id, Action::Created, context);
         Ok(StorageMutationOutcome::committed(
-            class_record_to_storage(class),
+            class_record_to_storage(class).map_err(map_memory_error)?,
             memory_audit_receipt(
                 EntityType::Class,
                 Action::Created,
@@ -1013,9 +1013,9 @@ impl ClassStorage for MemoryStorageModel {
             .validate_schema_update(&current)
             .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
-            return Ok(StorageMutationOutcome::unchanged(class_record_to_storage(
-                current,
-            )));
+            return Ok(StorageMutationOutcome::unchanged(
+                class_record_to_storage(current).map_err(map_memory_error)?,
+            ));
         }
         if let Some(name) = changes.name.as_deref()
             && state.class_name_in_use(name, Some(current.id))
@@ -1057,7 +1057,7 @@ impl ClassStorage for MemoryStorageModel {
         let updated = class.clone();
         state.record_class_event(updated.id, Action::Updated, context);
         Ok(StorageMutationOutcome::committed(
-            class_record_to_storage(updated.clone()),
+            class_record_to_storage(updated.clone()).map_err(map_memory_error)?,
             memory_audit_receipt(
                 EntityType::Class,
                 Action::Updated,
@@ -1144,9 +1144,9 @@ impl ClassRelationStorage for MemoryStorageModel {
             .get(&command.to_hubuum_class_id)
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
-        PreparedClassRelation::new(command, from_class, to_class)
-            .map(|prepared| prepared_class_relation_to_storage(&prepared))
-            .map_err(map_memory_error)
+        let prepared =
+            PreparedClassRelation::new(command, from_class, to_class).map_err(map_memory_error)?;
+        prepared_class_relation_to_storage(&prepared).map_err(map_memory_error)
     }
 
     async fn resolve_class_relation(
@@ -1166,9 +1166,9 @@ impl ClassRelationStorage for MemoryStorageModel {
             .get(&relation.to_hubuum_class_id)
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
-        ResolvedClassRelationTarget::new(relation, from_class, to_class)
-            .map(|target| resolved_class_relation_to_storage(&target))
-            .map_err(map_memory_error)
+        let target = ResolvedClassRelationTarget::new(relation, from_class, to_class)
+            .map_err(map_memory_error)?;
+        resolved_class_relation_to_storage(&target).map_err(map_memory_error)
     }
 
     async fn create_class_relation(
@@ -1212,8 +1212,8 @@ impl ClassRelationStorage for MemoryStorageModel {
             prepared.from_class().clone(),
             prepared.to_class().clone(),
         )
-        .map(|target| resolved_class_relation_to_storage(&target))
-        .map_err(map_memory_error)?;
+        .map_err(map_memory_error)
+        .and_then(|target| resolved_class_relation_to_storage(&target).map_err(map_memory_error))?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1312,7 +1312,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
                     .map_err(map_memory_error)?
             }
         };
-        Ok(prepared_object_relation_to_storage(&prepared))
+        prepared_object_relation_to_storage(&prepared).map_err(map_memory_error)
     }
 
     async fn resolve_object_relation(
@@ -1356,14 +1356,14 @@ impl ObjectRelationStorage for MemoryStorageModel {
             HubuumClassRelationID::new(relation.class_relation_id).map_err(map_memory_error)?;
         let class_relation =
             state.resolved_class_relation(state.class_relation(class_relation_id)?)?;
-        ResolvedObjectRelationTarget::new(
+        let target = ResolvedObjectRelationTarget::new(
             relation,
             from_object.clone(),
             to_object.clone(),
             class_relation,
         )
-        .map(|target| resolved_object_relation_to_storage(&target))
-        .map_err(map_memory_error)
+        .map_err(map_memory_error)?;
+        resolved_object_relation_to_storage(&target).map_err(map_memory_error)
     }
 
     async fn create_object_relation(
@@ -1426,8 +1426,10 @@ impl ObjectRelationStorage for MemoryStorageModel {
             prepared.to_object().clone(),
             prepared.class_relation().clone(),
         )
-        .map(|target| resolved_object_relation_to_storage(&target))
-        .map_err(map_memory_error)?;
+        .map_err(map_memory_error)
+        .and_then(|target| {
+            resolved_object_relation_to_storage(&target).map_err(map_memory_error)
+        })?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1482,7 +1484,7 @@ impl ObjectStorage for MemoryStorageModel {
                 class_id: ClassId::new(class.id).expect("internal class id must be positive"),
                 object_id: ObjectId::new(object.id).expect("internal object id must be positive"),
             },
-            class_record_to_storage(class.clone()),
+            class_record_to_storage(class.clone()).map_err(map_memory_error)?,
             object_to_storage(object.clone()),
         )
         .map_err(|error| {
@@ -1528,7 +1530,7 @@ impl ObjectStorage for MemoryStorageModel {
         };
         StorageResolvedObject::try_new(
             selector,
-            class_record_to_storage(class.clone()),
+            class_record_to_storage(class.clone()).map_err(map_memory_error)?,
             object_to_storage(object.clone()),
         )
         .map_err(|error| {

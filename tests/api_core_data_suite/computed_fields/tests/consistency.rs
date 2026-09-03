@@ -15,9 +15,9 @@ async fn computed_query_rejects_a_cursor_too_large_for_the_next_request(
         .unwrap();
         create_shared_definition(
             &test_context.pool,
-            fixture.class.id,
-            fixture.class.collection_id,
-            test_context.admin_user.id,
+            typed_class_id(fixture.class.id),
+            typed_collection_id(fixture.class.collection_id),
+            typed_principal_id(test_context.admin_user.id),
             request,
             &EventContext::system(),
         )

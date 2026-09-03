@@ -10,7 +10,7 @@ use crate::permissions::AuthorizationContext;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
 };
-use crate::storage::{ImportStorage, StorageTaskCompletionArtifact};
+use crate::storage::{ImportStorage, StorageTaskCompletionPayload};
 
 use super::helpers::{
     flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
@@ -134,7 +134,6 @@ where
             pool,
             task,
             NewTaskEventRecord {
-                task_id: task.id,
                 event_type: "running".to_string(),
                 message: if request.dry_run() {
                     "Import dry run planned successfully".to_string()
@@ -278,12 +277,11 @@ async fn finalize_task(
             .summary(terminal.summary.clone())
             .started_at(task.started_at),
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: terminal.status.as_str().to_string(),
             message: terminal.summary.clone(),
             data: terminal.event_data,
         },
-        StorageTaskCompletionArtifact::None,
+        StorageTaskCompletionPayload::Import,
     )
     .await?;
     Ok(())

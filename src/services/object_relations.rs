@@ -86,7 +86,7 @@ impl ObjectRelationService {
         prepared: &PreparedObjectRelation,
         context: &EventContext,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
-        let prepared = prepared_object_relation_to_storage(prepared);
+        let prepared = prepared_object_relation_to_storage(prepared)?;
         self.storage
             .create_object_relation(&prepared, context)
             .await
@@ -100,7 +100,7 @@ impl ObjectRelationService {
         target: &ResolvedObjectRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_relation_to_storage(target);
+        let target = resolved_object_relation_to_storage(target)?;
         self.storage
             .delete_object_relation(&target, context)
             .await

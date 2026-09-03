@@ -1053,7 +1053,7 @@ mod tests {
             task_response
                 .details
                 .as_ref()
-                .and_then(|d| d.export.as_ref())
+                .and_then(|details| details.as_export())
                 .is_some()
         );
     }

@@ -624,7 +624,7 @@ impl TaskExecutionStorage for MemoryStorage {
         if !task.status.is_active() || !task.lease_matches(&lease) {
             return Err(invalid_task_lease());
         }
-        task.status = status;
+        task.status = status.as_status();
         task.summary = summary;
         task.progress = StorageTaskProgress::try_new(
             task.progress.total(),
@@ -642,7 +642,8 @@ impl TaskExecutionStorage for MemoryStorage {
         &self,
         completion: StorageTaskCompletion,
     ) -> Result<StorageTask, StorageError> {
-        let (expected_kind, update, event, artifact) = completion.into_parts();
+        let (update, event, payload) = completion.into_parts();
+        let expected_kind = payload.task_kind();
         let (lease, status, summary, counts, started_at) = update.into_parts();
         let mut state = self.state.write().await;
         let stored = state
@@ -660,9 +661,11 @@ impl TaskExecutionStorage for MemoryStorage {
             return Err(invalid_task_lease());
         }
         let now = Utc::now();
-        match artifact {
-            StorageTaskCompletionArtifact::None | StorageTaskCompletionArtifact::RemoteCall(_) => {}
-            StorageTaskCompletionArtifact::Export(artifact) => {
+        match payload {
+            StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::Reindex
+            | StorageTaskCompletionPayload::RemoteCall(_) => {}
+            StorageTaskCompletionPayload::Export(artifact) => {
                 let (identity, content, report, output_expires_at, durations) =
                     artifact.into_parts();
                 let (template_name, content_type) = identity.into_parts();
@@ -684,7 +687,7 @@ impl TaskExecutionStorage for MemoryStorage {
                 .map_err(invalid_contract_value)?;
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
-            StorageTaskCompletionArtifact::Backup(artifact) => {
+            StorageTaskCompletionPayload::Backup(artifact) => {
                 let (document, byte_size, sha256, output_expires_at) = artifact.into_parts();
                 let output = StorageBackupOutput::try_new(
                     lease.task_id(),
@@ -702,7 +705,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .tasks
             .get_mut(&lease.task_id().id())
             .expect("validated task remains present");
-        task.status = status;
+        task.status = status.as_status();
         task.summary = summary;
         task.progress = StorageTaskProgress::try_new(
             task.progress.total(),

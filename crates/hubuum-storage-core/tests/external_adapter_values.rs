@@ -176,7 +176,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ =
         StorageClassWithCollection::builder(metadata, "class", collection.clone(), "description")
             .build();
-    let _ = StorageClassComputationState::builder;
+    let _ = StorageClassComputationState::try_new;
     let _ = StorageClassGraphRow::try_new;
     let _ = class_record.clone();
     let _ = StorageClassRelation::try_new;
@@ -346,11 +346,11 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageTaskBuilder::try_build;
     let _ = StorageTaskProgress::try_new;
     let _ = StorageTaskAccess::new;
-    let _ = StorageTaskActiveUpdate::try_new;
+    let _ = StorageTaskActiveUpdate::new;
     let _ = StorageTaskClaim::try_new;
-    let _ = StorageTaskCompletion::try_new;
+    let _ = StorageTaskCompletion::new;
     let _ = StorageTaskResultCounts::try_new;
-    let _ = StorageTaskTerminalUpdate::try_new;
+    let _ = StorageTaskTerminalUpdate::new;
     let _ = StorageTaskEvent::builder(
         EventSequence::new(1).unwrap(),
         TaskId::new(1).unwrap(),
@@ -386,7 +386,6 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     // from this downstream integration-test crate as well.
     let _ = StorageAuthenticatedTokenBuilder::try_build;
     let _ = StorageClassWithCollectionBuilder::build;
-    let _ = StorageClassComputationStateBuilder::try_build;
     let _ = StorageClassBuilder::build;
     let _ = StorageEventDeliveryBuilder::try_build;
     let _ = StorageEventSinkBuilder::try_build;

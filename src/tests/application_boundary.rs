@@ -1662,6 +1662,60 @@ fn process_entry_points_compose_only_through_backend_neutral_storage() {
 }
 
 #[test]
+fn validated_facts_remain_typed_across_application_storage_boundaries() {
+    let root = repository_root();
+
+    let computed_service = read_source(&root.join("src/services/computed_fields.rs"))
+        .expect("computed-field service should be readable");
+    assert!(
+        !computed_service.contains("_id_to_storage")
+            && !computed_service.contains("expect(\"validated computed field"),
+        "computed-field services must carry validated IDs instead of flattening and rebuilding them"
+    );
+
+    let computed_contract =
+        read_source(&root.join("crates/hubuum-storage-core/src/computed_fields.rs"))
+            .expect("computed-field storage contract should be readable");
+    let input = item_body(
+        &computed_contract,
+        "struct",
+        "StorageComputedFieldDefinitionInput",
+    );
+    assert!(
+        input.contains("definition: Definition")
+            && !input.contains("operation: Value")
+            && !input.contains("result_type: String"),
+        "computed definitions must cross storage as one validated proof value"
+    );
+
+    let lifecycle = read_source(&root.join("crates/hubuum-storage-core/src/resource_lifecycle.rs"))
+        .expect("resource lifecycle contract should be readable");
+    let class = item_body(&lifecycle, "struct", "StorageClass");
+    assert!(
+        class.contains("schema_policy: StorageClassSchemaPolicy")
+            && !class.contains("validate_schema: bool"),
+        "class schema and enforcement state must have one correlated representation"
+    );
+
+    let task_model =
+        read_source(&root.join("src/models/task.rs")).expect("task model should be readable");
+    assert_eq!(
+        enum_variants(&task_model, "TaskDetails"),
+        BTreeSet::from([
+            "Backup".to_string(),
+            "Export".to_string(),
+            "Import".to_string(),
+        ]),
+        "task details must use mutually exclusive variants"
+    );
+    let new_event = item_body(&task_model, "struct", "NewTaskEventRecord");
+    assert!(
+        !new_event.contains("task_id"),
+        "a claimed task lease must remain the sole proof of event task identity"
+    );
+}
+
+#[test]
 fn event_administration_consumers_use_the_backend_neutral_application_service() {
     let root = repository_root();
     for file in [

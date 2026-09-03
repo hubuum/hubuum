@@ -2,12 +2,17 @@
 name = "hubuum-computed-fields"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Typed, deterministic computed-field evaluation for Hubuum"
 license = "MIT"
-publish = false
+repository = "https://github.com/hubuum/hubuum"
+readme = "../../docs/rust_api/hubuum-computed-fields.md"
+publish = true
 
 [package.metadata.hubuum]
-rust-api = "workspace-internal"
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-computed-fields.md"
+release-train = "storage-sdk"
 
 [dependencies]
 bigdecimal = "0.4"

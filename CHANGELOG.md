@@ -65,6 +65,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (experimental storage SDK):** computed-field definitions, task
+  execution updates, completion artifacts, computation rebuild state, and class
+  schema policy now use proof-carrying types that make invalid combinations
+  unconstructable. `hubuum-computed-fields` joins the lockstep storage SDK release
+  train, and adapters must accept its validated `Definition`, use the new active
+  and terminal task status types, match the completion payload variants, and
+  migrate class builders to `StorageClassSchemaPolicy`. The HTTP response shapes
+  remain compatible. The database migration normalizes any legacy class row that
+  enabled validation without a schema and adds constraints preventing that state
+  from recurring.
 - **Breaking (database deployment):** server container entrypoints no longer
   apply migrations. Run `hubuum-admin --migrate` as a one-shot workload before
   rolling the server and deploy the isolated restore executor. Existing

@@ -54,6 +54,11 @@ classifications rather than HTTP status or database-driver names. Native table,
 row, connection, query, and ETag representations are adapter or application
 concerns.
 
+Computed-field create and import operations accept validated
+`hubuum-computed-fields::Definition` values. Adapters flatten a definition only
+at their persistence boundary and reconstruct it fallibly when reading stored
+rows; they must not expose an unvalidated parallel definition representation.
+
 Task execution uses distinct active and terminal update types. Claims validate
 active status, lease presence, and task identity; completion construction
 validates the documented task-kind/artifact matrix before an adapter receives

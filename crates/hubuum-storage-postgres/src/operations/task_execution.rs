@@ -14,7 +14,7 @@ use hubuum_events_core::{Action, AuditDocument, EntityType, MutationProvenance, 
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
     StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskEventAppend,
+    StorageTaskCompletion, StorageTaskCompletionPayload, StorageTaskEventAppend,
     StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
     StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStatus,
     StorageTaskTerminalUpdate,
@@ -361,7 +361,8 @@ pub async fn complete_task(
     runtime: &PostgresRuntime,
     completion: StorageTaskCompletion,
 ) -> Result<StorageTask, PostgresStorageError> {
-    let (expected_kind, update, event, artifact) = completion.into_parts();
+    let (update, event, payload) = completion.into_parts();
+    let expected_kind = payload.task_kind();
     let (claimed, update) = terminal_state_update(update)?;
     let stored = find_task(runtime, claimed.id).await?;
     let stored_kind = stored_task_kind(&stored)?;
@@ -372,11 +373,11 @@ pub async fn complete_task(
             stored_kind.as_str()
         )));
     }
-    let row = match artifact {
-        StorageTaskCompletionArtifact::None => {
+    let row = match payload {
+        StorageTaskCompletionPayload::Import | StorageTaskCompletionPayload::Reindex => {
             finalize_task(runtime, claimed, update, event, None).await?
         }
-        StorageTaskCompletionArtifact::Export(artifact) => {
+        StorageTaskCompletionPayload::Export(artifact) => {
             let output = export_artifact(claimed.id, artifact);
             finalize_task(
                 runtime,
@@ -387,7 +388,7 @@ pub async fn complete_task(
             )
             .await?
         }
-        StorageTaskCompletionArtifact::Backup(artifact) => {
+        StorageTaskCompletionPayload::Backup(artifact) => {
             let output = backup_artifact(claimed.id, artifact);
             finalize_task(
                 runtime,
@@ -398,7 +399,7 @@ pub async fn complete_task(
             )
             .await?
         }
-        StorageTaskCompletionArtifact::RemoteCall(artifact) => {
+        StorageTaskCompletionPayload::RemoteCall(artifact) => {
             let output = remote_call_artifact(claimed.id, artifact);
             finalize_task(
                 runtime,
@@ -700,7 +701,7 @@ fn state_update(
     Ok((
         claimed_task(&lease)?,
         TaskStateUpdate {
-            status,
+            status: status.as_status(),
             summary,
             counts,
             started_at: started_at.map(|timestamp| timestamp.naive_utc()),
@@ -715,7 +716,7 @@ fn terminal_state_update(
     Ok((
         claimed_task(&lease)?,
         TaskStateUpdate {
-            status,
+            status: status.as_status(),
             summary,
             counts,
             started_at: started_at.map(|timestamp| timestamp.naive_utc()),

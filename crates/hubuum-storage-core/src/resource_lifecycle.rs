@@ -13,6 +13,52 @@ use crate::{
     StorageValidationError,
 };
 
+/// The only valid relationships between a class schema and instance validation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StorageClassSchemaPolicy {
+    Absent,
+    Advisory(Value),
+    Enforced(Value),
+}
+
+impl StorageClassSchemaPolicy {
+    pub fn try_from_parts(
+        json_schema: Option<Value>,
+        validate_schema: bool,
+    ) -> Result<Self, StorageValidationError> {
+        match (json_schema, validate_schema) {
+            (None, false) => Ok(Self::Absent),
+            (Some(schema), false) => Ok(Self::Advisory(schema)),
+            (Some(schema), true) => Ok(Self::Enforced(schema)),
+            (None, true) => Err(StorageValidationError::invalid(
+                "Class schema validation cannot be enabled without a schema",
+            )),
+        }
+    }
+
+    #[must_use]
+    pub const fn json_schema(&self) -> Option<&Value> {
+        match self {
+            Self::Absent => None,
+            Self::Advisory(schema) | Self::Enforced(schema) => Some(schema),
+        }
+    }
+
+    #[must_use]
+    pub const fn validates_schema(&self) -> bool {
+        matches!(self, Self::Enforced(_))
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Option<Value>, bool) {
+        match self {
+            Self::Absent => (None, false),
+            Self::Advisory(schema) => (Some(schema), false),
+            Self::Enforced(schema) => (Some(schema), true),
+        }
+    }
+}
+
 /// Canonical flat class projection used by point and lifecycle operations.
 ///
 /// Catalog projections use `StorageClassWithCollection`, which also embeds the collection.
@@ -23,8 +69,7 @@ pub struct StorageClass {
     id: ClassId,
     name: String,
     collection_id: CollectionId,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
     description: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -44,8 +89,7 @@ impl StorageClass {
             name: name.into(),
             collection_id,
             description: description.into(),
-            json_schema: None,
-            validate_schema: false,
+            schema_policy: StorageClassSchemaPolicy::Absent,
         }
     }
 
@@ -66,12 +110,17 @@ impl StorageClass {
 
     #[must_use]
     pub const fn json_schema(&self) -> Option<&Value> {
-        self.json_schema.as_ref()
+        self.schema_policy.json_schema()
     }
 
     #[must_use]
     pub const fn validates_schema(&self) -> bool {
-        self.validate_schema
+        self.schema_policy.validates_schema()
+    }
+
+    #[must_use]
+    pub const fn schema_policy(&self) -> &StorageClassSchemaPolicy {
+        &self.schema_policy
     }
 
     #[must_use]
@@ -109,12 +158,13 @@ impl StorageClass {
         DateTime<Utc>,
         ResourceRevision,
     ) {
+        let (json_schema, validate_schema) = self.schema_policy.into_parts();
         (
             self.id,
             self.name,
             self.collection_id,
-            self.json_schema,
-            self.validate_schema,
+            json_schema,
+            validate_schema,
             self.description,
             self.created_at,
             self.updated_at,
@@ -129,8 +179,8 @@ impl StorageClass {
             "id": self.id.id(),
             "name": self.name,
             "collection_id": self.collection_id.id(),
-            "json_schema": self.json_schema,
-            "validate_schema": self.validate_schema,
+            "json_schema": self.schema_policy.json_schema(),
+            "validate_schema": self.schema_policy.validates_schema(),
             "description": self.description,
             "created_at": self.created_at.naive_utc(),
             "updated_at": self.updated_at.naive_utc(),
@@ -144,20 +194,13 @@ pub struct StorageClassBuilder {
     name: String,
     collection_id: CollectionId,
     description: String,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
 }
 
 impl StorageClassBuilder {
     #[must_use]
-    pub fn json_schema(mut self, json_schema: Option<Value>) -> Self {
-        self.json_schema = json_schema;
-        self
-    }
-
-    #[must_use]
-    pub const fn validate_schema(mut self, validate_schema: bool) -> Self {
-        self.validate_schema = validate_schema;
+    pub fn schema_policy(mut self, schema_policy: StorageClassSchemaPolicy) -> Self {
+        self.schema_policy = schema_policy;
         self
     }
 
@@ -167,8 +210,7 @@ impl StorageClassBuilder {
             id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection_id: self.collection_id,
-            json_schema: self.json_schema,
-            validate_schema: self.validate_schema,
+            schema_policy: self.schema_policy,
             description: self.description,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),
@@ -259,8 +301,7 @@ pub enum StorageClassSelector {
 pub struct StorageClassCreate {
     name: String,
     collection_id: CollectionId,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
     description: String,
 }
 
@@ -275,8 +316,7 @@ impl StorageClassCreate {
             command: Self {
                 name: name.into(),
                 collection_id,
-                json_schema: None,
-                validate_schema: false,
+                schema_policy: StorageClassSchemaPolicy::Absent,
                 description: description.into(),
             },
         }
@@ -294,12 +334,17 @@ impl StorageClassCreate {
 
     #[must_use]
     pub const fn json_schema(&self) -> Option<&Value> {
-        self.json_schema.as_ref()
+        self.schema_policy.json_schema()
     }
 
     #[must_use]
     pub const fn validates_schema(&self) -> bool {
-        self.validate_schema
+        self.schema_policy.validates_schema()
+    }
+
+    #[must_use]
+    pub const fn schema_policy(&self) -> &StorageClassSchemaPolicy {
+        &self.schema_policy
     }
 
     #[must_use]
@@ -314,14 +359,8 @@ pub struct StorageClassCreateBuilder {
 
 impl StorageClassCreateBuilder {
     #[must_use]
-    pub fn json_schema(mut self, json_schema: Option<Value>) -> Self {
-        self.command.json_schema = json_schema;
-        self
-    }
-
-    #[must_use]
-    pub const fn validate_schema(mut self, validate_schema: bool) -> Self {
-        self.command.validate_schema = validate_schema;
+    pub fn schema_policy(mut self, schema_policy: StorageClassSchemaPolicy) -> Self {
+        self.command.schema_policy = schema_policy;
         self
     }
 
@@ -367,6 +406,20 @@ impl StorageClassUpdate {
     #[must_use]
     pub const fn validate_schema(&self) -> Option<bool> {
         self.validate_schema
+    }
+
+    pub fn resolve_schema_policy(
+        &self,
+        current: &StorageClassSchemaPolicy,
+    ) -> Result<StorageClassSchemaPolicy, StorageValidationError> {
+        let json_schema = self
+            .json_schema
+            .clone()
+            .or_else(|| current.json_schema().cloned());
+        let validate_schema = self
+            .validate_schema
+            .unwrap_or_else(|| current.validates_schema());
+        StorageClassSchemaPolicy::try_from_parts(json_schema, validate_schema)
     }
 
     #[must_use]
@@ -834,4 +887,40 @@ pub trait ObjectStorage: Send + Sync {
         object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_schema_policy_rejects_validation_without_schema() {
+        let error = StorageClassSchemaPolicy::try_from_parts(None, true).unwrap_err();
+
+        assert!(error.to_string().contains("without a schema"));
+    }
+
+    #[test]
+    fn class_schema_policy_round_trips_valid_database_states() {
+        let schema = serde_json::json!({"type": "object"});
+
+        assert_eq!(
+            StorageClassSchemaPolicy::try_from_parts(None, false)
+                .unwrap()
+                .into_parts(),
+            (None, false)
+        );
+        assert_eq!(
+            StorageClassSchemaPolicy::try_from_parts(Some(schema.clone()), false)
+                .unwrap()
+                .into_parts(),
+            (Some(schema.clone()), false)
+        );
+        assert_eq!(
+            StorageClassSchemaPolicy::try_from_parts(Some(schema.clone()), true)
+                .unwrap()
+                .into_parts(),
+            (Some(schema), true)
+        );
+    }
 }

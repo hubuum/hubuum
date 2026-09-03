@@ -6,8 +6,8 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId, Re
 use serde_json::Value;
 
 use crate::{
-    StorageAuthorizationPermission, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
-    StorageRecordMetadata, StorageValidationError,
+    StorageAuthorizationPermission, StorageCandidatePage, StorageCandidatePageLimit,
+    StorageClassSchemaPolicy, StorageError, StorageRecordMetadata, StorageValidationError,
 };
 
 /// Normalized collection, class, and object boundary for a scoped search.
@@ -429,8 +429,7 @@ pub struct StorageClassWithCollection {
     id: ClassId,
     name: String,
     collection: StorageCollection,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
     description: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -445,7 +444,7 @@ impl fmt::Debug for StorageClassWithCollection {
             .field("name", &"[redacted]")
             .field("collection", &self.collection)
             .field("json_schema", &"[redacted]")
-            .field("validate_schema", &self.validate_schema)
+            .field("validate_schema", &self.schema_policy.validates_schema())
             .field("description", &"[redacted]")
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
@@ -467,8 +466,7 @@ impl StorageClassWithCollection {
             name: name.into(),
             collection,
             description: description.into(),
-            json_schema: None,
-            validate_schema: false,
+            schema_policy: StorageClassSchemaPolicy::Absent,
         }
     }
 
@@ -487,12 +485,13 @@ impl StorageClassWithCollection {
         DateTime<Utc>,
         ResourceRevision,
     ) {
+        let (json_schema, validate_schema) = self.schema_policy.into_parts();
         (
             self.id,
             self.name,
             self.collection,
-            self.json_schema,
-            self.validate_schema,
+            json_schema,
+            validate_schema,
             self.description,
             self.created_at,
             self.updated_at,
@@ -521,20 +520,13 @@ pub struct StorageClassWithCollectionBuilder {
     name: String,
     collection: StorageCollection,
     description: String,
-    json_schema: Option<Value>,
-    validate_schema: bool,
+    schema_policy: StorageClassSchemaPolicy,
 }
 
 impl StorageClassWithCollectionBuilder {
     #[must_use]
-    pub fn json_schema(mut self, value: Option<Value>) -> Self {
-        self.json_schema = value;
-        self
-    }
-
-    #[must_use]
-    pub const fn validate_schema(mut self, value: bool) -> Self {
-        self.validate_schema = value;
+    pub fn schema_policy(mut self, schema_policy: StorageClassSchemaPolicy) -> Self {
+        self.schema_policy = schema_policy;
         self
     }
 
@@ -544,8 +536,7 @@ impl StorageClassWithCollectionBuilder {
             id: ClassId::from(self.metadata.id()),
             name: self.name,
             collection: self.collection,
-            json_schema: self.json_schema,
-            validate_schema: self.validate_schema,
+            schema_policy: self.schema_policy,
             description: self.description,
             created_at: self.metadata.created_at(),
             updated_at: self.metadata.updated_at(),

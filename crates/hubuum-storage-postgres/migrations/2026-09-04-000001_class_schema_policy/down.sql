@@ -1,0 +1,5 @@
+ALTER TABLE hubuumclass_history
+DROP CONSTRAINT IF EXISTS hubuumclass_history_enforced_schema_present;
+
+ALTER TABLE hubuumclass
+DROP CONSTRAINT IF EXISTS hubuumclass_enforced_schema_present;

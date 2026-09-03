@@ -8,9 +8,9 @@ async fn shared_computed_groups_evaluate_snapshots_and_use_unavailable_bucket(
     let fixture = fixture(&test_context, "shared computed groups").await;
     create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         computed_definition("shared_bucket", "/bucket", true),
         &EventContext::system(),
     )
@@ -47,9 +47,9 @@ async fn shared_computed_numeric_measure_uses_the_definition_snapshot(
     let fixture = fixture(&test_context, "shared computed measure").await;
     create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         numeric_computed_definition("shared_amount", "/amount", true),
         &EventContext::system(),
     )
@@ -82,9 +82,9 @@ async fn shared_computed_filters_apply_before_scalar_aggregation(
     let fixture = fixture(&test_context, "shared computed aggregate filter").await;
     create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         computed_definition("filter_status", "/status", true),
         &EventContext::system(),
     )
@@ -148,9 +148,9 @@ async fn computed_grouping_paginates_byte_bounded_candidate_batches(
         .unwrap();
     create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         computed_definition("byte_batch", "/bucket", true),
         &EventContext::system(),
     )
@@ -180,8 +180,8 @@ async fn personal_computed_grouping_uses_the_requesting_owners_definition(
     let group = grant_normal_user_read_access(&test_context, &fixture).await;
     create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.normal_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.normal_user.id),
         computed_definition("priority", "/bucket", true),
         &EventContext::system(),
     )
@@ -214,8 +214,8 @@ async fn personal_computed_filters_use_the_requesting_owners_definition(
     let group = grant_normal_user_read_access(&test_context, &fixture).await;
     create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.normal_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.normal_user.id),
         computed_definition("filter_priority", "/bucket", true),
         &EventContext::system(),
     )
@@ -250,8 +250,8 @@ async fn personal_computed_grouping_rejects_another_owners_definition(
     let group = grant_normal_user_read_access(&test_context, &fixture).await;
     create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.admin_user.id),
         computed_definition("admin_only", "/status", true),
         &EventContext::system(),
     )
@@ -292,8 +292,8 @@ async fn personal_computed_grouping_rejects_service_accounts(
     let group = grant_normal_user_read_access(&test_context, &fixture).await;
     create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.normal_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.normal_user.id),
         computed_definition("priority", "/bucket", true),
         &EventContext::system(),
     )
@@ -352,8 +352,8 @@ async fn invalid_computed_selectors_are_bad_requests(
     if create_disabled {
         create_personal_definition(
             &test_context.pool,
-            fixture.class.id,
-            test_context.normal_user.id,
+            typed_class_id(fixture.class.id),
+            typed_principal_id(test_context.normal_user.id),
             computed_definition(key, "/bucket", false),
             &EventContext::system(),
         )
@@ -400,9 +400,9 @@ async fn local_computed_filters_are_not_disclosed_outside_resource_scope(
     for (key, enabled) in [("known", true), ("disabled", false)] {
         create_shared_definition(
             &test_context.pool,
-            target.class.id,
-            target.class.collection_id,
-            test_context.admin_user.id,
+            typed_class_id(target.class.id),
+            typed_collection_id(target.class.collection_id),
+            typed_principal_id(test_context.admin_user.id),
             computed_definition(key, "/bucket", enabled),
             &EventContext::system(),
         )

@@ -35,8 +35,9 @@ impl ClassService {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        let command = class_create_to_storage(command)?;
         self.storage
-            .create_class(class_create_to_storage(command), context)
+            .create_class(command, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -49,9 +50,10 @@ impl ClassService {
         changes: UpdateHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
+        let changes = class_update_to_storage(changes)?;
         self.storage
-            .update_class(&target, class_update_to_storage(changes), context)
+            .update_class(&target, changes, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -63,7 +65,7 @@ impl ClassService {
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
         self.storage
             .delete_class(&target, context)
             .await

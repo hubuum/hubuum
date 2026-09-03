@@ -8,6 +8,7 @@ The statically linked storage adapter SDK consists of exactly these crates:
 
 | Crate | Supported purpose | Supported features |
 | --- | --- | --- |
+| `hubuum-computed-fields` | Validated computed-field definitions and deterministic evaluation | Default only |
 | `hubuum-domain` | Validated identifiers, revisions, JSON Patch, and domain values | Default; `openapi` |
 | `hubuum-events-core` | Event catalog, envelopes, filters, and mutation provenance | Default; `schema` |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
@@ -23,17 +24,15 @@ hubuum-storage-conformance
         |          +-- hubuum-domain
         v
 hubuum-storage-core
-    |       |       |       |
-    |       |       |       +-- hubuum-task-core
-    |       |       +---------- hubuum-query
-    |       +------------------ hubuum-events-core
-    +-------------------------- hubuum-domain
-                                    ^
-                                    |
-                            hubuum-events-core
+    |       |       |       |       |
+    |       |       |       |       +-- hubuum-task-core
+    |       |       |       +---------- hubuum-query
+    |       |       +------------------ hubuum-events-core
+    |       +-------------------------- hubuum-domain
+    +---------------------------------- hubuum-computed-fields
 ```
 
-Every in-graph dependency uses an exact version requirement. The six packages
+Every in-graph dependency uses an exact version requirement. The seven packages
 share one version and are released together. The root application and
 `hubuum-storage-postgres` are not part of the supported SDK. PostgreSQL remains
 the in-repository reference implementation, while an external adapter depends
@@ -49,7 +48,7 @@ The SDK begins as `experimental-public` at `0.1.0`. During the `0.x` series:
 
 - a patch release is source compatible with its minor line;
 - a minor release may make a documented breaking change;
-- all six crates still advance together, even when only one crate changes; and
+- all seven crates still advance together, even when only one crate changes; and
 - adapter manifests use an exact requirement for `hubuum-storage-core` and the
   matching `hubuum-storage-conformance` release.
 
@@ -102,6 +101,8 @@ Every other public SDK enum is a closed semantic vocabulary. Adding, removing,
 renaming, or reinterpreting a variant is an incompatible change. The audited
 closed set is:
 
+- `hubuum-computed-fields`: `DefinitionError`, `FieldErrorCode`, `Operation`, and
+  `ResultType`;
 - `hubuum-domain`: `EventDeliveryStatus`, `JsonPatchErrorKind`,
   `JsonSchemaErrorKind`, `MaintenanceState`, `PrincipalKind`,
   `ResourceRevisionError`, and `StorageJsonValidationError`;
@@ -139,7 +140,7 @@ versions, and the safest available migration.
 
 SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 
-1. choose one version for all six packages and update every exact in-graph
+1. choose one version for all seven packages and update every exact in-graph
    dependency plus `Cargo.lock`;
 2. record supported additions, changes, deprecations, and every breaking
    migration in `CHANGELOG.md`;
@@ -148,11 +149,11 @@ SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 4. run the Rust API policy, package, rustdoc, SemVer, formatting, lint, and full
    repository suites;
 5. publish in dependency order, waiting for crates.io index visibility between
-   layers: `hubuum-domain`, `hubuum-query`, and `hubuum-task-core` first,
-   `hubuum-events-core` second, `hubuum-storage-core` third, and
-   `hubuum-storage-conformance` last; and
+   layers: `hubuum-computed-fields`, `hubuum-domain`, `hubuum-query`, and
+   `hubuum-task-core` first, `hubuum-events-core` second, `hubuum-storage-core`
+   third, and `hubuum-storage-conformance` last; and
 6. create an annotated `storage-sdk-vX.Y.Z` tag and release notes only after all
-   six immutable crate versions are visible.
+   seven immutable crate versions are visible.
 
 The local publication checks are:
 
@@ -160,6 +161,7 @@ The local publication checks are:
 python3 scripts/check-rust-api-policy.py
 python3 scripts/test-rust-api-policy.py
 cargo package --locked \
+  --package hubuum-computed-fields \
   --package hubuum-domain \
   --package hubuum-events-core \
   --package hubuum-query \

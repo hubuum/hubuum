@@ -88,6 +88,10 @@ impl ComputedDefinitionRow {
         self.enabled
     }
 
+    pub(crate) const fn semantics_version(&self) -> i16 {
+        self.semantics_version
+    }
+
     pub(crate) const fn revision(&self) -> PostgresRevision {
         self.revision
     }
@@ -129,13 +133,14 @@ impl ComputedDefinitionRow {
             .map_err(|error| invalid_definition(self.id, format!("invalid operation: {error}")))?;
         let key =
             FieldKey::new(self.key.clone()).map_err(|error| invalid_definition(self.id, error))?;
-        Definition::new(
+        Definition::try_from_parts(
             key,
             self.label.clone(),
             self.description.clone(),
             operation,
             self.result_type()?,
             self.enabled,
+            self.semantics_version,
         )
         .map_err(|error| invalid_definition(self.id, error))
     }
@@ -155,21 +160,14 @@ impl ComputedDefinitionRow {
                 )));
             }
         };
+        let definition = self.evaluator_definition()?;
         Ok(StorageComputedFieldDefinition::new(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             ClassId::new(self.class_id)?,
             visibility,
-            StorageComputedFieldDefinitionContent::new(
-                StorageComputedFieldDefinitionInput::new(
-                    self.key,
-                    self.label,
-                    self.operation,
-                    self.result_type,
-                )
-                .with_description(self.description)
-                .with_enabled(self.enabled),
-                self.semantics_version,
-            ),
+            StorageComputedFieldDefinitionContent::new(StorageComputedFieldDefinitionInput::new(
+                definition,
+            )),
             StorageComputedFieldProvenance::new(
                 self.created_by.map(PrincipalId::new).transpose()?,
                 self.updated_by.map(PrincipalId::new).transpose()?,

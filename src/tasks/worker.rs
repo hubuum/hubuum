@@ -760,7 +760,6 @@ pub(super) async fn mark_claimed_task_failed(
         task,
         summary.clone(),
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: "failed".to_string(),
             message: "Task failed".to_string(),
             data: Some(serde_json::json!({ "error": summary })),

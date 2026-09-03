@@ -28,6 +28,7 @@ mod tests {
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
+    use hubuum_domain::{ClassId, CollectionId, PrincipalId};
     use hubuum_storage_postgres::{capture_queries, source_data_sha256, with_connection};
 
     #[derive(QueryableByName)]
@@ -83,6 +84,18 @@ mod tests {
         serde_json::from_value(definition(key)).unwrap()
     }
 
+    fn typed_class_id(id: i32) -> ClassId {
+        ClassId::new(id).expect("test fixture class ids are positive")
+    }
+
+    fn typed_collection_id(id: i32) -> CollectionId {
+        CollectionId::new(id).expect("test fixture collection ids are positive")
+    }
+
+    fn typed_principal_id(id: i32) -> PrincipalId {
+        PrincipalId::new(id).expect("test fixture principal ids are positive")
+    }
+
     async fn fixture(context: &TestContext, label: &str) -> crate::tests::ObjectFixture {
         context
             .object_fixture(
@@ -111,7 +124,7 @@ mod tests {
 
     async fn active_rebuild_task(context: &TestContext, class_id: i32) -> ClaimedTask {
         for _ in 0..50 {
-            let state = class_computation_state_for(&context.pool, class_id)
+            let state = class_computation_state_for(&context.pool, typed_class_id(class_id))
                 .await
                 .unwrap();
             let task_id = match state.active_task_id {
@@ -124,9 +137,9 @@ mod tests {
                         .unwrap();
                     request_class_rebuild(
                         &context.pool,
-                        class_id,
-                        class.collection_id,
-                        Some(context.admin_user.id),
+                        typed_class_id(class_id),
+                        typed_collection_id(class.collection_id),
+                        Some(typed_principal_id(context.admin_user.id)),
                     )
                     .await
                     .unwrap()
@@ -147,7 +160,7 @@ mod tests {
 
     async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
         for _ in 0..50 {
-            let state = class_computation_state_for(&context.pool, class_id)
+            let state = class_computation_state_for(&context.pool, typed_class_id(class_id))
                 .await
                 .unwrap();
             if state.active_task_id.is_none() && state.rebuild_status == "ready" {

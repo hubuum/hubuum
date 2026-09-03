@@ -11,7 +11,7 @@ use chrono::{NaiveDateTime, Utc};
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{PgExpressionMethods, SelectableHelper};
 use diesel_async::{AsyncConnection, RunQueryDsl};
-use hubuum_computed_fields::{Definition, FieldKey, Operation, ResultType, SEMANTICS_VERSION};
+use hubuum_computed_fields::ResultType;
 use hubuum_storage_core::{
     StorageClass, StorageClassRelationCreate, StorageCollection, StorageError, StorageErrorKind,
     StorageImportApply, StorageImportApplyItem, StorageImportAtomicity, StorageImportClass,
@@ -623,6 +623,7 @@ async fn create_class(
 ) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
+    let (json_schema, validate_schema) = parts.schema_policy.into_parts();
     let row = match parts.timestamps {
         Some(timestamps) => {
             let (created_at, updated_at) = import_timestamp_pair(timestamps);
@@ -630,8 +631,8 @@ async fn create_class(
                 .values((
                     crate::schema::hubuumclass::name.eq(parts.name),
                     crate::schema::hubuumclass::collection_id.eq(collection_id),
-                    crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-                    crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
+                    crate::schema::hubuumclass::json_schema.eq(json_schema),
+                    crate::schema::hubuumclass::validate_schema.eq(validate_schema),
                     crate::schema::hubuumclass::description.eq(parts.description),
                     crate::schema::hubuumclass::created_at.eq(created_at),
                     crate::schema::hubuumclass::updated_at.eq(updated_at),
@@ -644,8 +645,8 @@ async fn create_class(
                 .values((
                     crate::schema::hubuumclass::name.eq(parts.name),
                     crate::schema::hubuumclass::collection_id.eq(collection_id),
-                    crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-                    crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
+                    crate::schema::hubuumclass::json_schema.eq(json_schema),
+                    crate::schema::hubuumclass::validate_schema.eq(validate_schema),
                     crate::schema::hubuumclass::description.eq(parts.description),
                 ))
                 .get_result::<ClassRow>(connection)
@@ -661,6 +662,7 @@ async fn update_class(
     input: StorageImportClass,
 ) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
+    let (json_schema, validate_schema) = parts.schema_policy.into_parts();
     let current = crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
         .select(crate::schema::hubuumclass::revision)
@@ -671,8 +673,8 @@ async fn update_class(
     assert_import_revision(parts.condition, require_existing(current, parts.condition)?)?;
     let values = (
         crate::schema::hubuumclass::name.eq(parts.name),
-        crate::schema::hubuumclass::json_schema.eq(parts.json_schema),
-        crate::schema::hubuumclass::validate_schema.eq(parts.validate_schema),
+        crate::schema::hubuumclass::json_schema.eq(json_schema),
+        crate::schema::hubuumclass::validate_schema.eq(validate_schema),
         crate::schema::hubuumclass::description.eq(parts.description),
     );
     let row = if let Some(timestamps) = parts.timestamps {
@@ -1746,14 +1748,15 @@ async fn execute_computed_field(
     overwrite: bool,
 ) -> Result<(), PostgresStorageError> {
     let parts = input.into_parts();
-    validate_computed_field(
-        &parts.key,
-        &parts.label,
-        &parts.description,
-        &parts.operation,
-        &parts.result_type,
-        parts.enabled,
-    )?;
+    let definition = parts.definition;
+    let key = definition.key().as_str().to_string();
+    let label = definition.label().to_string();
+    let description = definition.description().to_string();
+    let operation = serde_json::to_value(definition.operation())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+    let result_type = computed_result_type_name(definition.result_type()).to_string();
+    let enabled = definition.enabled();
+    let semantics_version = definition.semantics_version();
     let class = resolve_class(
         connection,
         state,
@@ -1779,7 +1782,7 @@ async fn execute_computed_field(
     let existing = crate::schema::computed_field_definitions::table
         .filter(crate::schema::computed_field_definitions::class_id.eq(class.id().id()))
         .filter(crate::schema::computed_field_definitions::visibility.eq(visibility))
-        .filter(crate::schema::computed_field_definitions::key.eq(&parts.key))
+        .filter(crate::schema::computed_field_definitions::key.eq(&key))
         .filter(
             crate::schema::computed_field_definitions::owner_user_id.is_not_distinct_from(owner_id),
         )
@@ -1795,7 +1798,7 @@ async fn execute_computed_field(
             if !overwrite {
                 return Err(PostgresStorageError::conflict(format!(
                     "Computed field '{}' already exists in its scope",
-                    parts.key
+                    key
                 )));
             }
             let (created_at, updated_at) = parts
@@ -1808,11 +1811,11 @@ async fn execute_computed_field(
                         .filter(crate::schema::computed_field_definitions::id.eq(existing.id())),
                 )
                 .set((
-                    crate::schema::computed_field_definitions::label.eq(parts.label),
-                    crate::schema::computed_field_definitions::description.eq(parts.description),
-                    crate::schema::computed_field_definitions::operation.eq(parts.operation),
-                    crate::schema::computed_field_definitions::result_type.eq(parts.result_type),
-                    crate::schema::computed_field_definitions::enabled.eq(parts.enabled),
+                    crate::schema::computed_field_definitions::label.eq(label),
+                    crate::schema::computed_field_definitions::description.eq(description),
+                    crate::schema::computed_field_definitions::operation.eq(operation),
+                    crate::schema::computed_field_definitions::result_type.eq(result_type),
+                    crate::schema::computed_field_definitions::enabled.eq(enabled),
                     crate::schema::computed_field_definitions::created_at.eq(created_at),
                     crate::schema::computed_field_definitions::updated_at.eq(updated_at),
                 ))
@@ -1832,14 +1835,14 @@ async fn execute_computed_field(
                     crate::schema::computed_field_definitions::class_id.eq(class.id().id()),
                     crate::schema::computed_field_definitions::visibility.eq(visibility),
                     crate::schema::computed_field_definitions::owner_user_id.eq(owner_id),
-                    crate::schema::computed_field_definitions::key.eq(parts.key),
-                    crate::schema::computed_field_definitions::label.eq(parts.label),
-                    crate::schema::computed_field_definitions::description.eq(parts.description),
-                    crate::schema::computed_field_definitions::operation.eq(parts.operation),
-                    crate::schema::computed_field_definitions::result_type.eq(parts.result_type),
-                    crate::schema::computed_field_definitions::enabled.eq(parts.enabled),
+                    crate::schema::computed_field_definitions::key.eq(key),
+                    crate::schema::computed_field_definitions::label.eq(label),
+                    crate::schema::computed_field_definitions::description.eq(description),
+                    crate::schema::computed_field_definitions::operation.eq(operation),
+                    crate::schema::computed_field_definitions::result_type.eq(result_type),
+                    crate::schema::computed_field_definitions::enabled.eq(enabled),
                     crate::schema::computed_field_definitions::semantics_version
-                        .eq(SEMANTICS_VERSION),
+                        .eq(semantics_version),
                     crate::schema::computed_field_definitions::created_by.eq(owner_id),
                     crate::schema::computed_field_definitions::updated_by.eq(owner_id),
                     crate::schema::computed_field_definitions::created_at.eq(created_at),
@@ -1856,46 +1859,15 @@ async fn execute_computed_field(
     Ok(())
 }
 
-fn validate_computed_field(
-    key: &str,
-    label: &str,
-    description: &str,
-    operation: &serde_json::Value,
-    result_type: &str,
-    enabled: bool,
-) -> Result<(), PostgresStorageError> {
-    let key = FieldKey::new(key.to_string())
-        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
-    let operation = serde_json::from_value::<Operation>(operation.clone()).map_err(|error| {
-        PostgresStorageError::invalid_input(format!("Invalid computed-field operation: {error}"))
-    })?;
-    let result_type = computed_result_type(result_type).ok_or_else(|| {
-        PostgresStorageError::invalid_input(format!(
-            "Invalid computed-field result type '{result_type}'"
-        ))
-    })?;
-    Definition::new(
-        key,
-        label.to_string(),
-        description.to_string(),
-        operation,
-        result_type,
-        enabled,
-    )
-    .map(|_| ())
-    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
-}
-
-fn computed_result_type(value: &str) -> Option<ResultType> {
-    Some(match value {
-        "string" => ResultType::String,
-        "number" => ResultType::Number,
-        "integer" => ResultType::Integer,
-        "boolean" => ResultType::Boolean,
-        "object" => ResultType::Object,
-        "array" => ResultType::Array,
-        _ => return None,
-    })
+const fn computed_result_type_name(value: ResultType) -> &'static str {
+    match value {
+        ResultType::String => "string",
+        ResultType::Number => "number",
+        ResultType::Integer => "integer",
+        ResultType::Boolean => "boolean",
+        ResultType::Object => "object",
+        ResultType::Array => "array",
+    }
 }
 
 async fn resolve_class_relation_endpoints(
@@ -2948,7 +2920,10 @@ async fn observed_revision(
             crate::schema::computed_field_definitions::table
                 .filter(crate::schema::computed_field_definitions::class_id.eq(class.id().id()))
                 .filter(crate::schema::computed_field_definitions::visibility.eq(visibility))
-                .filter(crate::schema::computed_field_definitions::key.eq(parts.key))
+                .filter(
+                    crate::schema::computed_field_definitions::key
+                        .eq(parts.definition.key().as_str()),
+                )
                 .filter(
                     crate::schema::computed_field_definitions::owner_user_id
                         .is_not_distinct_from(owner_id),

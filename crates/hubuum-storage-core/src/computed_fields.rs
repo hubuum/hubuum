@@ -2,6 +2,7 @@ use std::{fmt, str::FromStr};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hubuum_computed_fields::{Definition, Operation, ResultType};
 use hubuum_domain::{ClassId, CollectionId, ComputedFieldDefinitionId, PrincipalId, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
@@ -50,69 +51,60 @@ impl fmt::Debug for StorageComputedFieldVisibility {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StorageComputedFieldDefinitionInput {
-    key: String,
-    label: String,
-    description: String,
-    operation: Value,
-    result_type: String,
-    enabled: bool,
+    definition: Definition,
 }
 
 impl StorageComputedFieldDefinitionInput {
     #[must_use]
-    pub fn new(key: String, label: String, operation: Value, result_type: String) -> Self {
-        Self {
-            key,
-            label,
-            description: String::new(),
-            operation,
-            result_type,
-            enabled: true,
-        }
-    }
-
-    #[must_use]
-    pub fn with_description(mut self, description: String) -> Self {
-        self.description = description;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
+    pub const fn new(definition: Definition) -> Self {
+        Self { definition }
     }
 
     #[must_use]
     pub fn key(&self) -> &str {
-        &self.key
+        self.definition.key().as_str()
     }
 
     #[must_use]
     pub fn label(&self) -> &str {
-        &self.label
+        self.definition.label()
     }
 
     #[must_use]
     pub fn description(&self) -> &str {
-        &self.description
+        self.definition.description()
     }
 
     #[must_use]
-    pub const fn operation(&self) -> &Value {
-        &self.operation
+    pub fn operation(&self) -> &Operation {
+        self.definition.operation()
     }
 
     #[must_use]
-    pub fn result_type(&self) -> &str {
-        &self.result_type
+    pub const fn result_type(&self) -> ResultType {
+        self.definition.result_type()
     }
 
     #[must_use]
     pub const fn enabled(&self) -> bool {
-        self.enabled
+        self.definition.enabled()
+    }
+
+    #[must_use]
+    pub const fn semantics_version(&self) -> i16 {
+        self.definition.semantics_version()
+    }
+
+    #[must_use]
+    pub const fn definition(&self) -> &Definition {
+        &self.definition
+    }
+
+    #[must_use]
+    pub fn into_definition(self) -> Definition {
+        self.definition
     }
 }
 
@@ -120,8 +112,8 @@ impl fmt::Debug for StorageComputedFieldDefinitionInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageComputedFieldDefinitionInput")
-            .field("result_type", &self.result_type)
-            .field("enabled", &self.enabled)
+            .field("result_type", &self.result_type())
+            .field("enabled", &self.enabled())
             .field("operation", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -231,28 +223,16 @@ impl fmt::Debug for StorageComputedFieldDefinitionPatch {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StorageComputedFieldDefinitionContent {
-    key: String,
-    label: String,
-    description: String,
-    operation: Value,
-    result_type: String,
-    enabled: bool,
-    semantics_version: i16,
+    definition: Definition,
 }
 
 impl StorageComputedFieldDefinitionContent {
     #[must_use]
-    pub fn new(input: StorageComputedFieldDefinitionInput, semantics_version: i16) -> Self {
+    pub fn new(input: StorageComputedFieldDefinitionInput) -> Self {
         Self {
-            key: input.key,
-            label: input.label,
-            description: input.description,
-            operation: input.operation,
-            result_type: input.result_type,
-            enabled: input.enabled,
-            semantics_version,
+            definition: input.into_definition(),
         }
     }
 }
@@ -317,37 +297,42 @@ impl StorageComputedFieldDefinition {
 
     #[must_use]
     pub fn key(&self) -> &str {
-        &self.content.key
+        self.content.definition.key().as_str()
     }
 
     #[must_use]
     pub fn label(&self) -> &str {
-        &self.content.label
+        self.content.definition.label()
     }
 
     #[must_use]
     pub fn description(&self) -> &str {
-        &self.content.description
+        self.content.definition.description()
     }
 
     #[must_use]
-    pub const fn operation(&self) -> &Value {
-        &self.content.operation
+    pub fn operation(&self) -> &Operation {
+        self.content.definition.operation()
     }
 
     #[must_use]
-    pub fn result_type(&self) -> &str {
-        &self.content.result_type
+    pub const fn result_type(&self) -> ResultType {
+        self.content.definition.result_type()
     }
 
     #[must_use]
     pub const fn enabled(&self) -> bool {
-        self.content.enabled
+        self.content.definition.enabled()
     }
 
     #[must_use]
     pub const fn semantics_version(&self) -> i16 {
-        self.content.semantics_version
+        self.content.definition.semantics_version()
+    }
+
+    #[must_use]
+    pub const fn evaluator_definition(&self) -> &Definition {
+        &self.content.definition
     }
 
     #[must_use]
@@ -370,9 +355,12 @@ impl fmt::Debug for StorageComputedFieldDefinition {
         formatter
             .debug_struct("StorageComputedFieldDefinition")
             .field("visibility", &visibility)
-            .field("result_type", &self.content.result_type)
-            .field("enabled", &self.content.enabled)
-            .field("semantics_version", &self.content.semantics_version)
+            .field("result_type", &self.content.definition.result_type())
+            .field("enabled", &self.content.definition.enabled())
+            .field(
+                "semantics_version",
+                &self.content.definition.semantics_version(),
+            )
             .field("content", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -418,35 +406,104 @@ impl FromStr for StorageComputationRebuildStatus {
     }
 }
 
+/// Correlated computed-field rebuild state.
+///
+/// Each variant carries exactly the data that is meaningful for that state, so
+/// callers cannot construct a rebuilding state without a task or a failed state
+/// without an error.
+#[derive(Clone, PartialEq, Eq)]
+pub enum StorageComputationRebuildState {
+    Ready,
+    Rebuilding { active_task_id: TaskId },
+    Failed { last_error: String },
+}
+
+impl StorageComputationRebuildState {
+    pub fn try_from_parts(
+        status: StorageComputationRebuildStatus,
+        active_task_id: Option<TaskId>,
+        last_error: Option<String>,
+    ) -> Result<Self, StorageValidationError> {
+        match (status, active_task_id, last_error) {
+            (StorageComputationRebuildStatus::Ready, None, None) => Ok(Self::Ready),
+            (StorageComputationRebuildStatus::Rebuilding, Some(active_task_id), None) => {
+                Ok(Self::Rebuilding { active_task_id })
+            }
+            (StorageComputationRebuildStatus::Failed, None, Some(last_error)) => {
+                Ok(Self::Failed { last_error })
+            }
+            _ => Err(StorageValidationError::invalid(
+                "Computation rebuild status, active task, and last error are inconsistent",
+            )),
+        }
+    }
+
+    #[must_use]
+    pub const fn status(&self) -> StorageComputationRebuildStatus {
+        match self {
+            Self::Ready => StorageComputationRebuildStatus::Ready,
+            Self::Rebuilding { .. } => StorageComputationRebuildStatus::Rebuilding,
+            Self::Failed { .. } => StorageComputationRebuildStatus::Failed,
+        }
+    }
+
+    #[must_use]
+    pub const fn active_task_id(&self) -> Option<TaskId> {
+        match self {
+            Self::Rebuilding { active_task_id } => Some(*active_task_id),
+            Self::Ready | Self::Failed { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn last_error_message(&self) -> Option<&str> {
+        match self {
+            Self::Failed { last_error } => Some(last_error),
+            Self::Ready | Self::Rebuilding { .. } => None,
+        }
+    }
+}
+
+impl fmt::Debug for StorageComputationRebuildState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageComputationRebuildState")
+            .field("status", &self.status().as_str())
+            .field("has_active_task", &self.active_task_id().is_some())
+            .field("has_last_error", &self.last_error_message().is_some())
+            .finish()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageClassComputationState {
     class_id: ClassId,
     evaluation_revision: StorageComputationRevision,
-    rebuild_status: StorageComputationRebuildStatus,
-    active_task_id: Option<TaskId>,
-    last_error: Option<String>,
+    rebuild_state: StorageComputationRebuildState,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
 impl StorageClassComputationState {
-    #[must_use]
-    pub fn builder(
+    pub fn try_new(
         class_id: ClassId,
         evaluation_revision: StorageComputationRevision,
-        rebuild_status: StorageComputationRebuildStatus,
+        rebuild_state: StorageComputationRebuildState,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
-    ) -> StorageClassComputationStateBuilder {
-        StorageClassComputationStateBuilder {
+    ) -> Result<Self, StorageValidationError> {
+        if updated_at < created_at {
+            return Err(StorageValidationError::invalid(
+                "Computation state updated_at must not precede created_at",
+            ));
+        }
+        Ok(Self {
             class_id,
             evaluation_revision,
-            rebuild_status,
-            active_task_id: None,
-            last_error: None,
+            rebuild_state,
             created_at,
             updated_at,
-        }
+        })
     }
 
     #[must_use]
@@ -461,17 +518,22 @@ impl StorageClassComputationState {
 
     #[must_use]
     pub const fn rebuild_status(&self) -> StorageComputationRebuildStatus {
-        self.rebuild_status
+        self.rebuild_state.status()
+    }
+
+    #[must_use]
+    pub const fn rebuild_state(&self) -> &StorageComputationRebuildState {
+        &self.rebuild_state
     }
 
     #[must_use]
     pub const fn active_task_id(&self) -> Option<TaskId> {
-        self.active_task_id
+        self.rebuild_state.active_task_id()
     }
 
     #[must_use]
     pub fn last_error_message(&self) -> Option<&str> {
-        self.last_error.as_deref()
+        self.rebuild_state.last_error_message()
     }
 
     #[must_use]
@@ -485,72 +547,12 @@ impl StorageClassComputationState {
     }
 }
 
-/// Builder that validates correlated computation-state fields at its terminal.
-pub struct StorageClassComputationStateBuilder {
-    class_id: ClassId,
-    evaluation_revision: StorageComputationRevision,
-    rebuild_status: StorageComputationRebuildStatus,
-    active_task_id: Option<TaskId>,
-    last_error: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-impl StorageClassComputationStateBuilder {
-    #[must_use]
-    pub const fn active_task(mut self, active_task_id: Option<TaskId>) -> Self {
-        self.active_task_id = active_task_id;
-        self
-    }
-
-    #[must_use]
-    pub fn last_error(mut self, last_error: Option<String>) -> Self {
-        self.last_error = last_error;
-        self
-    }
-
-    pub fn try_build(self) -> Result<StorageClassComputationState, StorageValidationError> {
-        if self.updated_at < self.created_at {
-            return Err(StorageValidationError::invalid(
-                "Computation state updated_at must not precede created_at",
-            ));
-        }
-        let valid_correlated_state = match self.rebuild_status {
-            StorageComputationRebuildStatus::Ready => {
-                self.active_task_id.is_none() && self.last_error.is_none()
-            }
-            StorageComputationRebuildStatus::Rebuilding => {
-                self.active_task_id.is_some() && self.last_error.is_none()
-            }
-            StorageComputationRebuildStatus::Failed => {
-                self.active_task_id.is_none() && self.last_error.is_some()
-            }
-        };
-        if !valid_correlated_state {
-            return Err(StorageValidationError::invalid(
-                "Computation rebuild status, active task, and last error are inconsistent",
-            ));
-        }
-        Ok(StorageClassComputationState {
-            class_id: self.class_id,
-            evaluation_revision: self.evaluation_revision,
-            rebuild_status: self.rebuild_status,
-            active_task_id: self.active_task_id,
-            last_error: self.last_error,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        })
-    }
-}
-
 impl fmt::Debug for StorageClassComputationState {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageClassComputationState")
             .field("evaluation_revision", &self.evaluation_revision)
-            .field("rebuild_status", &self.rebuild_status.as_str())
-            .field("has_active_task", &self.active_task_id.is_some())
-            .field("has_last_error", &self.last_error.is_some())
+            .field("rebuild_state", &self.rebuild_state)
             .finish_non_exhaustive()
     }
 }
@@ -986,16 +988,19 @@ mod tests {
             StorageComputedFieldVisibility::Personal {
                 owner_id: PrincipalId::new(73).unwrap(),
             },
-            StorageComputedFieldDefinitionContent::new(
-                StorageComputedFieldDefinitionInput::new(
-                    "secret_key".to_string(),
-                    "secret label".to_string(),
-                    serde_json::json!({"secret": "expression"}),
-                    "number".to_string(),
+            StorageComputedFieldDefinitionContent::new(StorageComputedFieldDefinitionInput::new(
+                Definition::new(
+                    hubuum_computed_fields::FieldKey::new("secret_key").unwrap(),
+                    "secret label",
+                    "secret description",
+                    hubuum_computed_fields::Operation::Sum {
+                        paths: vec![hubuum_computed_fields::JsonPointer::new("/secret").unwrap()],
+                    },
+                    ResultType::Number,
+                    true,
                 )
-                .with_description("secret description".to_string()),
-                4,
-            ),
+                .unwrap(),
+            )),
             StorageComputedFieldProvenance::new(
                 PrincipalId::new(74).ok(),
                 PrincipalId::new(75).ok(),
@@ -1022,25 +1027,25 @@ mod tests {
     #[test]
     fn computation_state_debug_redacts_resource_task_and_error_details() {
         let now = chrono::Utc::now();
-        let failed_state = StorageClassComputationState::builder(
+        let failed_state = StorageClassComputationState::try_new(
             ClassId::new(98_765).unwrap(),
             StorageComputationRevision::try_new(7).unwrap(),
-            StorageComputationRebuildStatus::Failed,
+            StorageComputationRebuildState::Failed {
+                last_error: "secret database detail".to_string(),
+            },
             now,
             now,
         )
-        .last_error(Some("secret database detail".to_string()))
-        .try_build()
         .unwrap();
-        let rebuilding_state = StorageClassComputationState::builder(
+        let rebuilding_state = StorageClassComputationState::try_new(
             ClassId::new(98_765).unwrap(),
             StorageComputationRevision::try_new(7).unwrap(),
-            StorageComputationRebuildStatus::Rebuilding,
+            StorageComputationRebuildState::Rebuilding {
+                active_task_id: TaskId::new(87_654).unwrap(),
+            },
             now,
             now,
         )
-        .active_task(TaskId::new(87_654).ok())
-        .try_build()
         .unwrap();
 
         let debug = format!("{failed_state:?} {rebuilding_state:?}");
@@ -1051,5 +1056,35 @@ mod tests {
         assert!(debug.contains("failed"));
         assert!(debug.contains("has_active_task: true"));
         assert!(debug.contains("has_last_error: true"));
+    }
+
+    #[test]
+    fn computation_rebuild_state_rejects_inconsistent_parts() {
+        let task_id = TaskId::new(42).unwrap();
+
+        assert!(
+            StorageComputationRebuildState::try_from_parts(
+                StorageComputationRebuildStatus::Ready,
+                Some(task_id),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            StorageComputationRebuildState::try_from_parts(
+                StorageComputationRebuildStatus::Rebuilding,
+                None,
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            StorageComputationRebuildState::try_from_parts(
+                StorageComputationRebuildStatus::Failed,
+                None,
+                None,
+            )
+            .is_err()
+        );
     }
 }

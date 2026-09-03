@@ -358,9 +358,9 @@ async fn shared_mutation_rejects_a_stale_authorized_collection(
 
     let error = create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id + 1,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id + 1),
+        typed_principal_id(test_context.admin_user.id),
         definition_request("stale_authorization"),
         &EventContext::system(),
     )

@@ -27,7 +27,7 @@ use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update
 use crate::storage::{
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallTaskArtifact, StorageRemoteTargetHttpMethod,
-    StorageRemoteTargetSubjectType, StorageTaskCompletionArtifact,
+    StorageRemoteTargetSubjectType, StorageTaskCompletionPayload,
 };
 use crate::traits::AuthzSubject;
 
@@ -386,12 +386,11 @@ async fn finalize_remote_task(
         .summary(outcome.summary.clone())
         .started_at(task.started_at),
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: status.as_str().to_string(),
             message: outcome.summary,
             data: outcome.event_data,
         },
-        StorageTaskCompletionArtifact::RemoteCall(outcome.artifact),
+        StorageTaskCompletionPayload::RemoteCall(outcome.artifact),
     )
     .await?;
     Ok(())

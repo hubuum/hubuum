@@ -394,10 +394,6 @@ impl RelationPlanDecision {
     }
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 async fn ensure_relation_permissions<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -918,10 +914,6 @@ where
     }
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_collection<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -1140,10 +1132,6 @@ fn validate_planned_class_schema(class: &ClassResolution) -> Result<(), ApiError
     crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_class<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -1379,10 +1367,6 @@ where
     }
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_object<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -1598,10 +1582,6 @@ where
     }
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_class_relation<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -1748,10 +1728,6 @@ where
     })
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_object_relation<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
@@ -1922,10 +1898,6 @@ where
     })
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "planning failures retain the complete item for batched diagnostics and persistence"
-)]
 pub(super) async fn plan_collection_permission<C>(
     backend: &C,
     user: &impl crate::traits::AuthzSubject,
