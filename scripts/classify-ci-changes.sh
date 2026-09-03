@@ -18,6 +18,7 @@ container=false
 artifacts=false
 benchmarks=false
 runtime_benchmark=false
+scale_benchmark=false
 treetop_conformance=false
 
 for path in "$@"; do
@@ -96,6 +97,13 @@ for path in "$@"; do
       benchmarks=true
       runtime_benchmark=true
       ;;
+    .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
+      crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
+      crates/hubuum-storage-postgres/src/scale_benchmark.rs)
+      code=true
+      benchmarks=true
+      scale_benchmark=true
+      ;;
     .github/workflows/restore-drill.yml)
       code=true
       container=true
@@ -155,6 +163,7 @@ for path in "$@"; do
       artifacts=true
       benchmarks=true
       runtime_benchmark=true
+      scale_benchmark=true
       ;;
     Cross.toml | diesel.toml | build.rs)
       code=true
@@ -174,6 +183,7 @@ for path in "$@"; do
       code=true
       benchmarks=true
       runtime_benchmark=true
+      scale_benchmark=true
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
@@ -209,6 +219,7 @@ outputs=(
   "artifacts=$artifacts"
   "benchmarks=$benchmarks"
   "runtime_benchmark=$runtime_benchmark"
+  "scale_benchmark=$scale_benchmark"
   "treetop_conformance=$treetop_conformance"
 )
 

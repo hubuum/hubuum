@@ -8,6 +8,10 @@ one-connection pool for task lease renewal. Tune the primary pool as a database
 concurrency limit, not as a mirror of the Actix worker count, and include the
 auxiliary connections in the instance's total PostgreSQL connection budget.
 
+For deterministic large and huge datasets, stateful mixed workloads, and
+backup/restore lifecycle measurements, use the
+[scale operational benchmark suite](scale_benchmarks.md).
+
 ## Connection Budget
 
 Start with the PostgreSQL connection budget for one Hubuum instance:

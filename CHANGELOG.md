@@ -9,6 +9,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added opt-in deterministic large and huge operational benchmark profiles with
+  skewed relational, history, computed, authorization, task, and event data;
+  production API and worker workloads; standard and extended limit coverage;
+  correctness-gated scale reports; resource and lifecycle evidence; and
+  isolated backup/restore verification. Pull requests select the expensive
+  tiers only through `ci:scale-large` or `ci:scale-huge`, while scheduled and
+  manual runs retain explicit profile control. A calibrated fixed-binary growth
+  matrix changes objects or object relations independently by +20%, +50%, and
+  +100%, and reports exact baseline and expanded corpus sizes with absolute and
+  relative search, relation, traversal, database, and index costs. The scale
+  report also measures object-graph searches across calibrated depths, reports
+  returned nodes and edges, and distinguishes fixed-local-graph volume cost
+  from growing-density fan-out. The scale workflow leaves base/head
+  code-regression detection to `rust-pr-bench`.
+  Machine-readable impact reports support arbitrary controlled increments
+  without treating simultaneous large-to-huge changes as causal. A shared
+  benchmark frontend consumes adapter-owned scale traits, records neutral and
+  backend-specific resource evidence, renders matching backends side by side,
+  and publishes a consolidated, updatable pull-request report.
 - Added `hubuum-admin --verify-backup` for bounded offline validation and an
   opt-in isolated PostgreSQL restore drill with empty-target and production-
   endpoint safeguards, sanitized JSON evidence, readiness checks, and explicit

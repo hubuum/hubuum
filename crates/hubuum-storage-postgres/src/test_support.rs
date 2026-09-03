@@ -7,8 +7,8 @@
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Timestamp};
 use diesel::{
-    ExpressionMethods, Insertable, OptionalExtension, QueryDsl, Queryable, QueryableByName,
-    Selectable, SelectableHelper,
+    ExpressionMethods, Insertable, NullableExpressionMethods, OptionalExtension, QueryDsl,
+    Queryable, QueryableByName, Selectable, SelectableHelper,
 };
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
@@ -29,6 +29,16 @@ use crate::{
     PostgresStorageError, build_postgres_pool,
 };
 
+/// Return the migrated database URL selected by the repository test runner.
+///
+/// Environment translation stays in this adapter-owned support module instead
+/// of being repeated by each integration-test binary.
+#[must_use]
+pub fn integration_test_database_url() -> String {
+    std::env::var("HUBUUM_DATABASE_URL")
+        .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database")
+}
+
 /// Build a pool for an adapter integration test against the migrated database
 /// selected by the repository test runner.
 ///
@@ -36,8 +46,7 @@ use crate::{
 /// of being repeated by each integration-test binary.
 #[must_use]
 pub fn integration_test_pool(max_size: u32) -> PostgresPool {
-    let database_url = std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database");
+    let database_url = integration_test_database_url();
     let settings = PostgresPoolSettings::builder(database_url)
         .max_size(max_size)
         .statement_timeout_ms(0)
@@ -622,9 +631,13 @@ pub async fn claim_task_by_id_with_lease(
         attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
-    let now = chrono::Utc::now().naive_utc();
     let token = uuid::Uuid::new_v4();
     let mut connection = pool.get().await?;
+    let now = diesel::select(diesel::dsl::sql::<Timestamp>(
+        "clock_timestamp() AT TIME ZONE 'UTC'",
+    ))
+    .get_result::<NaiveDateTime>(&mut connection)
+    .await?;
     let row = diesel::update(
         tasks
             .filter(id.eq(task_id_value.id()))
@@ -1252,18 +1265,17 @@ pub async fn assign_task_lease(
     expires_at: NaiveDateTime,
 ) -> Result<(), PostgresStorageError> {
     use crate::schema::tasks::dsl::{
-        id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
+        created_at, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
     let mut connection = pool.get().await?;
-    let claimed_at = chrono::Utc::now().naive_utc();
     let updated = diesel::update(tasks.filter(id.eq(task_id.id())))
         .set((
             status.eq(status_value.as_str()),
-            started_at.eq(Some(claimed_at)),
+            started_at.eq(created_at.nullable()),
             lease_token.eq(Some(claim_token)),
             lease_expires_at.eq(Some(expires_at)),
-            updated_at.eq(claimed_at),
+            updated_at.eq(created_at),
         ))
         .execute(&mut connection)
         .await?;

@@ -31,6 +31,8 @@ members = [
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
+    "crates/hubuum-scale-benchmark",
+    "crates/hubuum-scale-core",
     "crates/hubuum-secrets",
     "crates/hubuum-storage-core",
     "crates/hubuum-storage-conformance",

@@ -19,6 +19,9 @@ mod pool;
 mod query_capture;
 mod revision;
 mod runtime;
+#[cfg(feature = "scale-benchmark-support")]
+#[doc(hidden)]
+pub mod scale_benchmark;
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub mod schema;

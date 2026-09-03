@@ -1,0 +1,353 @@
+name: Scale operational benchmarks
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+      - unlabeled
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Dataset profile
+        required: true
+        default: large
+        type: choice
+        options:
+          - large
+          - huge
+          - both
+      limit_mode:
+        description: Operational limit policy
+        required: true
+        default: both
+        type: choice
+        options:
+          - standard
+          - extended
+          - both
+  schedule:
+    - cron: "17 3 * * 2"
+    - cron: "43 3 1 * *"
+
+concurrency:
+  group: >-
+    scale-benchmarks-${{ github.event.pull_request.number || github.ref }}-${{
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      github.event.label.name != 'ci:scale-large' &&
+      github.event.label.name != 'ci:scale-huge' && github.run_id || 'selected' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select explicit scale tiers
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.matrix.outputs.enabled }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build requested profile matrix
+        id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          CHANGED_LABEL: ${{ github.event.label.name }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          INPUT_PROFILE: ${{ inputs.profile }}
+          INPUT_LIMIT_MODE: ${{ inputs.limit_mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          profiles=()
+          modes=(standard extended)
+          backends=(postgres)
+
+          case "$EVENT_NAME" in
+            pull_request)
+              if [[ "$EVENT_ACTION" == "labeled" || "$EVENT_ACTION" == "unlabeled" ]]; then
+                if [[ "$CHANGED_LABEL" != "ci:scale-large" && "$CHANGED_LABEL" != "ci:scale-huge" ]]; then
+                  echo 'enabled=false' >> "$GITHUB_OUTPUT"
+                  echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+              fi
+              if jq --exit-status 'index("ci:scale-large") != null' <<< "$PR_LABELS" >/dev/null; then
+                profiles+=(large)
+              fi
+              if jq --exit-status 'index("ci:scale-huge") != null' <<< "$PR_LABELS" >/dev/null; then
+                profiles+=(huge)
+              fi
+              ;;
+            workflow_dispatch)
+              if [[ "$INPUT_PROFILE" == "both" ]]; then
+                profiles=(large huge)
+              else
+                profiles=("$INPUT_PROFILE")
+              fi
+              if [[ "$INPUT_LIMIT_MODE" != "both" ]]; then
+                modes=("$INPUT_LIMIT_MODE")
+              fi
+              ;;
+            schedule)
+              if [[ "$SCHEDULE" == "17 3 * * 2" ]]; then
+                profiles=(large)
+              else
+                profiles=(huge)
+              fi
+              ;;
+          esac
+
+          matrix='{"include":[]}'
+          for profile in "${profiles[@]}"; do
+            for mode in "${modes[@]}"; do
+              for backend in "${backends[@]}"; do
+                matrix="$(jq --compact-output \
+                  --arg backend "$backend" --arg profile "$profile" --arg mode "$mode" \
+                  '.include += [{backend: $backend, profile: $profile, mode: $mode}]' <<< "$matrix")"
+              done
+            done
+          done
+          if [[ "${#profiles[@]}" -eq 0 ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  scale:
+    name: ${{ matrix.backend }} / ${{ matrix.profile }} / ${{ matrix.mode }}
+    needs: select
+    if: needs.select.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --shm-size 2g
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SCALE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_measure
+      SCALE_VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_scale_verify
+      REPORT_ROOT: target/scale-reports/${{ matrix.profile }}/${{ matrix.mode }}
+    steps:
+      - name: Check out benchmark implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Cache Cargo and target directories
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Verify PostgreSQL build tools
+        run: |
+          command -v pg_config
+          pkg-config --exists libpq
+      - name: Create report directories
+        run: |
+          mkdir -p "$REPORT_ROOT/impacts" "$REPORT_ROOT/points"
+      - name: Build fixed runner and production binaries
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          CARGO_TARGET_DIR=target/scale-head cargo build --locked \
+            --release \
+            --package hubuum-scale-benchmark
+          CARGO_TARGET_DIR=target/scale-head cargo build --locked \
+            --release --features embedded-migrations \
+            --bin hubuum-server --bin hubuum-admin
+      - name: Measure controlled corpus growth
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PGPASSWORD: postgres
+        run: |
+          reset_measure_database() {
+            dropdb --host localhost --username postgres --if-exists --force hubuum_scale_measure
+            createdb --host localhost --username postgres hubuum_scale_measure
+            target/scale-head/release/hubuum-admin \
+              --migrate --legacy-single-role-migration \
+              --database-url "$SCALE_DATABASE_URL"
+          }
+
+          target/scale-head/release/hubuum-scale-benchmark sensitivity-plan \
+            --profile "${{ matrix.profile }}" \
+            --limit-mode "${{ matrix.mode }}" \
+            --output "$REPORT_ROOT/sensitivity-plan.json"
+
+          reset_measure_database
+          dropdb --host localhost --username postgres --if-exists --force hubuum_scale_verify
+          createdb --host localhost --username postgres hubuum_scale_verify
+          target/scale-head/release/hubuum-scale-benchmark run \
+            --backend "${{ matrix.backend }}" \
+            --profile "${{ matrix.profile }}" \
+            --limit-mode "${{ matrix.mode }}" \
+            --server-binary target/scale-head/release/hubuum-server \
+            --admin-binary target/scale-head/release/hubuum-admin \
+            --database-url "$SCALE_DATABASE_URL" \
+            --restore-test-database-url "$SCALE_VERIFY_DATABASE_URL" \
+            --label "$HEAD_SHA-baseline" \
+            --manifest-output "$REPORT_ROOT/baseline-manifest.json" \
+            --load-report-output "$REPORT_ROOT/baseline-load.json" \
+            --output "$REPORT_ROOT/baseline.json" \
+            --artifact-directory "$REPORT_ROOT/baseline-artifacts"
+
+          while IFS=$'\t' read -r axis percent amount; do
+            case "$axis" in
+              classes)
+                increment_args=(--add-classes "$amount")
+                ;;
+              objects)
+                increment_args=(--add-objects "$amount")
+                ;;
+              object_heavy_objects)
+                increment_args=(--add-object-heavy-objects "$amount")
+                ;;
+              object_relations)
+                increment_args=(--add-object-relations "$amount")
+                ;;
+              concentrated_object_relations)
+                increment_args=(--add-concentrated-object-relations "$amount")
+                ;;
+              dense_object_relations)
+                increment_args=(--add-dense-object-relations "$amount")
+                ;;
+              *)
+                echo "Unsupported sensitivity axis: $axis" >&2
+                exit 1
+                ;;
+            esac
+            point="$axis-p$percent"
+            reset_measure_database
+            target/scale-head/release/hubuum-scale-benchmark run \
+              --backend "${{ matrix.backend }}" \
+              --profile "${{ matrix.profile }}" \
+              "${increment_args[@]}" \
+              --limit-mode "${{ matrix.mode }}" \
+              --server-binary target/scale-head/release/hubuum-server \
+              --admin-binary target/scale-head/release/hubuum-admin \
+              --database-url "$SCALE_DATABASE_URL" \
+              --label "$HEAD_SHA-$point" \
+              --manifest-output "$REPORT_ROOT/points/$point-manifest.json" \
+              --load-report-output "$REPORT_ROOT/points/$point-load.json" \
+              --output "$REPORT_ROOT/points/$point.json" \
+              --artifact-directory "$REPORT_ROOT/points/$point-artifacts" \
+              --skip-lifecycle
+            target/scale-head/release/hubuum-scale-benchmark impact \
+              --baseline "$REPORT_ROOT/baseline.json" \
+              --comparison "$REPORT_ROOT/points/$point.json" \
+              --axis "$axis" \
+              --output "$REPORT_ROOT/impacts/$point.json"
+          done < <(jq --raw-output \
+            '.points[] | [.axis, (.added_percent | tostring), (.added_count | tostring)] | @tsv' \
+            "$REPORT_ROOT/sensitivity-plan.json")
+
+          target/scale-head/release/hubuum-scale-benchmark summarize-sensitivity \
+            --baseline "$REPORT_ROOT/baseline.json" \
+            --impacts "$REPORT_ROOT"/impacts/*.json \
+            --output "$REPORT_ROOT/sensitivity.json" \
+            --markdown-output "$REPORT_ROOT/sensitivity.md" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized reports and lifecycle artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scale-${{ matrix.backend }}-${{ matrix.profile }}-${{ matrix.mode }}
+          path: ${{ env.REPORT_ROOT }}
+          retention-days: 14
+
+  report:
+    name: Scale growth report
+    needs:
+      - select
+      - scale
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.select.outputs.enabled == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    env:
+      COMMENT_PATH: target/scale-pr-comment.md
+      DOWNLOAD_ROOT: target/scale-pr-reports
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Download scale reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: scale-*
+          path: ${{ env.DOWNLOAD_ROOT }}
+      - name: Compose consolidated scale report
+        env:
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          mkdir -p "$(dirname "$COMMENT_PATH")"
+          standard_reports=()
+          extended_reports=()
+          for candidate in "$DOWNLOAD_ROOT"/scale-*/sensitivity.md; do
+            if [[ -f "$candidate" ]]; then
+              case "$candidate" in
+                *-standard/*)
+                  standard_reports+=("$candidate")
+                  ;;
+                *)
+                  extended_reports+=("$candidate")
+                  ;;
+              esac
+            fi
+          done
+          reports=("${standard_reports[@]}" "${extended_reports[@]}")
+
+          {
+            echo '<!-- hubuum-scale-pr-bench -->'
+            echo '# Scale Growth Report'
+            echo
+            echo "PR #$PR_NUMBER • Fixed binary: ${HEAD_SHA:0:7} • Latest: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "This report measures how performance changes as corpus volume and placement skew grow; \`rust-pr-bench\` owns base/PR code-regression comparisons. Page limit 250 includes the shape matrix, while page limit 1,500 is the focused pagination control. Correctness failures fail the scale job, while timing from one trial remains informational."
+            echo
+            if [[ "${#reports[@]}" -eq 0 ]]; then
+              echo 'No completed scale-growth report was available. Open the workflow run for the failing job and any partial artifacts.'
+              echo
+            else
+              for report in "${reports[@]}"; do
+                cat "$report"
+              done
+            fi
+            echo "[Open workflow run and download sanitized reports]($SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID) (14-day retention)."
+          } > "$COMMENT_PATH"
+      - name: Upsert scale PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          comments_path="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
+          comment_id="$(gh api "$comments_path?per_page=100" \
+            --jq '[.[] | select(.body | startswith("<!-- hubuum-scale-pr-bench -->"))][0].id // empty')"
+          jq --null-input --rawfile body "$COMMENT_PATH" '{body: $body}' > target/scale-pr-comment.json
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --input target/scale-pr-comment.json
+          else
+            gh api --method POST "$comments_path" \
+              --input target/scale-pr-comment.json
+          fi

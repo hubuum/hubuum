@@ -526,7 +526,7 @@ jobs:
         if: matrix.feature.name == 'default'
         run: >-
           cargo test -p hubuum-storage-postgres
-          -F integration-test-support --locked --release
+          -F integration-test-support,scale-benchmark-support --locked --release
       - name: Test (${{ matrix.feature.name }})
         run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 

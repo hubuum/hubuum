@@ -138,7 +138,8 @@ if [ "$#" -eq 0 ]; then
         split_role_reconciliation_adopts_existing_single_role_objects \
         -- --exact --ignored
 fi
-cargo test -p hubuum-storage-postgres --features integration-test-support "$@"
+cargo test -p hubuum-storage-postgres \
+    --features integration-test-support,scale-benchmark-support "$@"
 
 # Run the application and request-level suites.
 if cargo test --features integration-test-support "$@"; then

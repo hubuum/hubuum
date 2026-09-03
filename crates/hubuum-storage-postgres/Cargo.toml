@@ -29,6 +29,7 @@ hubuum-computed-fields = { path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
 hubuum-events-core = { version = "0.1.0", path = "../hubuum-events-core" }
 hubuum-query = { version = "0.1.0", path = "../hubuum-query" }
+hubuum-scale-core = { path = "../hubuum-scale-core", optional = true }
 hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
 hubuum-templates = { version = "0.0.1", path = "../hubuum-templates" }
 ipnet = "2.12"
@@ -37,6 +38,7 @@ rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"], optional = true }
 tokio = { version = "1", features = ["macros", "sync", "time"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.14"
@@ -49,6 +51,7 @@ pq-sys = { version = "0.7.5", optional = true }
 query-capture = []
 integration-test-support = []
 benchmark-support = []
+scale-benchmark-support = ["benchmark-support", "dep:hubuum-scale-core", "dep:sysinfo"]
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]

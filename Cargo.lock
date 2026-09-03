@@ -2303,6 +2303,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "hubuum-scale-benchmark"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "futures-util",
+ "hubuum-scale-core",
+ "hubuum-storage-postgres",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+]
+
+[[package]]
+name = "hubuum-scale-core"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "hubuum-storage-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
 name = "hubuum-secrets"
 version = "0.0.1"
 dependencies = [
@@ -2371,6 +2398,7 @@ dependencies = [
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
+ "hubuum-scale-core",
  "hubuum-storage-core",
  "hubuum-templates",
  "ipnet",
@@ -2381,6 +2409,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "sysinfo",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",

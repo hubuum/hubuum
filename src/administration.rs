@@ -83,6 +83,14 @@ struct AdminCli {
     #[arg(long, default_value_t = false, requires = "restore_test_database_url")]
     keep_restore_test_database: bool,
 
+    /// Maximum backup document size accepted by offline and isolated verification
+    #[arg(
+        long,
+        env = "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
+        default_value_t = DEFAULT_RESTORE_MAX_UPLOAD_BYTES
+    )]
+    restore_max_upload_bytes: usize,
+
     /// Destructively replace all application data from this backup document
     #[arg(long, value_name = "PATH", conflicts_with = "backup")]
     restore: Option<PathBuf>,
@@ -263,6 +271,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             storage_backend: admin_cli.storage_backend,
             statement_timeout_ms: admin_cli.db_statement_timeout_ms,
             keep_restore_test_database: admin_cli.keep_restore_test_database,
+            max_upload_bytes: admin_cli.restore_max_upload_bytes,
             json: admin_cli.json,
         })
         .await?;
@@ -717,14 +726,15 @@ struct BackupVerificationOptions<'a> {
     storage_backend: StorageBackendKind,
     statement_timeout_ms: u64,
     keep_restore_test_database: bool,
+    max_upload_bytes: usize,
     json: bool,
 }
 
 async fn verify_backup_file(
     options: BackupVerificationOptions<'_>,
 ) -> Result<BackupVerificationReport, ApiError> {
-    let bytes = read_backup_file(options.path, DEFAULT_RESTORE_MAX_UPLOAD_BYTES)?;
-    let report = verify_backup_document(&bytes, DEFAULT_RESTORE_MAX_UPLOAD_BYTES)?;
+    let bytes = read_backup_file(options.path, options.max_upload_bytes)?;
+    let report = verify_backup_document(&bytes, options.max_upload_bytes)?;
     let report = if let Some(database_url) = options.restore_test_database_url {
         if !matches!(options.storage_backend, StorageBackendKind::Postgres) {
             return Err(ApiError::BadRequest(
@@ -1299,6 +1309,15 @@ mod tests {
 
         assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn backup_verification_limit_accepts_an_explicit_operator_override() {
+        let cli =
+            AdminCli::try_parse_from(["hubuum-admin", "--restore-max-upload-bytes", "1073741824"])
+                .unwrap();
+
+        assert_eq!(cli.restore_max_upload_bytes, 1_073_741_824);
     }
 
     #[test]
