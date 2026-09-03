@@ -2332,7 +2332,7 @@
           "classes"
         ],
         "summary": "Get the related-object graph by class and object name",
-        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/graph.",
+        "description": "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
         "operationId": "getApiV1ClassesByNameByClassNameObjectsByNameByObjectNameRelatedGraph",
         "parameters": [
           {
@@ -2955,7 +2955,7 @@
           "classes"
         ],
         "summary": "Get the related-class graph by class name",
-        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/related/graph.",
+        "description": "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
         "operationId": "getApiV1ClassesByNameByClassNameRelatedGraph",
         "parameters": [
           {
@@ -4644,7 +4644,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Objects By Object Id Related Graph",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/graph.",
+        "description": "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
         "operationId": "getApiV1ClassesByClassIdObjectsByObjectIdRelatedGraph",
         "parameters": [
           {
@@ -5275,7 +5275,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Related Graph",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/graph.",
+        "description": "Returns the complete bounded neighborhood graph as one response. This endpoint is not paginated: limit is a maximum related-node safety bound, include_total has no effect, and X-Total-Count is not returned.",
         "operationId": "getApiV1ClassesByClassIdRelatedGraph",
         "parameters": [
           {

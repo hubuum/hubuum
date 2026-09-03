@@ -2154,12 +2154,16 @@ mod tests {
                 .await;
 
         let endpoint = format!(
-            "{}?depth__lte=1",
+            "{}?depth__lte=1&include_total=true",
             related_graph_endpoint(classes[0].id, objects[0].id)
         );
         let (resp, queries) =
             capture_queries(get_request(&context.pool, &context.admin_token, &endpoint)).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        assert!(
+            resp.headers().get(TOTAL_COUNT_HEADER).is_none(),
+            "graph responses must not expose pagination totals"
+        );
         let graph: RelatedObjectGraph = test::read_body_json(resp).await;
 
         let object_ids = graph
