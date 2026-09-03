@@ -4187,7 +4187,7 @@ mod tests {
                 .unwrap()
                 .traverse
         );
-        for depth in [1, 2, 4, 7] {
+        for depth in [1, 2, 4] {
             let scenario = workload
                 .scenarios
                 .iter()
@@ -4205,6 +4205,12 @@ mod tests {
             );
             assert!(!scenario.applies_to(Some(ScaleAxis::Objects)));
         }
+        assert!(
+            workload
+                .scenarios
+                .iter()
+                .all(|scenario| scenario.name != "object-graph-depth-7")
+        );
     }
 
     #[test]
@@ -4334,7 +4340,7 @@ mod tests {
             traversal.traversal_ms = Some(10.0);
             scenarios.push(traversal);
         }
-        for depth in [1_u64, 2, 4, 7] {
+        for depth in [1_u64, 2, 4] {
             let mut graph = prototype.clone();
             graph.name = format!("object-graph-depth-{depth}");
             graph.phase = "warm_single_client".to_string();
@@ -4474,7 +4480,7 @@ mod tests {
         let markdown = summary.markdown();
 
         assert_eq!(summary.axes.len(), 6);
-        assert_eq!(summary.axes[3].depth_probes.len(), 4);
+        assert_eq!(summary.axes[3].depth_probes.len(), 3);
         assert_eq!(summary.axes[5].depth_probes.len(), 2);
         assert_eq!(
             summary.axes[3].points[1]
@@ -4502,7 +4508,7 @@ mod tests {
         assert!(markdown.contains("300,000"));
         assert!(markdown.contains("+100% (+1,000,000)"));
         assert!(markdown.contains("pages `1 → 1 / 2 / 3`"));
-        assert!(markdown.contains("depth 7 graph p95"));
+        assert!(markdown.contains("depth 4 graph p95"));
         assert!(markdown.contains("Returned nodes/edges by maximum depth"));
         assert!(markdown.contains("reachable graph stays fixed"));
         assert!(markdown.contains("extra work caused by local fan-out"));

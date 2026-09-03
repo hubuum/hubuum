@@ -245,15 +245,17 @@ that different points carry more information.
 
 Relation-growth points also run object-graph searches from one bounded,
 eight-class chain. Spread and concentrated growth place new edges outside that
-chain, so maximum depths 1, 2, 4, and 7 isolate the effect of a larger global
+chain, so maximum depths 1, 2, and 4 isolate the effect of a larger global
 relation corpus while the reachable graph stays fixed. Dense-pair growth places
 new edges inside the chain and reports depths 1 and 2 together with returned
-node and edge counts, separating corpus-size cost from added fan-out. A focused
-pilot found that depth 4 at the +55% dense point exceeded the 30-second request
-timeout and left recursive database work running, so deeper dense probes would
-produce timeout backlog rather than a useful recurring curve. The diagnostic
-depth scenarios use one warm-up and three measured requests and are excluded
-from the mixed workload.
+node and edge counts, separating corpus-size cost from added fan-out. Calibration
+also tested depth 7 for fixed-local growth, but the hosted +100% spread point
+crossed the 30-second request timeout. Depth 4 already showed the deep-query
+effect while retaining useful headroom. A focused dense pilot found that depth
+4 at the +55% point likewise exceeded 30 seconds and left recursive database
+work running. Deeper recurring probes would therefore produce timeout backlog
+rather than a useful curve. The diagnostic depth scenarios use one warm-up and
+three measured requests and are excluded from the mixed workload.
 
 Page limit 250 runs all six curves. Page limit 1,500 repeats only balanced
 object and spread-relation growth, where it provides a useful pagination

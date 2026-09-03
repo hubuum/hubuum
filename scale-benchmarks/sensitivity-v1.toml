@@ -35,7 +35,6 @@ depth_probes = [
   { depth = 1, scenario = "object-graph-depth-1" },
   { depth = 2, scenario = "object-graph-depth-2" },
   { depth = 4, scenario = "object-graph-depth-4" },
-  { depth = 7, scenario = "object-graph-depth-7" },
 ]
 
 [[axes]]
@@ -49,7 +48,6 @@ depth_probes = [
   { depth = 1, scenario = "object-graph-depth-1" },
   { depth = 2, scenario = "object-graph-depth-2" },
   { depth = 4, scenario = "object-graph-depth-4" },
-  { depth = 7, scenario = "object-graph-depth-7" },
 ]
 
 [[axes]]
