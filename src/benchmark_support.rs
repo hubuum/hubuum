@@ -17,10 +17,11 @@ use crate::storage::{BenchmarkStorageContext, StorageHandle};
 use crate::{
     errors::ApiError,
     models::{
-        HubuumClassID, HubuumObject, STRUCTURED_SEARCH_VERSION, StructuredClassSelector,
-        StructuredRelatedPredicate, StructuredSearchExpression, StructuredSearchField,
-        StructuredSearchFieldPredicate, StructuredSearchOperator, StructuredSearchRequest,
-        StructuredSearchTarget,
+        ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
+        HubuumClassID, HubuumObject, RelatedObjectForRootRow, RelatedObjectIncludeRow,
+        STRUCTURED_SEARCH_VERSION, StructuredClassSelector, StructuredRelatedPredicate,
+        StructuredSearchExpression, StructuredSearchField, StructuredSearchFieldPredicate,
+        StructuredSearchOperator, StructuredSearchRequest, StructuredSearchTarget,
     },
 };
 #[cfg(feature = "postgres-bench")]
@@ -112,4 +113,53 @@ pub async fn structured_related_object_search(
         crate::services::catalog::list_objects(storage, 1, true, None, options).await?;
     debug_assert!(total.is_none(), "benchmark search must skip exact counts");
     Ok(rows)
+}
+
+/// Run the production bidirectional multi-root graph walk used by
+/// relation-aware export hydration.
+#[cfg(feature = "postgres-bench")]
+#[doc(hidden)]
+pub async fn template_multi_root_bidirectional_objects(
+    storage: &BenchmarkStorageContext,
+    root_object_ids: &[i32],
+    max_depth: i32,
+    per_root_cap: i32,
+) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
+    crate::services::relation_queries::list_bidirectionally_related_objects_for_roots(
+        storage,
+        crate::services::relation_queries::RelationAccess::new(1, true, None),
+        root_object_ids,
+        max_depth,
+        per_root_cap,
+        false,
+    )
+    .await
+}
+
+/// Run the production directional multi-root graph walk used by
+/// `include.related_objects` during object exports.
+#[cfg(feature = "postgres-bench")]
+#[doc(hidden)]
+pub async fn template_related_include_objects(
+    storage: &BenchmarkStorageContext,
+    root_object_ids: &[i32],
+    target_class_id: HubuumClassID,
+    max_depth: i32,
+    per_root_limit: i32,
+) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+    crate::services::relation_queries::list_related_objects_for_roots(
+        storage,
+        crate::services::relation_queries::RelationAccess::new(1, true, None),
+        root_object_ids,
+        ExportIncludeRelatedQuery {
+            class_id: target_class_id.id(),
+            class_relation_id: None,
+            direction: ExportIncludeRelatedDirection::Any,
+            sort: ExportIncludeRelatedSort::Path,
+            max_depth,
+            limit: per_root_limit,
+        },
+        false,
+    )
+    .await
 }
