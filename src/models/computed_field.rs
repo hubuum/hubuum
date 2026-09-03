@@ -319,8 +319,10 @@ pub struct ComputedFieldPreviewRequest {
 #[serde(deny_unknown_fields)]
 struct ComputedFieldPreviewWire {
     /// Required by the personal preview route and ignored on class-scoped routes.
+    #[schema(value_type = Option<i32>)]
     class_id: Option<HubuumClassID>,
     definition: ComputedFieldDefinitionRequest,
+    #[schema(value_type = Option<i32>)]
     object_id: Option<HubuumObjectID>,
     #[schema(value_type = Option<Object>)]
     data: Option<serde_json::Value>,
