@@ -1320,10 +1320,10 @@
           "name": "method",
           "bounded_by": "enumerated values",
           "values": [
-            "DELETE",
-            "GET",
-            "PATCH",
-            "POST"
+            "get",
+            "post",
+            "patch",
+            "delete"
           ]
         },
         {
@@ -1379,10 +1379,10 @@
           "name": "method",
           "bounded_by": "enumerated values",
           "values": [
-            "DELETE",
-            "GET",
-            "PATCH",
-            "POST"
+            "get",
+            "post",
+            "patch",
+            "delete"
           ]
         },
         {
@@ -4394,7 +4394,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 2147483647,
       "runtime_roles": [
         "all",
         "api",
@@ -4666,7 +4666,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -5470,7 +5471,7 @@
     "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS must not exceed HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
     "HUBUUM_TOKEN_LIFETIME_HOURS must not exceed HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
     "HUBUUM_TLS_CERT_PATH and HUBUUM_TLS_KEY_PATH must be configured together",
-    "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL",
+    "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL and the compiled permissions-treetop feature",
     "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
     "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT",
     "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
@@ -5845,9 +5846,9 @@
       "required_fields": [
         "backup_version",
         "created_at",
+        "manifest",
         "source_version",
-        "state",
-        "manifest"
+        "state"
       ],
       "optional_fields": [
         "history"
@@ -5892,8 +5893,8 @@
     "import": {
       "version": 2,
       "required_fields": [
-        "version",
-        "graph"
+        "graph",
+        "version"
       ],
       "optional_fields": [
         "dry_run",
@@ -7971,6 +7972,25 @@
           "requires": [
             "restore_test_database_url"
           ]
+        },
+        {
+          "id": "restore_max_upload_bytes",
+          "long": "restore-max-upload-bytes",
+          "short": null,
+          "environment": "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
         },
         {
           "id": "restore",

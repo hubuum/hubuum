@@ -163,6 +163,7 @@ assert_flag "$openapi_policy_output" container false
 assert_flag "$openapi_policy_output" artifacts false
 
 operational_contract_output="$(bash "$classifier" \
+  CHANGELOG.md \
   docs/operational-contract.json \
   docs/metrics-reference.md \
   .github/operational-contract-breaking-exceptions.json \
@@ -174,6 +175,18 @@ assert_flag "$operational_contract_output" operational_contract true
 assert_flag "$operational_contract_output" code true
 assert_flag "$operational_contract_output" container false
 assert_flag "$operational_contract_output" artifacts false
+
+changelog_output="$(bash "$classifier" CHANGELOG.md)"
+assert_flag "$changelog_output" markdown true
+assert_flag "$changelog_output" code true
+assert_flag "$changelog_output" operational_contract true
+
+ci_workflow_output="$(bash "$classifier" .github/workflows/ci.yml)"
+assert_flag "$ci_workflow_output" code true
+assert_flag "$ci_workflow_output" openapi true
+assert_flag "$ci_workflow_output" operational_contract true
+assert_flag "$ci_workflow_output" container true
+assert_flag "$ci_workflow_output" artifacts true
 
 embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
 assert_flag "$embedded_doc_output" markdown true

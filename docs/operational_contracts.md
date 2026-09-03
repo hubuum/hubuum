@@ -58,8 +58,9 @@ that generated the snapshot.
 Changes are classified against the latest stable release snapshot:
 
 - **Additive:** a new metric, variable, command, optional field, or catalog
-  value that leaves existing consumers valid, or removal of a configuration
-  constraint.
+  value that leaves existing consumers valid; removal of a configuration
+  constraint; or relaxed CLI required, conflict, dependency, or value-count
+  rules.
 - **Behavioral:** changed defaults, descriptions, aggregation scope, or an
   expanded bounded label domain. These require review and may require an
   operator note even when they do not block compatibility.

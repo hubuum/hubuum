@@ -4,6 +4,12 @@ use std::time::Duration as StdDuration;
 
 use chrono::{Duration, NaiveDateTime, Utc};
 
+/// Operational constraint enforced when event-delivery timeouts are built.
+pub const EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT: &str = "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS must be less than HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS";
+
+/// Operational constraint enforced when event-delivery retry backoff is built.
+pub const EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT: &str = "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS must not exceed HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS";
+
 /// Validation failure for an event worker or retention policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventPolicyError(String);
@@ -11,6 +17,14 @@ pub struct EventPolicyError(String);
 impl EventPolicyError {
     fn new(message: impl Into<String>) -> Self {
         Self(message.into())
+    }
+
+    fn constraint(contract: &'static str, message: impl Into<String>) -> Self {
+        debug_assert!(
+            contract == EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT
+                || contract == EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT
+        );
+        Self::new(message)
     }
 }
 
@@ -224,9 +238,12 @@ impl EventDeliverySettingsBuilder {
             ));
         }
         if transport_timeout_ms >= lock_timeout_ms {
-            return Err(EventPolicyError::new(format!(
-                "event_delivery_transport_timeout_ms ({transport_timeout_ms}) must be less than event_delivery_lock_timeout_ms ({lock_timeout_ms})"
-            )));
+            return Err(EventPolicyError::constraint(
+                EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT,
+                format!(
+                    "event_delivery_transport_timeout_ms ({transport_timeout_ms}) must be less than event_delivery_lock_timeout_ms ({lock_timeout_ms})"
+                ),
+            ));
         }
         if retry_backoff_base_ms == 0 {
             return Err(EventPolicyError::new(
@@ -239,9 +256,12 @@ impl EventDeliverySettingsBuilder {
             ));
         }
         if retry_backoff_base_ms > retry_backoff_max_ms {
-            return Err(EventPolicyError::new(format!(
-                "event_delivery_retry_backoff_base_ms ({retry_backoff_base_ms}) must be less than or equal to event_delivery_retry_backoff_max_ms ({retry_backoff_max_ms})"
-            )));
+            return Err(EventPolicyError::constraint(
+                EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT,
+                format!(
+                    "event_delivery_retry_backoff_base_ms ({retry_backoff_base_ms}) must be less than or equal to event_delivery_retry_backoff_max_ms ({retry_backoff_max_ms})"
+                ),
+            ));
         }
         validated_timeout(retry_backoff_max_ms, "event_delivery_retry_backoff_max_ms")?;
         let max_attempts = NonZeroI32::new(max_attempts)

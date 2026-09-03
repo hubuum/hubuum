@@ -7,6 +7,8 @@ use hubuum_secrets::{
     SecretError, SecretErrorKind, SecretName, SecretProviderKind, SecretRef, SecretResolver,
 };
 
+use crate::config::environment::{constraint_message, constraints};
+
 const SOURCE_ENVIRONMENT: &str = "HUBUUM_SECRET_SOURCE";
 const FILE_ROOT_ENVIRONMENT: &str = "HUBUUM_SECRET_FILE_ROOT";
 
@@ -192,7 +194,10 @@ fn consumer_resolver(
             let root = root.ok_or_else(|| {
                 SecretError::new(
                     SecretErrorKind::InvalidReference,
-                    "file secret source requires a configured root",
+                    constraint_message(
+                        constraints::SECRET_FILE_ROOT,
+                        "file secret source requires a configured root",
+                    ),
                 )
             })?;
             builder

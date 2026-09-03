@@ -2,17 +2,18 @@ use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use clap::{ArgAction, Command};
-use serde::Serialize;
+use clap::{Arg, ArgAction, Command};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::config::environment::{
-    APP_CONFIG_ENVIRONMENT, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner, EnvironmentVariable,
-    Exposure, PROCESS_ENVIRONMENT,
+    APP_CONFIG_ENVIRONMENT, CONFIGURATION_CONSTRAINTS, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner,
+    EnvironmentVariable, Exposure, PROCESS_ENVIRONMENT, configuration_bounds,
 };
 use crate::events::{Action, ActorKind, CURRENT_EVENT_SCHEMA_VERSION, EntityType, valid_actions};
 use crate::models::{
-    CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION, ExportContentType, ExportMissingDataPolicy,
-    ExportScopeKind, ExportTemplateKind, IMPORT_GRAPH_SECTIONS,
+    BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION,
+    ExportContentType, ExportMissingDataPolicy, ExportScopeKind, ExportTemplateKind,
+    IMPORT_GRAPH_SECTIONS, ImportGraph, ImportRequest, RemoteHttpMethod,
 };
 use crate::storage::{
     StorageBackupHistorySection, StorageBackupStateSection, StorageCallSite, StorageCapability,
@@ -48,7 +49,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum MetricKind {
+pub(crate) enum MetricKind {
     Counter,
     Gauge,
     Histogram,
@@ -56,21 +57,21 @@ enum MetricKind {
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum MetricScope {
+pub(crate) enum MetricScope {
     Process,
     Database,
 }
 
 #[derive(Clone, Copy, Serialize)]
-struct MetricDefinition {
-    name: &'static str,
-    kind: MetricKind,
-    unit: Option<&'static str>,
-    labels: &'static [&'static str],
-    buckets: &'static [f64],
-    scope: MetricScope,
-    description: &'static str,
-    feature: Option<&'static str>,
+pub(crate) struct MetricDefinition {
+    pub(crate) name: &'static str,
+    pub(crate) kind: MetricKind,
+    pub(crate) unit: Option<&'static str>,
+    pub(crate) labels: &'static [&'static str],
+    pub(crate) buckets: &'static [f64],
+    pub(crate) scope: MetricScope,
+    pub(crate) description: &'static str,
+    pub(crate) feature: Option<&'static str>,
 }
 
 macro_rules! metric {
@@ -100,7 +101,7 @@ macro_rules! metric {
     };
 }
 
-const METRICS: &[MetricDefinition] = &[
+pub(crate) const METRICS: &[MetricDefinition] = &[
     metric!(
         "hubuum_api_errors_total",
         Counter,
@@ -833,6 +834,45 @@ const METRICS: &[MetricDefinition] = &[
     ),
 ];
 
+impl MetricDefinition {
+    pub(crate) fn runtime_name(&self) -> &'static str {
+        if self.name.starts_with("process_") || self.name == "hubuum_export_template_info" {
+            return self.name;
+        }
+        if matches!(self.kind, MetricKind::Counter) {
+            return self.name.strip_suffix("_total").unwrap_or(self.name);
+        }
+        if self.unit == Some("seconds") {
+            return self.name.strip_suffix("_seconds").unwrap_or(self.name);
+        }
+        self.name
+    }
+
+    pub(crate) fn open_telemetry_unit(&self) -> Option<&'static str> {
+        match self.unit {
+            Some("seconds") => Some("s"),
+            Some(unit) => Some(unit),
+            None => None,
+        }
+    }
+}
+
+pub(crate) fn metric_definition(name: &str) -> &'static MetricDefinition {
+    METRICS
+        .iter()
+        .find(|metric| metric.name == name)
+        .unwrap_or_else(|| panic!("missing operational metric definition for {name}"))
+}
+
+pub(crate) fn runtime_metric_definition(name: &str) -> &'static MetricDefinition {
+    METRICS
+        .iter()
+        .find(|metric| metric.runtime_name() == name)
+        .unwrap_or_else(|| {
+            panic!("missing operational metric definition for runtime metric {name}")
+        })
+}
+
 #[derive(Serialize)]
 struct MetricLabelContract {
     name: &'static str,
@@ -936,8 +976,8 @@ struct EventEntityContract {
 #[derive(Serialize)]
 struct VersionedDocumentContract {
     version: Option<i32>,
-    required_fields: &'static [&'static str],
-    optional_fields: &'static [&'static str],
+    required_fields: Vec<String>,
+    optional_fields: Vec<String>,
     sections: Vec<&'static str>,
     rejection_policy: &'static str,
 }
@@ -969,23 +1009,6 @@ struct OperationalContract {
     cli: Vec<CliContract>,
     compatibility_policy: BTreeMap<&'static str, &'static str>,
 }
-
-const CONFIGURATION_CONSTRAINTS: &[&str] = &[
-    "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT",
-    "HUBUUM_TASK_HEARTBEAT_SECONDS must be less than HUBUUM_TASK_LEASE_SECONDS",
-    "HUBUUM_RUNTIME_ROLE=worker requires at least one task, fan-out, delivery, event-retention, or token-retention worker",
-    "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS must be less than HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
-    "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS must not exceed HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
-    "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true requires HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
-    "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS must not exceed HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
-    "HUBUUM_TOKEN_LIFETIME_HOURS must not exceed HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
-    "HUBUUM_TLS_CERT_PATH and HUBUUM_TLS_KEY_PATH must be configured together",
-    "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL",
-    "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
-    "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT",
-    "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
-    "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material",
-];
 
 pub(crate) fn generate_json() -> String {
     let contract = build_contract();
@@ -1221,9 +1244,12 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "private_target_rejected",
             "validation_rejected",
         ]),
-        (name, "method") if name.starts_with("hubuum_remote_call") => {
-            strings(&["DELETE", "GET", "PATCH", "POST"])
-        }
+        (name, "method") if name.starts_with("hubuum_remote_call") => RemoteHttpMethod::ALL
+            .iter()
+            .copied()
+            .map(RemoteHttpMethod::as_str)
+            .map(str::to_string)
+            .collect(),
         (name, "consumer") if name.starts_with("hubuum_secret_resolution") => strings(&[
             "database",
             "event_sink",
@@ -1570,6 +1596,7 @@ fn command_environment(mut command: Command) -> BTreeMap<String, CliArgumentMeta
 
 fn cli_contract(command_name: &'static str, mut command: Command) -> CliContract {
     command.build();
+    validate_cli_requirements(command_name, &command);
     let options = command
         .get_arguments()
         .filter(|argument| !matches!(argument.get_action(), ArgAction::Help | ArgAction::Version))
@@ -1629,6 +1656,121 @@ fn cli_contract(command_name: &'static str, mut command: Command) -> CliContract
         },
         exit_codes: cli_exit_codes(command_name),
     }
+}
+
+fn validate_cli_requirements(command_name: &str, command: &Command) {
+    let mut command = command
+        .clone()
+        .mut_args(|argument| argument.env(None::<&str>));
+    command.build();
+    for argument in command
+        .get_arguments()
+        .filter(|argument| !matches!(argument.get_action(), ArgAction::Help | ArgAction::Version))
+        .filter(|argument| argument.get_long().is_some() || argument.get_short().is_some())
+    {
+        let argument_id = argument.get_id().as_str();
+        let requirements = cli_requirement_closure(command_name, argument_id);
+        let without_requirements = cli_invocation(command_name, &command, [argument_id]);
+        let without_requirements_parses = command
+            .clone()
+            .try_get_matches_from(without_requirements)
+            .is_ok();
+        assert_eq!(
+            without_requirements_parses,
+            requirements.is_empty(),
+            "CLI requirement registry disagrees with {command_name} --{}",
+            argument.get_long().unwrap_or(argument_id)
+        );
+
+        let with_requirements = cli_invocation(
+            command_name,
+            &command,
+            std::iter::once(argument_id).chain(requirements.iter().copied()),
+        );
+        assert!(
+            command
+                .clone()
+                .try_get_matches_from(with_requirements)
+                .is_ok(),
+            "CLI requirement registry is incomplete for {command_name} --{}",
+            argument.get_long().unwrap_or(argument_id)
+        );
+    }
+}
+
+fn cli_requirement_closure<'a>(command_name: &str, argument: &'a str) -> Vec<&'a str> {
+    let mut requirements = Vec::new();
+    let mut pending = cli_requirements(command_name, argument).to_vec();
+    while let Some(requirement) = pending.pop() {
+        if requirements.contains(&requirement) {
+            continue;
+        }
+        requirements.push(requirement);
+        pending.extend(cli_requirements(command_name, requirement));
+    }
+    requirements.sort_unstable();
+    requirements
+}
+
+fn cli_invocation<'a>(
+    command_name: &str,
+    command: &Command,
+    arguments: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut invocation = vec![command_name.to_string()];
+    for argument_id in arguments {
+        let argument = command
+            .get_arguments()
+            .find(|argument| argument.get_id().as_str() == argument_id)
+            .unwrap_or_else(|| panic!("unknown CLI requirement {argument_id} for {command_name}"));
+        invocation.extend(cli_argument_tokens(argument));
+    }
+    invocation
+}
+
+fn cli_argument_tokens(argument: &Arg) -> Vec<String> {
+    let option = if let Some(long) = argument.get_long() {
+        format!("--{long}")
+    } else {
+        format!(
+            "-{}",
+            argument
+                .get_short()
+                .expect("filtered CLI option has a name")
+        )
+    };
+    if !argument.get_action().takes_values() {
+        return vec![option];
+    }
+
+    let value = argument
+        .get_default_values()
+        .first()
+        .map(|value| value.to_string_lossy().into_owned())
+        .or_else(|| {
+            argument
+                .get_possible_values()
+                .first()
+                .map(|value| value.get_name().to_string())
+        })
+        .unwrap_or_else(|| match argument_value_kind(argument) {
+            "integer" | "number" => "1".to_string(),
+            "path" => "/tmp/hubuum-operational-contract".to_string(),
+            _ => "value".to_string(),
+        });
+    let value_count = argument
+        .get_num_args()
+        .map(|range| range.min_values().max(1))
+        .unwrap_or(1);
+    let mut tokens = Vec::with_capacity(value_count + 1);
+    if argument.is_require_equals_set() {
+        tokens.push(format!("{option}={value}"));
+        tokens.extend(std::iter::repeat_n(value, value_count.saturating_sub(1)));
+    } else {
+        tokens.push(option);
+        tokens.extend(std::iter::repeat_n(value, value_count));
+    }
+    tokens
 }
 
 fn dynamic_default(environment: &str) -> Option<DynamicDefaultContract> {
@@ -1705,74 +1847,6 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
         return "path";
     }
     "string"
-}
-
-fn configuration_bounds(name: &str) -> (Option<i64>, Option<i64>) {
-    let minimum = match name {
-        "HUBUUM_ACTIX_WORKERS"
-        | "HUBUUM_TASK_POLL_INTERVAL_MS"
-        | "HUBUUM_TASK_LEASE_SECONDS"
-        | "HUBUUM_TASK_HEARTBEAT_SECONDS"
-        | "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS"
-        | "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE"
-        | "HUBUUM_EVENT_FANOUT_BATCH_SIZE"
-        | "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS"
-        | "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS"
-        | "HUBUUM_EVENT_DELIVERY_BATCH_SIZE"
-        | "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS"
-        | "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS"
-        | "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS"
-        | "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS"
-        | "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS"
-        | "HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS"
-        | "HUBUUM_EVENT_RETENTION_DAYS"
-        | "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS"
-        | "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS"
-        | "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE"
-        | "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS"
-        | "HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS"
-        | "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS"
-        | "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER"
-        | "HUBUUM_BACKUP_MAX_OUTPUT_BYTES"
-        | "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES"
-        | "HUBUUM_RESTORE_MAX_UPLOAD_BYTES"
-        | "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER"
-        | "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER"
-        | "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT"
-        | "HUBUUM_EXPORT_TEMPLATE_FUEL"
-        | "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS"
-        | "HUBUUM_EXPORT_MAX_OUTPUT_BYTES"
-        | "HUBUUM_EXPORT_STAGE_TIMEOUT_MS"
-        | "HUBUUM_REMOTE_CALL_TIMEOUT_MS"
-        | "HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES"
-        | "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER"
-        | "HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS"
-        | "HUBUUM_DB_POOL_SIZE"
-        | "HUBUUM_TOKEN_LIFETIME_HOURS"
-        | "HUBUUM_MAX_TOKEN_LIFETIME_HOURS"
-        | "HUBUUM_TOKEN_RETENTION_DAYS"
-        | "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS"
-        | "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS"
-        | "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS"
-        | "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS"
-        | "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS"
-        | "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4"
-        | "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6"
-        | "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS"
-        | "HUBUUM_DEFAULT_PAGE_LIMIT"
-        | "HUBUUM_MAX_PAGE_LIMIT"
-        | "HUBUUM_MAX_TRANSITIVE_DEPTH" => Some(1),
-        "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE" => Some(10),
-        _ => None,
-    };
-    let maximum = match name {
-        "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE" => Some(1_000),
-        "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4" => Some(32),
-        "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6" => Some(128),
-        "HUBUUM_TOKEN_LIFETIME_HOURS" => Some(i64::from(i32::MAX)),
-        _ => None,
-    };
-    (minimum, maximum)
 }
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
@@ -2020,17 +2094,25 @@ fn nested_field_contracts(
 }
 
 fn document_contracts() -> DocumentContracts {
+    let backup_fields = serialized_document_fields(&BackupDocument {
+        backup_version: CURRENT_BACKUP_VERSION,
+        created_at: chrono::DateTime::UNIX_EPOCH,
+        source_version: env!("CARGO_PKG_VERSION").to_string(),
+        state: BackupState::default(),
+        history: None,
+        manifest: BackupManifest::default(),
+    });
+    let import_fields = serialized_document_fields(&ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: None,
+        mode: None,
+        graph: ImportGraph::default(),
+    });
     DocumentContracts {
         backup: VersionedDocumentContract {
             version: Some(CURRENT_BACKUP_VERSION),
-            required_fields: &[
-                "backup_version",
-                "created_at",
-                "source_version",
-                "state",
-                "manifest",
-            ],
-            optional_fields: &["history"],
+            required_fields: backup_fields.required,
+            optional_fields: backup_fields.optional,
             sections: StorageBackupStateSection::ALL
                 .iter()
                 .copied()
@@ -2046,8 +2128,8 @@ fn document_contracts() -> DocumentContracts {
         },
         import: VersionedDocumentContract {
             version: Some(CURRENT_IMPORT_VERSION),
-            required_fields: &["version", "graph"],
-            optional_fields: &["dry_run", "mode"],
+            required_fields: import_fields.required,
+            optional_fields: import_fields.optional,
             sections: IMPORT_GRAPH_SECTIONS.to_vec(),
             rejection_policy: "reject any import version other than the current version",
         },
@@ -2074,6 +2156,35 @@ fn document_contracts() -> DocumentContracts {
                 .collect(),
         },
     }
+}
+
+struct SerializedDocumentFields {
+    required: Vec<String>,
+    optional: Vec<String>,
+}
+
+fn serialized_document_fields<T>(document: &T) -> SerializedDocumentFields
+where
+    T: DeserializeOwned + Serialize,
+{
+    let value = serde_json::to_value(document).expect("document contract sample must serialize");
+    let object = value
+        .as_object()
+        .expect("document contract sample must serialize as an object");
+    let mut required = Vec::new();
+    let mut optional = Vec::new();
+    for name in object.keys() {
+        let mut without_field = object.clone();
+        without_field.remove(name);
+        if serde_json::from_value::<T>(serde_json::Value::Object(without_field)).is_ok() {
+            optional.push(name.clone());
+        } else {
+            required.push(name.clone());
+        }
+    }
+    required.sort();
+    optional.sort();
+    SerializedDocumentFields { required, optional }
 }
 
 fn enum_name<T: Serialize>(value: T) -> String {
@@ -2169,6 +2280,34 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "CLI requirement registry disagrees")]
+    fn cli_requirement_validation_detects_an_unregistered_dependency() {
+        let mut command = crate::administration::admin_command()
+            .mut_arg("reset_password", |argument| argument.requires("backup"));
+        command.build();
+
+        validate_cli_requirements("hubuum-admin", &command);
+    }
+
+    #[test]
+    fn document_fields_follow_serde_names_and_missing_field_behavior() {
+        #[derive(Serialize, serde::Deserialize)]
+        struct Fixture {
+            #[serde(rename = "wire_name")]
+            rust_name: u32,
+            optional: Option<String>,
+        }
+
+        let fields = serialized_document_fields(&Fixture {
+            rust_name: 1,
+            optional: None,
+        });
+
+        assert_eq!(fields.required, ["wire_name"]);
+        assert_eq!(fields.optional, ["optional"]);
+    }
+
+    #[test]
     fn metric_registry_rejects_obvious_high_cardinality_labels() {
         let metric = metric!("hubuum_bad", Gauge, None, ["user_id"], &[], Process, "bad");
 
@@ -2198,7 +2337,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         let contract_names = METRICS
             .iter()
-            .map(runtime_instrument_name)
+            .map(MetricDefinition::runtime_name)
             .collect::<BTreeSet<_>>();
 
         assert_eq!(source_names, contract_names);
@@ -2220,11 +2359,44 @@ mod tests {
     }
 
     #[test]
+    fn remote_call_method_labels_use_runtime_method_names() {
+        let contract = metric_label_contract("hubuum_remote_call_results_total", "method");
+        let runtime_names = RemoteHttpMethod::ALL
+            .iter()
+            .copied()
+            .map(RemoteHttpMethod::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(contract.values, runtime_names);
+        assert!(
+            contract
+                .values
+                .iter()
+                .all(|value| value == &value.to_lowercase())
+        );
+    }
+
+    #[test]
     fn configuration_inventory_covers_the_environment_registry() {
         let inventory = configuration_contracts();
         for variable in APP_CONFIG_ENVIRONMENT.iter().chain(PROCESS_ENVIRONMENT) {
             assert!(inventory.iter().any(|item| item.name == variable.name));
         }
+    }
+
+    #[test]
+    fn token_lifetime_settings_publish_the_runtime_integer_cap() {
+        let expected = (Some(1), Some(i64::from(i32::MAX)));
+
+        assert_eq!(
+            configuration_bounds("HUBUUM_TOKEN_LIFETIME_HOURS"),
+            expected
+        );
+        assert_eq!(
+            configuration_bounds("HUBUUM_MAX_TOKEN_LIFETIME_HOURS"),
+            expected
+        );
     }
 
     #[test]
@@ -2271,6 +2443,13 @@ mod tests {
         ));
         assert!(CONFIGURATION_CONSTRAINTS.contains(
             &"HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material"
+        ));
+    }
+
+    #[test]
+    fn configuration_constraints_include_the_treetop_feature_prerequisite() {
+        assert!(CONFIGURATION_CONSTRAINTS.contains(
+            &"HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL and the compiled permissions-treetop feature"
         ));
     }
 
@@ -2446,18 +2625,5 @@ mod tests {
                 .split('"')
                 .next()
         })
-    }
-
-    fn runtime_instrument_name(metric: &MetricDefinition) -> &str {
-        if metric.name.starts_with("process_") || metric.name == "hubuum_export_template_info" {
-            return metric.name;
-        }
-        if matches!(metric.kind, MetricKind::Counter) {
-            return metric.name.strip_suffix("_total").unwrap_or(metric.name);
-        }
-        if metric.unit == Some("seconds") {
-            return metric.name.strip_suffix("_seconds").unwrap_or(metric.name);
-        }
-        metric.name
     }
 }

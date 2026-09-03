@@ -18,6 +18,7 @@ mod token;
 
 pub use event_delivery::{EventDeliveryStatus, EventDeliveryStatusParseError};
 pub use event_policy::{
+    EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT, EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT,
     EventDeliverySettings, EventDeliverySettingsBuilder, EventFanoutSettings, EventPolicyError,
     EventRetentionSettings,
 };
@@ -47,7 +48,8 @@ pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{
-    MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TokenIssuancePolicy,
-    TokenLifetime, TokenPolicyError, TokenRetentionBatchSize, TokenRetentionCutoffs,
-    TokenRetentionPeriod, TokenRetentionSettings, TokenRetentionSettingsBuilder,
+    MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TOKEN_LIFETIME_CONSTRAINT,
+    TokenIssuancePolicy, TokenLifetime, TokenPolicyError, TokenRetentionBatchSize,
+    TokenRetentionCutoffs, TokenRetentionPeriod, TokenRetentionSettings,
+    TokenRetentionSettingsBuilder,
 };

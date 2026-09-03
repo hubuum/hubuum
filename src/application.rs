@@ -16,6 +16,7 @@ use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::backups::BackupSettings;
+use crate::config::environment::{constraint_message, constraints};
 #[cfg(test)]
 use crate::config::get_config;
 #[cfg(not(test))]
@@ -425,11 +426,17 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             ),
         },
         (Some(_), None) => fatal_error(
-            "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path",
+            constraint_message(
+                constraints::TLS_KEY_PAIR,
+                "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path",
+            ),
             EXIT_CODE_TLS_ERROR,
         ),
         (None, Some(_)) => fatal_error(
-            "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path",
+            constraint_message(
+                constraints::TLS_KEY_PAIR,
+                "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path",
+            ),
             EXIT_CODE_TLS_ERROR,
         ),
         _ => server.bind(&bind_address)?,
@@ -576,13 +583,19 @@ fn start_worker_metrics_server(
         (Some(_), None) => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "TLS certificate specified but key is missing",
+                constraint_message(
+                    constraints::TLS_KEY_PAIR,
+                    "TLS certificate specified but key is missing",
+                ),
             ));
         }
         (None, Some(_)) => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "TLS key specified but certificate is missing",
+                constraint_message(
+                    constraints::TLS_KEY_PAIR,
+                    "TLS key specified but certificate is missing",
+                ),
             ));
         }
         _ => server.bind(&bind_address)?,

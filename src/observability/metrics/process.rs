@@ -4,6 +4,7 @@ use prometheus::{Counter, IntGauge, Registry, core::Collector};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
 
 use crate::errors::ApiError;
+use crate::operational_contracts::{MetricKind, metric_definition};
 
 const PROCESS_CPU_SECONDS: &str = "process_cpu_seconds_total";
 const PROCESS_OPEN_FDS: &str = "process_open_fds";
@@ -39,36 +40,12 @@ pub(super) struct ProcessMetrics {
 
 impl ProcessMetrics {
     pub(super) fn new(registry: &Registry) -> Result<Self, ApiError> {
-        let cpu_seconds = create_and_register_counter(
-            registry,
-            PROCESS_CPU_SECONDS,
-            "Total user and system CPU time spent in seconds",
-        )?;
-        let open_fds = create_and_register_gauge(
-            registry,
-            PROCESS_OPEN_FDS,
-            "Number of open file descriptors or handles",
-        )?;
-        let max_fds = create_and_register_gauge(
-            registry,
-            PROCESS_MAX_FDS,
-            "Maximum number of open file descriptors or handles",
-        )?;
-        let resident_memory_bytes = create_and_register_gauge(
-            registry,
-            PROCESS_RESIDENT_MEMORY,
-            "Resident memory size in bytes",
-        )?;
-        let virtual_memory_bytes = create_and_register_gauge(
-            registry,
-            PROCESS_VIRTUAL_MEMORY,
-            "Virtual memory size in bytes",
-        )?;
-        let start_time_seconds = create_and_register_gauge(
-            registry,
-            PROCESS_START_TIME,
-            "Start time of the process since the Unix epoch in seconds",
-        )?;
+        let cpu_seconds = create_and_register_counter(registry, PROCESS_CPU_SECONDS)?;
+        let open_fds = create_and_register_gauge(registry, PROCESS_OPEN_FDS)?;
+        let max_fds = create_and_register_gauge(registry, PROCESS_MAX_FDS)?;
+        let resident_memory_bytes = create_and_register_gauge(registry, PROCESS_RESIDENT_MEMORY)?;
+        let virtual_memory_bytes = create_and_register_gauge(registry, PROCESS_VIRTUAL_MEMORY)?;
+        let start_time_seconds = create_and_register_gauge(registry, PROCESS_START_TIME)?;
 
         let pid = get_current_pid().map_err(|error| {
             ApiError::InternalServerError(format!(
@@ -187,22 +164,20 @@ fn process_open_files_limit(process: &sysinfo::Process) -> Option<usize> {
     process.open_files_limit()
 }
 
-fn create_and_register_counter(
-    registry: &Registry,
-    name: &str,
-    help: &str,
-) -> Result<Counter, ApiError> {
-    let metric = Counter::new(name, help).map_err(|error| metric_creation_error(name, error))?;
+fn create_and_register_counter(registry: &Registry, name: &str) -> Result<Counter, ApiError> {
+    let definition = metric_definition(name);
+    assert!(matches!(definition.kind, MetricKind::Counter));
+    let metric = Counter::new(definition.runtime_name(), definition.description)
+        .map_err(|error| metric_creation_error(name, error))?;
     register_metric(registry, metric.clone(), name)?;
     Ok(metric)
 }
 
-fn create_and_register_gauge(
-    registry: &Registry,
-    name: &str,
-    help: &str,
-) -> Result<IntGauge, ApiError> {
-    let metric = IntGauge::new(name, help).map_err(|error| metric_creation_error(name, error))?;
+fn create_and_register_gauge(registry: &Registry, name: &str) -> Result<IntGauge, ApiError> {
+    let definition = metric_definition(name);
+    assert!(matches!(definition.kind, MetricKind::Gauge));
+    let metric = IntGauge::new(definition.runtime_name(), definition.description)
+        .map_err(|error| metric_creation_error(name, error))?;
     register_metric(registry, metric.clone(), name)?;
     Ok(metric)
 }

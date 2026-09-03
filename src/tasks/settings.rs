@@ -2,6 +2,14 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
+pub(crate) const TASK_HEARTBEAT_CONSTRAINT: &str =
+    "HUBUUM_TASK_HEARTBEAT_SECONDS must be less than HUBUUM_TASK_LEASE_SECONDS";
+
+fn constraint_error(constraint: &'static str, message: &'static str) -> String {
+    debug_assert_eq!(constraint, TASK_HEARTBEAT_CONSTRAINT);
+    message.to_string()
+}
+
 /// Validated settings for task execution, lease renewal, and maintenance work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskWorkerSettings {
@@ -110,10 +118,10 @@ impl TaskWorkerSettingsBuilder {
         }
         let lease_duration = TaskLeaseDuration::new(lease_duration)?;
         if heartbeat_interval.is_zero() || heartbeat_interval >= lease_duration.duration() {
-            return Err(
-                "task worker heartbeat interval must be greater than zero and shorter than the lease"
-                    .to_string(),
-            );
+            return Err(constraint_error(
+                TASK_HEARTBEAT_CONSTRAINT,
+                "task worker heartbeat interval must be greater than zero and shorter than the lease",
+            ));
         }
         if recovery_interval.is_zero() {
             return Err("task recovery interval must be greater than zero".to_string());

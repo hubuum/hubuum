@@ -51,7 +51,7 @@ for path in "$@"; do
   esac
 
   case "$path" in
-    docs/operational-contract.json | docs/metrics-reference.md | \
+    CHANGELOG.md | docs/operational-contract.json | docs/metrics-reference.md | \
       .github/operational-contract-breaking-exceptions.json | \
       scripts/check-operational-contract-compatibility.py | \
       scripts/resolve-operational-contract-baseline.sh | \
@@ -121,6 +121,7 @@ for path in "$@"; do
     .github/workflows/ci.yml)
       code=true
       openapi=true
+      operational_contract=true
       container=true
       artifacts=true
       ;;

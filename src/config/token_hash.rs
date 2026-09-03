@@ -6,6 +6,8 @@ use hubuum_storage_core::{MAX_TOKEN_HASH_KEYS, StorageTokenHashKeyId};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::environment::{constraint_message, constraints};
+
 const ACTIVE_KEY_ID_ENVIRONMENT: &str = "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID";
 const PREVIOUS_KEY_IDS_ENVIRONMENT: &str = "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS";
 const REQUIRE_STABLE_KEY_ENVIRONMENT: &str = "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY";
@@ -70,9 +72,10 @@ impl TokenHashKeyRing {
 
         let Some(active) = active else {
             if !previous.is_empty() {
-                return Err(TokenHashKeyConfigError::Invalid(
+                return Err(TokenHashKeyConfigError::Invalid(constraint_message(
+                    constraints::TOKEN_PREVIOUS_KEY_IDS,
                     "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID is required when previous token hash keys are configured",
-                ));
+                )));
             }
             return match crate::secrets::resolve_token_hash_key() {
                 Ok(material) => Self::try_new(
@@ -145,9 +148,10 @@ impl TokenHashKeyRing {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if require_stable && !stable {
-            return Err(TokenHashKeyConfigError::Invalid(
+            return Err(TokenHashKeyConfigError::Invalid(constraint_message(
+                constraints::STABLE_TOKEN_HASH_KEY,
                 "a stable token hash key is required for this deployment",
-            ));
+            )));
         }
         if keys
             .iter()

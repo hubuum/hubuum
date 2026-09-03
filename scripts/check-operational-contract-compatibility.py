@@ -279,9 +279,48 @@ class Comparator:
         def compare_command(name: str, old: dict[str, Any], new: dict[str, Any]) -> None:
             def compare_option(option: str, old_option: dict[str, Any], new_option: dict[str, Any]) -> None:
                 path = f"cli.{name}.options.{option}"
-                for field in ("long", "short", "value_kind", "value_count", "required", "conflicts_with", "requires"):
+                for field in ("long", "short", "value_kind"):
                     if old_option.get(field) != new_option.get(field):
                         self.add("breaking", f"cli-option-{field}-changed", f"{path}.{field}", old_option.get(field), new_option.get(field), f"CLI option {field} changed")
+                old_count = old_option.get("value_count")
+                new_count = new_option.get("value_count")
+                if old_count != new_count:
+                    old_minimum = old_count.get("minimum", 0) if old_count else 0
+                    new_minimum = new_count.get("minimum", 0) if new_count else 0
+                    old_maximum = old_count.get("maximum") if old_count else None
+                    new_maximum = new_count.get("maximum") if new_count else None
+                    stronger = new_minimum > old_minimum or (
+                        new_maximum is not None
+                        and (old_maximum is None or new_maximum < old_maximum)
+                    )
+                    self.add(
+                        "breaking" if stronger else "additive",
+                        "cli-option-value_count-changed",
+                        f"{path}.value_count",
+                        old_count,
+                        new_count,
+                        "CLI option value count narrowed" if stronger else "CLI option value count widened",
+                    )
+                old_required = bool(old_option.get("required"))
+                new_required = bool(new_option.get("required"))
+                if old_required != new_required:
+                    self.add(
+                        "breaking" if new_required else "additive",
+                        "cli-option-required-changed",
+                        f"{path}.required",
+                        old_required,
+                        new_required,
+                        "CLI option became required" if new_required else "CLI option became optional",
+                    )
+                for field in ("conflicts_with", "requires"):
+                    self.compare_set(
+                        f"{path}.{field}",
+                        old_option.get(field, []),
+                        new_option.get(field, []),
+                        f"cli-option-{field}",
+                        added_classification="breaking",
+                        removed_classification="additive",
+                    )
                 old_environment = old_option.get("environment")
                 new_environment = new_option.get("environment")
                 if old_environment != new_environment:
@@ -348,9 +387,12 @@ def validate_exceptions(policy: Any) -> None:
             raise ValueError("Invalid operational compatibility exception file")
 
 
-def changed_release_notes(changelog: str, candidate_version: str) -> str:
+def changed_release_notes(changelog: str, candidate_version: str, baseline_version: str) -> str:
     sections: list[str] = []
-    for heading in ("Unreleased", candidate_version):
+    headings = ["Unreleased"]
+    if candidate_version != baseline_version:
+        headings.append(candidate_version)
+    for heading in headings:
         match = re.search(rf"^## \[{re.escape(heading)}\].*$", changelog, re.MULTILINE)
         if not match:
             continue
@@ -459,7 +501,11 @@ def main() -> int:
             comparator.compare_documents(baseline, candidate)
             comparator.compare_cli(baseline, candidate)
             today = dt.date.fromisoformat(__import__("os").environ.get("HUBUUM_OPERATIONAL_CONTRACT_TODAY", dt.date.today().isoformat()))
-            notes = changed_release_notes(arguments.changelog.read_text(encoding="utf-8"), candidate["release"])
+            notes = changed_release_notes(
+                arguments.changelog.read_text(encoding="utf-8"),
+                candidate["release"],
+                baseline_tag[1:],
+            )
             exception_errors = apply_exceptions(comparator.changes, policy, baseline_tag, today, notes)
             counts = {classification: sum(change["classification"] == classification for change in comparator.changes) for classification in ("additive", "behavioral", "breaking")}
             counts["accepted"] = sum(change.get("accepted_by") is not None for change in comparator.changes if change["classification"] == "breaking")

@@ -359,6 +359,49 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(change["kind"], "cli-option-environment-changed")
         self.assertEqual(change["classification"], "additive")
 
+    def test_relaxed_cli_constraints_are_additive(self) -> None:
+        baseline = contract()
+        option = baseline["cli"][0]["options"][0]
+        option["required"] = True
+        option["conflicts_with"] = ["conflict"]
+        option["requires"] = ["requirement"]
+        candidate = copy.deepcopy(baseline)
+        candidate_option = candidate["cli"][0]["options"][0]
+        candidate_option["required"] = False
+        candidate_option["conflicts_with"] = []
+        candidate_option["requires"] = []
+        candidate_option["value_count"] = {"minimum": 0, "maximum": 2}
+        self.write_case(baseline, candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        changes = self.report_json()["changes"]
+        self.assertTrue(changes)
+        self.assertTrue(all(change["classification"] == "additive" for change in changes))
+
+    def test_stronger_cli_constraints_are_breaking(self) -> None:
+        candidate = contract()
+        option = candidate["cli"][0]["options"][0]
+        option["required"] = True
+        option["conflicts_with"] = ["conflict"]
+        option["requires"] = ["requirement"]
+        option["value_count"] = {"minimum": 1, "maximum": 1}
+        baseline = copy.deepcopy(candidate)
+        baseline_option = baseline["cli"][0]["options"][0]
+        baseline_option["required"] = False
+        baseline_option["conflicts_with"] = []
+        baseline_option["requires"] = []
+        baseline_option["value_count"] = {"minimum": 0, "maximum": 2}
+        self.write_case(baseline, candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        changes = self.report_json()["changes"]
+        self.assertTrue(changes)
+        self.assertTrue(all(change["classification"] == "breaking" for change in changes))
+
     def test_candidate_prerelease_version_is_valid(self) -> None:
         candidate = contract()
         candidate["release"] = "1.1.0-rc.1"
@@ -459,6 +502,44 @@ class PolicyTests(unittest.TestCase):
         result = self.run_checker()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.report_json()["counts"]["accepted"], 1)
+
+    def test_exception_cannot_reuse_a_previous_release_note(self) -> None:
+        candidate = contract()
+        candidate["metrics"] = []
+        self.write_case(contract(), candidate)
+        self.assertEqual(self.run_checker().returncode, 1)
+        fingerprint = self.report_json()["changes"][0]["fingerprint"]
+        self.write_json(
+            self.exceptions,
+            {
+                "schema_version": 1,
+                "exceptions": [
+                    {
+                        "id": "fixture.old-note",
+                        "baseline": "v1.0.0",
+                        "expires": "2026-12-01",
+                        "reason": "fixture",
+                        "migration": "use the replacement metric",
+                        "changelog_entry": "old migration",
+                        "fingerprints": [fingerprint],
+                    }
+                ],
+            },
+        )
+        self.changelog.write_text(
+            "# Changelog\n\n## [Unreleased]\n\n## [1.0.0]\n\n- old migration\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(
+            any(
+                "no matching changelog migration entry" in error
+                for error in self.report_json()["exception_errors"]
+            )
+        )
 
     def test_expired_exception_fails(self) -> None:
         candidate = contract()

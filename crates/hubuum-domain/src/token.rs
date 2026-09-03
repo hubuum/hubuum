@@ -12,6 +12,11 @@ impl TokenPolicyError {
     fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
+
+    fn constraint(contract: &'static str, message: impl Into<String>) -> Self {
+        debug_assert_eq!(contract, TOKEN_LIFETIME_CONSTRAINT);
+        Self::new(message)
+    }
 }
 
 impl fmt::Display for TokenPolicyError {
@@ -23,6 +28,10 @@ impl fmt::Display for TokenPolicyError {
 impl std::error::Error for TokenPolicyError {}
 
 pub const MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE: usize = 10;
+
+/// Operational constraint enforced for the default and maximum token lifetimes.
+pub const TOKEN_LIFETIME_CONSTRAINT: &str =
+    "HUBUUM_TOKEN_LIFETIME_HOURS must not exceed HUBUUM_MAX_TOKEN_LIFETIME_HOURS";
 
 /// Validated post-terminal period for retaining token metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,8 +115,9 @@ impl TokenIssuancePolicy {
         let maximum_lifetime =
             TokenLifetime::from_hours_for("max_token_lifetime_hours", maximum_lifetime_hours)?;
         if default_lifetime.hours() > maximum_lifetime.hours() {
-            return Err(TokenPolicyError::new(
-                "token_lifetime_hours must not exceed max_token_lifetime_hours".to_string(),
+            return Err(TokenPolicyError::constraint(
+                TOKEN_LIFETIME_CONSTRAINT,
+                "token_lifetime_hours must not exceed max_token_lifetime_hours",
             ));
         }
         Ok(Self {
