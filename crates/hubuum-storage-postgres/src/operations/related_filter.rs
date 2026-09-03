@@ -311,7 +311,7 @@ valid_scope_classes AS (
 target_seeds AS (
 {}
 ),
-object_edges AS (
+object_edges AS NOT MATERIALIZED (
     SELECT relation.from_hubuum_object_id AS source_object_id,
            relation.to_hubuum_object_id AS target_object_id
     FROM hubuumobject_relation relation
@@ -731,6 +731,7 @@ mod tests {
 
         let component = build_related_object_filter_sql(&groups, &[2], &[2], &visibility).unwrap();
 
+        assert!(component.sql.contains("object_edges AS NOT MATERIALIZED"));
         assert!(
             component
                 .sql

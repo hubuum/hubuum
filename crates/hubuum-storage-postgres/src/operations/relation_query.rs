@@ -1403,7 +1403,7 @@ root_objects AS (
     FROM unnest({root_array_sql}) AS scoped_root(root_object_id)
     WHERE scoped_root.root_object_id IN (SELECT object_id FROM valid_scope_objects)
 ),
-object_edges AS (
+object_edges AS NOT MATERIALIZED (
 {object_edges_sql}
 ),
 graph_walk AS (
@@ -2288,4 +2288,37 @@ fn validate_positive_id(id: i32, label: &str) -> Result<(), PostgresStorageError
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use hubuum_domain::PrincipalId;
+
+    use super::*;
+
+    #[test]
+    fn root_graph_walk_keeps_bidirectional_edges_inline() {
+        let root_ids = [1];
+        let collection_ids = [2];
+        let visibility = StorageVisibility::new(
+            PrincipalId::new(3).unwrap(),
+            true,
+            None::<Vec<StorageAuthorizationPermission>>,
+            None,
+        );
+
+        let query = build_root_graph_walk_query(RootGraphWalkSpec {
+            root_ids: &root_ids,
+            collection_ids: &collection_ids,
+            visibility: &visibility,
+            max_depth: 4,
+            per_root_limit: 250,
+            edges: GraphWalkEdges::Bidirectional,
+            ranking: GraphWalkRanking::ByDescendant,
+            projection: GraphWalkProjection::DescendantOnly,
+            preserve_alternative_paths: false,
+        });
+
+        assert!(query.sql.contains("object_edges AS NOT MATERIALIZED"));
+    }
 }
