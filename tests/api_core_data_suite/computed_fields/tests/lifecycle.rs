@@ -170,7 +170,7 @@ async fn lease_recovery_marks_the_class_rebuild_failed(#[future(awt)] test_conte
     )
     .await;
     assert_response_status(response, StatusCode::CREATED).await;
-    let state = class_computation_state_for(&test_context.pool, fixture.class.id)
+    let state = class_computation_state_for(&test_context.pool, typed_class_id(fixture.class.id))
         .await
         .unwrap();
     let task_id = state.active_task_id.unwrap();
@@ -188,7 +188,7 @@ async fn lease_recovery_marks_the_class_rebuild_failed(#[future(awt)] test_conte
         .await
         .unwrap();
     assert!(recovered.iter().any(|task| task.id == task_id));
-    let state = class_computation_state_for(&test_context.pool, fixture.class.id)
+    let state = class_computation_state_for(&test_context.pool, typed_class_id(fixture.class.id))
         .await
         .unwrap();
     assert_eq!(state.rebuild_status, "failed");
@@ -258,8 +258,8 @@ async fn concurrent_personal_creates_preserve_scope_capacity(
     for index in 0..15 {
         create_personal_definition(
             &test_context.pool,
-            fixture.class.id,
-            test_context.normal_user.id,
+            typed_class_id(fixture.class.id),
+            typed_principal_id(test_context.normal_user.id),
             definition_request(&format!("existing_{index}")),
             &EventContext::system(),
         )
@@ -270,16 +270,16 @@ async fn concurrent_personal_creates_preserve_scope_capacity(
     let first_context = EventContext::system();
     let first = create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.normal_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.normal_user.id),
         definition_request("concurrent_first"),
         &first_context,
     );
     let second_context = EventContext::system();
     let second = create_personal_definition(
         &test_context.pool,
-        fixture.class.id,
-        test_context.normal_user.id,
+        typed_class_id(fixture.class.id),
+        typed_principal_id(test_context.normal_user.id),
         definition_request("concurrent_second"),
         &second_context,
     );
@@ -372,7 +372,7 @@ async fn manual_rebuild_queues_the_current_revision(#[future(awt)] test_context:
     .await;
     assert_response_status(response, StatusCode::CREATED).await;
     finish_active_rebuild(&test_context, fixture.class.id).await;
-    let before = class_computation_state_for(&test_context.pool, fixture.class.id)
+    let before = class_computation_state_for(&test_context.pool, typed_class_id(fixture.class.id))
         .await
         .unwrap();
     let rebuild_endpoint = format!("{definition_endpoint}/rebuild");

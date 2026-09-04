@@ -402,8 +402,7 @@ impl ClassStorage for MemoryStorage {
             command.collection_id(),
             command.description(),
         )
-        .json_schema(command.json_schema().cloned())
-        .validate_schema(command.validates_schema())
+        .schema_policy(command.schema_policy().clone())
         .build();
         let document = AuditDocument::builder(format!("Class '{}' created", class.name()))
             .after(class.audit_snapshot())
@@ -450,18 +449,13 @@ impl ClassStorage for MemoryStorage {
         }
         let name = changes.name().unwrap_or(current.name());
         let collection_id = changes.collection_id().unwrap_or(current.collection_id());
-        let json_schema = changes
-            .json_schema()
-            .cloned()
-            .or_else(|| current.json_schema().cloned());
-        let validate_schema = changes
-            .validate_schema()
-            .unwrap_or(current.validates_schema());
+        let schema_policy = changes
+            .resolve_schema_policy(current.schema_policy())
+            .map_err(StorageValidationError::into_request_error)?;
         let description = changes.description().unwrap_or(current.description());
         if name == current.name()
             && collection_id == current.collection_id()
-            && json_schema.as_ref() == current.json_schema()
-            && validate_schema == current.validates_schema()
+            && &schema_policy == current.schema_policy()
             && description == current.description()
         {
             return Ok(StorageMutationOutcome::unchanged(current));
@@ -494,8 +488,7 @@ impl ClassStorage for MemoryStorage {
         )
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         let updated = StorageClass::builder(metadata, name, collection_id, description)
-            .json_schema(json_schema)
-            .validate_schema(validate_schema)
+            .schema_policy(schema_policy)
             .build();
         let document = AuditDocument::builder(format!("Class '{}' updated", updated.name()))
             .before(current.audit_snapshot())

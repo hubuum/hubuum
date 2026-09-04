@@ -341,10 +341,30 @@ source = "crates/hubuum-storage-core/src/import_workflow.rs"
 variants = ["UpsertIdentityScope", "UpsertGroup", "UpsertPrincipal", "UpsertGroupMembership", "CreateCollection", "UpdateCollection", "CreateClass", "UpdateClass", "CreateObject", "UpdateObject", "UpsertComputedField", "CreateClassRelation", "UpdateClassRelationTimestamps", "CheckClassRelationCondition", "CreateObjectRelation", "UpdateObjectRelationTimestamps", "CheckObjectRelationCondition", "ApplyCollectionPermissions", "UpsertExportTemplate", "UpsertRemoteTarget", "UpsertEventSink", "UpsertEventSubscription"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract", "tests/api_jobs_suite/imports.rs::administrator_imports_deterministic_identity_and_permission_graph"]
 
-[enums.StorageTaskCompletionArtifact]
+[enums.StorageTaskCompletionPayload]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-variants = ["None", "Export", "Backup", "RemoteCall"]
-scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+variants = ["Import", "Reindex", "Export", "Backup", "RemoteCall"]
+scenarios = ["crates/hubuum-storage-core/src/task_execution.rs::task_completion_payload_determines_task_kind", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[enums.StorageTaskActiveStatus]
+source = "crates/hubuum-storage-core/src/task_execution.rs"
+variants = ["Validating", "Running"]
+scenarios = ["crates/hubuum-storage-core/src/task_execution.rs::active_task_status_rejects_non_active_statuses", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[enums.StorageTaskTerminalStatus]
+source = "crates/hubuum-storage-core/src/task_execution.rs"
+variants = ["Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
+scenarios = ["crates/hubuum-storage-core/src/task_execution.rs::terminal_task_status_rejects_non_terminal_statuses", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[enums.StorageComputationRebuildState]
+source = "crates/hubuum-storage-core/src/computed_fields.rs"
+variants = ["Ready", "Rebuilding", "Failed"]
+scenarios = ["crates/hubuum-storage-core/src/computed_fields.rs::computation_rebuild_state_rejects_inconsistent_parts", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_computed_fields"]
+
+[enums.StorageClassSchemaPolicy]
+source = "crates/hubuum-storage-core/src/resource_lifecycle.rs"
+variants = ["Absent", "Advisory", "Enforced"]
+scenarios = ["crates/hubuum-storage-core/src/resource_lifecycle.rs::class_schema_policy_round_trips_valid_database_states", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_class_lifecycle"]
 
 [enums.StorageRestoreJobStatus]
 source = "crates/hubuum-storage-core/src/restore.rs"

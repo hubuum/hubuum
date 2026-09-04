@@ -11,7 +11,7 @@ use crate::models::{
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::backups::capture_backup_snapshot;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
-use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionArtifact};
+use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionPayload};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
@@ -129,7 +129,6 @@ pub(crate) async fn execute_backup_task(
         .summary(summary.clone())
         .started_at(task.started_at),
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
             message: summary,
             data: Some(serde_json::json!({
@@ -139,7 +138,7 @@ pub(crate) async fn execute_backup_task(
                 "include_history": request.include_history,
             })),
         },
-        StorageTaskCompletionArtifact::Backup(StorageBackupTaskArtifact::try_new(
+        StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::try_new(
             bytes,
             expires_at.and_utc(),
         )?),

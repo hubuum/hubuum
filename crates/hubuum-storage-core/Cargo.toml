@@ -18,6 +18,7 @@ release-train = "storage-sdk"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
+hubuum-computed-fields = { version = "=0.1.0", path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "=0.1.0", path = "../hubuum-domain" }
 hubuum-events-core = { version = "=0.1.0", path = "../hubuum-events-core" }
 hubuum-query = { version = "=0.1.0", path = "../hubuum-query" }

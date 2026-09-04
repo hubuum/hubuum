@@ -35,8 +35,9 @@ impl ClassService {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        let command = class_create_to_storage(command)?;
         self.storage
-            .create_class(class_create_to_storage(command), context)
+            .create_class(command, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -49,9 +50,10 @@ impl ClassService {
         changes: UpdateHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
+        let changes = class_update_to_storage(changes)?;
         self.storage
-            .update_class(&target, class_update_to_storage(changes), context)
+            .update_class(&target, changes, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -63,7 +65,7 @@ impl ClassService {
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = resolved_class_to_storage(target)?;
         self.storage
             .delete_class(&target, context)
             .await
@@ -599,5 +601,55 @@ mod tests {
                 .iter()
                 .all(|event| event.class_id == class.id && event.context == context)
         );
+    }
+
+    #[actix_web::test]
+    async fn memory_rejected_schema_policy_update_is_atomic() {
+        let storage = MemoryStorageModel::new();
+        let service = Services::from_resource_storage(storage.clone())
+            .classes()
+            .clone();
+        let context = EventContext::system();
+        let class = service
+            .create(
+                NewHubuumClass {
+                    name: "memory_atomic_schema_policy".to_string(),
+                    collection_id: 1,
+                    json_schema: None,
+                    validate_schema: None,
+                    description: "memory atomic schema policy".to_string(),
+                },
+                &context,
+            )
+            .await
+            .expect("memory class should be created");
+        let target = service
+            .resolve(selector(ClassAddress::Id, &class))
+            .await
+            .expect("memory class should resolve");
+        let events_before = storage.class_events().await;
+
+        let error = service
+            .update(
+                &target,
+                UpdateHubuumClass {
+                    name: None,
+                    collection_id: None,
+                    json_schema: None,
+                    validate_schema: Some(true),
+                    description: None,
+                },
+                &context,
+            )
+            .await
+            .expect_err("schema validation without a schema must fail");
+        let persisted = service
+            .resolve(selector(ClassAddress::Id, &class))
+            .await
+            .expect("rejected update must leave the class resolvable");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(persisted.class(), &class);
+        assert_eq!(storage.class_events().await, events_before);
     }
 }

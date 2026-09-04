@@ -1,3 +1,4 @@
+use hubuum_computed_fields::{Definition, FieldKey, Operation};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -385,12 +386,16 @@ fn collection_to_storage(
 }
 
 fn class_to_storage(input: ImportClassInput) -> Result<StorageImportClass, ApiError> {
+    let schema_policy = crate::storage::StorageClassSchemaPolicy::try_from_parts(
+        input.json_schema,
+        input.validate_schema.unwrap_or(false),
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
     Ok(StorageImportClass::from_parts(StorageImportClassParts {
         reference: input.ref_,
         name: input.name,
         description: input.description,
-        json_schema: input.json_schema,
-        validate_schema: input.validate_schema.unwrap_or(false),
+        schema_policy,
         collection_ref: input.collection_ref,
         collection_key: input.collection_key.map(collection_key_to_storage),
         condition: condition_to_storage(input.condition)?,
@@ -414,6 +419,17 @@ fn object_to_storage(input: ImportObjectInput) -> Result<StorageImportObject, Ap
 fn computed_field_to_storage(
     input: ImportComputedFieldInput,
 ) -> Result<StorageImportComputedField, ApiError> {
+    let operation = serde_json::from_value::<Operation>(input.operation)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let definition = Definition::new(
+        FieldKey::new(input.key).map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        input.label,
+        input.description,
+        operation,
+        input.result_type.into(),
+        input.enabled,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(StorageImportComputedField::from_parts(
         StorageImportComputedFieldParts {
             reference: input.ref_,
@@ -429,12 +445,7 @@ fn computed_field_to_storage(
             },
             owner_ref: input.owner_ref,
             owner_key: input.owner_key.map(principal_key_to_storage),
-            key: input.key,
-            label: input.label,
-            description: input.description,
-            operation: input.operation,
-            result_type: input.result_type.as_str().to_string(),
-            enabled: input.enabled,
+            definition,
             condition: condition_to_storage(input.condition)?,
             timestamps: timestamps_to_storage(input.timestamps)?,
         },
@@ -736,6 +747,6 @@ mod tests {
         })
         .unwrap();
 
-        assert!(!class.into_parts().validate_schema);
+        assert!(!class.into_parts().schema_policy.validates_schema());
     }
 }

@@ -47,7 +47,7 @@ use crate::services::tasks::{
 };
 use crate::storage::{
     ExecutionStorage, StorageExecutionScope, StorageExportTaskArtifact,
-    StorageExportTaskArtifactContent, StorageQueryBudget, StorageTaskCompletionArtifact,
+    StorageExportTaskArtifactContent, StorageQueryBudget, StorageTaskCompletionPayload,
     StorageTaskDurations, StorageTaskScopeSnapshot, storage_handle,
 };
 use crate::tasks::request_hash;
@@ -1160,7 +1160,6 @@ where
         pool,
         task,
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: "running".to_string(),
             message: "Export execution started".to_string(),
             data: None,
@@ -1179,7 +1178,6 @@ where
         pool,
         task,
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: "running".to_string(),
             message: "Query execution started".to_string(),
             data: Some(serde_json::json!({
@@ -1228,7 +1226,6 @@ where
             pool,
             task,
             NewTaskEventRecord {
-                task_id: task.id,
                 event_type: "running".to_string(),
                 message: "Hydrating relation-aware template context".to_string(),
                 data: relation_hydration.as_ref().map(|plan| {
@@ -1288,7 +1285,6 @@ where
         pool,
         task,
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: "running".to_string(),
             message: "Rendering export output".to_string(),
             data: None,
@@ -1324,7 +1320,6 @@ where
         pool,
         task,
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: "running".to_string(),
             message: "Persisting export output".to_string(),
             data: None,
@@ -1342,7 +1337,6 @@ where
         .summary("Export completed successfully")
         .started_at(task.started_at),
         NewTaskEventRecord {
-            task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
             message: format!("Export completed successfully in {total_elapsed:?}"),
             data: Some(serde_json::json!({
@@ -1356,7 +1350,7 @@ where
                 "render_duration_ms": artifact.timings.render_millis(),
             })),
         },
-        StorageTaskCompletionArtifact::Export(artifact_to_storage(artifact)?),
+        StorageTaskCompletionPayload::Export(artifact_to_storage(artifact)?),
     )
     .await?;
 

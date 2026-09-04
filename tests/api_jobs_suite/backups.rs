@@ -8,7 +8,8 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use crate::models::{
-        BackupDocument, BackupRequest, Permissions, TaskKind, TaskResponse, TaskStatus,
+        BackupDocument, BackupRequest, BackupTaskOutputStatus, Permissions, TaskKind, TaskResponse,
+        TaskStatus,
     };
     use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -77,9 +78,12 @@ mod tests {
         let completed = wait_for_backup(&context, accepted.id).await;
         let details = completed
             .details
-            .and_then(|details| details.backup)
+            .and_then(|details| details.into_backup())
             .expect("completed backup should expose output details");
-        assert!(details.output_available);
+        assert!(matches!(
+            details.state(),
+            BackupTaskOutputStatus::Available { .. }
+        ));
 
         let response = get_request(
             &context.pool,
@@ -161,15 +165,18 @@ mod tests {
         .await;
         let response = assert_response_status(response, StatusCode::OK).await;
         let task: TaskResponse = test::read_body_json(response).await;
-        let details = task.details.and_then(|details| details.backup).unwrap();
-        assert_eq!(
-            (
-                details.output_available,
-                details.byte_size.is_some(),
-                details.sha256.is_some(),
-            ),
-            (true, true, true)
-        );
+        let details = task
+            .details
+            .and_then(|details| details.into_backup())
+            .unwrap();
+        assert!(matches!(
+            details.state(),
+            BackupTaskOutputStatus::Available {
+                byte_size: 1..,
+                sha256: _sha256,
+                ..
+            }
+        ));
 
         let response = get_request(
             &context.pool,
@@ -190,8 +197,10 @@ mod tests {
             listed
                 .details
                 .as_ref()
-                .and_then(|details| details.backup.as_ref())
-                .is_some_and(|details| details.output_available)
+                .and_then(|details| details.as_backup())
+                .is_some_and(|details| {
+                    matches!(details.state(), BackupTaskOutputStatus::Available { .. })
+                })
         );
     }
 

@@ -509,8 +509,7 @@ impl MemoryStorage {
                 let created = self
                     .create_class(
                         StorageClassCreate::builder(parts.name, collection_id, parts.description)
-                            .json_schema(parts.json_schema)
-                            .validate_schema(parts.validate_schema)
+                            .schema_policy(parts.schema_policy)
                             .build(),
                         &EventContext::system(),
                     )
@@ -547,13 +546,14 @@ impl MemoryStorage {
                     .resolve_class(StorageClassSelector::Id(class_id))
                     .await?;
                 assert_import_revision(parts.condition, target.class().revision())?;
+                let (json_schema, validate_schema) = parts.schema_policy.into_parts();
                 let updated = self
                     .update_class(
                         &target,
                         StorageClassUpdate::builder()
                             .name(Some(parts.name))
-                            .json_schema(parts.json_schema)
-                            .validate_schema(Some(parts.validate_schema))
+                            .json_schema(json_schema)
+                            .validate_schema(Some(validate_schema))
                             .description(Some(parts.description))
                             .build(),
                         &EventContext::system(),
@@ -864,6 +864,7 @@ impl MemoryStorage {
             }
             StorageImportOperation::UpsertComputedField { input, overwrite } => {
                 let parts = input.into_parts();
+                let definition_key = parts.definition.key().as_str().to_string();
                 let class_id = self
                     .import_class_id(
                         parts.class_ref.as_deref(),
@@ -894,7 +895,7 @@ impl MemoryStorage {
                     .find(|definition| {
                         definition.class_id() == class_id
                             && definition.visibility() == visibility
-                            && definition.key() == parts.key
+                            && definition.key() == definition_key
                     })
                     .cloned();
                 if let Some(current) = &existing {
@@ -944,20 +945,13 @@ impl MemoryStorage {
                     }
                     StorageComputedFieldVisibility::Personal { owner_id } => owner_id,
                 };
+                let evaluator_definition = parts.definition;
                 let definition = StorageComputedFieldDefinition::new(
                     metadata,
                     class_id,
                     visibility,
                     StorageComputedFieldDefinitionContent::new(
-                        StorageComputedFieldDefinitionInput::new(
-                            parts.key,
-                            parts.label,
-                            parts.operation,
-                            parts.result_type,
-                        )
-                        .with_description(parts.description)
-                        .with_enabled(parts.enabled),
-                        1,
+                        StorageComputedFieldDefinitionInput::new(evaluator_definition),
                     ),
                     StorageComputedFieldProvenance::new(Some(actor_id), Some(actor_id)),
                 );

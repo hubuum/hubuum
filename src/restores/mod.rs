@@ -665,10 +665,10 @@ pub fn verify_backup_document(
             max_document_bytes
         )));
     }
-    let document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
+    let mut document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
         ApiError::BadRequest(format!("Backup document is not valid backup JSON: {error}"))
     })?;
-    let summary = validation_summary(&document)?;
+    let summary = validation_summary(&mut document)?;
     let section_counts = backup_section_counts(&document)?;
     Ok(BackupVerificationReport {
         report_version: BACKUP_VERIFICATION_REPORT_VERSION,
@@ -698,6 +698,8 @@ pub(crate) fn verify_restored_backup_matches(
     source: &BackupDocument,
     restored: &BackupDocument,
 ) -> Result<(), ApiError> {
+    let mut source = source.clone();
+    normalize_legacy_class_schema_policies(&mut source);
     if source.state != restored.state {
         return Err(ApiError::InternalServerError(
             "Restored logical state does not match the verified backup".to_string(),
@@ -790,8 +792,9 @@ fn invalid_restore_capability() -> ApiError {
     ApiError::Forbidden("Restore capability is invalid".to_string())
 }
 
-fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
+fn validation_summary(document: &mut BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
+    normalize_legacy_class_schema_policies(document);
     validate_backup_metadata(document)?;
     StorageBackupSnapshot::try_new(
         document.state.sections.clone(),
@@ -823,6 +826,40 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
     })
 }
 
+fn normalize_legacy_class_schema_policies(document: &mut BackupDocument) {
+    fn normalize_rows(rows: Option<&mut Vec<StorageBackupRow>>) {
+        let Some(rows) = rows else {
+            return;
+        };
+        for row in rows {
+            let validates_without_schema = row
+                .get("validate_schema")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && row.get("json_schema").is_none_or(Value::is_null);
+            if !validates_without_schema {
+                continue;
+            }
+            let mut fields = row.fields().clone();
+            fields.insert("validate_schema".to_string(), Value::Bool(false));
+            *row = StorageBackupRow::try_from_value(Value::Object(fields))
+                .expect("normalizing a backup row preserves its object shape");
+        }
+    }
+
+    normalize_rows(
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Classes),
+    );
+    normalize_rows(document.history.as_mut().and_then(|history| {
+        history
+            .sections
+            .get_mut(&StorageBackupHistorySection::ClassHistory)
+    }));
+}
+
 fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiError> {
     let current_classes = required_state_section(document, StorageBackupStateSection::Classes)?;
     let historical_classes = document
@@ -837,14 +874,27 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
         .unwrap_or(&[]);
 
     for row in current_classes.iter().chain(historical_classes) {
-        let Some(schema) = row.get("json_schema").filter(|value| !value.is_null()) else {
+        let schema_policy = crate::storage::StorageClassSchemaPolicy::try_from_parts(
+            row.get("json_schema")
+                .filter(|value| !value.is_null())
+                .cloned(),
+            row.get("validate_schema")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
+        .map_err(|error| {
+            let class_id = row.get("id").and_then(Value::as_i64);
+            ApiError::BadRequest(format!(
+                "Full backup class {} contains an invalid schema policy: {error}",
+                class_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "with unknown id".to_string())
+            ))
+        })?;
+        let Some(schema) = schema_policy.json_schema() else {
             continue;
         };
-        let validation = if row
-            .get("validate_schema")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        let validation = if schema_policy.validates_schema() {
             crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
         } else {
             crate::utilities::json_schema::validate_json_schema(schema)
@@ -1287,12 +1337,13 @@ pub async fn stage_restore(
             settings.max_upload_bytes()
         )));
     }
-    let document: BackupDocument = serde_json::from_slice(&document_bytes).map_err(|error| {
-        ApiError::BadRequest(format!(
-            "Restore document is not valid backup JSON: {error}"
-        ))
-    })?;
-    let validation = validation_summary(&document)?;
+    let mut document: BackupDocument =
+        serde_json::from_slice(&document_bytes).map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Restore document is not valid backup JSON: {error}"
+            ))
+        })?;
+    let validation = validation_summary(&mut document)?;
     let document_sha = sha256(&document_bytes);
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
@@ -1413,8 +1464,9 @@ pub async fn restore_status(
 async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
-    document: BackupDocument,
+    mut document: BackupDocument,
 ) -> Result<StorageRestoreCompletion, ApiError> {
+    normalize_legacy_class_schema_policies(&mut document);
     let metadata = StorageRestoreDocumentMetadata::new(
         document.backup_version,
         document.created_at,
@@ -1511,10 +1563,13 @@ pub async fn confirm_restore(
         }
         return Err(ApiError::Gone("Restore stage has expired".to_string()));
     }
-    let document: BackupDocument = serde_json::from_slice(&document_bytes).map_err(|error| {
-        ApiError::InternalServerError(format!("Staged restore document became invalid: {error}"))
-    })?;
-    let validation = validation_summary(&document)?;
+    let mut document: BackupDocument =
+        serde_json::from_slice(&document_bytes).map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Staged restore document became invalid: {error}"
+            ))
+        })?;
+    let validation = validation_summary(&mut document)?;
     // Confirmation commits only the maintenance transition. A separately
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.
@@ -1631,7 +1686,7 @@ async fn reconcile_restore_from_snapshot(
         return Ok(false);
     }
 
-    let document: BackupDocument = match serde_json::from_slice(&document_bytes) {
+    let mut document: BackupDocument = match serde_json::from_slice(&document_bytes) {
         Ok(document) => document,
         Err(parse_error) => {
             let error = ApiError::InternalServerError(format!(
@@ -1641,7 +1696,7 @@ async fn reconcile_restore_from_snapshot(
             return Err(error);
         }
     };
-    if let Err(error) = validation_summary(&document) {
+    if let Err(error) = validation_summary(&mut document) {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
@@ -1773,9 +1828,9 @@ mod tests {
     use super::verify_restored_backup_matches;
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-        RestoreSettings, confirmation_is_stale, restore_capability_matches,
-        restore_error_for_storage, sha256, validate_computed_field_definitions,
-        validate_event_revisions, verify_backup_document,
+        RestoreSettings, confirmation_is_stale, normalize_legacy_class_schema_policies,
+        restore_capability_matches, restore_error_for_storage, sha256,
+        validate_computed_field_definitions, validate_event_revisions, verify_backup_document,
     };
     use crate::errors::ApiError;
     use crate::models::{
@@ -1913,6 +1968,62 @@ mod tests {
     }
 
     #[test]
+    fn legacy_current_class_without_schema_disables_validation() {
+        let mut document = minimally_valid_document();
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Classes)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 2,
+                    "json_schema": null,
+                    "validate_schema": true
+                }))
+                .unwrap(),
+            );
+
+        normalize_legacy_class_schema_policies(&mut document);
+
+        let class = &document.state.sections[&StorageBackupStateSection::Classes][0];
+        assert_eq!(class.get("validate_schema"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn legacy_class_history_without_schema_disables_validation() {
+        let mut document = minimally_valid_document();
+        document.history = Some(BackupHistory {
+            sections: StorageBackupHistorySection::ALL
+                .iter()
+                .copied()
+                .map(|section| (section, Vec::new()))
+                .collect(),
+        });
+        document
+            .history
+            .as_mut()
+            .unwrap()
+            .sections
+            .get_mut(&StorageBackupHistorySection::ClassHistory)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 2,
+                    "json_schema": null,
+                    "validate_schema": true
+                }))
+                .unwrap(),
+            );
+
+        normalize_legacy_class_schema_policies(&mut document);
+
+        let class =
+            &document.history.unwrap().sections[&StorageBackupHistorySection::ClassHistory][0];
+        assert_eq!(class.get("validate_schema"), Some(&json!(false)));
+    }
+
+    #[test]
     fn offline_backup_verification_returns_only_sanitized_artifact_evidence() {
         let mut document = minimally_valid_document();
         document
@@ -2042,6 +2153,29 @@ mod tests {
                 }))
                 .unwrap(),
             );
+
+        assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[test]
+    fn restored_backup_comparison_accepts_legacy_class_schema_normalization() {
+        let mut source = minimally_valid_document();
+        source
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Classes)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(json!({
+                    "id": 2,
+                    "json_schema": null,
+                    "validate_schema": true
+                }))
+                .unwrap(),
+            );
+        let mut restored = source.clone();
+        normalize_legacy_class_schema_policies(&mut restored);
 
         assert!(verify_restored_backup_matches(&source, &restored).is_ok());
     }

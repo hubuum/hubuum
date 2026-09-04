@@ -78,7 +78,7 @@ manifest.
 | `hubuum` | Internal application |
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
-| `hubuum-computed-fields` | Workspace-internal |
+| `hubuum-computed-fields` | Experimental public |
 | `hubuum-domain` | Experimental public |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |

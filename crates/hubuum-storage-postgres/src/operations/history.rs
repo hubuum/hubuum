@@ -6,14 +6,14 @@ use hubuum_domain::{
 };
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageClass, StorageClassHistoryRecord, StorageCollection, StorageCollectionHistoryRecord,
-    StorageExportTemplate, StorageExportTemplateDefinition, StorageExportTemplateHistoryRecord,
-    StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryListQuery,
-    StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryPrincipalName, StorageObject,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryRecord,
-    StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
-    StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod, StorageRemoteTargetPolicy,
-    StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
+    StorageClass, StorageClassHistoryRecord, StorageClassSchemaPolicy, StorageCollection,
+    StorageCollectionHistoryRecord, StorageExportTemplate, StorageExportTemplateDefinition,
+    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
+    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
+    StorageHistoryPrincipalName, StorageObject, StorageObjectHistoryAsOfQuery,
+    StorageObjectHistoryListQuery, StorageObjectHistoryRecord, StoragePage, StorageRemoteTarget,
+    StorageRemoteTargetDefinition, StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod,
+    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
 
@@ -224,14 +224,21 @@ impl TryFrom<ClassHistoryRow> for StorageClassHistoryRecord {
 
     fn try_from(row: ClassHistoryRow) -> Result<Self, Self::Error> {
         let metadata = metadata!(row)?;
+        let schema_policy =
+            StorageClassSchemaPolicy::try_from_parts(row.json_schema, row.validate_schema)
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value(
+                        "class history schema policy",
+                        error,
+                    )
+                })?;
         let record = StorageClass::builder(
             record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
             row.name,
             CollectionId::new(row.collection_id)?,
             row.description,
         )
-        .json_schema(row.json_schema)
-        .validate_schema(row.validate_schema)
+        .schema_policy(schema_policy)
         .build();
         crate::validate_persisted("class history projection", Self::try_new(record, metadata))
     }

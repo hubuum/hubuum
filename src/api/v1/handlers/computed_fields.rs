@@ -11,7 +11,8 @@ use crate::models::{
     CollectionID, ComputedFieldDefinition, ComputedFieldDefinitionID, ComputedFieldDefinitionPatch,
     ComputedFieldDefinitionRequest, ComputedFieldDeleteResponse, ComputedFieldListResponse,
     ComputedFieldMutationResponse, ComputedFieldPreviewRequest, ComputedFieldPreviewResponse,
-    HubuumClassID, HubuumObjectID, Permissions, PersonalComputedFieldDefinitionRequest,
+    ComputedFieldPreviewSource, HubuumClassID, Permissions, PersonalComputedFieldDefinitionRequest,
+    PrincipalID,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
@@ -25,9 +26,9 @@ use crate::storage::with_revision_precondition;
 use crate::traits::SelfAccessors;
 use crate::traits::UserPermissions;
 
-fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {
+fn require_human(requestor: &Authenticated) -> Result<PrincipalID, ApiError> {
     if requestor.principal.is_human() {
-        Ok(requestor.principal.id().id())
+        Ok(requestor.principal.id())
     } else {
         Err(ApiError::Forbidden(
             "Service accounts cannot manage personal computed fields".to_string(),
@@ -69,8 +70,8 @@ pub async fn get_shared_computed_fields(
         [Permissions::ReadClass],
         class
     );
-    let definitions = list_shared_definitions(&context, class.id).await?;
-    let state = class_computation_state_for(&context, class.id).await?;
+    let definitions = list_shared_definitions(&context, class_id).await?;
+    let state = class_computation_state_for(&context, class_id).await?;
     Ok(ApiResponse::ok(ComputedFieldListResponse {
         definitions,
         state,
@@ -107,7 +108,7 @@ pub async fn get_shared_computed_field(
         [Permissions::ReadClass],
         class
     );
-    let definition = get_computed_definition(&context, field_id.id()).await?;
+    let definition = get_computed_definition(&context, field_id).await?;
     if definition.class_id != class.id || !definition.is_shared() {
         return Err(ApiError::NotFound(format!(
             "Shared computed field {} was not found in class {}",
@@ -143,9 +144,8 @@ pub async fn create_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&context).await?;
-    let collection = CollectionID::new(class.collection_id)?
-        .instance(&context)
-        .await?;
+    let collection_id = CollectionID::new(class.collection_id)?;
+    let collection = collection_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -156,9 +156,9 @@ pub async fn create_shared_computed_field(
     let event_context = requestor.event_context(&http_request);
     let response = create_shared_definition(
         &context,
-        class.id,
-        class.collection_id,
-        requestor.principal.id().id(),
+        class_id,
+        collection_id,
+        requestor.principal.id(),
         request.into_inner(),
         &event_context,
     )
@@ -192,9 +192,8 @@ pub async fn patch_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let (class_id, field_id) = path.into_inner();
     let class = class_id.instance(&context).await?;
-    let collection = CollectionID::new(class.collection_id)?
-        .instance(&context)
-        .await?;
+    let collection_id = CollectionID::new(class.collection_id)?;
+    let collection = collection_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -202,7 +201,7 @@ pub async fn patch_shared_computed_field(
         [Permissions::UpdateCollection],
         collection
     );
-    let definition = get_computed_definition(&context, field_id.id()).await?;
+    let definition = get_computed_definition(&context, field_id).await?;
     if definition.class_id != class.id || !definition.is_shared() {
         return Err(ApiError::NotFound(format!(
             "Shared computed field {} was not found in class {}",
@@ -217,10 +216,10 @@ pub async fn patch_shared_computed_field(
         precondition,
         update_shared_definition(
             &context,
-            class.id,
-            class.collection_id,
-            field_id.id(),
-            requestor.principal.id().id(),
+            class_id,
+            collection_id,
+            field_id,
+            requestor.principal.id(),
             request.into_inner(),
             &event_context,
         ),
@@ -252,9 +251,8 @@ pub async fn delete_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let (class_id, field_id) = path.into_inner();
     let class = class_id.instance(&context).await?;
-    let collection = CollectionID::new(class.collection_id)?
-        .instance(&context)
-        .await?;
+    let collection_id = CollectionID::new(class.collection_id)?;
+    let collection = collection_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -262,7 +260,7 @@ pub async fn delete_shared_computed_field(
         [Permissions::UpdateCollection],
         collection
     );
-    let definition = get_computed_definition(&context, field_id.id()).await?;
+    let definition = get_computed_definition(&context, field_id).await?;
     if definition.class_id != class.id || !definition.is_shared() {
         return Err(ApiError::NotFound(format!(
             "Shared computed field {} was not found in class {}",
@@ -277,10 +275,10 @@ pub async fn delete_shared_computed_field(
         precondition,
         delete_shared_definition(
             &context,
-            class.id,
-            class.collection_id,
-            field_id.id(),
-            requestor.principal.id().id(),
+            class_id,
+            collection_id,
+            field_id,
+            requestor.principal.id(),
             &event_context,
         ),
     )
@@ -300,30 +298,26 @@ async fn preview_source(
     request: &ComputedFieldPreviewRequest,
     target_class_id: i32,
 ) -> Result<serde_json::Value, ApiError> {
-    if request.source_count() != 1 {
-        return Err(ApiError::BadRequest(
-            "Preview requires exactly one of object_id or data".to_string(),
-        ));
+    match request.source() {
+        ComputedFieldPreviewSource::Inline(data) => Ok(data.clone()),
+        ComputedFieldPreviewSource::Object(object_id) => {
+            let object = object_id.instance(context).await?;
+            if object.hubuum_class_id != target_class_id {
+                return Err(ApiError::BadRequest(format!(
+                    "Object {} is not in class {target_class_id}",
+                    object.id
+                )));
+            }
+            can!(
+                context,
+                &requestor.principal,
+                requestor.scopes(),
+                [Permissions::ReadObject],
+                object
+            );
+            Ok(object.data)
+        }
     }
-    if let Some(data) = &request.data {
-        return Ok(data.clone());
-    }
-    let object_id = HubuumObjectID::new(request.object_id.expect("source count checked"))?;
-    let object = object_id.instance(context).await?;
-    if object.hubuum_class_id != target_class_id {
-        return Err(ApiError::BadRequest(format!(
-            "Object {} is not in class {target_class_id}",
-            object.id
-        )));
-    }
-    can!(
-        context,
-        &requestor.principal,
-        requestor.scopes(),
-        [Permissions::ReadObject],
-        object
-    );
-    Ok(object.data)
 }
 
 #[utoipa::path(
@@ -347,9 +341,8 @@ pub async fn preview_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&context).await?;
-    let collection = CollectionID::new(class.collection_id)?
-        .instance(&context)
-        .await?;
+    let collection_id = CollectionID::new(class.collection_id)?;
+    let collection = collection_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -361,7 +354,7 @@ pub async fn preview_shared_computed_field(
     let data = preview_source(&context, &requestor, &request, class.id).await?;
     Ok(ApiResponse::ok(preview_computed_definition(
         &data,
-        &request.definition,
+        request.definition(),
     )?))
 }
 
@@ -384,9 +377,8 @@ pub async fn rebuild_shared_computed_fields(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&context).await?;
-    let collection = CollectionID::new(class.collection_id)?
-        .instance(&context)
-        .await?;
+    let collection_id = CollectionID::new(class.collection_id)?;
+    let collection = collection_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -397,9 +389,9 @@ pub async fn rebuild_shared_computed_fields(
     Ok(ApiResponse::accepted(
         request_class_rebuild(
             &context,
-            class.id,
-            class.collection_id,
-            Some(requestor.principal.id().id()),
+            class_id,
+            collection_id,
+            Some(requestor.principal.id()),
         )
         .await?,
     ))
@@ -427,11 +419,11 @@ pub async fn get_personal_computed_fields(
         parse_query_parameter_with_passthrough(request.query_string(), &["class_id"])?;
     let class_filter = match passthrough.remove("class_id") {
         None => None,
-        Some(values) if values.len() == 1 => Some(
-            values[0]
-                .parse::<i32>()
-                .map_err(|_| ApiError::BadRequest("class_id must be an integer".to_string()))?,
-        ),
+        Some(values) if values.len() == 1 => {
+            Some(HubuumClassID::new(values[0].parse::<i32>().map_err(
+                |_| ApiError::BadRequest("class_id must be an integer".to_string()),
+            )?)?)
+        }
         Some(_) => {
             return Err(ApiError::BadRequest(
                 "class_id may be supplied at most once".to_string(),
@@ -465,8 +457,8 @@ pub async fn get_personal_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
     let field_id = field_id.into_inner();
-    let definition = get_computed_definition(&context, field_id.id()).await?;
-    if !definition.is_personal_for(owner_id) {
+    let definition = get_computed_definition(&context, field_id).await?;
+    if !definition.is_personal_for(owner_id.id()) {
         return Err(ApiError::NotFound(format!(
             "Personal computed field {} was not found",
             field_id.id()
@@ -518,7 +510,7 @@ pub async fn create_personal_computed_field(
     ApiResponse::revisioned(
         create_personal_definition(
             &context,
-            class.id,
+            class_id,
             owner_id,
             request.definition,
             &event_context,
@@ -550,8 +542,8 @@ pub async fn patch_personal_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
     let field_id = field_id.into_inner();
-    let definition = get_computed_definition(&context, field_id.id()).await?;
-    if !definition.is_personal_for(owner_id) {
+    let definition = get_computed_definition(&context, field_id).await?;
+    if !definition.is_personal_for(owner_id.id()) {
         return Err(ApiError::NotFound(format!(
             "Personal computed field {} was not found",
             field_id.id()
@@ -575,7 +567,7 @@ pub async fn patch_personal_computed_field(
         update_personal_definition(
             &context,
             owner_id,
-            field_id.id(),
+            field_id,
             request.into_inner(),
             &event_context,
         ),
@@ -606,8 +598,8 @@ pub async fn delete_personal_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
     let field_id = field_id.into_inner();
-    let definition = get_computed_definition(&context, field_id.id()).await?;
-    if !definition.is_personal_for(owner_id) {
+    let definition = get_computed_definition(&context, field_id).await?;
+    if !definition.is_personal_for(owner_id.id()) {
         return Err(ApiError::NotFound(format!(
             "Personal computed field {} was not found",
             field_id.id()
@@ -628,7 +620,7 @@ pub async fn delete_personal_computed_field(
     with_revision_precondition(
         &context,
         precondition,
-        delete_personal_definition(&context, owner_id, field_id.id(), &event_context),
+        delete_personal_definition(&context, owner_id, field_id, &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(definition.entity_tag()?))
@@ -653,12 +645,10 @@ pub async fn preview_personal_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let _ = require_human(&requestor)?;
     let request = request.into_inner();
-    let target_class_id = request.class_id.ok_or_else(|| {
+    let target_class_id = request.class_id().ok_or_else(|| {
         ApiError::BadRequest("class_id is required for a personal preview".to_string())
     })?;
-    let class = HubuumClassID::new(target_class_id)?
-        .instance(&context)
-        .await?;
+    let class = target_class_id.instance(&context).await?;
     can!(
         &context,
         &requestor.principal,
@@ -666,9 +656,9 @@ pub async fn preview_personal_computed_field(
         [Permissions::ReadClass],
         class
     );
-    let data = preview_source(&context, &requestor, &request, target_class_id).await?;
+    let data = preview_source(&context, &requestor, &request, target_class_id.id()).await?;
     Ok(ApiResponse::ok(preview_computed_definition(
         &data,
-        &request.definition,
+        request.definition(),
     )?))
 }

@@ -2,8 +2,8 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
@@ -303,7 +303,6 @@ pub struct TaskEventRecord {
 }
 
 pub struct NewTaskEventRecord {
-    pub task_id: i32,
     pub event_type: String,
     pub message: String,
     pub data: Option<serde_json::Value>,
@@ -349,40 +348,551 @@ pub struct ImportTaskDetails {
     pub results_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportTaskDetails {
-    pub output_url: String,
-    pub output_available: bool,
+    output_url: String,
+    state: ExportTaskOutputState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExportTaskOutputState {
+    Missing,
+    Expired {
+        expires_at: NaiveDateTime,
+    },
+    Available {
+        expires_at: NaiveDateTime,
+        template_name: Option<String>,
+        content_type: String,
+        warning_count: i32,
+        truncated: bool,
+        total_duration_ms: i32,
+        query_duration_ms: i32,
+        hydration_duration_ms: i32,
+        render_duration_ms: i32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+struct ExportTaskDetailsWire {
+    output_url: String,
+    output_available: bool,
     /// True when output was produced but has since passed its retention window. Distinguishes an
     /// expired export from one that was never generated (both have `output_available = false`).
-    pub output_expired: bool,
-    pub output_expires_at: Option<NaiveDateTime>,
-    pub template_name: Option<String>,
-    pub output_content_type: Option<String>,
-    pub warning_count: Option<i32>,
-    pub truncated: Option<bool>,
-    pub total_duration_ms: Option<i32>,
-    pub query_duration_ms: Option<i32>,
-    pub hydration_duration_ms: Option<i32>,
-    pub render_duration_ms: Option<i32>,
+    output_expired: bool,
+    output_expires_at: Option<NaiveDateTime>,
+    template_name: Option<String>,
+    output_content_type: Option<String>,
+    warning_count: Option<i32>,
+    truncated: Option<bool>,
+    total_duration_ms: Option<i32>,
+    query_duration_ms: Option<i32>,
+    hydration_duration_ms: Option<i32>,
+    render_duration_ms: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl ExportTaskDetails {
+    fn from_lookup(
+        output_url: String,
+        output: ExportOutputLookup<&ExportTaskOutputSummary>,
+    ) -> Self {
+        let state = match output {
+            ExportOutputLookup::Available(summary) => ExportTaskOutputState::Available {
+                expires_at: summary.output_expires_at,
+                template_name: summary.template_name.clone(),
+                content_type: summary.content_type.clone(),
+                warning_count: summary.warning_count,
+                truncated: summary.truncated,
+                total_duration_ms: summary.total_duration_ms,
+                query_duration_ms: summary.query_duration_ms,
+                hydration_duration_ms: summary.hydration_duration_ms,
+                render_duration_ms: summary.render_duration_ms,
+            },
+            ExportOutputLookup::Expired { expires_at } => {
+                ExportTaskOutputState::Expired { expires_at }
+            }
+            ExportOutputLookup::Missing => ExportTaskOutputState::Missing,
+        };
+        Self { output_url, state }
+    }
+
+    #[must_use]
+    pub fn state(&self) -> ExportTaskOutputStatus<'_> {
+        match &self.state {
+            ExportTaskOutputState::Missing => ExportTaskOutputStatus::Missing,
+            ExportTaskOutputState::Expired { expires_at } => {
+                ExportTaskOutputStatus::Expired { expires_at }
+            }
+            ExportTaskOutputState::Available {
+                expires_at,
+                template_name,
+                content_type,
+                warning_count,
+                truncated,
+                total_duration_ms,
+                query_duration_ms,
+                hydration_duration_ms,
+                render_duration_ms,
+            } => ExportTaskOutputStatus::Available {
+                expires_at,
+                template_name: template_name.as_deref(),
+                content_type,
+                warning_count: *warning_count,
+                truncated: *truncated,
+                total_duration_ms: *total_duration_ms,
+                query_duration_ms: *query_duration_ms,
+                hydration_duration_ms: *hydration_duration_ms,
+                render_duration_ms: *render_duration_ms,
+            },
+        }
+    }
+
+    fn into_wire(self) -> ExportTaskDetailsWire {
+        let mut wire = ExportTaskDetailsWire {
+            output_url: self.output_url,
+            output_available: false,
+            output_expired: false,
+            output_expires_at: None,
+            template_name: None,
+            output_content_type: None,
+            warning_count: None,
+            truncated: None,
+            total_duration_ms: None,
+            query_duration_ms: None,
+            hydration_duration_ms: None,
+            render_duration_ms: None,
+        };
+        match self.state {
+            ExportTaskOutputState::Missing => {}
+            ExportTaskOutputState::Expired { expires_at } => {
+                wire.output_expired = true;
+                wire.output_expires_at = Some(expires_at);
+            }
+            ExportTaskOutputState::Available {
+                expires_at,
+                template_name,
+                content_type,
+                warning_count,
+                truncated,
+                total_duration_ms,
+                query_duration_ms,
+                hydration_duration_ms,
+                render_duration_ms,
+            } => {
+                wire.output_available = true;
+                wire.output_expires_at = Some(expires_at);
+                wire.template_name = template_name;
+                wire.output_content_type = Some(content_type);
+                wire.warning_count = Some(warning_count);
+                wire.truncated = Some(truncated);
+                wire.total_duration_ms = Some(total_duration_ms);
+                wire.query_duration_ms = Some(query_duration_ms);
+                wire.hydration_duration_ms = Some(hydration_duration_ms);
+                wire.render_duration_ms = Some(render_duration_ms);
+            }
+        }
+        wire
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportTaskOutputStatus<'a> {
+    Missing,
+    Expired {
+        expires_at: &'a NaiveDateTime,
+    },
+    Available {
+        expires_at: &'a NaiveDateTime,
+        template_name: Option<&'a str>,
+        content_type: &'a str,
+        warning_count: i32,
+        truncated: bool,
+        total_duration_ms: i32,
+        query_duration_ms: i32,
+        hydration_duration_ms: i32,
+        render_duration_ms: i32,
+    },
+}
+
+impl Serialize for ExportTaskDetails {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.clone().into_wire().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ExportTaskDetails {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ExportTaskDetailsWire::deserialize(deserializer)?;
+        let state = match (wire.output_available, wire.output_expired) {
+            (false, false)
+                if wire.output_expires_at.is_none()
+                    && wire.template_name.is_none()
+                    && wire.output_content_type.is_none()
+                    && wire.warning_count.is_none()
+                    && wire.truncated.is_none()
+                    && wire.total_duration_ms.is_none()
+                    && wire.query_duration_ms.is_none()
+                    && wire.hydration_duration_ms.is_none()
+                    && wire.render_duration_ms.is_none() =>
+            {
+                ExportTaskOutputState::Missing
+            }
+            (false, true)
+                if wire.template_name.is_none()
+                    && wire.output_content_type.is_none()
+                    && wire.warning_count.is_none()
+                    && wire.truncated.is_none()
+                    && wire.total_duration_ms.is_none()
+                    && wire.query_duration_ms.is_none()
+                    && wire.hydration_duration_ms.is_none()
+                    && wire.render_duration_ms.is_none() =>
+            {
+                ExportTaskOutputState::Expired {
+                    expires_at: wire.output_expires_at.ok_or_else(|| {
+                        serde::de::Error::custom("expired export output requires an expiry")
+                    })?,
+                }
+            }
+            (true, false) => ExportTaskOutputState::Available {
+                expires_at: wire.output_expires_at.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires an expiry")
+                })?,
+                template_name: wire.template_name,
+                content_type: wire.output_content_type.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires a content type")
+                })?,
+                warning_count: wire.warning_count.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires a warning count")
+                })?,
+                truncated: wire.truncated.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires truncation state")
+                })?,
+                total_duration_ms: wire.total_duration_ms.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires total duration")
+                })?,
+                query_duration_ms: wire.query_duration_ms.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires query duration")
+                })?,
+                hydration_duration_ms: wire.hydration_duration_ms.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires hydration duration")
+                })?,
+                render_duration_ms: wire.render_duration_ms.ok_or_else(|| {
+                    serde::de::Error::custom("available export output requires render duration")
+                })?,
+            },
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "export output state and metadata are inconsistent",
+                ));
+            }
+        };
+        Ok(Self {
+            output_url: wire.output_url,
+            state,
+        })
+    }
+}
+
+impl PartialSchema for ExportTaskDetails {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        ExportTaskDetailsWire::schema()
+    }
+}
+
+impl ToSchema for ExportTaskDetails {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupTaskDetails {
-    pub output_url: String,
-    pub output_available: bool,
-    pub output_expired: bool,
-    pub output_expires_at: Option<NaiveDateTime>,
-    pub byte_size: Option<i64>,
-    pub sha256: Option<String>,
+    output_url: String,
+    state: BackupTaskOutputState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BackupTaskOutputState {
+    Missing,
+    Expired {
+        expires_at: NaiveDateTime,
+    },
+    Available {
+        expires_at: NaiveDateTime,
+        byte_size: i64,
+        sha256: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct TaskDetails {
-    pub import: Option<ImportTaskDetails>,
-    pub export: Option<ExportTaskDetails>,
-    pub backup: Option<BackupTaskDetails>,
+struct BackupTaskDetailsWire {
+    output_url: String,
+    output_available: bool,
+    output_expired: bool,
+    output_expires_at: Option<NaiveDateTime>,
+    byte_size: Option<i64>,
+    sha256: Option<String>,
 }
+
+impl BackupTaskDetails {
+    fn from_lookup(
+        output_url: String,
+        output: BackupOutputLookup<&BackupTaskOutputSummary>,
+    ) -> Self {
+        let state = match output {
+            BackupOutputLookup::Available(summary) => BackupTaskOutputState::Available {
+                expires_at: summary.output_expires_at,
+                byte_size: summary.byte_size,
+                sha256: summary.sha256.clone(),
+            },
+            BackupOutputLookup::Expired { expires_at } => {
+                BackupTaskOutputState::Expired { expires_at }
+            }
+            BackupOutputLookup::Missing => BackupTaskOutputState::Missing,
+        };
+        Self { output_url, state }
+    }
+
+    #[must_use]
+    pub fn state(&self) -> BackupTaskOutputStatus<'_> {
+        match &self.state {
+            BackupTaskOutputState::Missing => BackupTaskOutputStatus::Missing,
+            BackupTaskOutputState::Expired { expires_at } => {
+                BackupTaskOutputStatus::Expired { expires_at }
+            }
+            BackupTaskOutputState::Available {
+                expires_at,
+                byte_size,
+                sha256,
+            } => BackupTaskOutputStatus::Available {
+                expires_at,
+                byte_size: *byte_size,
+                sha256,
+            },
+        }
+    }
+
+    fn into_wire(self) -> BackupTaskDetailsWire {
+        let mut wire = BackupTaskDetailsWire {
+            output_url: self.output_url,
+            output_available: false,
+            output_expired: false,
+            output_expires_at: None,
+            byte_size: None,
+            sha256: None,
+        };
+        match self.state {
+            BackupTaskOutputState::Missing => {}
+            BackupTaskOutputState::Expired { expires_at } => {
+                wire.output_expired = true;
+                wire.output_expires_at = Some(expires_at);
+            }
+            BackupTaskOutputState::Available {
+                expires_at,
+                byte_size,
+                sha256,
+            } => {
+                wire.output_available = true;
+                wire.output_expires_at = Some(expires_at);
+                wire.byte_size = Some(byte_size);
+                wire.sha256 = Some(sha256);
+            }
+        }
+        wire
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupTaskOutputStatus<'a> {
+    Missing,
+    Expired {
+        expires_at: &'a NaiveDateTime,
+    },
+    Available {
+        expires_at: &'a NaiveDateTime,
+        byte_size: i64,
+        sha256: &'a str,
+    },
+}
+
+impl Serialize for BackupTaskDetails {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.clone().into_wire().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BackupTaskDetails {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = BackupTaskDetailsWire::deserialize(deserializer)?;
+        let state = match (wire.output_available, wire.output_expired) {
+            (false, false)
+                if wire.output_expires_at.is_none()
+                    && wire.byte_size.is_none()
+                    && wire.sha256.is_none() =>
+            {
+                BackupTaskOutputState::Missing
+            }
+            (false, true) if wire.byte_size.is_none() && wire.sha256.is_none() => {
+                BackupTaskOutputState::Expired {
+                    expires_at: wire.output_expires_at.ok_or_else(|| {
+                        serde::de::Error::custom("expired backup output requires an expiry")
+                    })?,
+                }
+            }
+            (true, false) => BackupTaskOutputState::Available {
+                expires_at: wire.output_expires_at.ok_or_else(|| {
+                    serde::de::Error::custom("available backup output requires an expiry")
+                })?,
+                byte_size: wire.byte_size.ok_or_else(|| {
+                    serde::de::Error::custom("available backup output requires a byte size")
+                })?,
+                sha256: wire.sha256.ok_or_else(|| {
+                    serde::de::Error::custom("available backup output requires a digest")
+                })?,
+            },
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "backup output state and metadata are inconsistent",
+                ));
+            }
+        };
+        Ok(Self {
+            output_url: wire.output_url,
+            state,
+        })
+    }
+}
+
+impl PartialSchema for BackupTaskDetails {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        BackupTaskDetailsWire::schema()
+    }
+}
+
+impl ToSchema for BackupTaskDetails {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskDetails {
+    Import(ImportTaskDetails),
+    Export(ExportTaskDetails),
+    Backup(BackupTaskDetails),
+}
+
+impl TaskDetails {
+    #[must_use]
+    pub const fn as_import(&self) -> Option<&ImportTaskDetails> {
+        match self {
+            Self::Import(details) => Some(details),
+            Self::Export(_) | Self::Backup(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_export(&self) -> Option<&ExportTaskDetails> {
+        match self {
+            Self::Export(details) => Some(details),
+            Self::Import(_) | Self::Backup(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_backup(&self) -> Option<&BackupTaskDetails> {
+        match self {
+            Self::Backup(details) => Some(details),
+            Self::Import(_) | Self::Export(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn into_import(self) -> Option<ImportTaskDetails> {
+        match self {
+            Self::Import(details) => Some(details),
+            Self::Export(_) | Self::Backup(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn into_export(self) -> Option<ExportTaskDetails> {
+        match self {
+            Self::Export(details) => Some(details),
+            Self::Import(_) | Self::Backup(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn into_backup(self) -> Option<BackupTaskDetails> {
+        match self {
+            Self::Backup(details) => Some(details),
+            Self::Import(_) | Self::Export(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+struct TaskDetailsWire {
+    import: Option<ImportTaskDetails>,
+    export: Option<ExportTaskDetails>,
+    backup: Option<BackupTaskDetails>,
+}
+
+impl Serialize for TaskDetails {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let wire = match self {
+            Self::Import(details) => TaskDetailsWire {
+                import: Some(details.clone()),
+                export: None,
+                backup: None,
+            },
+            Self::Export(details) => TaskDetailsWire {
+                import: None,
+                export: Some(details.clone()),
+                backup: None,
+            },
+            Self::Backup(details) => TaskDetailsWire {
+                import: None,
+                export: None,
+                backup: Some(details.clone()),
+            },
+        };
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskDetails {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = TaskDetailsWire::deserialize(deserializer)?;
+        match (wire.import, wire.export, wire.backup) {
+            (Some(details), None, None) => Ok(Self::Import(details)),
+            (None, Some(details), None) => Ok(Self::Export(details)),
+            (None, None, Some(details)) => Ok(Self::Backup(details)),
+            _ => Err(serde::de::Error::custom(
+                "task details must contain exactly one detail kind",
+            )),
+        }
+    }
+}
+
+impl PartialSchema for TaskDetails {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        TaskDetailsWire::schema()
+    }
+}
+
+impl ToSchema for TaskDetails {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskResponse {
@@ -523,63 +1033,18 @@ impl TaskRecord {
         let export_output_url =
             (kind == TaskKind::Export).then(|| format!("/api/v1/exports/{}/output", self.id));
         let details = match kind {
-            TaskKind::Import => import_results.clone().map(|results_url| TaskDetails {
-                import: Some(ImportTaskDetails { results_url }),
-                export: None,
-                backup: None,
-            }),
+            TaskKind::Import => import_results
+                .clone()
+                .map(|results_url| TaskDetails::Import(ImportTaskDetails { results_url })),
             TaskKind::Export => export_output_url.clone().map(|output_url| {
-                let (output_summary, output_expired, expired_expires_at) = match export_output {
-                    ExportOutputLookup::Available(summary) => (Some(summary), false, None),
-                    ExportOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
-                    ExportOutputLookup::Missing => (None, false, None),
-                };
-                TaskDetails {
-                    import: None,
-                    export: Some(ExportTaskDetails {
-                        output_url,
-                        output_available: output_summary.is_some(),
-                        output_expired,
-                        output_expires_at: output_summary
-                            .map(|summary| summary.output_expires_at)
-                            .or(expired_expires_at),
-                        template_name: output_summary
-                            .and_then(|summary| summary.template_name.clone()),
-                        output_content_type: output_summary
-                            .map(|summary| summary.content_type.clone()),
-                        warning_count: output_summary.map(|summary| summary.warning_count),
-                        truncated: output_summary.map(|summary| summary.truncated),
-                        total_duration_ms: output_summary.map(|summary| summary.total_duration_ms),
-                        query_duration_ms: output_summary.map(|summary| summary.query_duration_ms),
-                        hydration_duration_ms: output_summary
-                            .map(|summary| summary.hydration_duration_ms),
-                        render_duration_ms: output_summary
-                            .map(|summary| summary.render_duration_ms),
-                    }),
-                    backup: None,
-                }
+                TaskDetails::Export(ExportTaskDetails::from_lookup(output_url, export_output))
             }),
             TaskKind::Backup => {
                 let output_url = format!("/api/v1/backups/{}/output", self.id);
-                let (output_summary, output_expired, expired_expires_at) = match backup_output {
-                    BackupOutputLookup::Available(summary) => (Some(summary), false, None),
-                    BackupOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
-                    BackupOutputLookup::Missing => (None, false, None),
-                };
-                Some(TaskDetails {
-                    import: None,
-                    export: None,
-                    backup: Some(BackupTaskDetails {
-                        output_url,
-                        output_available: output_summary.is_some(),
-                        output_expired,
-                        output_expires_at: output_summary
-                            .map(|summary| summary.output_expires_at)
-                            .or(expired_expires_at),
-                        byte_size: output_summary.map(|summary| summary.byte_size),
-                        sha256: output_summary.map(|summary| summary.sha256.clone()),
-                    }),
-                })
+                Some(TaskDetails::Backup(BackupTaskDetails::from_lookup(
+                    output_url,
+                    backup_output,
+                )))
             }
             _ => None,
         };
@@ -962,6 +1427,54 @@ mod tests {
     }
 
     #[test]
+    fn task_details_deserialization_rejects_multiple_kinds() {
+        let invalid = serde_json::json!({
+            "import": {"results_url": "/imports/1/results"},
+            "export": {
+                "output_url": "/exports/1/output",
+                "output_available": false,
+                "output_expired": false,
+                "output_expires_at": null,
+                "template_name": null,
+                "output_content_type": null,
+                "warning_count": null,
+                "truncated": null,
+                "total_duration_ms": null,
+                "query_duration_ms": null,
+                "hydration_duration_ms": null,
+                "render_duration_ms": null
+            },
+            "backup": null
+        });
+
+        let error = serde_json::from_value::<TaskDetails>(invalid).unwrap_err();
+
+        assert!(error.to_string().contains("exactly one detail kind"));
+    }
+
+    #[test]
+    fn export_details_deserialization_rejects_contradictory_output_state() {
+        let invalid = serde_json::json!({
+            "output_url": "/exports/1/output",
+            "output_available": true,
+            "output_expired": true,
+            "output_expires_at": test_timestamp(),
+            "template_name": null,
+            "output_content_type": "application/json",
+            "warning_count": 0,
+            "truncated": false,
+            "total_duration_ms": 1,
+            "query_duration_ms": 1,
+            "hydration_duration_ms": 0,
+            "render_duration_ms": 0
+        });
+
+        let error = serde_json::from_value::<ExportTaskDetails>(invalid).unwrap_err();
+
+        assert!(error.to_string().contains("inconsistent"));
+    }
+
+    #[test]
     fn task_id_new_accepts_positive() {
         assert_eq!(TaskID::new(1).unwrap().id(), 1);
         assert_eq!(TaskID::new(i32::MAX).unwrap().id(), i32::MAX);
@@ -1075,16 +1588,28 @@ mod tests {
         let response = task
             .to_response_with_export_output(ExportOutputLookup::Available(&output))
             .unwrap();
-        let details = response.details.unwrap().export.unwrap();
+        let TaskDetails::Export(details) = response.details.unwrap() else {
+            panic!("expected export task details");
+        };
+        let ExportTaskOutputStatus::Available {
+            total_duration_ms,
+            query_duration_ms,
+            hydration_duration_ms,
+            render_duration_ms,
+            ..
+        } = details.state()
+        else {
+            panic!("expected available export output");
+        };
 
         assert_eq!(
             (
-                details.total_duration_ms,
-                details.query_duration_ms,
-                details.hydration_duration_ms,
-                details.render_duration_ms,
+                total_duration_ms,
+                query_duration_ms,
+                hydration_duration_ms,
+                render_duration_ms,
             ),
-            (Some(150), Some(40), Some(30), Some(70))
+            (150, 40, 30, 70)
         );
     }
 }

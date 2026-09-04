@@ -873,7 +873,8 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         ))
         .await
         .expect("class fixture should resolve");
-    let storage_class = resolved_class_to_storage(&class_target);
+    let storage_class = resolved_class_to_storage(&class_target)
+        .expect("resolved class fixture should satisfy the storage contract");
     let command = object_create_to_storage(NewHubuumObject {
         name: scope.scoped_name("query_budget_object_transaction_create"),
         collection_id: fixture.collection.id,

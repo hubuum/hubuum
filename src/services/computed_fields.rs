@@ -1,4 +1,5 @@
 use hubuum_computed_fields::{EvaluationLimits, evaluate};
+use hubuum_domain::{ClassId, CollectionId, ComputedFieldDefinitionId, PrincipalId};
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
@@ -7,11 +8,9 @@ use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
     ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedFieldPreviewResponse,
+    ComputedResultType,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
-use crate::services::storage_boundary::{
-    class_id_to_storage, collection_id_to_storage, principal_id_to_storage,
-};
 use crate::storage::{
     ComputedFieldStorage, StorageClassComputationState, StorageComputedFieldDefinition,
     StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
@@ -25,20 +24,20 @@ use crate::storage::{
 #[doc(hidden)]
 pub async fn class_computation_state_for(
     backend: &impl StorageContext,
-    class_id: i32,
+    class_id: ClassId,
 ) -> Result<ClassComputationState, ApiError> {
     let state = storage_handle(backend)
-        .get_computed_field_state(class_id_to_storage(class_id))
+        .get_computed_field_state(class_id)
         .await?;
     Ok(state_from_storage(state))
 }
 
 pub(crate) async fn list_shared_definitions(
     backend: &impl StorageContext,
-    class_id: i32,
+    class_id: ClassId,
 ) -> Result<Vec<ComputedFieldDefinition>, ApiError> {
     storage_handle(backend)
-        .list_shared_computed_fields(class_id_to_storage(class_id))
+        .list_shared_computed_fields(class_id)
         .await?
         .into_iter()
         .map(definition_from_storage)
@@ -47,15 +46,13 @@ pub(crate) async fn list_shared_definitions(
 
 pub(crate) async fn list_personal_definitions_page(
     backend: &impl StorageContext,
-    owner_id: i32,
-    class_id: Option<i32>,
+    owner_id: PrincipalId,
+    class_id: Option<ClassId>,
     options: QueryOptions,
 ) -> Result<(Vec<ComputedFieldDefinition>, i64), ApiError> {
     let page = storage_handle(backend)
         .list_personal_computed_fields(StoragePersonalComputedFieldListQuery::new(
-            principal_id_to_storage(owner_id),
-            class_id.map(class_id_to_storage),
-            options,
+            owner_id, class_id, options,
         ))
         .await?;
     let (definitions, total) = page.into_parts();
@@ -70,13 +67,10 @@ pub(crate) async fn list_personal_definitions_page(
 
 pub(crate) async fn get_computed_definition(
     backend: &impl StorageContext,
-    definition_id: i32,
+    definition_id: ComputedFieldDefinitionId,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let definition = storage_handle(backend)
-        .get_computed_field(
-            hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
-                .expect("validated computed field definition id must be positive"),
-        )
+        .get_computed_field(definition_id)
         .await?;
     definition_from_storage(definition)
 }
@@ -84,16 +78,16 @@ pub(crate) async fn get_computed_definition(
 #[doc(hidden)]
 pub async fn create_shared_definition(
     backend: &impl StorageContext,
-    class_id: i32,
-    authorized_collection_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    actor_id: PrincipalId,
     definition: ComputedFieldDefinitionRequest,
     event_context: &EventContext,
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
     let request = StorageSharedComputedFieldCreate::new(
-        class_id_to_storage(class_id),
-        collection_id_to_storage(authorized_collection_id),
-        principal_id_to_storage(actor_id),
+        class_id,
+        authorized_collection_id,
+        actor_id,
         input_to_storage(definition)?,
         event_context.clone(),
     );
@@ -106,19 +100,18 @@ pub async fn create_shared_definition(
 #[doc(hidden)]
 pub async fn update_shared_definition(
     backend: &impl StorageContext,
-    class_id: i32,
-    authorized_collection_id: i32,
-    definition_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    definition_id: ComputedFieldDefinitionId,
+    actor_id: PrincipalId,
     patch: ComputedFieldDefinitionPatch,
     event_context: &EventContext,
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
     let request = StorageSharedComputedFieldUpdate::new(
-        class_id_to_storage(class_id),
-        collection_id_to_storage(authorized_collection_id),
-        hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
-            .expect("validated computed field definition id must be positive"),
-        principal_id_to_storage(actor_id),
+        class_id,
+        authorized_collection_id,
+        definition_id,
+        actor_id,
         patch_to_storage(patch),
         event_context.clone(),
     );
@@ -130,18 +123,17 @@ pub async fn update_shared_definition(
 
 pub(crate) async fn delete_shared_definition(
     backend: &impl StorageContext,
-    class_id: i32,
-    authorized_collection_id: i32,
-    definition_id: i32,
-    actor_id: i32,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    definition_id: ComputedFieldDefinitionId,
+    actor_id: PrincipalId,
     event_context: &EventContext,
 ) -> Result<ClassComputationState, ApiError> {
     let request = StorageSharedComputedFieldDelete::new(
-        class_id_to_storage(class_id),
-        collection_id_to_storage(authorized_collection_id),
-        hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
-            .expect("validated computed field definition id must be positive"),
-        principal_id_to_storage(actor_id),
+        class_id,
+        authorized_collection_id,
+        definition_id,
+        actor_id,
         event_context.clone(),
     );
     let state = storage_handle(backend)
@@ -153,14 +145,14 @@ pub(crate) async fn delete_shared_definition(
 #[doc(hidden)]
 pub async fn create_personal_definition(
     backend: &impl StorageContext,
-    class_id: i32,
-    owner_id: i32,
+    class_id: ClassId,
+    owner_id: PrincipalId,
     definition: ComputedFieldDefinitionRequest,
     event_context: &EventContext,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let request = StoragePersonalComputedFieldCreate::new(
-        class_id_to_storage(class_id),
-        principal_id_to_storage(owner_id),
+        class_id,
+        owner_id,
         input_to_storage(definition)?,
         event_context.clone(),
     );
@@ -172,15 +164,14 @@ pub async fn create_personal_definition(
 
 pub(crate) async fn update_personal_definition(
     backend: &impl StorageContext,
-    owner_id: i32,
-    definition_id: i32,
+    owner_id: PrincipalId,
+    definition_id: ComputedFieldDefinitionId,
     patch: ComputedFieldDefinitionPatch,
     event_context: &EventContext,
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let request = StoragePersonalComputedFieldUpdate::new(
-        principal_id_to_storage(owner_id),
-        hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
-            .expect("validated computed field definition id must be positive"),
+        owner_id,
+        definition_id,
         patch_to_storage(patch),
         event_context.clone(),
     );
@@ -192,15 +183,14 @@ pub(crate) async fn update_personal_definition(
 
 pub(crate) async fn delete_personal_definition(
     backend: &impl StorageContext,
-    owner_id: i32,
-    definition_id: i32,
+    owner_id: PrincipalId,
+    definition_id: ComputedFieldDefinitionId,
     event_context: &EventContext,
 ) -> Result<(), ApiError> {
     storage_handle(backend)
         .delete_personal_computed_field(StoragePersonalComputedFieldDelete::new(
-            principal_id_to_storage(owner_id),
-            hubuum_domain::ComputedFieldDefinitionId::new(definition_id)
-                .expect("validated computed field definition id must be positive"),
+            owner_id,
+            definition_id,
             event_context.clone(),
         ))
         .await?
@@ -211,15 +201,15 @@ pub(crate) async fn delete_personal_definition(
 #[doc(hidden)]
 pub async fn request_class_rebuild(
     backend: &impl StorageContext,
-    class_id: i32,
-    authorized_collection_id: i32,
-    actor_id: Option<i32>,
+    class_id: ClassId,
+    authorized_collection_id: CollectionId,
+    actor_id: Option<PrincipalId>,
 ) -> Result<ClassComputationState, ApiError> {
     let state = storage_handle(backend)
         .request_computed_field_rebuild(StorageComputedFieldRebuildRequest::new(
-            class_id_to_storage(class_id),
-            collection_id_to_storage(authorized_collection_id),
-            actor_id.map(principal_id_to_storage),
+            class_id,
+            authorized_collection_id,
+            actor_id,
         ))
         .await?;
     Ok(state_from_storage(state))
@@ -252,15 +242,7 @@ pub(crate) fn preview_computed_definition(
 fn input_to_storage(
     input: ComputedFieldDefinitionRequest,
 ) -> Result<StorageComputedFieldDefinitionInput, ApiError> {
-    input.validate()?;
-    Ok(StorageComputedFieldDefinitionInput::new(
-        input.key,
-        input.label,
-        input.operation,
-        input.result_type.as_str().to_string(),
-    )
-    .with_description(input.description)
-    .with_enabled(input.enabled))
+    Ok(StorageComputedFieldDefinitionInput::new(input.validate()?))
 }
 
 fn patch_to_storage(patch: ComputedFieldDefinitionPatch) -> StorageComputedFieldDefinitionPatch {
@@ -298,8 +280,14 @@ fn definition_from_storage(
         key: definition.key().to_string(),
         label: definition.label().to_string(),
         description: definition.description().to_string(),
-        operation: definition.operation().clone(),
-        result_type: definition.result_type().to_string(),
+        operation: serde_json::to_value(definition.operation()).map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Failed to serialize validated computed-field operation: {error}"
+            ))
+        })?,
+        result_type: ComputedResultType::from(definition.result_type())
+            .as_str()
+            .to_string(),
         enabled: definition.enabled(),
         revision: metadata.revision(),
         semantics_version: definition.semantics_version(),

@@ -2049,6 +2049,64 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
 }
 
 #[tokio::test]
+async fn best_effort_planning_rejects_invalid_class_schema_policy_per_item() {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("invalid_class_schema_policy")
+        .await;
+    let collection_key = CollectionKey {
+        name: fixture.collection.name.clone(),
+        path: None,
+    };
+    let class_input = |reference: &str, name: &str, validate_schema| ImportClassInput {
+        ref_: Some(reference.to_string()),
+        name: context.scoped_name(name),
+        description: name.to_string(),
+        condition: None,
+        timestamps: None,
+        json_schema: None,
+        validate_schema: Some(validate_schema),
+        collection_ref: None,
+        collection_key: Some(collection_key.clone()),
+    };
+    let request = ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: Some(ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        }),
+        graph: ImportGraph {
+            classes: vec![
+                class_input("class:invalid", "invalid_policy", true),
+                class_input("class:valid", "valid_policy", false),
+            ],
+            ..ImportGraph::default()
+        },
+    };
+
+    let planning = plan_import(&context.pool, &context.admin_user, None, &request).await;
+
+    assert!(!planning.aborted);
+    assert!(matches!(
+        planning.failures.as_slice(),
+        [PlanningFailure {
+            kind: FailureKind::Validation,
+            message,
+            ..
+        }] if message.contains("without a schema")
+    ));
+    assert!(matches!(
+        planning.planned_items.as_slice(),
+        [PlannedItem {
+            execution: Some(PlannedExecution::CreateClass(_)),
+            ..
+        }]
+    ));
+}
+
+#[tokio::test]
 async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("duplicate_virtual_object")).await;

@@ -701,9 +701,9 @@ async fn non_pushdown_computed_selectors_are_not_disclosed_without_visible_objec
     for (key, enabled) in [("known", true), ("disabled", false)] {
         create_shared_definition(
             &test_context.pool,
-            fixture.class.id,
-            fixture.class.collection_id,
-            test_context.admin_user.id,
+            typed_class_id(fixture.class.id),
+            typed_collection_id(fixture.class.collection_id),
+            typed_principal_id(test_context.admin_user.id),
             computed_definition(key, "/bucket", enabled),
             &EventContext::system(),
         )
@@ -749,9 +749,9 @@ async fn non_pushdown_computed_filters_are_not_disclosed_without_visible_objects
     for (key, enabled) in [("known", true), ("disabled", false)] {
         create_shared_definition(
             &test_context.pool,
-            fixture.class.id,
-            fixture.class.collection_id,
-            test_context.admin_user.id,
+            typed_class_id(fixture.class.id),
+            typed_collection_id(fixture.class.collection_id),
+            typed_principal_id(test_context.admin_user.id),
             computed_definition(key, "/bucket", enabled),
             &EventContext::system(),
         )
@@ -797,9 +797,9 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
         .unwrap();
     let created = create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         computed_definition("lock_probe", "/bucket", true),
         &EventContext::system(),
     )
@@ -825,10 +825,10 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
         let context = EventContext::system();
         update_shared_definition(
             &pool,
-            class_id,
-            collection_id,
-            definition_id,
-            actor_id,
+            typed_class_id(class_id),
+            typed_collection_id(collection_id),
+            typed_definition_id(definition_id),
+            typed_principal_id(actor_id),
             ComputedFieldDefinitionPatch {
                 key: None,
                 label: Some("Updated while authorizing".to_string()),
@@ -883,9 +883,9 @@ async fn non_pushdown_computed_filters_apply_before_authorized_aggregation(
         .unwrap();
     create_shared_definition(
         &test_context.pool,
-        fixture.class.id,
-        fixture.class.collection_id,
-        test_context.admin_user.id,
+        typed_class_id(fixture.class.id),
+        typed_collection_id(fixture.class.collection_id),
+        typed_principal_id(test_context.admin_user.id),
         serde_json::from_value(serde_json::json!({
             "key": "external_status",
             "label": "external_status",

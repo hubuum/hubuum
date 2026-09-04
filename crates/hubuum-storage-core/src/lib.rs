@@ -74,7 +74,7 @@ pub use collection_authorization::{
     StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
 };
 pub use computed_fields::{
-    ComputedFieldStorage, StorageClassComputationState, StorageClassComputationStateBuilder,
+    ComputedFieldStorage, StorageClassComputationState, StorageComputationRebuildState,
     StorageComputationRebuildStatus, StorageComputationRevision, StorageComputedFieldDefinition,
     StorageComputedFieldDefinitionContent, StorageComputedFieldDefinitionInput,
     StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation,
@@ -247,10 +247,10 @@ pub use remote_target::{
 };
 pub use resource_lifecycle::{
     ClassStorage, CollectionStorage, ObjectStorage, StorageClass, StorageClassBuilder,
-    StorageClassCreate, StorageClassCreateBuilder, StorageClassSelector, StorageClassUpdate,
-    StorageClassUpdateBuilder, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector, StorageObjectUpdate,
-    StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
+    StorageClassCreate, StorageClassCreateBuilder, StorageClassSchemaPolicy, StorageClassSelector,
+    StorageClassUpdate, StorageClassUpdateBuilder, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageObjectCreate, StorageObjectDataPatch, StorageObjectSelector,
+    StorageObjectUpdate, StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
 };
 pub use restore::{
     RestoreStorage, StorageRestoreApply, StorageRestoreArtifactSummary,
@@ -266,11 +266,11 @@ pub use task_execution::{
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
     StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
     StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact, StorageTaskActiveUpdate,
-    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionArtifact,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalUpdate,
-    TaskExecutionStorage,
+    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,

@@ -21,6 +21,14 @@
 
 ## Architecture
 
+- Preserve validated facts as types across architectural boundaries. Convert raw
+  API and database representations once with a fallible constructor, keep the
+  resulting proof type private-fielded, and make downstream services and storage
+  operations accept that type instead of reconstructing or rechecking the fact.
+  Use newtypes for scalar invariants, enums for mutually exclusive or correlated
+  states, and capability/proof wrappers for validated, resolved, authorized, or
+  claimed state. Keep database constraints, transactions, and fencing for
+  concurrent or cross-row invariants; types complement rather than replace them.
 - Treat the root `hubuum` library as an internal application composition crate,
   not a supported third-party embedding API. Its `pub` visibility may exist for
   sibling binaries, integration tests, or benchmarks without creating a SemVer

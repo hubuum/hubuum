@@ -8,8 +8,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::CollectionId;
 use hubuum_query::{FilterField, ParsedQueryParam, QueryOptions};
 use hubuum_storage_core::{
-    StorageAuthorizationPermission, StorageCatalogListQuery, StorageClassWithCollection,
-    StorageCollection, StorageObject, StoragePage, StorageResourceScope,
+    StorageAuthorizationPermission, StorageCatalogListQuery, StorageClassSchemaPolicy,
+    StorageClassWithCollection, StorageCollection, StorageObject, StoragePage,
+    StorageResourceScope,
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
@@ -649,14 +650,17 @@ fn class_to_storage(
                 row.id, row.collection_id
             ))
         })?;
+    let schema_policy =
+        StorageClassSchemaPolicy::try_from_parts(row.json_schema, row.validate_schema).map_err(
+            |error| PostgresStorageError::invalid_persisted_value("class schema policy", error),
+        )?;
     Ok(StorageClassWithCollection::builder(
         record_metadata(row.id, row.created_at, row.updated_at, row.revision)?,
         row.name,
         collection,
         row.description,
     )
-    .json_schema(row.json_schema)
-    .validate_schema(row.validate_schema)
+    .schema_policy(schema_policy)
     .build())
 }
 

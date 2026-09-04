@@ -167,7 +167,7 @@ mod tests {
                 collection_id: collection.collection.id,
                 name: format!("{label}-{name}"),
                 description: format!("{label}-{name}"),
-                json_schema: None,
+                json_schema: validate_schema.then(|| serde_json::json!({})),
                 validate_schema: Some(validate_schema),
             }
             .save_without_events(&context.pool)

@@ -7,8 +7,8 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, validate_json_schema, validate_json_schema_for_instances};
 use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    StorageClass, StorageClassCreate, StorageClassSelector, StorageClassUpdate,
-    StorageMutationOutcome, StorageResolvedClass,
+    StorageClass, StorageClassCreate, StorageClassSchemaPolicy, StorageClassSelector,
+    StorageClassUpdate, StorageMutationOutcome, StorageResolvedClass,
 };
 use serde_json::json;
 
@@ -33,14 +33,18 @@ pub(crate) struct ClassRow {
 
 impl ClassRow {
     pub(crate) fn into_storage(self) -> Result<StorageClass, PostgresStorageError> {
+        let schema_policy =
+            StorageClassSchemaPolicy::try_from_parts(self.json_schema, self.validate_schema)
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value("class schema policy", error)
+                })?;
         Ok(StorageClass::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             CollectionId::new(self.collection_id)?,
             self.description,
         )
-        .json_schema(self.json_schema)
-        .validate_schema(self.validate_schema)
+        .schema_policy(schema_policy)
         .build())
     }
 
@@ -381,10 +385,17 @@ fn validate_class_update(
     if changes.json_schema().is_none() && changes.validate_schema().is_none() {
         return Ok(());
     }
-    let schema = changes.json_schema().or(current.json_schema.as_ref());
-    if let Some(schema) = schema {
+    let current_policy = StorageClassSchemaPolicy::try_from_parts(
+        current.json_schema.clone(),
+        current.validate_schema,
+    )
+    .map_err(|error| PostgresStorageError::invalid_persisted_value("class schema policy", error))?;
+    let schema_policy = changes
+        .resolve_schema_policy(&current_policy)
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+    if let Some(schema) = schema_policy.json_schema() {
         validate_json_schema(schema)?;
-        if changes.validate_schema().unwrap_or(current.validate_schema) {
+        if schema_policy.validates_schema() {
             validate_json_schema_for_instances(schema)?;
         }
     }

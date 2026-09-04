@@ -1,15 +1,13 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveDateTime;
-use hubuum_computed_fields::{
-    Definition, FieldError, FieldKey, Operation, ResultType, SEMANTICS_VERSION,
-};
+use hubuum_computed_fields::{Definition, FieldError, FieldKey, Operation, ResultType};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
 use crate::models::search::{ComputedQueryValueType, FilterField, SortParam};
-use crate::models::{HubuumObject, ResourceRevision};
+use crate::models::{HubuumClassID, HubuumObject, HubuumObjectID, ResourceRevision};
 use crate::pagination::{CursorPaginated, CursorValue};
 
 pub const COMPUTED_FIELD_VISIBILITY_SHARED: &str = "shared";
@@ -68,6 +66,19 @@ impl From<ComputedResultType> for ResultType {
     }
 }
 
+impl From<ResultType> for ComputedResultType {
+    fn from(value: ResultType) -> Self {
+        match value {
+            ResultType::String => Self::String,
+            ResultType::Number => Self::Number,
+            ResultType::Integer => Self::Integer,
+            ResultType::Boolean => Self::Boolean,
+            ResultType::Object => Self::Object,
+            ResultType::Array => Self::Array,
+        }
+    }
+}
+
 impl From<ComputedResultType> for ComputedQueryValueType {
     fn from(value: ComputedResultType) -> Self {
         match value {
@@ -103,23 +114,6 @@ pub struct ComputedFieldDefinition {
 }
 
 impl ComputedFieldDefinition {
-    pub fn evaluator_definition(&self) -> Result<Definition, ApiError> {
-        validated_definition(
-            &self.key,
-            &self.label,
-            &self.description,
-            &self.operation,
-            ComputedResultType::from_db(&self.result_type)?,
-            self.enabled,
-        )
-        .map_err(|error| {
-            ApiError::InternalServerError(format!(
-                "Computed-field definition {} is invalid: {error}",
-                self.id
-            ))
-        })
-    }
-
     pub fn is_shared(&self) -> bool {
         self.visibility == COMPUTED_FIELD_VISIBILITY_SHARED
     }
@@ -171,22 +165,6 @@ impl CursorPaginated for ComputedFieldDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NewComputedFieldDefinition {
-    pub class_id: i32,
-    pub visibility: String,
-    pub owner_user_id: Option<i32>,
-    pub key: String,
-    pub label: String,
-    pub description: String,
-    pub operation: serde_json::Value,
-    pub result_type: String,
-    pub enabled: bool,
-    pub semantics_version: i16,
-    pub created_by: Option<i32>,
-    pub updated_by: Option<i32>,
-}
-
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ComputedFieldDefinitionRequest {
@@ -225,50 +203,6 @@ impl ComputedFieldDefinitionRequest {
         )
         .map_err(|error| ApiError::BadRequest(error.to_string()))
     }
-
-    pub fn into_new_shared(
-        self,
-        class_id: i32,
-        actor_id: i32,
-    ) -> Result<NewComputedFieldDefinition, ApiError> {
-        self.validate()?;
-        Ok(NewComputedFieldDefinition {
-            class_id,
-            visibility: COMPUTED_FIELD_VISIBILITY_SHARED.to_string(),
-            owner_user_id: None,
-            key: self.key,
-            label: self.label,
-            description: self.description,
-            operation: self.operation,
-            result_type: self.result_type.as_str().to_string(),
-            enabled: self.enabled,
-            semantics_version: SEMANTICS_VERSION,
-            created_by: Some(actor_id),
-            updated_by: Some(actor_id),
-        })
-    }
-
-    pub fn into_new_personal(
-        self,
-        class_id: i32,
-        owner_id: i32,
-    ) -> Result<NewComputedFieldDefinition, ApiError> {
-        self.validate()?;
-        Ok(NewComputedFieldDefinition {
-            class_id,
-            visibility: COMPUTED_FIELD_VISIBILITY_PERSONAL.to_string(),
-            owner_user_id: Some(owner_id),
-            key: self.key,
-            label: self.label,
-            description: self.description,
-            operation: self.operation,
-            result_type: self.result_type.as_str().to_string(),
-            enabled: self.enabled,
-            semantics_version: SEMANTICS_VERSION,
-            created_by: Some(owner_id),
-            updated_by: Some(owner_id),
-        })
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -281,49 +215,6 @@ pub struct ComputedFieldDefinitionPatch {
     pub operation: Option<serde_json::Value>,
     pub result_type: Option<ComputedResultType>,
     pub enabled: Option<bool>,
-}
-
-impl ComputedFieldDefinitionPatch {
-    pub fn validate_against(
-        &self,
-        current: &ComputedFieldDefinition,
-    ) -> Result<ValidatedComputedFieldPatch, ApiError> {
-        let key = self.key.as_ref().unwrap_or(&current.key);
-        let label = self.label.as_ref().unwrap_or(&current.label);
-        let description = self.description.as_ref().unwrap_or(&current.description);
-        let operation = self.operation.as_ref().unwrap_or(&current.operation);
-        let result_type = match self.result_type {
-            Some(result_type) => result_type,
-            None => ComputedResultType::from_db(&current.result_type)?,
-        };
-        let enabled = self.enabled.unwrap_or(current.enabled);
-        validated_definition(key, label, description, operation, result_type, enabled)
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-
-        Ok(ValidatedComputedFieldPatch {
-            key: key.clone(),
-            label: label.clone(),
-            description: description.clone(),
-            operation: operation.clone(),
-            result_type: result_type.as_str().to_string(),
-            enabled,
-            value_affecting: key != &current.key
-                || operation != &current.operation
-                || result_type.as_str() != current.result_type
-                || enabled != current.enabled,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ValidatedComputedFieldPatch {
-    pub key: String,
-    pub label: String,
-    pub description: String,
-    pub operation: serde_json::Value,
-    pub result_type: String,
-    pub enabled: bool,
-    pub value_affecting: bool,
 }
 
 fn validated_definition(
@@ -411,20 +302,74 @@ pub struct ComputedFieldDeleteResponse {
     pub state: ClassComputationState,
 }
 
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ComputedFieldPreviewRequest {
-    /// Required by the personal preview route and ignored on class-scoped routes.
-    pub class_id: Option<i32>,
-    pub definition: ComputedFieldDefinitionRequest,
-    pub object_id: Option<i32>,
-    #[schema(value_type = Option<Object>)]
-    pub data: Option<serde_json::Value>,
+#[derive(Debug, Clone)]
+pub enum ComputedFieldPreviewSource {
+    Object(HubuumObjectID),
+    Inline(serde_json::Value),
 }
 
+#[derive(Debug, Clone)]
+pub struct ComputedFieldPreviewRequest {
+    class_id: Option<HubuumClassID>,
+    definition: ComputedFieldDefinitionRequest,
+    source: ComputedFieldPreviewSource,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct ComputedFieldPreviewWire {
+    /// Required by the personal preview route and ignored on class-scoped routes.
+    #[schema(value_type = Option<i32>)]
+    class_id: Option<HubuumClassID>,
+    definition: ComputedFieldDefinitionRequest,
+    #[schema(value_type = Option<i32>)]
+    object_id: Option<HubuumObjectID>,
+    #[schema(value_type = Option<Object>)]
+    data: Option<serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for ComputedFieldPreviewRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ComputedFieldPreviewWire::deserialize(deserializer)?;
+        let source = match (wire.object_id, wire.data) {
+            (Some(object_id), None) => ComputedFieldPreviewSource::Object(object_id),
+            (None, Some(data)) => ComputedFieldPreviewSource::Inline(data),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "preview requires exactly one of object_id or data",
+                ));
+            }
+        };
+        Ok(Self {
+            class_id: wire.class_id,
+            definition: wire.definition,
+            source,
+        })
+    }
+}
+
+impl PartialSchema for ComputedFieldPreviewRequest {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        ComputedFieldPreviewWire::schema()
+    }
+}
+
+impl ToSchema for ComputedFieldPreviewRequest {}
+
 impl ComputedFieldPreviewRequest {
-    pub fn source_count(&self) -> usize {
-        usize::from(self.object_id.is_some()) + usize::from(self.data.is_some())
+    pub const fn class_id(&self) -> Option<HubuumClassID> {
+        self.class_id
+    }
+
+    pub const fn definition(&self) -> &ComputedFieldDefinitionRequest {
+        &self.definition
+    }
+
+    pub const fn source(&self) -> &ComputedFieldPreviewSource {
+        &self.source
     }
 }
 

@@ -25,6 +25,23 @@ use crate::tests::{
     resource_scoped_token, scoped_token, service_account_token, test_context,
 };
 use crate::traits::{CanUpdate, PermissionController};
+use hubuum_domain::{ClassId, CollectionId, ComputedFieldDefinitionId, PrincipalId};
+
+fn typed_class_id(id: i32) -> ClassId {
+    ClassId::new(id).expect("test fixture class ids are positive")
+}
+
+fn typed_collection_id(id: i32) -> CollectionId {
+    CollectionId::new(id).expect("test fixture collection ids are positive")
+}
+
+fn typed_definition_id(id: i32) -> ComputedFieldDefinitionId {
+    ComputedFieldDefinitionId::new(id).expect("persisted definition ids are positive")
+}
+
+fn typed_principal_id(id: i32) -> PrincipalId {
+    PrincipalId::new(id).expect("test fixture principal ids are positive")
+}
 
 async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
     let object = |name: &str, description: &str, data: serde_json::Value| NewHubuumObject {
@@ -192,7 +209,7 @@ fn numeric_computed_definition(
 
 async fn finish_active_rebuild(context: &TestContext, class_id: i32) {
     for _ in 0..20 {
-        let state = class_computation_state_for(&context.pool, class_id)
+        let state = class_computation_state_for(&context.pool, typed_class_id(class_id))
             .await
             .unwrap();
         if state.active_task_id.is_none() {

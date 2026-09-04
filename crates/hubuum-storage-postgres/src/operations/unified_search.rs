@@ -6,9 +6,9 @@ use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ResourceId};
 use hubuum_storage_core::{
-    StorageAuthorizationPermission, StorageCandidatePage, StorageClassWithCollection,
-    StorageCollection, StorageObject, StorageResourceScope, StorageUnifiedSearchCandidate,
-    StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
+    StorageAuthorizationPermission, StorageCandidatePage, StorageClassSchemaPolicy,
+    StorageClassWithCollection, StorageCollection, StorageObject, StorageResourceScope,
+    StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
 };
 
 use crate::revision::record_metadata;
@@ -227,14 +227,18 @@ impl ClassRow {
                     self.id, self.collection_id
                 ))
             })?;
+        let schema_policy =
+            StorageClassSchemaPolicy::try_from_parts(self.json_schema, self.validate_schema)
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value("class schema policy", error)
+                })?;
         let item = StorageClassWithCollection::builder(
             record_metadata(self.id, self.created_at, self.updated_at, self.revision)?,
             self.name,
             collection,
             self.description,
         )
-        .json_schema(self.json_schema)
-        .validate_schema(self.validate_schema)
+        .schema_policy(schema_policy)
         .build();
         Ok(StorageUnifiedSearchCandidate::new(item, cursor))
     }

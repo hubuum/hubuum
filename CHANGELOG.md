@@ -65,6 +65,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (experimental storage SDK):** computed-field definitions, task
+  execution updates, completion artifacts, computation rebuild state, and class
+  schema policy now use proof-carrying types that make invalid combinations
+  unconstructable. `hubuum-computed-fields` joins the lockstep storage SDK release
+  train, and adapters must accept its validated `Definition`, use the new active
+  and terminal task status types, match the completion payload variants, and
+  migrate class builders to `StorageClassSchemaPolicy`. The HTTP response shapes
+  remain compatible. The database migration normalizes any live legacy class row
+  that enabled validation without a schema, version 5 restore applies the same
+  compatibility normalization to current and historical class rows, and database
+  constraints prevent that state from recurring.
 - **Breaking (database deployment):** server container entrypoints no longer
   apply migrations. Run `hubuum-admin --migrate` as a one-shot workload before
   rolling the server and deploy the isolated restore executor. Existing
@@ -117,6 +128,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- The memory storage backend now returns HTTP 400 with an actionable message
+  when a class update enables schema validation without a schema.
 - Recursive object-relation graph queries now expand through indexed adjacency
   lookups instead of repeatedly materializing the global relation corpus, and
   graph responses no longer execute a discarded total-count traversal.

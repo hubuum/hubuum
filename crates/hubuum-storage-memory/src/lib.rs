@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use hubuum_computed_fields::{
+    Definition, EvaluationLimits, FieldKey, Operation, ResultType, evaluate,
+};
 use hubuum_domain::*;
 use hubuum_events_core::*;
 use hubuum_query::*;

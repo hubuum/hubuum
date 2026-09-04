@@ -10,11 +10,11 @@ mod tests {
 
     use crate::models::{
         CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
-        ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateID, ExportTemplateKind,
-        HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewExportTemplate, NewHubuumClass,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-        TaskEventResponse, TaskKind, TaskResponse, TaskStatus, TokenResourceScope,
-        UpdateExportTemplate,
+        ExportScope, ExportScopeKind, ExportTaskOutputStatus, ExportTemplate, ExportTemplateID,
+        ExportTemplateKind, HubuumClass, HubuumClassRelation, HubuumObjectRelation,
+        NewExportTemplate, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+        NewHubuumObjectRelation, Permissions, TaskEventResponse, TaskKind, TaskResponse,
+        TaskStatus, TokenResourceScope, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -431,7 +431,7 @@ mod tests {
         assert!(
             task.details
                 .as_ref()
-                .and_then(|details| details.export.as_ref())
+                .and_then(|details| details.as_export())
                 .is_some()
         );
 
@@ -1092,17 +1092,23 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.export.as_ref())
+            .and_then(|details| details.as_export())
             .expect("export details");
-        assert!(details.output_available);
-        assert_eq!(details.template_name.as_deref(), Some("warning-template"));
-        assert_eq!(
-            details.output_content_type.as_deref(),
-            Some(ExportContentType::TextPlain.as_mime())
-        );
-        assert_eq!(details.warning_count, Some(1));
-        assert_eq!(details.truncated, Some(false));
-        assert!(details.output_expires_at.is_some());
+        match details.state() {
+            ExportTaskOutputStatus::Available {
+                template_name,
+                content_type,
+                warning_count,
+                truncated,
+                ..
+            } => {
+                assert_eq!(template_name, Some("warning-template"));
+                assert_eq!(content_type, ExportContentType::TextPlain.as_mime());
+                assert_eq!(warning_count, 1);
+                assert!(!truncated);
+            }
+            state => panic!("expected available export details, got {state:?}"),
+        }
 
         cleanup(&classes).await;
     }
@@ -1804,10 +1810,9 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.export.as_ref())
+            .and_then(|details| details.as_export())
             .expect("export details");
-        assert!(!details.output_available);
-        assert_eq!(details.output_expires_at, None);
+        assert_eq!(details.state(), ExportTaskOutputStatus::Missing);
 
         let output = get_request(
             &context.pool,
@@ -1938,11 +1943,14 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.export.as_ref())
+            .and_then(|details| details.as_export())
             .expect("export details");
-        assert!(!details.output_available);
-        assert!(details.output_expired);
-        assert_eq!(details.output_expires_at, Some(backdated_expiry));
+        assert_eq!(
+            details.state(),
+            ExportTaskOutputStatus::Expired {
+                expires_at: &backdated_expiry,
+            }
+        );
 
         // The batch task-list endpoint must classify expiry the same way as the single-task
         // endpoints, not silently drop the expired row. Filtering by this test's (unique) admin
@@ -1962,11 +1970,14 @@ mod tests {
             .iter()
             .find(|entry| entry.id == task.id)
             .and_then(|entry| entry.details.as_ref())
-            .and_then(|details| details.export.as_ref())
+            .and_then(|details| details.as_export())
             .expect("expired export task present in task list with export details");
-        assert!(!listed_details.output_available);
-        assert!(listed_details.output_expired);
-        assert_eq!(listed_details.output_expires_at, Some(backdated_expiry));
+        assert_eq!(
+            listed_details.state(),
+            ExportTaskOutputStatus::Expired {
+                expires_at: &backdated_expiry,
+            }
+        );
 
         cleanup(&classes).await;
     }

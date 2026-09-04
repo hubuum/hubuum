@@ -14,16 +14,16 @@ use crate::models::{
 use crate::permissions::permission_to_storage;
 use crate::storage::{
     StorageClass, StorageClassCreate, StorageClassRelation, StorageClassRelationCreate,
-    StorageClassSelector, StorageClassUpdate, StorageClassWithCollection, StorageCollection,
-    StorageCollectionCreate, StorageCollectionUpdate, StorageGroupCreate, StorageGroupUpdate,
-    StorageIdentityGroup, StorageObject, StorageObjectCreate, StorageObjectDataPatch,
-    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StorageObjectSelector,
-    StorageObjectUpdate, StoragePreparedClassRelation, StoragePreparedObjectRelation,
-    StoragePrincipal, StoragePrincipalGroup, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation, StorageRecordMetadata, StorageResolvedClass,
-    StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
-    StorageResourceScope, StorageVisibility,
+    StorageClassSchemaPolicy, StorageClassSelector, StorageClassUpdate, StorageClassWithCollection,
+    StorageCollection, StorageCollectionCreate, StorageCollectionUpdate, StorageGroupCreate,
+    StorageGroupUpdate, StorageIdentityGroup, StorageObject, StorageObjectCreate,
+    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
+    StorageObjectRelationSelector, StorageObjectSelector, StorageObjectUpdate,
+    StoragePreparedClassRelation, StoragePreparedObjectRelation, StoragePrincipal,
+    StoragePrincipalGroup, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StorageRecordMetadata, StorageResolvedClass, StorageResolvedClassRelation,
+    StorageResolvedObject, StorageResolvedObjectRelation, StorageResourceScope, StorageVisibility,
 };
 use crate::traits::SelfAccessors;
 
@@ -89,11 +89,9 @@ fn resource_scope(scope: &TokenScope) -> Result<Option<StorageResourceScope>, Ap
     let mut object_ids = Vec::new();
     for resource in resources {
         match resource {
-            TokenResourceScope::Collection(id) => {
-                collection_ids.push(collection_id_to_storage(id.id()));
-            }
-            TokenResourceScope::Class(id) => class_ids.push(class_id_to_storage(id.id())),
-            TokenResourceScope::Object(id) => object_ids.push(object_id_to_storage(id.id())),
+            TokenResourceScope::Collection(id) => collection_ids.push(id),
+            TokenResourceScope::Class(id) => class_ids.push(id),
+            TokenResourceScope::Object(id) => object_ids.push(id),
         }
     }
     Ok(Some(StorageResourceScope::new(
@@ -233,12 +231,8 @@ pub(crate) fn collection_create_to_storage(
     StorageCollectionCreate::new(
         command.name,
         command.description,
-        hubuum_domain::GroupId::new(command.group_id.id())
-            .expect("validated group id must be positive"),
-        command.parent_collection_id.map(|id| {
-            hubuum_domain::CollectionId::new(id.id())
-                .expect("validated collection id must be positive")
-        }),
+        command.group_id,
+        command.parent_collection_id,
     )
 }
 
@@ -298,30 +292,29 @@ pub(crate) fn class_record_from_storage(row: StorageClass) -> Result<HubuumClass
     })
 }
 
-pub(crate) fn class_record_to_storage(class: HubuumClass) -> StorageClass {
-    StorageClass::builder(
+pub(crate) fn class_record_to_storage(class: HubuumClass) -> Result<StorageClass, ApiError> {
+    let schema_policy =
+        StorageClassSchemaPolicy::try_from_parts(class.json_schema, class.validate_schema)
+            .map_err(|error| ApiError::from(error.into_request_error()))?;
+    Ok(StorageClass::builder(
         StorageRecordMetadata::try_new(
-            hubuum_domain::ResourceId::new(class.id).expect("stored class id must be positive"),
+            hubuum_domain::ResourceId::new(class.id)?,
             class.created_at.and_utc(),
             class.updated_at.and_utc(),
             class.revision,
         )
-        .expect("stored class timestamps must be ordered"),
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
         class.name,
-        hubuum_domain::CollectionId::new(class.collection_id)
-            .expect("stored class collection id must be positive"),
+        hubuum_domain::CollectionId::new(class.collection_id)?,
         class.description,
     )
-    .json_schema(class.json_schema)
-    .validate_schema(class.validate_schema)
-    .build()
+    .schema_policy(schema_policy)
+    .build())
 }
 
 pub(crate) fn class_selector_to_storage(selector: ClassSelector) -> StorageClassSelector {
     match selector.kind() {
-        ClassSelectorKind::ById(id) => StorageClassSelector::Id(
-            hubuum_domain::ClassId::new(id.id()).expect("validated class id must be positive"),
-        ),
+        ClassSelectorKind::ById(id) => StorageClassSelector::Id(*id),
         ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
     }
 }
@@ -335,12 +328,14 @@ pub(super) fn class_selector_from_storage(
     })
 }
 
-pub(crate) fn resolved_class_to_storage(target: &ResolvedClassTarget) -> StorageResolvedClass {
+pub(crate) fn resolved_class_to_storage(
+    target: &ResolvedClassTarget,
+) -> Result<StorageResolvedClass, ApiError> {
     StorageResolvedClass::try_new(
         class_selector_to_storage(target.selector().clone()),
-        class_record_to_storage(target.class().clone()),
+        class_record_to_storage(target.class().clone())?,
     )
-    .expect("resolved domain class must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn resolved_class_from_storage(
@@ -353,28 +348,38 @@ pub(crate) fn resolved_class_from_storage(
     ))
 }
 
-pub(crate) fn class_create_to_storage(command: NewHubuumClass) -> StorageClassCreate {
-    StorageClassCreate::builder(
+pub(crate) fn class_create_to_storage(
+    command: NewHubuumClass,
+) -> Result<StorageClassCreate, ApiError> {
+    let schema_policy = StorageClassSchemaPolicy::try_from_parts(
+        command.json_schema,
+        command.validate_schema.unwrap_or(false),
+    )
+    .map_err(|error| ApiError::from(error.into_request_error()))?;
+    Ok(StorageClassCreate::builder(
         command.name,
-        hubuum_domain::CollectionId::new(command.collection_id)
-            .expect("validated collection id must be positive"),
+        hubuum_domain::CollectionId::new(command.collection_id)?,
         command.description,
     )
-    .json_schema(command.json_schema)
-    .validate_schema(command.validate_schema.unwrap_or(false))
-    .build()
+    .schema_policy(schema_policy)
+    .build())
 }
 
-pub(crate) fn class_update_to_storage(update: UpdateHubuumClass) -> StorageClassUpdate {
-    StorageClassUpdate::builder()
+pub(crate) fn class_update_to_storage(
+    update: UpdateHubuumClass,
+) -> Result<StorageClassUpdate, ApiError> {
+    Ok(StorageClassUpdate::builder()
         .name(update.name)
-        .collection_id(update.collection_id.map(|id| {
-            hubuum_domain::CollectionId::new(id).expect("validated collection id must be positive")
-        }))
+        .collection_id(
+            update
+                .collection_id
+                .map(hubuum_domain::CollectionId::new)
+                .transpose()?,
+        )
         .json_schema(update.json_schema)
         .validate_schema(update.validate_schema)
         .description(update.description)
-        .build()
+        .build())
 }
 
 pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, ApiError> {
@@ -427,10 +432,8 @@ pub(crate) fn object_selector_to_storage(selector: ObjectSelector) -> StorageObj
             class_id,
             object_id,
         } => StorageObjectSelector::Ids {
-            class_id: hubuum_domain::ClassId::new(class_id.id())
-                .expect("validated class id must be positive"),
-            object_id: hubuum_domain::ObjectId::new(object_id.id())
-                .expect("validated object id must be positive"),
+            class_id: *class_id,
+            object_id: *object_id,
         },
         ObjectSelectorKind::ByName {
             class_name,
@@ -460,13 +463,15 @@ pub(super) fn object_selector_from_storage(
     })
 }
 
-pub(crate) fn resolved_object_to_storage(target: &ResolvedObjectTarget) -> StorageResolvedObject {
+pub(crate) fn resolved_object_to_storage(
+    target: &ResolvedObjectTarget,
+) -> Result<StorageResolvedObject, ApiError> {
     StorageResolvedObject::try_new(
         object_selector_to_storage(target.selector().clone()),
-        class_record_to_storage(target.class().clone()),
+        class_record_to_storage(target.class().clone())?,
         object_to_storage(target.object().clone()),
     )
-    .expect("resolved domain object must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn resolved_object_from_storage(
@@ -608,13 +613,13 @@ pub(crate) fn class_relation_create_from_storage(
 
 pub(crate) fn prepared_class_relation_to_storage(
     prepared: &PreparedClassRelation,
-) -> StoragePreparedClassRelation {
+) -> Result<StoragePreparedClassRelation, ApiError> {
     StoragePreparedClassRelation::try_new(
         class_relation_create_to_storage(prepared.command().clone()),
-        class_record_to_storage(prepared.from_class().clone()),
-        class_record_to_storage(prepared.to_class().clone()),
+        class_record_to_storage(prepared.from_class().clone())?,
+        class_record_to_storage(prepared.to_class().clone())?,
     )
-    .expect("prepared domain relation endpoints must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn prepared_class_relation_from_storage(
@@ -630,13 +635,13 @@ pub(crate) fn prepared_class_relation_from_storage(
 
 pub(crate) fn resolved_class_relation_to_storage(
     target: &ResolvedClassRelationTarget,
-) -> StorageResolvedClassRelation {
+) -> Result<StorageResolvedClassRelation, ApiError> {
     StorageResolvedClassRelation::try_new(
         class_relation_to_storage(target.relation().clone()),
-        class_record_to_storage(target.from_class().clone()),
-        class_record_to_storage(target.to_class().clone()),
+        class_record_to_storage(target.from_class().clone())?,
+        class_record_to_storage(target.to_class().clone())?,
     )
-    .expect("resolved domain relation endpoints must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn resolved_class_relation_from_storage(
@@ -795,14 +800,14 @@ pub(crate) fn object_relation_selector_from_storage(
 
 pub(crate) fn prepared_object_relation_to_storage(
     prepared: &PreparedObjectRelation,
-) -> StoragePreparedObjectRelation {
+) -> Result<StoragePreparedObjectRelation, ApiError> {
     StoragePreparedObjectRelation::try_new(
         object_relation_create_to_storage(prepared.command().clone()),
         object_to_storage(prepared.from_object().clone()),
         object_to_storage(prepared.to_object().clone()),
-        resolved_class_relation_to_storage(prepared.class_relation()),
+        resolved_class_relation_to_storage(prepared.class_relation())?,
     )
-    .expect("prepared domain object relation must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn prepared_object_relation_from_storage(
@@ -819,14 +824,14 @@ pub(crate) fn prepared_object_relation_from_storage(
 
 pub(crate) fn resolved_object_relation_to_storage(
     target: &ResolvedObjectRelationTarget,
-) -> StorageResolvedObjectRelation {
+) -> Result<StorageResolvedObjectRelation, ApiError> {
     StorageResolvedObjectRelation::try_new(
         object_relation_to_storage(*target.relation()),
         object_to_storage(target.from_object().clone()),
         object_to_storage(target.to_object().clone()),
-        resolved_class_relation_to_storage(target.class_relation()),
+        resolved_class_relation_to_storage(target.class_relation())?,
     )
-    .expect("resolved domain object relation must satisfy the storage contract")
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
 pub(crate) fn resolved_object_relation_from_storage(

@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use actix_web::{App, http, test, web::Data};
+use actix_web::{App, ResponseError, http, test, web::Data};
 use async_trait::async_trait;
+use hubuum_computed_fields::{Definition, FieldKey, JsonPointer, Operation, ResultType};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, EventDeliveryStatus,
     GroupId, ObjectId, ObjectRelationId, PrincipalId, ResourceId, UserId,
@@ -43,6 +44,7 @@ fn group_id(id: i32) -> GroupId {
     GroupId::new(id).expect("test group id must be positive")
 }
 
+use crate::errors::ApiError;
 use crate::events::{
     Action, EntityType, EventContext, EventEntityId, EventFanoutSettings, EventRetentionSettings,
     MutationProvenance,
@@ -87,20 +89,21 @@ use crate::storage::{
     StorageAuthorizationPrincipalCollectionPageQuery, StorageAuthorizationPrincipalCollectionQuery,
     StorageAuthorizationResourceIds, StorageBackendKind, StorageBackupTaskArtifact,
     StorageBidirectionalRelatedObjectsQuery, StorageCallSite, StorageCandidatePageLimit,
-    StorageCatalogListQuery, StorageClassCreate, StorageClassRelationCreate, StorageClassSelector,
-    StorageClassUpdate, StorageCollectionCreate, StorageCollectionUpdate,
-    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
-    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility,
-    StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
-    StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
-    StorageComputedObjectVisibility, StorageDefaultAdminBootstrap, StorageError, StorageErrorKind,
-    StorageEventDeliveryListQuery, StorageEventRetentionBatch, StorageEventSinkCreate,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
-    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
-    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
-    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
-    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
+    StorageCatalogListQuery, StorageClassCreate, StorageClassRelationCreate,
+    StorageClassSchemaPolicy, StorageClassSelector, StorageClassUpdate, StorageCollectionCreate,
+    StorageCollectionUpdate, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StorageComputedObjectEnrichmentQuery,
+    StorageComputedObjectListQuery, StorageComputedObjectProjection,
+    StorageComputedObjectQueryOptions, StorageComputedObjectVisibility,
+    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
+    StorageEventRetentionBatch, StorageEventSinkCreate, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
+    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
+    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
+    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
+    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
+    StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
     StorageHistoryCollectionScope, StorageHistoryListQuery, StorageImportPlan,
     StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
@@ -125,13 +128,13 @@ use crate::storage::{
     StorageRevisionPrecondition, StorageRevisionTarget, StorageServiceAccountCreate,
     StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskActiveUpdate, StorageTaskChildListQuery,
-    StorageTaskCompletion, StorageTaskCompletionArtifact, StorageTaskCreateRequest,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
-    StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenDigest, StorageTokenFormat,
-    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenHashRevoke,
+    StorageSharedComputedFieldUpdate, StorageTaskActiveStatus, StorageTaskActiveUpdate,
+    StorageTaskChildListQuery, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
+    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
+    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenDigest,
+    StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
     StorageTokenMigrationOutcome, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
     StorageUnifiedSearchQuery, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
@@ -2023,21 +2026,16 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
 
     let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
         .run(
-            backend.complete_task(
-                StorageTaskCompletion::try_new(
-                    StorageTaskKind::Import,
-                    StorageTaskTerminalUpdate::try_new(
-                        lease,
-                        StorageTaskStatus::Succeeded,
-                        StorageTaskResultCounts::try_new(1, 1, 0)
-                            .expect("non-negative task counts should be valid"),
-                    )
-                    .expect("succeeded is a terminal task status"),
-                    StorageTaskEventInput::new("succeeded", "Must be rolled back"),
-                    StorageTaskCompletionArtifact::None,
-                )
-                .expect("an import task accepts no completion artifact"),
-            ),
+            backend.complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    lease,
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0)
+                        .expect("non-negative task counts should be valid"),
+                ),
+                StorageTaskEventInput::new("succeeded", "Must be rolled back"),
+                StorageTaskCompletionPayload::Import,
+            )),
         )
         .await
         .expect_err("injected failure should abort task finalization");
@@ -4039,34 +4037,26 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                     .expect("certified backend should append a claim-owned event");
             }
             backend
-                .update_task_state(
-                    StorageTaskActiveUpdate::try_new(
-                        claimed.lease().clone(),
-                        StorageTaskStatus::Running,
-                        StorageTaskResultCounts::try_new(0, 0, 0)
-                            .expect("non-negative task counts should be valid"),
-                    )
-                    .expect("running is an active task status"),
-                )
+                .update_task_state(StorageTaskActiveUpdate::new(
+                    claimed.lease().clone(),
+                    StorageTaskActiveStatus::Running,
+                    StorageTaskResultCounts::try_new(0, 0, 0)
+                        .expect("non-negative task counts should be valid"),
+                ))
                 .await
                 .expect("certified backend should update claimed task state");
-            let artifact = compatibility_completion_artifact(claimed.task().kind());
+            let payload = compatibility_completion_payload(claimed.task().kind());
             backend
-                .complete_task(
-                    StorageTaskCompletion::try_new(
-                        claimed.task().kind(),
-                        StorageTaskTerminalUpdate::try_new(
-                            claimed.lease().clone(),
-                            StorageTaskStatus::Succeeded,
-                            StorageTaskResultCounts::try_new(1, 1, 0)
-                                .expect("non-negative task counts should be valid"),
-                        )
-                        .expect("succeeded is a terminal task status"),
-                        StorageTaskEventInput::new("succeeded", "Compatibility completed"),
-                        artifact,
-                    )
-                    .expect("task kind and completion artifact should match"),
-                )
+                .complete_task(StorageTaskCompletion::new(
+                    StorageTaskTerminalUpdate::new(
+                        claimed.lease().clone(),
+                        StorageTaskTerminalStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(1, 1, 0)
+                            .expect("non-negative task counts should be valid"),
+                    ),
+                    StorageTaskEventInput::new("succeeded", "Compatibility completed"),
+                    payload,
+                ))
                 .await
                 .expect("certified backend should complete a claimed task");
             match claimed.task().kind() {
@@ -4124,21 +4114,16 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("the kind mismatch fixture should be queued"),
         };
         let mismatched_kind_error = backend
-            .complete_task(
-                StorageTaskCompletion::try_new(
-                    StorageTaskKind::Import,
-                    StorageTaskTerminalUpdate::try_new(
-                        mismatched_kind_claim.lease().clone(),
-                        StorageTaskStatus::Succeeded,
-                        StorageTaskResultCounts::try_new(1, 1, 0)
-                            .expect("non-negative task counts should be valid"),
-                    )
-                    .expect("succeeded is a terminal task status"),
-                    StorageTaskEventInput::new("succeeded", "Mismatched kind must fail"),
-                    StorageTaskCompletionArtifact::None,
-                )
-                .expect("an import task accepts no completion artifact"),
-            )
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    mismatched_kind_claim.lease().clone(),
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0)
+                        .expect("non-negative task counts should be valid"),
+                ),
+                StorageTaskEventInput::new("succeeded", "Mismatched kind must fail"),
+                StorageTaskCompletionPayload::Import,
+            ))
             .await
             .expect_err("a completion kind that differs from storage must be rejected");
         assert_eq!(mismatched_kind_error.kind(), StorageErrorKind::InvalidInput);
@@ -4221,12 +4206,13 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
     }
 }
 
-fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskCompletionArtifact {
+fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskCompletionPayload {
     let output_expires_at =
         chrono::Utc::now() + chrono::Duration::try_hours(1).expect("valid duration");
     match kind {
-        StorageTaskKind::Import | StorageTaskKind::Reindex => StorageTaskCompletionArtifact::None,
-        StorageTaskKind::Export => StorageTaskCompletionArtifact::Export(
+        StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
+        StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
+        StorageTaskKind::Export => StorageTaskCompletionPayload::Export(
             StorageExportTaskArtifact::builder(
                 "application/json",
                 crate::storage::StorageExportTaskArtifactContent::Json(serde_json::json!({
@@ -4239,12 +4225,12 @@ fn compatibility_completion_artifact(kind: StorageTaskKind) -> StorageTaskComple
             .try_build()
             .expect("compatibility export artifact should be valid"),
         ),
-        StorageTaskKind::Backup => StorageTaskCompletionArtifact::Backup(
+        StorageTaskKind::Backup => StorageTaskCompletionPayload::Backup(
             StorageBackupTaskArtifact::try_new(b"{}".to_vec(), output_expires_at)
                 .expect("compatibility backup artifact should be valid"),
         ),
         StorageTaskKind::RemoteCall => {
-            StorageTaskCompletionArtifact::RemoteCall(StorageRemoteCallTaskArtifact::new(
+            StorageTaskCompletionPayload::RemoteCall(StorageRemoteCallTaskArtifact::new(
                 StorageRemoteCallArtifactTarget::new(
                     None,
                     crate::storage::StorageRemoteTargetSubjectType::Collection,
@@ -4750,6 +4736,45 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
 }
 
 #[actix_web::test]
+async fn memory_storage_rejects_schema_validation_without_a_schema_as_bad_request() {
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let classes = backend.class_store();
+    let context = EventContext::system();
+    let created = classes
+        .create_class(
+            StorageClassCreate::builder("schema_less_class", collection_id(1), "").build(),
+            &context,
+        )
+        .await
+        .expect("memory adapter should create a schema-less class")
+        .into_value();
+    let target = classes
+        .resolve_class(StorageClassSelector::Id(created.id()))
+        .await
+        .expect("memory adapter should resolve the class");
+
+    let error = classes
+        .update_class(
+            &target,
+            StorageClassUpdate::builder()
+                .validate_schema(Some(true))
+                .build(),
+            &context,
+        )
+        .await
+        .err()
+        .expect("memory adapter must reject validation without a schema");
+
+    assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    let api_error = ApiError::from(error);
+    assert_eq!(api_error.status_code(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        api_error.public_message(),
+        "Class schema validation cannot be enabled without a schema"
+    );
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_class_lifecycle() {
     let _permit = postgres_permit().await;
     let pool = pool();
@@ -4775,11 +4800,10 @@ async fn every_available_storage_backend_supplies_class_lifecycle() {
         let created = classes
             .create_class(
                 StorageClassCreate::builder(&class_name, collection.id(), "class lifecycle")
-                    .json_schema(Some(serde_json::json!({
+                    .schema_policy(StorageClassSchemaPolicy::Enforced(serde_json::json!({
                         "type": "object",
                         "properties": {"name": {"type": "string"}}
                     })))
-                    .validate_schema(true)
                     .build(),
                 &EventContext::system(),
             )
@@ -4888,11 +4912,10 @@ async fn every_available_storage_backend_supplies_object_lifecycle() {
                     collection.id(),
                     "object lifecycle class",
                 )
-                .json_schema(Some(serde_json::json!({
+                .schema_policy(StorageClassSchemaPolicy::Enforced(serde_json::json!({
                     "type": "object",
                     "properties": {"value": {"type": "integer"}}
                 })))
-                .validate_schema(true)
                 .build(),
                 &EventContext::system(),
             )
@@ -5844,13 +5867,17 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
                 fixture_collection_id,
                 owner.principal_id,
                 StorageComputedFieldDefinitionInput::new(
-                    "compatibility".to_string(),
-                    "Compatibility".to_string(),
-                    serde_json::json!({
-                        "type": "first_non_null",
-                        "paths": ["/compatibility"]
-                    }),
-                    "string".to_string(),
+                    Definition::new(
+                        FieldKey::new("compatibility").unwrap(),
+                        "Compatibility",
+                        "",
+                        Operation::FirstNonNull {
+                            paths: vec![JsonPointer::new("/compatibility").unwrap()],
+                        },
+                        ResultType::String,
+                        true,
+                    )
+                    .unwrap(),
                 ),
                 EventContext::user(owner.principal_id, None, None),
             ))
@@ -5920,15 +5947,18 @@ async fn every_available_storage_backend_supplies_computed_fields() {
     let _permit = postgres_permit().await;
     let definition = |key: &str| {
         StorageComputedFieldDefinitionInput::new(
-            key.to_string(),
-            "Compatibility".to_string(),
-            serde_json::json!({
-                "type": "first_non_null",
-                "paths": ["/compatibility"]
-            }),
-            "string".to_string(),
+            Definition::new(
+                FieldKey::new(key).unwrap(),
+                "Compatibility",
+                "Backend compatibility definition",
+                Operation::FirstNonNull {
+                    paths: vec![JsonPointer::new("/compatibility").unwrap()],
+                },
+                ResultType::String,
+                true,
+            )
+            .unwrap(),
         )
-        .with_description("Backend compatibility definition".to_string())
     };
 
     for environment in available_backend_environments() {
