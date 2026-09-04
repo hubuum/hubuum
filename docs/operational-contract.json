@@ -5481,6 +5481,7 @@
   ],
   "events": {
     "schema_version": 1,
+    "revision_aware_schema_version": 2,
     "envelope_fields": [
       {
         "name": "action",
@@ -5669,8 +5670,9 @@
     ],
     "schema_version_semantics": [
       "positive integer",
-      "omitted builder value defaults to the current event schema version",
-      "incompatible envelope, provenance, or sink payload shape changes require an increase"
+      "production events obtain schema_version from their audit document",
+      "revision-bearing snapshots use revision_aware_schema_version; other events use schema_version",
+      "incompatible envelope, provenance, or sink payload shape changes require both production versions to increase"
     ],
     "actors": [
       "user",
@@ -5903,21 +5905,21 @@
         "mode"
       ],
       "sections": [
-        "identity_scopes",
-        "groups",
-        "principals",
-        "group_memberships",
-        "collections",
-        "classes",
-        "objects",
-        "computed_fields",
         "class_relations",
-        "object_relations",
+        "classes",
         "collection_permissions",
-        "export_templates",
-        "remote_targets",
+        "collections",
+        "computed_fields",
         "event_sinks",
-        "event_subscriptions"
+        "event_subscriptions",
+        "export_templates",
+        "group_memberships",
+        "groups",
+        "identity_scopes",
+        "object_relations",
+        "objects",
+        "principals",
+        "remote_targets"
       ],
       "rejection_policy": "reject any import version other than the current version"
     },

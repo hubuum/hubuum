@@ -17,23 +17,6 @@ use crate::models::{
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 2;
-pub const IMPORT_GRAPH_SECTIONS: &[&str] = &[
-    "identity_scopes",
-    "groups",
-    "principals",
-    "group_memberships",
-    "collections",
-    "classes",
-    "objects",
-    "computed_fields",
-    "class_relations",
-    "object_relations",
-    "collection_permissions",
-    "export_templates",
-    "remote_targets",
-    "event_sinks",
-    "event_subscriptions",
-];
 pub(crate) const CONDITIONAL_IMPORT_TARGET_MISSING: &str =
     "stale_revision: conditional import target does not exist";
 

@@ -39,6 +39,8 @@ HUBUUM_TEST_RELEASES_FILE="$temporary_dir/releases.json" \
 HUBUUM_TEST_CONTENTS_STATUS="404" \
 GITHUB_API_URL="https://github.invalid" \
 GITHUB_REPOSITORY="hubuum/hubuum" \
+GITHUB_REF="" \
+GITHUB_REF_NAME="" \
   "$repo_root/scripts/resolve-operational-contract-baseline.sh" \
   "$temporary_dir/bootstrap-missing"
 jq --exit-status \
@@ -51,6 +53,8 @@ if PATH="$mock_bin:$PATH" \
   HUBUUM_TEST_CONTENTS_STATUS="404" \
   GITHUB_API_URL="https://github.invalid" \
   GITHUB_REPOSITORY="hubuum/hubuum" \
+  GITHUB_REF="" \
+  GITHUB_REF_NAME="" \
   "$repo_root/scripts/resolve-operational-contract-baseline.sh" \
   "$temporary_dir/post-bootstrap-missing"; then
   echo "Expected a post-bootstrap release without a snapshot to fail" >&2

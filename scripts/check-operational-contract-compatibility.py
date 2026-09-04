@@ -39,6 +39,15 @@ def stable(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def event_schema_versions(events: dict[str, Any]) -> dict[str, int]:
+    if "revision_aware_schema_version" in events:
+        return {name: events[name] for name in ("schema_version", "revision_aware_schema_version")}
+    # Older snapshots recorded a builder default in schema_version. Their audit
+    # catalog is the source for the two versions actually emitted in production.
+    versions = events.get("audit_document_versions") or [events["schema_version"]]
+    return {"schema_version": min(versions), "revision_aware_schema_version": max(versions)}
+
+
 class Comparator:
     def __init__(self) -> None:
         self.changes: list[dict[str, Any]] = []
@@ -266,13 +275,17 @@ class Comparator:
             added_classification="breaking",
             removed_classification="breaking",
         )
-        self.compare_set("events.audit_document_versions", old.get("audit_document_versions", []), new.get("audit_document_versions", []), "event-audit-document-version")
-        if new["schema_version"] < old["schema_version"]:
-            self.add("breaking", "event-schema-version-decreased", "events.schema_version", old["schema_version"], new["schema_version"], "event schema version decreased")
-        elif shape_changed and new["schema_version"] == old["schema_version"]:
-            self.add("breaking", "event-schema-version-not-increased", "events.schema_version", old["schema_version"], new["schema_version"], "event shape changed without increasing schema_version")
-        elif old["schema_version"] != new["schema_version"]:
-            self.add("behavioral", "event-schema-version-changed", "events.schema_version", old["schema_version"], new["schema_version"], "event schema version changed")
+        old_versions = event_schema_versions(old)
+        new_versions = event_schema_versions(new)
+        for name, old_version in old_versions.items():
+            new_version = new_versions[name]
+            path = f"events.{name}"
+            if new_version < old_version:
+                self.add("breaking", "event-schema-version-decreased", path, old_version, new_version, "production event schema version decreased")
+            elif shape_changed and new_version == old_version:
+                self.add("breaking", "event-schema-version-not-increased", path, old_version, new_version, "event shape changed without increasing this production schema version")
+            elif old_version != new_version:
+                self.add("behavioral", "event-schema-version-changed", path, old_version, new_version, "production event schema version changed")
 
     def compare_documents(self, baseline: dict[str, Any], candidate: dict[str, Any]) -> None:
         old = baseline["documents"]

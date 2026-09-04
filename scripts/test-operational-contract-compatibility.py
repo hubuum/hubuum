@@ -56,6 +56,7 @@ def contract() -> dict[str, object]:
         "configuration_constraints": [],
         "events": {
             "schema_version": 1,
+            "revision_aware_schema_version": 2,
             "envelope_fields": [{"name": "id", "nullable": False}],
             "provenance_fields": [{"name": "actor", "nullable": False}],
             "sink_payload_fields": [{"name": "id", "nullable": False}],
@@ -63,7 +64,7 @@ def contract() -> dict[str, object]:
             "actors": ["user"],
             "entities": [{"name": "object", "actions": ["created"]}],
             "redaction_rules": ["redact snapshots"],
-            "audit_document_versions": [1],
+            "audit_document_versions": [1, 2],
         },
         "documents": {
             "backup": {
@@ -537,14 +538,63 @@ class PolicyTests(unittest.TestCase):
         kinds = {change["kind"] for change in self.report_json()["changes"]}
         self.assertNotIn("event-schema-version-not-increased", kinds)
 
-    def test_event_schema_version_decrease_fails_without_shape_change(self) -> None:
+    def test_event_shape_requires_each_production_version_to_increase(self) -> None:
+        for unchanged in ("schema_version", "revision_aware_schema_version"):
+            with self.subTest(unchanged=unchanged):
+                candidate = contract()
+                candidate["events"]["envelope_fields"].append({"name": "optional", "nullable": True})
+                for name in ("schema_version", "revision_aware_schema_version"):
+                    if name != unchanged:
+                        candidate["events"][name] += 2
+                self.write_case(contract(), candidate)
+                result = self.run_checker()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                missing_bumps = [change["path"] for change in self.report_json()["changes"]
+                                 if change["kind"] == "event-schema-version-not-increased"]
+                self.assertEqual(missing_bumps, [f"events.{unchanged}"])
+
+    def test_event_shape_passes_when_both_production_versions_increase(self) -> None:
+        candidate = contract()
+        candidate["events"]["envelope_fields"].append({"name": "optional", "nullable": True})
+        candidate["events"]["schema_version"] = 3
+        candidate["events"]["revision_aware_schema_version"] = 4
+        candidate["events"]["audit_document_versions"] = [3, 4]
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_legacy_event_builder_default_cannot_satisfy_a_version_bump(self) -> None:
         baseline = contract()
-        baseline["events"]["schema_version"] = 2
+        del baseline["events"]["revision_aware_schema_version"]
+        candidate = copy.deepcopy(baseline)
+        candidate["events"]["schema_version"] = 3
+        candidate["events"]["envelope_fields"].append({"name": "optional", "nullable": True})
+        self.write_case(baseline, candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        missing_bumps = {change["path"] for change in self.report_json()["changes"]
+                         if change["kind"] == "event-schema-version-not-increased"}
+        self.assertEqual(missing_bumps, {"events.schema_version", "events.revision_aware_schema_version"})
+
+    def test_legacy_event_versions_match_explicit_production_versions(self) -> None:
+        baseline = contract()
+        del baseline["events"]["revision_aware_schema_version"]
         self.write_case(baseline, contract())
         result = self.run_checker()
-        self.assertEqual(result.returncode, 1)
-        kinds = {change["kind"] for change in self.report_json()["changes"]}
-        self.assertIn("event-schema-version-decreased", kinds)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.report_json()["changes"], [])
+
+    def test_event_schema_version_decrease_fails_without_shape_change(self) -> None:
+        for name in ("schema_version", "revision_aware_schema_version"):
+            with self.subTest(version=name):
+                baseline = contract()
+                baseline["events"][name] += 1
+                self.write_case(baseline, contract())
+                result = self.run_checker()
+                self.assertEqual(result.returncode, 1)
+                decreases = [change["path"] for change in self.report_json()["changes"]
+                             if change["kind"] == "event-schema-version-decreased"]
+                self.assertEqual(decreases, [f"events.{name}"])
 
     def test_added_event_redaction_rule_fails(self) -> None:
         candidate = contract()
@@ -572,6 +622,17 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         kinds = {change["kind"] for change in self.report_json()["changes"]}
         self.assertIn("backup-version-decreased", kinds)
+
+    def test_import_section_rename_or_removal_requires_version_bump(self) -> None:
+        for sections in ([], ["renamed_objects"]):
+            with self.subTest(sections=sections):
+                candidate = contract()
+                candidate["documents"]["import"]["sections"] = sections
+                self.write_case(contract(), candidate)
+                result = self.run_checker()
+                self.assertEqual(result.returncode, 1)
+                kinds = {change["kind"] for change in self.report_json()["changes"]}
+                self.assertIn("import-version-not-increased", kinds)
 
     def test_document_rejection_policy_change_fails(self) -> None:
         candidate = contract()

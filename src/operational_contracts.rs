@@ -4,17 +4,21 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use clap::{Arg, ArgAction, Command};
+use hubuum_events_core::{
+    AuditDocument, BASE_AUDIT_DOCUMENT_SCHEMA_VERSION, NewEvent,
+    REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
+};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::config::environment::{
     APP_CONFIG_ENVIRONMENT, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner, EnvironmentVariable,
     Exposure, PROCESS_ENVIRONMENT, configuration_bounds, configuration_constraints,
 };
-use crate::events::{Action, ActorKind, CURRENT_EVENT_SCHEMA_VERSION, EntityType, valid_actions};
+use crate::events::{Action, ActorKind, EntityType, valid_actions};
 use crate::models::{
     BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION,
-    ExportContentType, ExportMissingDataPolicy, ExportScopeKind, ExportTemplateKind,
-    IMPORT_GRAPH_SECTIONS, ImportGraph, ImportRequest, RemoteHttpMethod,
+    ExportContentType, ExportMissingDataPolicy, ExportScopeKind, ExportTemplateKind, ImportGraph,
+    ImportRequest, RemoteHttpMethod,
 };
 use crate::storage::{
     StorageBackupHistorySection, StorageBackupStateSection, StorageCallSite, StorageCapability,
@@ -961,6 +965,7 @@ struct FieldContract {
 #[derive(Serialize)]
 struct EventContract {
     schema_version: i32,
+    revision_aware_schema_version: i32,
     envelope_fields: Vec<FieldContract>,
     provenance_fields: Vec<FieldContract>,
     sink_payload_fields: Vec<FieldContract>,
@@ -982,7 +987,7 @@ struct VersionedDocumentContract {
     version: Option<i32>,
     required_fields: Vec<String>,
     optional_fields: Vec<String>,
-    sections: Vec<&'static str>,
+    sections: Vec<String>,
     rejection_policy: &'static str,
 }
 
@@ -1700,6 +1705,19 @@ fn validate_cli_requirements(command_name: &str, command: &Command) {
         .clone()
         .mut_args(|argument| argument.env(None::<&str>));
     command.build();
+    let command_requirements = command
+        .get_arguments()
+        .filter(|argument| argument.is_required_set())
+        .flat_map(|argument| {
+            let id = argument.get_id().as_str();
+            std::iter::once(id).chain(cli_requirement_closure(command_name, id))
+        })
+        .collect::<BTreeSet<_>>();
+    // Disable command-wide requirements only when checking option-specific
+    // dependencies, so an always-present option cannot hide registry drift.
+    let dependency_command = command
+        .clone()
+        .mut_args(|argument| argument.required(false));
     for argument in command
         .get_arguments()
         .filter(|argument| !matches!(argument.get_action(), ArgAction::Help | ArgAction::Version))
@@ -1708,7 +1726,7 @@ fn validate_cli_requirements(command_name: &str, command: &Command) {
         let argument_id = argument.get_id().as_str();
         let requirements = cli_requirement_closure(command_name, argument_id);
         let without_requirements = cli_invocation(command_name, &command, [argument_id]);
-        let without_requirements_parses = command
+        let without_requirements_parses = dependency_command
             .clone()
             .try_get_matches_from(without_requirements)
             .is_ok();
@@ -1725,11 +1743,24 @@ fn validate_cli_requirements(command_name: &str, command: &Command) {
             std::iter::once(argument_id).chain(requirements.iter().copied()),
         );
         assert!(
-            command
+            dependency_command
                 .clone()
                 .try_get_matches_from(with_requirements)
                 .is_ok(),
             "CLI requirement registry is incomplete for {command_name} --{}",
+            argument.get_long().unwrap_or(argument_id)
+        );
+
+        let invocation = cli_invocation(
+            command_name,
+            &command,
+            std::iter::once(argument_id)
+                .chain(requirements.iter().copied())
+                .chain(command_requirements.iter().copied()),
+        );
+        assert!(
+            command.clone().try_get_matches_from(invocation).is_ok(),
+            "CLI requirement probe failed for {command_name} --{} with command requirements",
             argument.get_long().unwrap_or(argument_id)
         );
     }
@@ -1755,7 +1786,11 @@ fn cli_invocation<'a>(
     arguments: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
     let mut invocation = vec![command_name.to_string()];
+    let mut seen = BTreeSet::new();
     for argument_id in arguments {
+        if !seen.insert(argument_id) {
+            continue;
+        }
         let argument = command
             .get_arguments()
             .find(|argument| argument.get_id().as_str() == argument_id)
@@ -1979,14 +2014,16 @@ fn event_contract() -> EventContract {
         &populated_envelope["provenance"],
     );
     EventContract {
-        schema_version: CURRENT_EVENT_SCHEMA_VERSION,
+        schema_version: BASE_AUDIT_DOCUMENT_SCHEMA_VERSION,
+        revision_aware_schema_version: REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
         sink_payload_fields: envelope_fields.clone(),
         envelope_fields,
         provenance_fields,
         schema_version_semantics: &[
             "positive integer",
-            "omitted builder value defaults to the current event schema version",
-            "incompatible envelope, provenance, or sink payload shape changes require an increase",
+            "production events obtain schema_version from their audit document",
+            "revision-bearing snapshots use revision_aware_schema_version; other events use schema_version",
+            "incompatible envelope, provenance, or sink payload shape changes require both production versions to increase",
         ],
         actors: ActorKind::ALL
             .iter()
@@ -2011,8 +2048,8 @@ fn event_contract() -> EventContract {
             "event debug output never includes before, after, metadata, or routing secrets",
         ],
         audit_document_versions: &[
-            hubuum_events_core::BASE_AUDIT_DOCUMENT_SCHEMA_VERSION,
-            hubuum_events_core::REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
+            BASE_AUDIT_DOCUMENT_SCHEMA_VERSION,
+            REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
         ],
     }
 }
@@ -2044,6 +2081,7 @@ fn serialized_event_envelope(populated: bool) -> serde_json::Value {
     } else {
         Provenance::default()
     };
+    let event = sample_event(populated);
     let mut builder = EventEnvelope::builder()
         .id(EventSequence::new(1).expect("positive sample event sequence"))
         .event_id(uuid::Uuid::nil())
@@ -2058,7 +2096,8 @@ fn serialized_event_envelope(populated: bool) -> serde_json::Value {
             ActorKind::System
         })
         .provenance(provenance)
-        .summary("operational contract sample".to_string());
+        .schema_version(event.schema_version())
+        .summary(event.summary().to_string());
     if populated {
         builder = builder
             .entity_id(Some(
@@ -2071,8 +2110,8 @@ fn serialized_event_envelope(populated: bool) -> serde_json::Value {
             .actor_user_id(Some(actor_id))
             .request_id(Some(uuid::Uuid::nil()))
             .correlation_id(Some("sample".to_string()))
-            .before(Some(serde_json::json!({})))
-            .after(Some(serde_json::json!({})));
+            .before(event.before().cloned())
+            .after(event.after().cloned());
     }
     serde_json::to_value(
         builder
@@ -2080,6 +2119,21 @@ fn serialized_event_envelope(populated: bool) -> serde_json::Value {
             .expect("sample event envelope must satisfy runtime invariants"),
     )
     .expect("event envelope must serialize")
+}
+
+fn sample_event(revision_aware: bool) -> NewEvent {
+    let document = AuditDocument::builder("operational contract sample")
+        .before_opt(revision_aware.then(|| serde_json::json!({"revision": 1})))
+        .after_opt(revision_aware.then(|| serde_json::json!({"revision": 2})))
+        .try_build()
+        .expect("sample audit document must satisfy runtime invariants");
+    NewEvent::from_document(
+        EntityType::Collection,
+        Action::Created,
+        ActorKind::System,
+        document,
+    )
+    .expect("sample event must satisfy runtime invariants")
 }
 
 fn direct_field_contracts(value: &serde_json::Value) -> Vec<FieldContract> {
@@ -2160,6 +2214,7 @@ fn document_contracts() -> DocumentContracts {
                         .copied()
                         .map(StorageBackupHistorySection::as_str),
                 )
+                .map(str::to_string)
                 .collect(),
             rejection_policy: "reject any backup_version other than the current version",
         },
@@ -2167,7 +2222,7 @@ fn document_contracts() -> DocumentContracts {
             version: Some(CURRENT_IMPORT_VERSION),
             required_fields: import_fields.required,
             optional_fields: import_fields.optional,
-            sections: IMPORT_GRAPH_SECTIONS.to_vec(),
+            sections: serialized_section_names(&ImportGraph::default()),
             rejection_policy: "reject any import version other than the current version",
         },
         export: ExportContract {
@@ -2198,6 +2253,16 @@ fn document_contracts() -> DocumentContracts {
 struct SerializedDocumentFields {
     required: Vec<String>,
     optional: Vec<String>,
+}
+
+fn serialized_section_names<T: Serialize>(document: &T) -> Vec<String> {
+    serde_json::to_value(document)
+        .expect("section catalog sample must serialize")
+        .as_object()
+        .expect("section catalog sample must serialize as an object")
+        .keys()
+        .cloned()
+        .collect()
 }
 
 fn serialized_document_fields<T>(document: &T) -> SerializedDocumentFields
@@ -2326,6 +2391,87 @@ mod tests {
         validate_cli_requirements("hubuum-admin", &command);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn cli_contract_includes_command_wide_required_options(#[case] takes_value: bool) {
+        let command = Command::new("fixture")
+            .arg(Arg::new("optional").long("optional"))
+            .arg(
+                Arg::new("required")
+                    .long("required")
+                    .required(true)
+                    .action(if takes_value {
+                        ArgAction::Set
+                    } else {
+                        ArgAction::SetTrue
+                    }),
+            );
+
+        let contract = cli_contract("fixture", command);
+
+        assert!(
+            contract
+                .options
+                .iter()
+                .find(|option| option.id == "required")
+                .unwrap()
+                .required
+        );
+    }
+
+    #[rstest]
+    #[case("backup")]
+    #[case("backup_without_history")]
+    fn cli_dependencies_are_checked_separately_from_command_requirements(#[case] required: &str) {
+        let command = Command::new("hubuum-admin")
+            .arg(Arg::new("optional").long("optional"))
+            .arg(Arg::new("backup").long("backup"))
+            .arg(
+                Arg::new("backup_without_history")
+                    .long("backup-without-history")
+                    .action(ArgAction::SetTrue)
+                    .requires("backup"),
+            )
+            .mut_arg(required, |argument| argument.required(true));
+
+        let contract = cli_contract("hubuum-admin", command);
+
+        assert_eq!(
+            contract
+                .options
+                .iter()
+                .find(|option| option.id == "backup_without_history")
+                .unwrap()
+                .requires,
+            ["backup"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "CLI requirement registry disagrees")]
+    fn cli_required_options_do_not_hide_unregistered_dependencies() {
+        let command = Command::new("fixture")
+            .arg(Arg::new("optional").long("optional").requires("required"))
+            .arg(Arg::new("required").long("required").required(true));
+
+        cli_contract("fixture", command);
+    }
+
+    #[test]
+    #[should_panic(expected = "CLI requirement registry disagrees")]
+    fn cli_required_options_do_not_hide_removed_dependencies() {
+        let command = Command::new("hubuum-admin")
+            .arg(Arg::new("backup").long("backup").required(true))
+            .arg(
+                Arg::new("backup_without_history")
+                    .long("backup-without-history")
+                    .action(ArgAction::SetTrue),
+            );
+
+        cli_contract("hubuum-admin", command);
+    }
+
     #[test]
     fn document_fields_follow_serde_names_and_missing_field_behavior() {
         #[derive(Serialize, serde::Deserialize)]
@@ -2342,6 +2488,24 @@ mod tests {
 
         assert_eq!(fields.required, ["wire_name"]);
         assert_eq!(fields.optional, ["optional"]);
+    }
+
+    #[test]
+    fn document_sections_follow_serde_renames_and_omissions() {
+        #[derive(Serialize)]
+        struct Fixture {
+            #[serde(rename = "memberships")]
+            group_memberships: Vec<()>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            removed: Option<()>,
+        }
+
+        let sections = serialized_section_names(&Fixture {
+            group_memberships: Vec::new(),
+            removed: None,
+        });
+
+        assert_eq!(sections, ["memberships"]);
     }
 
     #[test]
@@ -2582,6 +2746,25 @@ mod tests {
                 .provenance_fields
                 .iter()
                 .any(|field| field.name == "actor.kind" && !field.nullable)
+        );
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn event_contract_versions_match_production_events(#[case] revision_aware: bool) {
+        let contract = event_contract();
+        let version = if revision_aware {
+            contract.revision_aware_schema_version
+        } else {
+            contract.schema_version
+        };
+        let event = sample_event(revision_aware);
+
+        assert_eq!(version, event.schema_version());
+        assert_eq!(
+            serialized_event_envelope(revision_aware)["schema_version"],
+            version
         );
     }
 

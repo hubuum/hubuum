@@ -52,6 +52,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   cross-field rules, serialized document fields, and CLI dependencies now feed
   the same checked definitions used by the snapshot. Relaxed CLI constraints
   remain additive, and exceptions must cite notes from the candidate release.
+  Event version checks cover both base and revision-aware production events,
+  and import section catalogs follow serialized graph names.
 - Added `hubuum-admin --verify-backup` for bounded offline validation and an
   opt-in isolated PostgreSQL restore drill with empty-target and production-
   endpoint safeguards, sanitized JSON evidence, readiness checks, and explicit

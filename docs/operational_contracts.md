@@ -70,8 +70,13 @@ Changes are classified against the latest stable release snapshot:
   weaker secret classification, or format shape changes without the
   corresponding version increase.
 
-Event-envelope shape changes must increase the event schema version. Backup and
-import shape or section changes must increase their document version. The
+Event-envelope shape changes must increase both production event versions:
+`schema_version` for base audit documents and `revision_aware_schema_version`
+for documents containing revision-bearing snapshots. These values come from the
+audit-document version sources used by event writes, stored-event projection,
+and sink fan-out; changing the envelope builder's default does not satisfy the
+gate. Import section names come from the serialized graph's Serde keys.
+Backup and import shape or section changes must increase their document version. The
 checker reports both the shape change and a missing version bump so a format
 change cannot silently reuse an old version number.
 
