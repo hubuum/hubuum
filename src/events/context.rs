@@ -55,6 +55,10 @@ impl RequestProvenance {
         self.client_ip
     }
 
+    pub(crate) fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
+    }
+
     #[must_use]
     pub fn with_trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
         self.trace_link = trace_link;

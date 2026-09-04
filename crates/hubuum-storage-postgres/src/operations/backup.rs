@@ -4,6 +4,7 @@ use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use diesel::QueryableByName;
 use diesel::sql_types::Jsonb;
 use diesel_async::RunQueryDsl;
+use hubuum_events_core::CorrelationId;
 use hubuum_storage_core::{
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
     StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
@@ -441,6 +442,9 @@ pub(crate) fn history_row_to_postgres(
             "Logical backup history row contains adapter-private field '{field}'"
         )));
     }
+    if section == StorageBackupHistorySection::AuditEvents {
+        normalize_legacy_event_correlation_id(object);
+    }
     if matches!(
         section,
         StorageBackupHistorySection::CollectionHistory
@@ -459,6 +463,16 @@ pub(crate) fn history_row_to_postgres(
     rename_fields(object, history_field_mappings(section), false)?;
     physicalize_timestamps(object)?;
     Ok(row)
+}
+
+fn normalize_legacy_event_correlation_id(row: &mut Map<String, Value>) {
+    let invalid = row
+        .get("correlation_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| CorrelationId::new(value).is_err());
+    if invalid {
+        row.insert("correlation_id".to_string(), Value::Null);
+    }
 }
 
 fn validate_snapshot_table(table: &str) -> Result<(), PostgresStorageError> {
@@ -861,5 +875,18 @@ mod tests {
             state_row_to_postgres(StorageBackupStateSection::Collections, logical).unwrap(),
             physical
         );
+    }
+
+    #[rstest]
+    #[case::whitespace("legacy correlation")]
+    #[case::overlong(&"x".repeat(129))]
+    fn restore_normalizes_legacy_invalid_event_correlation_ids(#[case] correlation_id: &str) {
+        let restored = history_row_to_postgres(
+            StorageBackupHistorySection::AuditEvents,
+            json!({"correlation_id": correlation_id}),
+        )
+        .unwrap();
+
+        assert_eq!(restored.get("correlation_id"), Some(&Value::Null));
     }
 }

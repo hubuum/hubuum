@@ -10,7 +10,9 @@ use diesel::sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamp};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
-use hubuum_events_core::{Action, AuditDocument, EntityType, MutationProvenance, NewEvent};
+use hubuum_events_core::{
+    Action, AuditDocument, EntityType, MutationProvenance, NewEvent, TraceLink,
+};
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
     StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken,
@@ -651,14 +653,20 @@ fn worker_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStora
     Ok(MutationProvenance::worker(
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
-    ))
+    )
+    .with_trace_link(task_event_trace_link(task)?))
 }
 
 fn system_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStorageError> {
     Ok(MutationProvenance::system_for_task(
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
-    ))
+    )
+    .with_trace_link(task_event_trace_link(task)?))
+}
+
+fn task_event_trace_link(task: &TaskRow) -> Result<Option<TraceLink>, PostgresStorageError> {
+    Ok(crate::runtime::ambient_mutation_trace_link().or(task.trace_link()?))
 }
 
 pub(super) async fn live_claimed_task(

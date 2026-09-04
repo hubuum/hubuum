@@ -116,11 +116,16 @@ Only these fixed span names can cross the OTLP boundary:
 - `authz.scope_intersection`
 - `db.connection`
 - `db.operation`
+- `storage_operation`
 - `task.admission`
 - `task.execute`
 - `event.fanout`
 - `event.delivery`
 - `http.client.request`
+
+`storage_operation` spans cover logical persistence calls for every selected
+backend, including memory storage. PostgreSQL connection and transaction
+diagnostics remain available as `db.connection` and `db.operation` spans.
 
 Each category has a closed attribute allowlist. Route templates, status codes,
 bounded operation categories, result categories, counts, attempts, and coarse

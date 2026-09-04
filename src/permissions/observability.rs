@@ -23,10 +23,9 @@
 
 use std::time::{Duration, SystemTime};
 
-use opentelemetry::trace::{Span as _, Tracer as _};
+use opentelemetry::trace::{Span as _, Tracer};
 use opentelemetry::{KeyValue, global};
 use tracing::debug;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 const TARGET: &str = "hubuum::permissions";
 
@@ -55,6 +54,7 @@ pub fn record_authorize_many(
         "authorize_many"
     );
     record_authorization_span(
+        &global::tracer("hubuum"),
         "authz.permission_backend",
         backend,
         "authorize_many",
@@ -74,6 +74,7 @@ pub fn record_is_admin(backend: &'static str, allowed: bool, elapsed: Duration) 
         "is_admin"
     );
     record_authorization_span(
+        &global::tracer("hubuum"),
         "authz.permission_backend",
         backend,
         "is_admin",
@@ -115,6 +116,7 @@ pub fn record_reverse_query(
         "reverse_query"
     );
     record_authorization_span(
+        &global::tracer("hubuum"),
         "authz.scope_intersection",
         backend,
         query,
@@ -152,6 +154,7 @@ pub fn record_paginate_authorized(
         "paginate_authorized"
     );
     record_authorization_span(
+        &global::tracer("hubuum"),
         "authz.scope_intersection",
         backend,
         "paginate_authorized",
@@ -162,6 +165,7 @@ pub fn record_paginate_authorized(
 }
 
 fn record_authorization_span(
+    tracer: &impl Tracer,
     name: &'static str,
     backend: &'static str,
     operation: &'static str,
@@ -169,10 +173,9 @@ fn record_authorization_span(
     result: &'static str,
     duration: Duration,
 ) {
-    let tracer = global::tracer("hubuum");
     let ended_at = SystemTime::now();
     let started_at = ended_at.checked_sub(duration).unwrap_or(ended_at);
-    let parent = tracing::Span::current().context();
+    let parent = opentelemetry::Context::current();
     let mut span = tracer
         .span_builder(name)
         .with_start_time(started_at)
@@ -189,6 +192,46 @@ fn record_authorization_span(
                 i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
             ),
         ])
-        .start_with_context(&tracer, &parent);
+        .start_with_context(tracer, &parent);
     span.end_with_timestamp(ended_at);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::tracing::test_support::TraceCapture;
+
+    #[test]
+    fn authorization_spans_keep_the_ambient_parent() {
+        let capture = TraceCapture::new("debug");
+        tracing::dispatcher::with_default(&capture.dispatch(), || {
+            let request = tracing::info_span!("http.server.request");
+            let _request = request.enter();
+            let internal = tracing::info_span!("import_planning");
+            let _internal = internal.enter();
+            record_authorization_span(
+                &capture.tracer(),
+                "authz.permission_backend",
+                "local",
+                "authorize_many",
+                1,
+                "allow",
+                Duration::from_millis(1),
+            );
+        });
+        let spans = capture.spans();
+        let request = spans
+            .iter()
+            .find(|span| span.name == "http.server.request")
+            .unwrap();
+        let authorization = spans
+            .iter()
+            .find(|span| span.name == "authz.permission_backend")
+            .unwrap();
+        assert_eq!(authorization.parent_span_id, request.span_context.span_id());
+        assert_eq!(
+            authorization.span_context.trace_id(),
+            request.span_context.trace_id()
+        );
+    }
 }

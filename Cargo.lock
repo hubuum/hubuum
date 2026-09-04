@@ -2372,6 +2372,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-task-core",
+ "rstest",
  "serde",
  "serde_json",
  "sha2 0.11.0",

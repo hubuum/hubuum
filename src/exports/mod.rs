@@ -1124,7 +1124,7 @@ pub(crate) async fn execute_export_task<C>(
     task: &ClaimedTask,
     subject: &impl crate::traits::Search,
     scopes: Option<&TokenScope>,
-) -> Result<(), ApiError>
+) -> Result<TaskStatus, ApiError>
 where
     C: AuthorizationContext,
 {
@@ -1366,7 +1366,7 @@ where
         metrics::export_warnings(metric_scope, metric_content_type, metric_warning_count);
     }
 
-    Ok(())
+    Ok(TaskStatus::Succeeded)
 }
 
 fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArtifact, ApiError> {

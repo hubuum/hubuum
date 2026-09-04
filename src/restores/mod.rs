@@ -692,7 +692,7 @@ pub fn verify_backup_document(
 /// Compare a post-restore logical snapshot with the source artifact. The
 /// destructive restore deliberately appends exactly one provenance event; all
 /// authoritative state and every other requested history section must remain
-/// byte-for-byte equivalent at the logical storage boundary.
+/// equivalent after canonicalizing optional history fields.
 #[cfg(feature = "embedded-migrations")]
 pub(crate) fn verify_restored_backup_matches(
     source: &BackupDocument,
@@ -719,8 +719,31 @@ pub(crate) fn verify_restored_backup_matches(
                         "Restored snapshot comparison is missing history section '{section}'"
                     ))
                 })?;
+                if !matches!(
+                    section,
+                    StorageBackupHistorySection::TerminalTasks
+                        | StorageBackupHistorySection::AuditEvents
+                ) {
+                    if source_rows != restored_rows {
+                        return Err(ApiError::InternalServerError(format!(
+                            "Restored history section '{section}' does not match the verified backup"
+                        )));
+                    }
+                    continue;
+                }
+                let canonicalize = |rows: &[StorageBackupRow]| {
+                    rows.iter()
+                        .cloned()
+                        .map(|mut row| {
+                            row.canonicalize_history(*section);
+                            row
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let source_rows = canonicalize(source_rows);
+                let restored_rows = canonicalize(restored_rows);
                 if *section == StorageBackupHistorySection::AuditEvents {
-                    verify_restore_provenance_delta(source_rows, restored_rows)?;
+                    verify_restore_provenance_delta(&source_rows, &restored_rows)?;
                 } else if source_rows != restored_rows {
                     return Err(ApiError::InternalServerError(format!(
                         "Restored history section '{section}' does not match the verified backup"
@@ -2155,6 +2178,64 @@ mod tests {
             );
 
         assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[rstest]
+    #[case::old_to_null(json!({}), json!({"trace_id": null, "trace_span_id": null, "trace_flags": null, "trace_context_version": null}), true)]
+    #[case::null_to_absent(json!({"trace_id": null, "trace_span_id": null, "trace_flags": null, "trace_context_version": null}), json!({}), true)]
+    #[case::new_link(json!({}), json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0}), false)]
+    #[case::partial_link(json!({}), json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": null}), false)]
+    #[case::cleared_link(json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0}), json!({}), false)]
+    fn restored_backup_comparison_canonicalizes_only_empty_trace_links(
+        #[values(
+            StorageBackupHistorySection::TerminalTasks,
+            StorageBackupHistorySection::AuditEvents
+        )]
+        section: StorageBackupHistorySection,
+        #[case] source_link: serde_json::Value,
+        #[case] restored_link: serde_json::Value,
+        #[case] accepted: bool,
+    ) {
+        let row = |link: serde_json::Value| {
+            let mut row = json!({"id": 1, "summary": "retained history"});
+            row.as_object_mut()
+                .unwrap()
+                .extend(link.as_object().unwrap().clone());
+            StorageBackupRow::try_from_value(row).unwrap()
+        };
+        let mut source = minimally_valid_document();
+        source.history = Some(BackupHistory {
+            sections: StorageBackupHistorySection::ALL
+                .iter()
+                .copied()
+                .map(|section| (section, Vec::new()))
+                .collect(),
+        });
+        source
+            .history
+            .as_mut()
+            .unwrap()
+            .sections
+            .insert(section, vec![row(source_link)]);
+        let mut restored = source.clone();
+        let history = restored.history.as_mut().unwrap();
+        history.sections.insert(section, vec![row(restored_link)]);
+        history
+            .sections
+            .get_mut(&StorageBackupHistorySection::AuditEvents)
+            .unwrap()
+            .push(
+                StorageBackupRow::try_from_value(
+                    json!({"id": 2, "entity_type": "restore", "action": "succeeded"}),
+                )
+                .unwrap(),
+            );
+
+        assert_eq!(
+            verify_restored_backup_matches(&source, &restored).is_ok(),
+            accepted
+        );
     }
 
     #[cfg(feature = "embedded-migrations")]

@@ -65,12 +65,7 @@ impl TaskRow {
                 self.failed_items,
             ),
         )?;
-        let trace_link = task_trace_link(
-            self.trace_id,
-            self.trace_span_id,
-            self.trace_flags,
-            self.trace_context_version,
-        )?;
+        let trace_link = self.trace_link()?;
         let task = StorageTask::builder(
             TaskId::new(self.id)?,
             kind,
@@ -104,6 +99,15 @@ impl TaskRow {
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
         .trace_link(trace_link);
         crate::validate_persisted("task projection", task.try_build())
+    }
+
+    pub(crate) fn trace_link(&self) -> Result<Option<TraceLink>, PostgresStorageError> {
+        task_trace_link(
+            self.trace_id.clone(),
+            self.trace_span_id.clone(),
+            self.trace_flags,
+            self.trace_context_version,
+        )
     }
 }
 

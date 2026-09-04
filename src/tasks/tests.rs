@@ -33,23 +33,26 @@ use crate::models::{
     ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, ImportWriteCondition,
     NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, ObjectKey, Permissions, PrincipalKey, RemoteAuthConfig,
-    RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision, RestoreTimestamps,
-    TaskResultCounts, TaskStatus,
+    NewHubuumObjectRelation, NewTaskEventRecord, ObjectKey, Permissions, PrincipalKey,
+    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision,
+    RestoreTimestamps, TaskResultCounts, TaskStatus,
 };
 use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{ResourceAttrs, ResourceKind};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
-use crate::services::tasks::{ClaimedTask, TaskStateChange, find_task, update_task_state};
+use crate::services::tasks::{
+    ClaimedTask, TaskStateChange, append_task_event, find_task, update_task_state,
+};
 use crate::storage::{
     CollectionStorage, ImportStorage, StorageImportPlan, StorageImportPlanItem,
     StorageImportResult, StorageTaskCreateRequest, StorageTaskKind, StorageTaskScopeSnapshot,
-    TaskQueueStorage,
+    TaskQueueStorage, with_mutation_provenance,
 };
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
+use hubuum_events_core::{Action, EntityType, EventEntityId, MutationProvenance, TraceLink};
 use hubuum_storage_postgres::PostgresStorage;
 use hubuum_storage_postgres::{capture_queries, with_connection};
 
@@ -59,6 +62,17 @@ async fn create_worker_test_task(
     payload: serde_json::Value,
     total_items: i32,
     label: &str,
+) -> crate::models::TaskRecord {
+    create_worker_test_task_with_trace(context, kind, payload, total_items, label, None).await
+}
+
+async fn create_worker_test_task_with_trace(
+    context: &TestContext,
+    kind: StorageTaskKind,
+    payload: serde_json::Value,
+    total_items: i32,
+    label: &str,
+    trace_link: Option<TraceLink>,
 ) -> crate::models::TaskRecord {
     let backend = crate::storage::storage_handle(&context.pool);
     let task = backend
@@ -75,6 +89,7 @@ async fn create_worker_test_task(
                     .expect("test idempotency key must be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+            .trace_link(trace_link)
             .try_build(100)
             .expect("worker test task request should be valid"),
         )
@@ -3028,6 +3043,116 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
         &ApiError::DatabaseError("db error".to_string()),
         &mode,
     ));
+}
+
+fn task_test_trace_link(trace_id: &str, span_id: &str) -> TraceLink {
+    TraceLink::new(trace_id, span_id, 1, 0).expect("test trace link must be valid")
+}
+
+#[tokio::test]
+async fn task_queued_event_persists_the_admission_trace_link() {
+    let context = TestContext::new().await;
+    let admission_link =
+        task_test_trace_link("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+    let task = create_worker_test_task_with_trace(
+        &context,
+        StorageTaskKind::Export,
+        serde_json::json!({}),
+        0,
+        "queued-trace-link",
+        Some(admission_link.clone()),
+    )
+    .await;
+
+    let events = hubuum_storage_postgres::test_support::list_events(
+        context.pool.get_ref(),
+        EntityType::Task,
+        EventEntityId::new(task.id).expect("persisted task id must be positive"),
+        Some(Action::Queued),
+    )
+    .await
+    .expect("queued task event should be readable");
+    let envelope = events
+        .into_iter()
+        .next()
+        .expect("queued task event should exist")
+        .into_parts()
+        .0;
+
+    assert_eq!(envelope.trace_link(), Some(&admission_link));
+
+    hubuum_storage_postgres::test_support::delete_task(
+        context.pool.get_ref(),
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .expect("queued trace-link task fixture should be removed");
+}
+
+#[tokio::test]
+async fn worker_task_event_prefers_the_current_execution_trace_link() {
+    let context = TestContext::new().await;
+    let admission_link =
+        task_test_trace_link("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+    let execution_link =
+        task_test_trace_link("6bf92f3577b34da6a3ce929d0e0e4738", "10f067aa0ba902b8");
+    let task = create_worker_test_task_with_trace(
+        &context,
+        StorageTaskKind::Export,
+        serde_json::json!({}),
+        0,
+        "execution-trace-link",
+        Some(admission_link),
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let provenance = MutationProvenance::worker(
+        Some(
+            hubuum_domain::PrincipalId::new(context.admin_user.id)
+                .expect("persisted test principal id must be positive"),
+        ),
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive"),
+    )
+    .with_trace_link(Some(execution_link.clone()));
+
+    with_mutation_provenance(&context.pool, Some(provenance), async {
+        append_task_event(
+            &context.pool,
+            &claimed,
+            NewTaskEventRecord {
+                event_type: TaskStatus::Running.as_str().to_string(),
+                message: "Task execution started".to_string(),
+                data: None,
+            },
+        )
+        .await
+    })
+    .await
+    .expect("worker task event should be appended");
+
+    let events = hubuum_storage_postgres::test_support::list_events(
+        context.pool.get_ref(),
+        EntityType::Task,
+        EventEntityId::new(task.id).expect("persisted task id must be positive"),
+        Some(Action::Running),
+    )
+    .await
+    .expect("running task event should be readable");
+    let envelope = events
+        .into_iter()
+        .next()
+        .expect("running task event should exist")
+        .into_parts()
+        .0;
+
+    assert_eq!(envelope.trace_link(), Some(&execution_link));
+
+    hubuum_storage_postgres::test_support::delete_task(
+        context.pool.get_ref(),
+        hubuum_domain::TaskId::new(task.id).expect("persisted task id must be positive"),
+    )
+    .await
+    .expect("execution trace-link task fixture should be removed");
 }
 
 #[tokio::test]

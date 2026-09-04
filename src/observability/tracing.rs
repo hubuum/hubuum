@@ -10,7 +10,8 @@ use hubuum_events_core::TraceLink;
 use opentelemetry::global;
 use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{
-    SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState, TracerProvider as _,
+    Link, SpanContext, SpanId, SpanKind, TraceContextExt, TraceFlags, TraceId, TraceState,
+    TracerProvider as _,
 };
 use opentelemetry::{Context, KeyValue};
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
@@ -18,8 +19,9 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
-    BatchConfigBuilder, BatchSpanProcessor, Sampler, SdkTracerProvider, Span as SdkSpan, SpanData,
-    SpanExporter, SpanProcessor,
+    BatchConfigBuilder, BatchSpanProcessor, IdGenerator, RandomIdGenerator, Sampler,
+    SamplingResult, SdkTracerProvider, ShouldSample, Span as SdkSpan, SpanData, SpanExporter,
+    SpanProcessor,
 };
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -69,6 +71,14 @@ const DATABASE_ATTRIBUTES: &[&str] = &[
     "db.caller",
     "db.duration_ms",
     "db.result",
+];
+const STORAGE_ATTRIBUTES: &[&str] = &[
+    "backend",
+    "capability",
+    "operation",
+    "storage.result",
+    "storage.duration_ms",
+    "error.type",
 ];
 const AUTHORIZATION_ATTRIBUTES: &[&str] = &[
     "authorization.backend",
@@ -240,6 +250,7 @@ fn classified_span(name: &str) -> Option<(&'static str, &'static [&'static str])
         "event.fanout" | "event.delivery" => Some(("event", EVENT_ATTRIBUTES)),
         "http.client.request" => Some(("outbound", HTTP_CLIENT_ATTRIBUTES)),
         "db.connection" | "db.operation" => Some(("database", DATABASE_ATTRIBUTES)),
+        "storage_operation" => Some(("storage", STORAGE_ATTRIBUTES)),
         "authz.permission_backend" | "authz.scope_intersection" => {
             Some(("authorization", AUTHORIZATION_ATTRIBUTES))
         }
@@ -675,15 +686,78 @@ fn build_otlp_exporter(
         .map_err(|_| "failed to initialize the OTLP trace exporter".to_string())
 }
 
-fn configured_sampler(settings: &TracingSettings) -> Sampler {
+fn configured_sampler(settings: &TracingSettings) -> Box<dyn ShouldSample> {
     match settings.sampling_mode {
-        TracingSamplingMode::Off => Sampler::AlwaysOff,
-        TracingSamplingMode::AlwaysOn => Sampler::AlwaysOn,
-        TracingSamplingMode::ParentBasedRatio if settings.trust_incoming_sampling => {
-            Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(settings.sample_ratio)))
-        }
-        TracingSamplingMode::ParentBasedRatio => Sampler::TraceIdRatioBased(settings.sample_ratio),
+        TracingSamplingMode::Off => Box::new(Sampler::AlwaysOff),
+        TracingSamplingMode::AlwaysOn => Box::new(Sampler::AlwaysOn),
+        TracingSamplingMode::ParentBasedRatio if settings.trust_incoming_sampling => Box::new(
+            Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(settings.sample_ratio))),
+        ),
+        TracingSamplingMode::ParentBasedRatio => Box::new(
+            LocallyControlledParentRatioSampler::new(settings.sample_ratio),
+        ),
     }
+}
+
+#[derive(Clone, Debug)]
+struct LocallyControlledParentRatioSampler {
+    ratio: f64,
+    trace_id_generator: fn() -> TraceId,
+}
+
+impl LocallyControlledParentRatioSampler {
+    fn new(ratio: f64) -> Self {
+        Self {
+            ratio,
+            trace_id_generator: locally_generated_trace_id,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_trace_id_generator(ratio: f64, trace_id_generator: fn() -> TraceId) -> Self {
+        Self {
+            ratio,
+            trace_id_generator,
+        }
+    }
+}
+
+impl ShouldSample for LocallyControlledParentRatioSampler {
+    fn should_sample(
+        &self,
+        parent_context: Option<&Context>,
+        trace_id: TraceId,
+        name: &str,
+        span_kind: &SpanKind,
+        attributes: &[KeyValue],
+        links: &[Link],
+    ) -> SamplingResult {
+        let has_untrusted_remote_parent = parent_context
+            .filter(|context| context.has_active_span())
+            .is_some_and(|context| context.span().span_context().is_remote());
+        if has_untrusted_remote_parent {
+            return Sampler::TraceIdRatioBased(self.ratio).should_sample(
+                parent_context,
+                (self.trace_id_generator)(),
+                name,
+                span_kind,
+                attributes,
+                links,
+            );
+        }
+        Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(self.ratio))).should_sample(
+            parent_context,
+            trace_id,
+            name,
+            span_kind,
+            attributes,
+            links,
+        )
+    }
+}
+
+fn locally_generated_trace_id() -> TraceId {
+    RandomIdGenerator::default().new_trace_id()
 }
 
 struct RequestHeaderExtractor<'a>(&'a HeaderMap);
@@ -740,12 +814,15 @@ pub fn set_remote_parent(span: &Span, parent: Option<Context>) {
 
 #[must_use]
 pub fn current_trace_link() -> Option<TraceLink> {
-    trace_link_from_span(&Span::current())
+    trace_link_from_context(&Context::current())
 }
 
 #[must_use]
 pub fn trace_link_from_span(span: &Span) -> Option<TraceLink> {
-    let context = span.context();
+    trace_link_from_context(&span.context())
+}
+
+fn trace_link_from_context(context: &Context) -> Option<TraceLink> {
     let span_context = context.span().span_context().clone();
     if !span_context.is_valid() {
         return None;
@@ -779,9 +856,83 @@ fn span_context_from_link(link: &TraceLink) -> Option<SpanContext> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::Mutex;
+
+    use opentelemetry_sdk::trace::SdkTracer;
+    use tracing::Dispatch;
+    use tracing_subscriber::{EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt};
+
+    use super::*;
+
+    #[derive(Clone, Debug, Default)]
+    pub(super) struct CapturingExporter(pub(super) Arc<Mutex<Vec<SpanData>>>);
+
+    impl SpanExporter for CapturingExporter {
+        fn export(
+            &self,
+            batch: Vec<SpanData>,
+        ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
+            let spans = self.0.clone();
+            async move {
+                spans.lock().unwrap().extend(batch);
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) struct TraceCapture {
+        provider: SdkTracerProvider,
+        dispatch: Dispatch,
+        exporter: CapturingExporter,
+    }
+
+    impl TraceCapture {
+        pub(crate) fn new(log_level: &str) -> Self {
+            let exporter = CapturingExporter::default();
+            let provider = SdkTracerProvider::builder()
+                .with_simple_exporter(ClassifiedSpanExporter::new(exporter.clone()))
+                .with_sampler(Sampler::AlwaysOn)
+                .build();
+            let subscriber = tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(std::io::sink)
+                        .with_filter(EnvFilter::new(log_level)),
+                )
+                .with(
+                    tracing_opentelemetry::layer()
+                        .with_tracer(provider.tracer("trace-regression-test"))
+                        .with_filter(filter_fn(|metadata| {
+                            metadata.is_span() && is_catalog_span(metadata.name())
+                        })),
+                );
+            Self {
+                provider,
+                dispatch: Dispatch::new(subscriber),
+                exporter,
+            }
+        }
+
+        pub(crate) fn tracer(&self) -> SdkTracer {
+            self.provider.tracer("trace-regression-test")
+        }
+
+        pub(crate) fn dispatch(&self) -> Dispatch {
+            self.dispatch.clone()
+        }
+
+        pub(crate) fn spans(&self) -> Vec<SpanData> {
+            self.provider.force_flush().unwrap();
+            self.exporter.0.lock().unwrap().clone()
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use actix_web::http::header::{HeaderName, HeaderValue};
     use base64::Engine;
@@ -796,6 +947,7 @@ mod tests {
     use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use uuid::Uuid;
 
+    use super::test_support::{CapturingExporter, TraceCapture};
     use super::*;
 
     // Pinned, test-only localhost CA/server certificate, valid 2026-09-03 to
@@ -903,20 +1055,19 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug, Default)]
-    struct CapturingExporter(Arc<Mutex<Vec<SpanData>>>);
+    #[test]
+    fn current_trace_link_survives_a_span_excluded_from_telemetry() {
+        let capture = TraceCapture::new("debug");
+        tracing::dispatcher::with_default(&capture.dispatch(), || {
+            let request = tracing::info_span!("http.server.request");
+            let expected = trace_link_from_span(&request).unwrap();
+            let _request = request.enter();
+            let internal = tracing::info_span!("import_planning");
+            assert!(!internal.is_disabled());
+            let _internal = internal.enter();
 
-    impl SpanExporter for CapturingExporter {
-        fn export(
-            &self,
-            batch: Vec<SpanData>,
-        ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
-            let spans = self.0.clone();
-            async move {
-                spans.lock().unwrap().extend(batch);
-                Ok(())
-            }
-        }
+            assert_eq!(current_trace_link(), Some(expected));
+        });
     }
 
     #[test]
@@ -1140,6 +1291,54 @@ mod tests {
                 .should_sample(
                     Some(&remote_context),
                     trace_id,
+                    "http.server.request",
+                    &SpanKind::Server,
+                    &[],
+                    &[],
+                )
+                .decision,
+            SamplingDecision::Drop
+        );
+    }
+
+    #[test]
+    fn untrusted_remote_trace_id_cannot_select_the_ratio_sampling_decision() {
+        fn locally_selected_drop_trace_id() -> TraceId {
+            TraceId::from_hex("ffffffffffffffffffffffffffffffff").unwrap()
+        }
+
+        let attacker_selected_trace_id =
+            TraceId::from_hex("00000000000000000000000000000001").unwrap();
+        assert_eq!(
+            Sampler::TraceIdRatioBased(0.5)
+                .should_sample(
+                    None,
+                    attacker_selected_trace_id,
+                    "http.server.request",
+                    &SpanKind::Server,
+                    &[],
+                    &[],
+                )
+                .decision,
+            SamplingDecision::RecordAndSample
+        );
+        let remote_context = Context::new().with_remote_span_context(SpanContext::new(
+            attacker_selected_trace_id,
+            SpanId::from_hex("00f067aa0ba902b7").unwrap(),
+            TraceFlags::SAMPLED,
+            true,
+            TraceState::default(),
+        ));
+        let sampler = LocallyControlledParentRatioSampler::with_trace_id_generator(
+            0.5,
+            locally_selected_drop_trace_id,
+        );
+
+        assert_eq!(
+            sampler
+                .should_sample(
+                    Some(&remote_context),
+                    attacker_selected_trace_id,
                     "http.server.request",
                     &SpanKind::Server,
                     &[],

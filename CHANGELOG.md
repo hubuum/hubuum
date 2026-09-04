@@ -18,7 +18,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   persist only a validated trace/span link so task execution, event fan-out,
   and delivery retries remain connected across worker and process boundaries
   without storing baggage or exposing trace context through public task or
-  event JSON.
+  event JSON. Storage spans cover every selected backend, computed-field
+  rebuild tasks retain their initiating request link, and audit trace links
+  remain immutable. Version 5 backups without trace fields remain compatible
+  with restore verification.
 - Added opt-in deterministic large and huge operational benchmark profiles with
   skewed relational, history, computed, authorization, task, and event data;
   production API and worker workloads; standard and extended limit coverage;

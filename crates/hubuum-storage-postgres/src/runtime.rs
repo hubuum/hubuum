@@ -10,7 +10,7 @@ use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel::sql_types::{BigInt, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
-use hubuum_events_core::MutationProvenance;
+use hubuum_events_core::{MutationProvenance, TraceLink};
 use hubuum_storage_core::{
     StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
 };
@@ -438,6 +438,17 @@ where
     F: Future,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
+}
+
+pub(crate) fn ambient_mutation_trace_link() -> Option<TraceLink> {
+    AMBIENT_MUTATION_PROVENANCE
+        .try_with(|provenance| {
+            provenance
+                .as_ref()
+                .and_then(MutationProvenance::trace_link)
+                .cloned()
+        })
+        .unwrap_or(None)
 }
 
 /// Apply an optimistic-concurrency assertion to adapter work in `future`.

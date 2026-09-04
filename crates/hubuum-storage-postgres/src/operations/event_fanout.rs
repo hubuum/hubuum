@@ -355,6 +355,7 @@ pub async fn fanout_events(
                 if envelopes.is_empty() {
                     return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
                 }
+                let processed = envelopes.len();
 
                 let trace_links = envelopes
                     .iter()
@@ -393,7 +394,7 @@ pub async fn fanout_events(
                 if inserted > 0 {
                     notify_event_delivery(connection).await?;
                 }
-                Ok(StorageEventFanoutOutcome::new(inserted, trace_links))
+                Ok(StorageEventFanoutOutcome::new(processed, trace_links))
             },
         )
         .await

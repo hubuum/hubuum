@@ -24,6 +24,8 @@ mod storage_transactions;
 #[cfg(test)]
 pub mod temporal;
 #[cfg(test)]
+mod trace_provenance;
+#[cfg(test)]
 pub mod validation;
 #[cfg(test)]
 pub mod workspace_boundaries;

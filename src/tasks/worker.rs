@@ -18,7 +18,7 @@ use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
-use crate::models::{NewTaskEventRecord, TaskKind};
+use crate::models::{NewTaskEventRecord, TaskKind, TaskStatus};
 use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
@@ -362,6 +362,7 @@ async fn process_one_task_with_settings(
                 ))
             }
         };
+        let mut terminal_status = result.as_ref().ok().copied();
         if let Err(err) = &result
             && !ownership_lost
         {
@@ -370,7 +371,9 @@ async fn process_one_task_with_settings(
                 mark_claimed_task_failed(context, &task, err),
             )
             .await?;
-            if !finalized {
+            if finalized {
+                terminal_status = Some(TaskStatus::Failed);
+            } else {
                 warn!(
                     message = "Task failure finalization stopped because its worker lease was lost",
                     task_id = task.id,
@@ -383,7 +386,7 @@ async fn process_one_task_with_settings(
 
         tracing::Span::current().record(
             "task.outcome",
-            if result.is_ok() { "succeeded" } else { "failed" },
+            task_span_outcome(terminal_status),
         );
 
         Ok(true)
@@ -702,11 +705,12 @@ async fn process_claimed_task(
     context: &AppContext,
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
-) -> Result<(), ApiError> {
+) -> Result<TaskStatus, ApiError> {
     let task_kind = TaskKind::from_db(&task.kind)?;
     if task_kind == TaskKind::Reindex {
-        crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
-        return Ok(());
+        let completed =
+            crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
+        return TaskStatus::from_db(&completed.status);
     }
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
@@ -756,6 +760,29 @@ async fn process_claimed_task(
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         TaskKind::Reindex => unreachable!("reindex tasks are dispatched before principal loading"),
+    }
+}
+
+fn task_span_outcome(terminal_status: Option<TaskStatus>) -> &'static str {
+    terminal_status.map(TaskStatus::as_str).unwrap_or("error")
+}
+
+#[cfg(test)]
+mod task_span_outcome_tests {
+    use rstest::rstest;
+
+    use super::{TaskStatus, task_span_outcome};
+
+    #[rstest]
+    #[case::succeeded(Some(TaskStatus::Succeeded), "succeeded")]
+    #[case::failed(Some(TaskStatus::Failed), "failed")]
+    #[case::partially_succeeded(Some(TaskStatus::PartiallySucceeded), "partially_succeeded")]
+    #[case::not_persisted(None, "error")]
+    fn span_outcome_reports_the_persisted_terminal_status(
+        #[case] status: Option<TaskStatus>,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(task_span_outcome(status), expected);
     }
 }
 

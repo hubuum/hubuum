@@ -809,7 +809,8 @@ async fn insert_queued_task(
         PrincipalId::new(actor_user_id)?,
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
-    );
+    )
+    .with_trace_link(task.trace_link()?);
     let document = AuditDocument::try_new(
         "Task queued",
         None,

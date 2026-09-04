@@ -114,6 +114,32 @@ impl StorageBackupRow {
         &self.0
     }
 
+    /// Canonicalize optional history fields added within backup version 5.
+    /// An absent trace link and an all-null link carry the same information;
+    /// populated or partial links must remain intact for validation/comparison.
+    pub fn canonicalize_history(&mut self, section: StorageBackupHistorySection) {
+        if !matches!(
+            section,
+            StorageBackupHistorySection::TerminalTasks | StorageBackupHistorySection::AuditEvents
+        ) {
+            return;
+        }
+        const TRACE_FIELDS: [&str; 4] = [
+            "trace_id",
+            "trace_span_id",
+            "trace_flags",
+            "trace_context_version",
+        ];
+        if TRACE_FIELDS
+            .iter()
+            .all(|field| self.0.get(*field).is_none_or(Value::is_null))
+        {
+            for field in TRACE_FIELDS {
+                self.0.remove(field);
+            }
+        }
+    }
+
     #[must_use]
     pub fn into_value(self) -> Value {
         Value::Object(self.0)
@@ -147,7 +173,7 @@ pub struct StorageBackupSnapshot {
 impl StorageBackupSnapshot {
     pub fn try_new(
         state_sections: StorageBackupStateSections,
-        history_sections: Option<StorageBackupHistorySections>,
+        mut history_sections: Option<StorageBackupHistorySections>,
     ) -> Result<Self, StorageValidationError> {
         let missing_state = StorageBackupStateSection::ALL
             .iter()
@@ -166,6 +192,14 @@ impl StorageBackupSnapshot {
                 return Err(StorageValidationError::invalid(format!(
                     "Backup snapshot is missing required history section '{section}'"
                 )));
+            }
+        }
+
+        if let Some(history) = &mut history_sections {
+            for (section, rows) in history {
+                for row in rows {
+                    row.canonicalize_history(*section);
+                }
             }
         }
 
@@ -221,7 +255,46 @@ pub trait BackupSnapshotStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+    use serde_json::json;
+
     use super::*;
+
+    #[rstest]
+    #[case::tasks(StorageBackupHistorySection::TerminalTasks)]
+    #[case::events(StorageBackupHistorySection::AuditEvents)]
+    fn snapshots_omit_empty_trace_links(#[case] section: StorageBackupHistorySection) {
+        let mut history = complete_history();
+        history.insert(
+            section,
+            vec![
+                StorageBackupRow::try_from_value(json!({
+                    "id": 1, "trace_id": null, "trace_span_id": null,
+                    "trace_flags": null, "trace_context_version": null,
+                }))
+                .unwrap(),
+            ],
+        );
+        let (_, history) = StorageBackupSnapshot::try_new(complete_state(), Some(history))
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            history.unwrap()[&section][0].fields(),
+            json!({"id": 1}).as_object().unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::populated(json!({
+        "id": 1, "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0,
+    }))]
+    #[case::partial(json!({"id": 1, "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": null}))]
+    fn canonicalization_preserves_nonempty_trace_links(#[case] value: Value) {
+        let mut row = StorageBackupRow::try_from_value(value.clone()).unwrap();
+        row.canonicalize_history(StorageBackupHistorySection::AuditEvents);
+        assert_eq!(row.into_value(), value);
+    }
 
     fn complete_state() -> StorageBackupStateSections {
         StorageBackupStateSection::ALL

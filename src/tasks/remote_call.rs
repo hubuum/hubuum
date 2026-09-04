@@ -60,7 +60,7 @@ pub(super) async fn execute_remote_call_task<C>(
     task: &ClaimedTask,
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
-) -> Result<(), ApiError>
+) -> Result<TaskStatus, ApiError>
 where
     C: AuthorizationContext,
 {
@@ -367,7 +367,7 @@ async fn finalize_remote_task(
     backend: &impl crate::storage::StorageContext,
     task: &ClaimedTask,
     outcome: RemoteExecutionOutcome,
-) -> Result<(), ApiError> {
+) -> Result<TaskStatus, ApiError> {
     let status = if outcome.success {
         TaskStatus::Succeeded
     } else {
@@ -393,7 +393,7 @@ async fn finalize_remote_task(
         StorageTaskCompletionPayload::RemoteCall(outcome.artifact),
     )
     .await?;
-    Ok(())
+    Ok(status)
 }
 
 fn invocation_context(
