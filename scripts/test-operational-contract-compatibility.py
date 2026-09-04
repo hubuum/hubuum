@@ -192,6 +192,88 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.report_json()["counts"]["unaccepted"], 1)
 
+    def test_open_metric_label_domain_becoming_enumerated_fails(self) -> None:
+        baseline = contract()
+        baseline_label = baseline["metrics"][0]["labels"][0]
+        baseline_label["bounded_by"] = "runtime values"
+        baseline_label["values"] = []
+        self.write_case(baseline, contract())
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-label-bound-changed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_enumerated_metric_label_domain_becoming_open_is_behavioral(self) -> None:
+        candidate = contract()
+        candidate_label = candidate["metrics"][0]["labels"][0]
+        candidate_label["bounded_by"] = "runtime values"
+        candidate_label["values"] = []
+        self.write_case(contract(), candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-label-bound-changed")
+        self.assertEqual(change["classification"], "behavioral")
+
+    def test_changed_descriptive_metric_label_bound_fails(self) -> None:
+        baseline = contract()
+        baseline_label = baseline["metrics"][0]["labels"][0]
+        baseline_label["bounded_by"] = "runtime values"
+        baseline_label["values"] = []
+        candidate = copy.deepcopy(baseline)
+        candidate["metrics"][0]["labels"][0]["bounded_by"] = "configured values"
+        self.write_case(baseline, candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-label-bound-changed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_unconditional_metric_becoming_feature_gated_fails(self) -> None:
+        candidate = contract()
+        candidate["metrics"][0]["feature"] = "optional-metrics"
+        self.write_case(contract(), candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-feature-changed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_metric_moving_between_features_fails(self) -> None:
+        baseline = contract()
+        baseline["metrics"][0]["feature"] = "old-metrics"
+        candidate = copy.deepcopy(baseline)
+        candidate["metrics"][0]["feature"] = "new-metrics"
+        self.write_case(baseline, candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-feature-changed")
+        self.assertEqual(change["classification"], "breaking")
+
+    def test_feature_gated_metric_becoming_unconditional_is_additive(self) -> None:
+        baseline = contract()
+        baseline["metrics"][0]["feature"] = "optional-metrics"
+        self.write_case(baseline, contract())
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "metric-feature-changed")
+        self.assertEqual(change["classification"], "additive")
+
     def test_changed_default_is_behavioral(self) -> None:
         candidate = contract()
         candidate["configuration"][0]["default"] = ["new"]
@@ -358,6 +440,34 @@ class PolicyTests(unittest.TestCase):
         change = self.report_json()["changes"][0]
         self.assertEqual(change["kind"], "cli-option-environment-changed")
         self.assertEqual(change["classification"], "additive")
+
+    def test_new_cli_short_alias_is_additive(self) -> None:
+        candidate = contract()
+        candidate["cli"][0]["options"][0]["short"] = "f"
+        self.write_case(contract(), candidate)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        change = self.report_json()["changes"][0]
+        self.assertEqual(change["kind"], "cli-option-short-changed")
+        self.assertEqual(change["classification"], "additive")
+
+    def test_removed_or_replaced_cli_short_alias_fails(self) -> None:
+        for replacement in (None, "r"):
+            with self.subTest(replacement=replacement):
+                baseline = contract()
+                baseline["cli"][0]["options"][0]["short"] = "f"
+                candidate = copy.deepcopy(baseline)
+                candidate["cli"][0]["options"][0]["short"] = replacement
+                self.write_case(baseline, candidate)
+
+                result = self.run_checker()
+
+                self.assertEqual(result.returncode, 1)
+                change = self.report_json()["changes"][0]
+                self.assertEqual(change["kind"], "cli-option-short-changed")
+                self.assertEqual(change["classification"], "breaking")
 
     def test_relaxed_cli_constraints_are_additive(self) -> None:
         baseline = contract()

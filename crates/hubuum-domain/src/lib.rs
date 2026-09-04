@@ -12,6 +12,7 @@ mod json_patch;
 mod json_schema;
 mod json_value;
 mod maintenance;
+mod operational_constraint;
 mod revision;
 mod template_alias;
 mod token;
@@ -45,6 +46,7 @@ pub use json_value::{
     MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
+pub use operational_constraint::OperationalConstraint;
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{

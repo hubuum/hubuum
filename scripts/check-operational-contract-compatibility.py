@@ -95,17 +95,42 @@ class Comparator:
             if old_labels.keys() != new_labels.keys():
                 self.add("breaking", "metric-labels-changed", f"{path}.labels", sorted(old_labels), sorted(new_labels), "metric label names changed")
             for label in sorted(old_labels.keys() & new_labels.keys()):
-                old_values = set(old_labels[label].get("values", []))
-                new_values = set(new_labels[label].get("values", []))
-                for value in sorted(new_values - old_values):
-                    self.add("behavioral", "metric-label-value-added", f"{path}.labels.{label}.values.{value}", None, value, "expanded a bounded metric label domain")
-                for value in sorted(old_values - new_values):
-                    self.add("breaking", "metric-label-value-removed", f"{path}.labels.{label}.values.{value}", value, None, "narrowed a bounded metric label domain")
-                if old_labels[label].get("bounded_by") != new_labels[label].get("bounded_by"):
-                    self.add("behavioral", "metric-label-bound-changed", f"{path}.labels.{label}.bounded_by", old_labels[label].get("bounded_by"), new_labels[label].get("bounded_by"), "metric label bounding policy changed")
-            for field in ("scope", "description", "feature"):
+                old_bound = old_labels[label].get("bounded_by")
+                new_bound = new_labels[label].get("bounded_by")
+                old_is_enumerated = old_bound == "enumerated values"
+                new_is_enumerated = new_bound == "enumerated values"
+                if old_is_enumerated and new_is_enumerated:
+                    old_values = set(old_labels[label].get("values", []))
+                    new_values = set(new_labels[label].get("values", []))
+                    for value in sorted(new_values - old_values):
+                        self.add("behavioral", "metric-label-value-added", f"{path}.labels.{label}.values.{value}", None, value, "expanded a bounded metric label domain")
+                    for value in sorted(old_values - new_values):
+                        self.add("breaking", "metric-label-value-removed", f"{path}.labels.{label}.values.{value}", value, None, "narrowed a bounded metric label domain")
+                if old_bound != new_bound:
+                    expands_domain = old_is_enumerated and not new_is_enumerated
+                    self.add(
+                        "behavioral" if expands_domain else "breaking",
+                        "metric-label-bound-changed",
+                        f"{path}.labels.{label}.bounded_by",
+                        old_bound,
+                        new_bound,
+                        "expanded the metric label domain" if expands_domain else "metric label bounding policy narrowed or changed",
+                    )
+            for field in ("scope", "description"):
                 if old.get(field) != new.get(field):
                     self.add("behavioral", f"metric-{field}-changed", f"{path}.{field}", old.get(field), new.get(field), f"metric {field} changed")
+            old_feature = old.get("feature")
+            new_feature = new.get("feature")
+            if old_feature != new_feature:
+                narrows_availability = new_feature is not None
+                self.add(
+                    "breaking" if narrows_availability else "additive",
+                    "metric-feature-changed",
+                    f"{path}.feature",
+                    old_feature,
+                    new_feature,
+                    "metric availability narrowed" if narrows_availability else "metric became unconditionally available",
+                )
 
         self.keyed_items("metric", baseline["metrics"], candidate["metrics"], "name", compare)
 
@@ -279,9 +304,21 @@ class Comparator:
         def compare_command(name: str, old: dict[str, Any], new: dict[str, Any]) -> None:
             def compare_option(option: str, old_option: dict[str, Any], new_option: dict[str, Any]) -> None:
                 path = f"cli.{name}.options.{option}"
-                for field in ("long", "short", "value_kind"):
+                for field in ("long", "value_kind"):
                     if old_option.get(field) != new_option.get(field):
                         self.add("breaking", f"cli-option-{field}-changed", f"{path}.{field}", old_option.get(field), new_option.get(field), f"CLI option {field} changed")
+                old_short = old_option.get("short")
+                new_short = new_option.get("short")
+                if old_short != new_short:
+                    added = old_short is None and new_short is not None
+                    self.add(
+                        "additive" if added else "breaking",
+                        "cli-option-short-changed",
+                        f"{path}.short",
+                        old_short,
+                        new_short,
+                        "CLI short alias added" if added else "CLI short alias removed or replaced",
+                    )
                 old_count = old_option.get("value_count")
                 new_count = new_option.get("value_count")
                 if old_count != new_count:

@@ -27,7 +27,7 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use prometheus::{IntGaugeVec, Registry};
 
 use crate::errors::ApiError;
-use crate::operational_contracts::MetricDefinition;
+use crate::operational_contracts::{MetricDefinition, metric_label_value_is_allowed};
 
 use self::cache::ScrapeCache;
 use self::process::ProcessMetrics;
@@ -89,26 +89,40 @@ impl<T> CheckedMetric<T> {
     }
 
     fn attributes_match(&self, attributes: &[KeyValue]) -> bool {
-        let matches = attributes.len() == self.definition.labels.len()
+        let labels_match = attributes.len() == self.definition.labels.len()
             && self.definition.labels.iter().all(|expected| {
                 attributes
                     .iter()
                     .any(|attribute| attribute.key.as_str() == *expected)
             });
+        let values_match = labels_match
+            && attributes.iter().all(|attribute| {
+                metric_label_value_is_allowed(
+                    self.definition.name,
+                    attribute.key.as_str(),
+                    attribute.value.as_str().as_ref(),
+                )
+            });
+        let matches = labels_match && values_match;
         if !matches {
             let actual = attributes
                 .iter()
-                .map(|attribute| attribute.key.as_str())
+                .map(|attribute| {
+                    (
+                        attribute.key.as_str(),
+                        attribute.value.as_str().into_owned(),
+                    )
+                })
                 .collect::<Vec<_>>();
             tracing::error!(
                 metric = self.definition.name,
                 expected_labels = ?self.definition.labels,
-                actual_labels = ?actual,
+                actual_attributes = ?actual,
                 "Metric observation rejected because its labels violate the operational contract"
             );
             debug_assert!(
                 matches,
-                "metric {} labels {:?} do not match {:?}",
+                "metric {} labels and values {:?} do not match {:?}",
                 self.definition.name, actual, self.definition.labels
             );
         }
@@ -291,5 +305,19 @@ mod contract_tests {
         );
 
         metric.add(1, &[KeyValue::new("route", "/api/v1")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "labels and values")]
+    fn checked_metrics_reject_values_outside_an_enumerated_domain() {
+        let definition = runtime_metric_definition("hubuum_task_worker_iterations");
+        let metric = CheckedMetric::new(
+            global::meter("hubuum-contract-value-test")
+                .u64_counter(definition.runtime_name())
+                .build(),
+            definition,
+        );
+
+        metric.add(1, &[KeyValue::new("outcome", "waiting")]);
     }
 }

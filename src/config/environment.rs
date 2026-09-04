@@ -5,6 +5,10 @@
 //! declaring its owner and sensitivity here, which prevents a consumer from
 //! quietly introducing an ambiguous name such as `HUBUUM_TIMEOUT`.
 
+use hubuum_domain::OperationalConstraint;
+
+use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
+
 use super::AppConfig;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,7 +345,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ),
     configuration_bound!(
         "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
-        export_output_retention_hours
+        export_output_retention_hours,
+        maximum = MAX_FUTURE_RETENTION_HOURS
     ),
     configuration_bound!(
         "HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
@@ -349,7 +354,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ),
     configuration_bound!(
         "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
-        backup_output_retention_hours
+        backup_output_retention_hours,
+        maximum = MAX_FUTURE_RETENTION_HOURS
     ),
     configuration_bound!(
         "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
@@ -358,7 +364,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", backup_max_output_bytes),
     configuration_bound!(
         "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
-        restore_stage_retention_minutes
+        restore_stage_retention_minutes,
+        maximum = MAX_FUTURE_RETENTION_MINUTES
     ),
     configuration_bound!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", restore_max_upload_bytes),
     configuration_bound!(
@@ -484,24 +491,50 @@ pub(crate) mod constraints {
 
     pub(crate) use crate::tasks::TASK_HEARTBEAT_CONSTRAINT as TASK_HEARTBEAT;
 
-    pub(crate) const PAGE_LIMITS: &str =
-        "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT";
-    pub(crate) const WORKER_ROLE: &str = "HUBUUM_RUNTIME_ROLE=worker requires at least one task, fan-out, delivery, event-retention, or token-retention worker";
-    pub(crate) const RETENTION_ARCHIVE: &str = "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true requires HUBUUM_EVENT_RETENTION_ARCHIVE_PATH";
-    pub(crate) const LOGIN_BACKOFF: &str = "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS must not exceed HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS";
-    pub(crate) const TLS_KEY_PAIR: &str =
-        "HUBUUM_TLS_CERT_PATH and HUBUUM_TLS_KEY_PATH must be configured together";
-    pub(crate) const TREETOP_BACKEND: &str = "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL and the compiled permissions-treetop feature";
-    pub(crate) const VALKEY_URL: &str = "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey requires HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature";
-    pub(crate) const SECRET_FILE_ROOT: &str =
-        "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT";
-    pub(crate) const TOKEN_PREVIOUS_KEY_IDS: &str =
-        "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID";
-    pub(crate) const STABLE_TOKEN_HASH_KEY: &str = "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material";
+    use hubuum_domain::OperationalConstraint;
+
+    pub(crate) const PAGE_LIMITS: OperationalConstraint = OperationalConstraint::less_than_or_equal(
+        "HUBUUM_DEFAULT_PAGE_LIMIT",
+        "HUBUUM_MAX_PAGE_LIMIT",
+    );
+    pub(crate) const WORKER_ROLE: OperationalConstraint = OperationalConstraint::requires(
+        "HUBUUM_RUNTIME_ROLE=worker",
+        "at least one task, fan-out, delivery, event-retention, or token-retention worker",
+    );
+    pub(crate) const RETENTION_ARCHIVE: OperationalConstraint = OperationalConstraint::requires(
+        "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true",
+        "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+    );
+    pub(crate) const LOGIN_BACKOFF: OperationalConstraint =
+        OperationalConstraint::less_than_or_equal(
+            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+        );
+    pub(crate) const TLS_KEY_PAIR: OperationalConstraint =
+        OperationalConstraint::paired("HUBUUM_TLS_CERT_PATH", "HUBUUM_TLS_KEY_PATH");
+    pub(crate) const TREETOP_BACKEND: OperationalConstraint = OperationalConstraint::requires(
+        "HUBUUM_PERMISSION_BACKEND=treetop",
+        "HUBUUM_TREETOP_URL and the compiled permissions-treetop feature",
+    );
+    pub(crate) const VALKEY_URL: OperationalConstraint = OperationalConstraint::requires(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey",
+        "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
+    );
+    pub(crate) const SECRET_FILE_ROOT: OperationalConstraint =
+        OperationalConstraint::requires("HUBUUM_SECRET_SOURCE=file", "HUBUUM_SECRET_FILE_ROOT");
+    pub(crate) const TOKEN_PREVIOUS_KEY_IDS: OperationalConstraint =
+        OperationalConstraint::requires(
+            "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
+            "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+        );
+    pub(crate) const STABLE_TOKEN_HASH_KEY: OperationalConstraint = OperationalConstraint::requires(
+        "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true",
+        "resolvable stable token hash key material",
+    );
 }
 
 /// Cross-field configuration contracts shared with their runtime validators.
-pub(crate) const CONFIGURATION_CONSTRAINTS: &[&str] = &[
+pub(crate) const CONFIGURATION_CONSTRAINTS: &[OperationalConstraint] = &[
     constraints::PAGE_LIMITS,
     constraints::TASK_HEARTBEAT,
     constraints::WORKER_ROLE,
@@ -518,11 +551,11 @@ pub(crate) const CONFIGURATION_CONSTRAINTS: &[&str] = &[
     constraints::STABLE_TOKEN_HASH_KEY,
 ];
 
-/// Associate a runtime validation failure with its generated operational
-/// constraint without changing the existing user-facing error text.
-pub(crate) fn constraint_message<T>(constraint: &'static str, message: T) -> T {
-    debug_assert!(CONFIGURATION_CONSTRAINTS.contains(&constraint));
-    message
+pub(crate) fn configuration_constraints() -> Vec<String> {
+    CONFIGURATION_CONSTRAINTS
+        .iter()
+        .map(|constraint| constraint.expression())
+        .collect()
 }
 
 /// Files allowed to translate Hubuum-owned environment values. This list is

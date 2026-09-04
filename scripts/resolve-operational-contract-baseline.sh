@@ -9,6 +9,7 @@ fi
 report_dir="$1"
 baseline_path="$report_dir/baseline.json"
 metadata_path="$report_dir/baseline-metadata.json"
+bootstrap_last_tag="v0.0.11"
 mkdir -p "$report_dir"
 
 sha256_file() {
@@ -62,6 +63,17 @@ validate_baseline_document() {
     echo "Operational-contract baseline document does not match tag $tag" >&2
     exit 1
   fi
+}
+
+is_bootstrap_release() {
+  local tag="$1"
+
+  jq --null-input --exit-status \
+    --arg tag "$tag" \
+    --arg bootstrap_last_tag "$bootstrap_last_tag" '
+      def version_parts: ltrimstr("v") | split(".") | map(tonumber);
+      ($tag | version_parts) <= ($bootstrap_last_tag | version_parts)
+    ' >/dev/null
 }
 
 if [[ -n "${HUBUUM_OPERATIONAL_CONTRACT_BASELINE_FILE:-}" ]]; then
@@ -149,13 +161,17 @@ contents_url="$api_url/repos/$repository/contents/docs/operational-contract.json
 contents_status="$(github_get "application/vnd.github.raw+json" "$contents_url" "$baseline_path")"
 if [[ "$contents_status" == "404" ]]; then
   rm -f "$baseline_path"
-  write_metadata \
-    "unavailable" \
-    "" \
-    "$contents_url" \
-    "" \
-    "Stable release $baseline_tag predates the operational-contract snapshot."
-  exit 0
+  if is_bootstrap_release "$baseline_tag"; then
+    write_metadata \
+      "unavailable" \
+      "$baseline_tag" \
+      "$contents_url" \
+      "" \
+      "Stable release $baseline_tag is at or before the known pre-snapshot bootstrap boundary $bootstrap_last_tag."
+    exit 0
+  fi
+  echo "Stable release $baseline_tag is newer than the operational-contract bootstrap boundary but has no snapshot" >&2
+  exit 1
 fi
 if [[ "$contents_status" != "200" ]]; then
   echo "Operational-contract baseline request returned HTTP $contents_status" >&2

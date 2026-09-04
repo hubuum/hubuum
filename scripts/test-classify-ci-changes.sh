@@ -169,6 +169,7 @@ operational_contract_output="$(bash "$classifier" \
   .github/operational-contract-breaking-exceptions.json \
   scripts/check-operational-contract-compatibility.py \
   scripts/resolve-operational-contract-baseline.sh \
+  scripts/test-operational-contract-github-api.sh \
   scripts/test-operational-contract-compatibility.py \
   scripts/test-operational-contract-compatibility.sh)"
 assert_flag "$operational_contract_output" operational_contract true

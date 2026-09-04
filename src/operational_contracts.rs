@@ -1,13 +1,14 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use clap::{Arg, ArgAction, Command};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::config::environment::{
-    APP_CONFIG_ENVIRONMENT, CONFIGURATION_CONSTRAINTS, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner,
-    EnvironmentVariable, Exposure, PROCESS_ENVIRONMENT, configuration_bounds,
+    APP_CONFIG_ENVIRONMENT, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner, EnvironmentVariable,
+    Exposure, PROCESS_ENVIRONMENT, configuration_bounds, configuration_constraints,
 };
 use crate::events::{Action, ActorKind, CURRENT_EVENT_SCHEMA_VERSION, EntityType, valid_actions};
 use crate::models::{
@@ -21,6 +22,9 @@ use crate::storage::{
 };
 
 const CONTRACT_SCHEMA_VERSION: u32 = 1;
+const HTTP_METHOD_LABEL_VALUES: &[&str] = &[
+    "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT", "TRACE",
+];
 const LATENCY_BUCKETS_SECONDS: &[f64] = &[
     0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
 ];
@@ -1003,7 +1007,7 @@ struct OperationalContract {
     release: &'static str,
     metrics: Vec<MetricContract>,
     configuration: Vec<ConfigurationContract>,
-    configuration_constraints: &'static [&'static str],
+    configuration_constraints: Vec<String>,
     events: EventContract,
     documents: DocumentContracts,
     cli: Vec<CliContract>,
@@ -1082,7 +1086,7 @@ fn build_contract() -> OperationalContract {
         release: env!("CARGO_PKG_VERSION"),
         metrics: metric_contracts(),
         configuration: configuration_contracts(),
-        configuration_constraints: CONFIGURATION_CONSTRAINTS,
+        configuration_constraints: configuration_constraints(),
         events: event_contract(),
         documents: document_contracts(),
         cli: vec![
@@ -1361,9 +1365,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             strings(&["claimed", "idle", "error"])
         }
         (_, "status_family") => strings(&["none", "unknown", "1xx", "2xx", "3xx", "4xx", "5xx"]),
-        (_, "method") => strings(&[
-            "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
-        ]),
+        (_, "method") => strings(HTTP_METHOD_LABEL_VALUES),
         _ => Vec::new(),
     };
     let bounded_by = match (metric, label) {
@@ -1386,6 +1388,41 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         name: label,
         bounded_by,
         values,
+    }
+}
+
+static ENUMERATED_METRIC_LABEL_DOMAINS: OnceLock<
+    BTreeMap<&'static str, BTreeMap<&'static str, BTreeSet<String>>>,
+> = OnceLock::new();
+
+pub(crate) fn metric_label_value_is_allowed(metric: &str, label: &str, value: &str) -> bool {
+    let domains = ENUMERATED_METRIC_LABEL_DOMAINS.get_or_init(|| {
+        let mut domains = BTreeMap::<_, BTreeMap<_, _>>::new();
+        for metric in METRICS {
+            for label in metric.labels {
+                let contract = metric_label_contract(metric.name, label);
+                if contract.bounded_by == "enumerated values" {
+                    domains
+                        .entry(metric.name)
+                        .or_default()
+                        .insert(*label, contract.values.into_iter().collect::<BTreeSet<_>>());
+                }
+            }
+        }
+        domains
+    });
+
+    domains
+        .get(metric)
+        .and_then(|labels| labels.get(label))
+        .is_none_or(|values| values.contains(value))
+}
+
+pub(crate) fn http_method_metric_label(method: &str) -> &str {
+    if HTTP_METHOD_LABEL_VALUES.contains(&method) {
+        method
+    } else {
+        "OTHER"
     }
 }
 
@@ -2400,6 +2437,25 @@ mod tests {
     }
 
     #[test]
+    fn artifact_retention_settings_publish_the_runtime_duration_caps() {
+        use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
+
+        for name in [
+            "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
+            "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+        ] {
+            assert_eq!(
+                configuration_bounds(name),
+                (Some(1), Some(MAX_FUTURE_RETENTION_HOURS))
+            );
+        }
+        assert_eq!(
+            configuration_bounds("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES"),
+            (Some(1), Some(MAX_FUTURE_RETENTION_MINUTES))
+        );
+    }
+
+    #[test]
     fn process_only_configuration_preserves_typed_metadata() {
         let inventory = configuration_contracts();
         let secret_source = inventory
@@ -2430,27 +2486,41 @@ mod tests {
 
     #[test]
     fn configuration_constraints_include_secret_file_root_requirement() {
-        assert!(
-            CONFIGURATION_CONSTRAINTS
-                .contains(&"HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT")
-        );
+        assert!(configuration_constraints().iter().any(|constraint| {
+            constraint == "HUBUUM_SECRET_SOURCE=file requires HUBUUM_SECRET_FILE_ROOT"
+        }));
     }
 
     #[test]
     fn configuration_constraints_include_token_key_startup_requirements() {
-        assert!(CONFIGURATION_CONSTRAINTS.contains(
-            &"HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
-        ));
-        assert!(CONFIGURATION_CONSTRAINTS.contains(
-            &"HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material"
-        ));
+        let constraints = configuration_constraints();
+        assert!(constraints.iter().any(|constraint| {
+            constraint
+                == "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS requires HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
+        }));
+        assert!(constraints.iter().any(|constraint| {
+            constraint
+                == "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true requires resolvable stable token hash key material"
+        }));
     }
 
     #[test]
     fn configuration_constraints_include_the_treetop_feature_prerequisite() {
-        assert!(CONFIGURATION_CONSTRAINTS.contains(
-            &"HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL and the compiled permissions-treetop feature"
-        ));
+        assert!(configuration_constraints().iter().any(|constraint| {
+            constraint
+                == "HUBUUM_PERMISSION_BACKEND=treetop requires HUBUUM_TREETOP_URL and the compiled permissions-treetop feature"
+        }));
+    }
+
+    #[test]
+    fn page_limit_constraint_expression_comes_from_its_executable_operator() {
+        assert!(
+            crate::config::environment::constraints::PAGE_LIMITS.ordered_values_satisfy(100, 100)
+        );
+        assert_eq!(
+            crate::config::environment::constraints::PAGE_LIMITS.expression(),
+            "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT"
+        );
     }
 
     #[test]

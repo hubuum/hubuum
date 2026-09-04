@@ -895,6 +895,7 @@
             "GET",
             "HEAD",
             "OPTIONS",
+            "OTHER",
             "PATCH",
             "POST",
             "PUT",
@@ -971,6 +972,7 @@
             "GET",
             "HEAD",
             "OPTIONS",
+            "OTHER",
             "PATCH",
             "POST",
             "PUT",
@@ -3008,7 +3010,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 2562047788015,
       "runtime_roles": [
         "all",
         "api",
@@ -3907,7 +3909,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 2562047788015,
       "runtime_roles": [
         "all",
         "api",
@@ -4685,7 +4687,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 153722867280912,
       "runtime_roles": [
         "all",
         "api",

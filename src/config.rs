@@ -18,7 +18,7 @@ use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
 use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
-use environment::{constraint_message, constraints, validate_configuration_bounds};
+use environment::{constraints, validate_configuration_bounds};
 
 mod client_network;
 mod defaults;
@@ -1219,18 +1219,19 @@ impl AppConfig {
             ));
         }
 
-        if self.runtime_role == RuntimeRole::Worker
-            && self.task_workers == 0
-            && self.event_fanout_workers == 0
-            && self.event_delivery_workers == 0
-            && !self.event_retention_purge_enabled
-            && !self.token_retention_purge_enabled
-        {
-            return Err(ApiError::BadRequest(constraint_message(
-                constraints::WORKER_ROLE,
+        let has_background_worker = self.task_workers > 0
+            || self.event_fanout_workers > 0
+            || self.event_delivery_workers > 0
+            || self.event_retention_purge_enabled
+            || self.token_retention_purge_enabled;
+        if !constraints::WORKER_ROLE.requirement_is_satisfied(
+            self.runtime_role == RuntimeRole::Worker,
+            has_background_worker,
+        ) {
+            return Err(ApiError::BadRequest(
                 "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, event retention, or token retention worker"
                     .to_string(),
-            )));
+            ));
         }
 
         self.task_worker_settings()?;
@@ -1258,13 +1259,12 @@ impl AppConfig {
             ));
         }
 
-        if self.event_retention_file_archive_enabled && self.event_retention_archive_path.is_none()
-        {
+        if !constraints::RETENTION_ARCHIVE.requirement_is_satisfied(
+            self.event_retention_file_archive_enabled,
+            self.event_retention_archive_path.is_some(),
+        ) {
             return Err(ApiError::BadRequest(
-                constraint_message(
-                    constraints::RETENTION_ARCHIVE,
-                    "event_retention_archive_path is required when event_retention_file_archive_enabled is true".to_string(),
-                ),
+                "event_retention_archive_path is required when event_retention_file_archive_enabled is true".to_string(),
             ));
         }
 
@@ -1403,14 +1403,14 @@ impl AppConfig {
             ));
         }
 
-        if self.login_rate_limit_backoff_max_seconds < self.login_rate_limit_backoff_base_seconds {
-            return Err(ApiError::BadRequest(constraint_message(
-                constraints::LOGIN_BACKOFF,
-                format!(
-                    "login_rate_limit_backoff_max_seconds ({}) must be greater than or equal to login_rate_limit_backoff_base_seconds ({})",
-                    self.login_rate_limit_backoff_max_seconds,
-                    self.login_rate_limit_backoff_base_seconds
-                ),
+        if !constraints::LOGIN_BACKOFF.ordered_values_satisfy(
+            self.login_rate_limit_backoff_base_seconds,
+            self.login_rate_limit_backoff_max_seconds,
+        ) {
+            return Err(ApiError::BadRequest(format!(
+                "login_rate_limit_backoff_max_seconds ({}) must be greater than or equal to login_rate_limit_backoff_base_seconds ({})",
+                self.login_rate_limit_backoff_max_seconds,
+                self.login_rate_limit_backoff_base_seconds
             )));
         }
 
@@ -1454,23 +1454,24 @@ impl AppConfig {
 
         if self.login_rate_limit_backend == LoginRateLimitBackendKind::Valkey {
             #[cfg(not(feature = "login-rate-limit-valkey"))]
-            return Err(ApiError::BadRequest(constraint_message(
-                constraints::VALKEY_URL,
-                "login_rate_limit_backend=valkey requires the login-rate-limit-valkey feature"
-                    .to_string(),
-            )));
+            if !constraints::VALKEY_URL.requirement_is_satisfied(true, false) {
+                return Err(ApiError::BadRequest(
+                    "login_rate_limit_backend=valkey requires the login-rate-limit-valkey feature"
+                        .to_string(),
+                ));
+            }
 
             #[cfg(feature = "login-rate-limit-valkey")]
-            if self
-                .login_rate_limit_valkey_url
-                .as_deref()
-                .is_none_or(|url| url.trim().is_empty())
-            {
-                return Err(ApiError::BadRequest(constraint_message(
-                    constraints::VALKEY_URL,
+            if !constraints::VALKEY_URL.requirement_is_satisfied(
+                true,
+                self.login_rate_limit_valkey_url
+                    .as_deref()
+                    .is_some_and(|url| !url.trim().is_empty()),
+            ) {
+                return Err(ApiError::BadRequest(
                     "login_rate_limit_valkey_url is required when login_rate_limit_backend=valkey"
                         .to_string(),
-                )));
+                ));
             }
         }
 
@@ -1512,21 +1513,22 @@ impl AppConfig {
             ));
         }
 
-        if self.default_page_limit > self.max_page_limit {
-            return Err(ApiError::BadRequest(constraint_message(
-                constraints::PAGE_LIMITS,
-                format!(
-                    "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
-                    self.default_page_limit, self.max_page_limit
-                ),
+        if !constraints::PAGE_LIMITS
+            .ordered_values_satisfy(self.default_page_limit, self.max_page_limit)
+        {
+            return Err(ApiError::BadRequest(format!(
+                "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
+                self.default_page_limit, self.max_page_limit
             )));
         }
 
-        if self.permission_backend == PermissionBackendKind::Treetop && self.treetop_url.is_none() {
-            return Err(ApiError::BadRequest(constraint_message(
-                constraints::TREETOP_BACKEND,
+        if !constraints::TREETOP_BACKEND.requirement_is_satisfied(
+            self.permission_backend == PermissionBackendKind::Treetop,
+            self.treetop_url.is_some(),
+        ) {
+            return Err(ApiError::BadRequest(
                 "treetop_url is required when permission_backend=treetop".to_string(),
-            )));
+            ));
         }
 
         crate::observability::tracing::TracingSettings::from_config(&self)

@@ -55,6 +55,7 @@ for path in "$@"; do
       .github/operational-contract-breaking-exceptions.json | \
       scripts/check-operational-contract-compatibility.py | \
       scripts/resolve-operational-contract-baseline.sh | \
+      scripts/test-operational-contract-github-api.sh | \
       scripts/test-operational-contract-compatibility.py | \
       scripts/test-operational-contract-compatibility.sh)
       code=true

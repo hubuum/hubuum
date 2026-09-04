@@ -7,7 +7,7 @@ use hubuum_secrets::{
     SecretError, SecretErrorKind, SecretName, SecretProviderKind, SecretRef, SecretResolver,
 };
 
-use crate::config::environment::{constraint_message, constraints};
+use crate::config::environment::constraints;
 
 const SOURCE_ENVIRONMENT: &str = "HUBUUM_SECRET_SOURCE";
 const FILE_ROOT_ENVIRONMENT: &str = "HUBUUM_SECRET_FILE_ROOT";
@@ -191,15 +191,13 @@ fn consumer_resolver(
             builder.provider(provider)?.build()
         }
         SecretSource::File => {
-            let root = root.ok_or_else(|| {
-                SecretError::new(
+            if !constraints::SECRET_FILE_ROOT.requirement_is_satisfied(true, root.is_some()) {
+                return Err(SecretError::new(
                     SecretErrorKind::InvalidReference,
-                    constraint_message(
-                        constraints::SECRET_FILE_ROOT,
-                        "file secret source requires a configured root",
-                    ),
-                )
-            })?;
+                    "file secret source requires a configured root",
+                ));
+            }
+            let root = root.expect("file-root constraint accepted the configured root");
             builder
                 .provider(
                     FileProvider::builder(root)

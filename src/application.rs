@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::backups::BackupSettings;
-use crate::config::environment::{constraint_message, constraints};
+use crate::config::environment::constraints;
 #[cfg(test)]
 use crate::config::get_config;
 #[cfg(not(test))]
@@ -410,6 +410,18 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
+    if !constraints::TLS_KEY_PAIR.paired_values_satisfy(
+        config.tls_cert_path.is_some(),
+        config.tls_key_path.is_some(),
+    ) {
+        let message = if config.tls_cert_path.is_some() {
+            "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path"
+        } else {
+            "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path"
+        };
+        fatal_error(message, EXIT_CODE_TLS_ERROR);
+    }
+
     let server = match (&config.tls_cert_path, &config.tls_key_path) {
         (Some(cert), Some(key)) => match tls::configure_server(
             server,
@@ -425,20 +437,9 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
                 EXIT_CODE_TLS_ERROR,
             ),
         },
-        (Some(_), None) => fatal_error(
-            constraint_message(
-                constraints::TLS_KEY_PAIR,
-                "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path",
-            ),
-            EXIT_CODE_TLS_ERROR,
-        ),
-        (None, Some(_)) => fatal_error(
-            constraint_message(
-                constraints::TLS_KEY_PAIR,
-                "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path",
-            ),
-            EXIT_CODE_TLS_ERROR,
-        ),
+        (Some(_), None) | (None, Some(_)) => {
+            unreachable!("TLS key-pair constraint rejected mismatched paths")
+        }
         _ => server.bind(&bind_address)?,
     };
 
@@ -571,6 +572,20 @@ fn start_worker_metrics_server(
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
+    if !constraints::TLS_KEY_PAIR.paired_values_satisfy(
+        config.tls_cert_path.is_some(),
+        config.tls_key_path.is_some(),
+    ) {
+        let message = if config.tls_cert_path.is_some() {
+            "TLS certificate specified but key is missing"
+        } else {
+            "TLS key specified but certificate is missing"
+        };
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            message,
+        ));
+    }
     let server = match (&config.tls_cert_path, &config.tls_key_path) {
         (Some(cert), Some(key)) => tls::configure_server(
             server,
@@ -580,23 +595,8 @@ fn start_worker_metrics_server(
             config.tls_key_passphrase.as_deref(),
             config.tls_backend,
         )?,
-        (Some(_), None) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                constraint_message(
-                    constraints::TLS_KEY_PAIR,
-                    "TLS certificate specified but key is missing",
-                ),
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                constraint_message(
-                    constraints::TLS_KEY_PAIR,
-                    "TLS key specified but certificate is missing",
-                ),
-            ));
+        (Some(_), None) | (None, Some(_)) => {
+            unreachable!("TLS key-pair constraint rejected mismatched paths")
         }
         _ => server.bind(&bind_address)?,
     };
