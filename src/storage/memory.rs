@@ -1033,31 +1033,32 @@ impl ClassStorage for MemoryStorageModel {
         }
 
         let before_revision = current.revision;
-        let class = state
-            .classes
-            .get_mut(&current.id)
-            .expect("class existence was checked");
+        let mut updated = current;
         if let Some(name) = changes.name {
-            class.name = name;
+            updated.name = name;
         }
         if let Some(collection_id) = changes.collection_id {
-            class.collection_id = collection_id;
+            updated.collection_id = collection_id;
         }
         if let Some(json_schema) = changes.json_schema {
-            class.json_schema = Some(json_schema);
+            updated.json_schema = Some(json_schema);
         }
         if let Some(validate_schema) = changes.validate_schema {
-            class.validate_schema = validate_schema;
+            updated.validate_schema = validate_schema;
         }
         if let Some(description) = changes.description {
-            class.description = description;
+            updated.description = description;
         }
-        class.updated_at = Utc::now().naive_utc();
-        class.revision = class.revision.checked_advance().map_err(map_memory_error)?;
-        let updated = class.clone();
+        updated.updated_at = Utc::now().naive_utc();
+        updated.revision = updated
+            .revision
+            .checked_advance()
+            .map_err(map_memory_error)?;
+        let projected = class_record_to_storage(updated.clone()).map_err(map_memory_error)?;
+        state.classes.insert(updated.id, updated.clone());
         state.record_class_event(updated.id, Action::Updated, context);
         Ok(StorageMutationOutcome::committed(
-            class_record_to_storage(updated.clone()).map_err(map_memory_error)?,
+            projected,
             memory_audit_receipt(
                 EntityType::Class,
                 Action::Updated,
