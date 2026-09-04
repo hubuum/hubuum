@@ -288,36 +288,53 @@ pub(crate) fn clear_scrape_cache_for_tests() {
 
 #[cfg(test)]
 mod contract_tests {
-    use opentelemetry::global;
+    use opentelemetry::metrics::MeterProvider as _;
+    use rstest::rstest;
 
     use super::*;
     use crate::operational_contracts::runtime_metric_definition;
 
-    #[test]
-    #[should_panic(expected = "labels")]
-    fn checked_metrics_reject_labels_from_a_different_contract() {
-        let definition = runtime_metric_definition("hubuum_api_errors");
+    #[rstest]
+    #[case::wrong_label(
+        "hubuum_api_errors",
+        KeyValue::new("class", "bad_request"),
+        KeyValue::new("route", "/api/v1")
+    )]
+    #[case::invalid_value(
+        "hubuum_task_worker_iterations",
+        KeyValue::new("outcome", "idle"),
+        KeyValue::new("outcome", "waiting")
+    )]
+    #[cfg_attr(debug_assertions, should_panic(expected = "labels and values"))]
+    fn checked_metrics_reject_invalid_observations(
+        #[case] name: &str,
+        #[case] valid_attribute: KeyValue,
+        #[case] invalid_attribute: KeyValue,
+    ) {
+        let registry = Registry::new();
+        let exporter = opentelemetry_prometheus::exporter()
+            .with_registry(registry.clone())
+            .without_scope_info()
+            .without_target_info()
+            .build()
+            .unwrap();
+        let provider = SdkMeterProvider::builder().with_reader(exporter).build();
+        let definition = runtime_metric_definition(name);
         let metric = CheckedMetric::new(
-            global::meter("hubuum-contract-test")
+            provider
+                .meter("hubuum-contract-test")
                 .u64_counter(definition.runtime_name())
                 .build(),
             definition,
         );
 
-        metric.add(1, &[KeyValue::new("route", "/api/v1")]);
-    }
+        metric.add(1, &[valid_attribute]);
+        let before = registry.gather();
+        assert!(!before.is_empty(), "valid observations must be exported");
 
-    #[test]
-    #[should_panic(expected = "labels and values")]
-    fn checked_metrics_reject_values_outside_an_enumerated_domain() {
-        let definition = runtime_metric_definition("hubuum_task_worker_iterations");
-        let metric = CheckedMetric::new(
-            global::meter("hubuum-contract-value-test")
-                .u64_counter(definition.runtime_name())
-                .build(),
-            definition,
-        );
+        metric.add(1, &[invalid_attribute]);
 
-        metric.add(1, &[KeyValue::new("outcome", "waiting")]);
+        // With debug assertions disabled, rejection must still prevent export.
+        assert_eq!(registry.gather(), before);
     }
 }
