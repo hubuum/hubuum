@@ -72,9 +72,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   train, and adapters must accept its validated `Definition`, use the new active
   and terminal task status types, match the completion payload variants, and
   migrate class builders to `StorageClassSchemaPolicy`. The HTTP response shapes
-  remain compatible. The database migration normalizes any legacy class row that
-  enabled validation without a schema and adds constraints preventing that state
-  from recurring.
+  remain compatible. The database migration normalizes any live legacy class row
+  that enabled validation without a schema, version 5 restore applies the same
+  compatibility normalization to current and historical class rows, and database
+  constraints prevent that state from recurring.
 - **Breaking (database deployment):** server container entrypoints no longer
   apply migrations. Run `hubuum-admin --migrate` as a one-shot workload before
   rolling the server and deploy the isolated restore executor. Existing

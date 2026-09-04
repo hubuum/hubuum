@@ -32,7 +32,9 @@ use crate::permissions::AuthorizationContext;
 use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, object_id_to_storage,
 };
-use crate::storage::{ImportStorage, StorageImportPlanItem, storage_handle};
+use crate::storage::{
+    ImportStorage, StorageClassSchemaPolicy, StorageImportPlanItem, storage_handle,
+};
 use crate::traits::UserPermissions;
 
 fn import_item_allows_overwrite(
@@ -1130,14 +1132,19 @@ where
     }
 }
 
-fn validate_planned_class_schema(class: &ClassResolution) -> Result<(), ApiError> {
-    if !class.validate_schema {
-        return Ok(());
+fn planned_class_schema_policy(
+    class: &ClassResolution,
+) -> Result<StorageClassSchemaPolicy, ApiError> {
+    let schema_policy =
+        StorageClassSchemaPolicy::try_from_parts(class.json_schema.clone(), class.validate_schema)
+            .map_err(|error| ApiError::from(error.into_request_error()))?;
+    if let Some(schema) = schema_policy
+        .json_schema()
+        .filter(|_| schema_policy.validates_schema())
+    {
+        crate::utilities::json_schema::compile_json_schema(schema)?;
     }
-    let Some(schema) = class.json_schema.as_ref() else {
-        return Ok(());
-    };
-    crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
+    Ok(schema_policy)
 }
 
 #[allow(
@@ -1290,19 +1297,21 @@ where
             validate_schema: input.validate_schema.unwrap_or(class.validate_schema),
             exists_in_db: true,
         };
-        validate_planned_class_schema(&updated).map_err(|error| PlanningFailure {
-            kind: FailureKind::Validation,
-            item: planned_result(
-                "class",
-                "validate",
-                input.ref_.clone(),
-                Some(input.name.clone()),
-            ),
-            message: error.to_string(),
-        })?;
+        let schema_policy =
+            planned_class_schema_policy(&updated).map_err(|error| PlanningFailure {
+                kind: FailureKind::Validation,
+                item: planned_result(
+                    "class",
+                    "validate",
+                    input.ref_.clone(),
+                    Some(input.name.clone()),
+                ),
+                message: error.to_string(),
+            })?;
+        let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
-            json_schema: updated.json_schema.clone(),
-            validate_schema: Some(updated.validate_schema),
+            json_schema,
+            validate_schema: Some(validate_schema),
             ..input.clone()
         };
         remember_class(state, input.ref_.clone(), updated.clone());
@@ -1355,19 +1364,21 @@ where
             validate_schema: input.validate_schema.unwrap_or(false),
             exists_in_db: false,
         };
-        validate_planned_class_schema(&created).map_err(|error| PlanningFailure {
-            kind: FailureKind::Validation,
-            item: planned_result(
-                "class",
-                "validate",
-                input.ref_.clone(),
-                Some(input.name.clone()),
-            ),
-            message: error.to_string(),
-        })?;
+        let schema_policy =
+            planned_class_schema_policy(&created).map_err(|error| PlanningFailure {
+                kind: FailureKind::Validation,
+                item: planned_result(
+                    "class",
+                    "validate",
+                    input.ref_.clone(),
+                    Some(input.name.clone()),
+                ),
+                message: error.to_string(),
+            })?;
+        let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
-            json_schema: created.json_schema.clone(),
-            validate_schema: Some(created.validate_schema),
+            json_schema,
+            validate_schema: Some(validate_schema),
             ..input.clone()
         };
         remember_class(state, input.ref_.clone(), created.clone());
