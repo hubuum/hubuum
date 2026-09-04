@@ -451,7 +451,7 @@ impl ClassStorage for MemoryStorage {
         let collection_id = changes.collection_id().unwrap_or(current.collection_id());
         let schema_policy = changes
             .resolve_schema_policy(current.schema_policy())
-            .map_err(invalid_contract_value)?;
+            .map_err(StorageValidationError::into_request_error)?;
         let description = changes.description().unwrap_or(current.description());
         if name == current.name()
             && collection_id == current.collection_id()

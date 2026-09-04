@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use actix_web::{App, http, test, web::Data};
+use actix_web::{App, ResponseError, http, test, web::Data};
 use async_trait::async_trait;
 use hubuum_computed_fields::{Definition, FieldKey, JsonPointer, Operation, ResultType};
 use hubuum_domain::{
@@ -44,6 +44,7 @@ fn group_id(id: i32) -> GroupId {
     GroupId::new(id).expect("test group id must be positive")
 }
 
+use crate::errors::ApiError;
 use crate::events::{
     Action, EntityType, EventContext, EventEntityId, EventFanoutSettings, EventRetentionSettings,
     MutationProvenance,
@@ -4732,6 +4733,45 @@ async fn every_available_storage_backend_supplies_collection_lifecycle() {
         .delete_without_events(pool.get_ref())
         .await
         .expect("collection record compatibility group should be removed");
+}
+
+#[actix_web::test]
+async fn memory_storage_rejects_schema_validation_without_a_schema_as_bad_request() {
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let classes = backend.class_store();
+    let context = EventContext::system();
+    let created = classes
+        .create_class(
+            StorageClassCreate::builder("schema_less_class", collection_id(1), "").build(),
+            &context,
+        )
+        .await
+        .expect("memory adapter should create a schema-less class")
+        .into_value();
+    let target = classes
+        .resolve_class(StorageClassSelector::Id(created.id()))
+        .await
+        .expect("memory adapter should resolve the class");
+
+    let error = classes
+        .update_class(
+            &target,
+            StorageClassUpdate::builder()
+                .validate_schema(Some(true))
+                .build(),
+            &context,
+        )
+        .await
+        .err()
+        .expect("memory adapter must reject validation without a schema");
+
+    assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    let api_error = ApiError::from(error);
+    assert_eq!(api_error.status_code(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        api_error.public_message(),
+        "Class schema validation cannot be enabled without a schema"
+    );
 }
 
 #[actix_web::test]

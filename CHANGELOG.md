@@ -128,6 +128,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- The memory storage backend now returns HTTP 400 with an actionable message
+  when a class update enables schema validation without a schema.
 - Recursive object-relation graph queries now expand through indexed adjacency
   lookups instead of repeatedly materializing the global relation corpus, and
   graph responses no longer execute a discarded total-count traversal.
