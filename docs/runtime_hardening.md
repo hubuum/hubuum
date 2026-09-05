@@ -53,17 +53,26 @@ Prospective collection probes omit unknown endpoint IDs and use distinct
 `prospective`. Policies accessing optional class/object IDs must guard them with
 Cedar `has` checks. Stored resources continue to use their database identities.
 
-Apply the new database migrations before starting workers. Import mutations and
+Apply the single runtime-hardening migration before starting workers. Import mutations and
 item receipts commit in the same transaction. Each commit validates the claim
 and lease, including a deferred database check. Recovery reconciles completed
 imports from durable results; it does not automatically replay uncertain work.
 Planning and dry-run result batches also require the current claim and pass the
 same deferred commit fence.
 Backups preserve terminal import results and omit execution indexes and claim
-tokens. Restoring history never recreates worker authority. Receipt columns,
-the concurrent unique index, and constraint validation deploy in separate
-migration phases. If a concurrent index build is interrupted, remove its invalid
-index before retrying the migration; startup requires the completed migration.
+tokens. Restoring history never recreates worker authority. Graph functions,
+receipt columns, the unique index, and constraint validation deploy atomically
+in one migration. It allows five seconds to acquire a lock and sixty seconds
+per statement. The index build scans existing receipt history while the table
+is locked; run the migration during a quiet period. A timeout rolls back the
+whole migration, so retrying never requires cleaning up a partially built index.
+Startup requires the completed migration.
+
+The migration compatibility checker normally requires concurrent indexes. An
+explicit `hubuum-compat: bounded-transactional-index` marker on an index statement
+permits a reviewed transactional build only when positive `SET LOCAL` lock and
+statement timeouts precede it. Nontransactional migrations cannot use this
+exception.
 
 The storage SDK advances as a coordinated 0.2 release. Adapter implementations
 must accept traversal budgets and implement claimed import execution. See the

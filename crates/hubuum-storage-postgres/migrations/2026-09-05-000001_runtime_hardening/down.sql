@@ -1,3 +1,14 @@
+-- Keep this PR's schema changes atomic. These limits bound lock acquisition
+-- and each statement; failure rolls back every change and the migration record.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
+DROP INDEX import_execution_receipt_once;
+DROP TRIGGER import_execution_commit_fence ON import_task_results;
+DROP FUNCTION hubuum_fence_import_receipt();
+ALTER TABLE import_task_results DROP CONSTRAINT import_execution_receipt_fields,
+    DROP COLUMN execution_index, DROP COLUMN execution_claim_token;
+
 CREATE OR REPLACE FUNCTION get_bidirectionally_related_objects(
     start_object_id INT,
     valid_collection_ids INT[],

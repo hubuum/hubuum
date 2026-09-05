@@ -91,7 +91,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (experimental storage SDK 0.2):** update all seven packages together,
   supply traversal budgets, and implement fenced import execution with atomic
   item receipts.
-  Apply the new database migrations before starting workers.
+  Apply the single runtime-hardening migration before starting workers.
 - **Breaking (resource limits):** graph depth is now bounded by
   `HUBUUM_MAX_TRANSITIVE_DEPTH` even when requests
   omit depth. Traversals reject excessive generated work before pagination;
