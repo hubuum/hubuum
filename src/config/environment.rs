@@ -5,6 +5,15 @@
 //! declaring its owner and sensitivity here, which prevents a consumer from
 //! quietly introducing an ambiguous name such as `HUBUUM_TIMEOUT`.
 
+use hubuum_domain::{
+    MAX_EVENT_WORKER_BATCH_SIZE, OperationalConstraint, TokenLifetime, TokenRetentionBatchSize,
+};
+
+use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
+use crate::observability::tracing::{MAX_BATCH_SIZE, MAX_QUEUE_CAPACITY, MAX_TIMEOUT_MS};
+
+use super::{AppConfig, defaults::MAX_COMPUTED_REINDEX_BATCH_SIZE};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentOwner {
     Server,
@@ -27,7 +36,8 @@ pub enum EnvironmentOwner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exposure {
     Public,
-    Sensitive,
+    SensitiveMetadata,
+    Secret,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +59,14 @@ macro_rules! option {
         EnvironmentVariable {
             name: $name,
             owner: EnvironmentOwner::$owner,
-            exposure: Exposure::Sensitive,
+            exposure: Exposure::Secret,
+        }
+    };
+    ($name:literal, $owner:ident, metadata) => {
+        EnvironmentVariable {
+            name: $name,
+            owner: EnvironmentOwner::$owner,
+            exposure: Exposure::SensitiveMetadata,
         }
     };
 }
@@ -176,12 +193,12 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     ),
     option!("HUBUUM_ADMIN_GROUPNAME", Authentication),
     option!("HUBUUM_ADMIN_IDENTITY_SCOPE", Authentication),
-    option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, sensitive),
+    option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, metadata),
     option!("HUBUUM_DEFAULT_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_TRANSITIVE_DEPTH", Relations),
     option!("HUBUUM_TLS_CERT_PATH", Server),
-    option!("HUBUUM_TLS_KEY_PATH", Server, sensitive),
+    option!("HUBUUM_TLS_KEY_PATH", Server, metadata),
     option!("HUBUUM_TLS_KEY_PASSPHRASE", Server, sensitive),
     option!("HUBUUM_TLS_BACKEND", Server),
     option!("HUBUUM_METRICS_ENABLED", Server),
@@ -207,9 +224,9 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
     option!("HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY", Authentication),
     option!("HUBUUM_SECRET_SOURCE", Operations),
-    option!("HUBUUM_SECRET_FILE_ROOT", Operations, sensitive),
+    option!("HUBUUM_SECRET_FILE_ROOT", Operations, metadata),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
-    option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
+    option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, metadata),
     option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),
     option!("HUBUUM_TREETOP_TEST_CONTAINER_NAME", Permissions),
     option!("HUBUUM_TREETOP_TEST_IMAGE", Permissions),
@@ -226,6 +243,375 @@ pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
     ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),
 ];
+
+/// A numeric configuration bound together with the runtime value it validates.
+pub(crate) struct ConfigurationBound {
+    pub(crate) name: &'static str,
+    minimum: Option<i64>,
+    maximum: Option<i64>,
+    value: fn(&AppConfig) -> i128,
+}
+
+macro_rules! configuration_bound {
+    ($name:literal, $field:ident) => {
+        ConfigurationBound {
+            name: $name,
+            minimum: Some(1),
+            maximum: None,
+            value: |config| config.$field as i128,
+        }
+    };
+    ($name:literal, $field:ident, minimum = $minimum:expr) => {
+        ConfigurationBound {
+            name: $name,
+            minimum: Some($minimum),
+            maximum: None,
+            value: |config| config.$field as i128,
+        }
+    };
+    ($name:literal, $field:ident, minimum = $minimum:expr, maximum = $maximum:expr) => {
+        ConfigurationBound {
+            name: $name,
+            minimum: Some($minimum),
+            maximum: Some($maximum),
+            value: |config| config.$field as i128,
+        }
+    };
+    ($name:literal, $field:ident, maximum = $maximum:expr) => {
+        ConfigurationBound {
+            name: $name,
+            minimum: Some(1),
+            maximum: Some($maximum),
+            value: |config| config.$field as i128,
+        }
+    };
+}
+
+/// Application-enforced numeric bounds for registered environment variables.
+/// Runtime validation and the generated operational contract consume these
+/// same entries, including the accessor for the value being validated.
+pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
+    configuration_bound!(
+        "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
+        tracing_connect_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_EXPORT_TIMEOUT_MS",
+        tracing_export_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_FLUSH_TIMEOUT_MS",
+        tracing_flush_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_QUEUE_CAPACITY",
+        tracing_queue_capacity,
+        maximum = MAX_QUEUE_CAPACITY as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_BATCH_SIZE",
+        tracing_batch_size,
+        maximum = MAX_BATCH_SIZE as i64
+    ),
+    configuration_bound!("HUBUUM_ACTIX_WORKERS", actix_workers),
+    configuration_bound!("HUBUUM_TASK_POLL_INTERVAL_MS", task_poll_interval_ms),
+    configuration_bound!("HUBUUM_TASK_LEASE_SECONDS", task_lease_seconds),
+    configuration_bound!("HUBUUM_TASK_HEARTBEAT_SECONDS", task_heartbeat_seconds),
+    configuration_bound!(
+        "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS",
+        task_recovery_interval_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
+        computed_reindex_batch_size,
+        maximum = MAX_COMPUTED_REINDEX_BATCH_SIZE as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+        event_fanout_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
+        event_fanout_poll_interval_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+        event_fanout_lock_timeout_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
+        event_delivery_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS",
+        event_delivery_poll_interval_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+        event_delivery_lock_timeout_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS",
+        event_delivery_transport_timeout_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
+        event_delivery_retry_backoff_base_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+        event_delivery_retry_backoff_max_ms
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS",
+        event_delivery_max_attempts
+    ),
+    configuration_bound!("HUBUUM_EVENT_RETENTION_DAYS", event_retention_days),
+    configuration_bound!(
+        "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS",
+        event_delivery_retention_days
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+        event_retention_purge_interval_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+        event_retention_purge_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
+        export_output_retention_hours,
+        maximum = MAX_FUTURE_RETENTION_HOURS
+    ),
+    configuration_bound!(
+        "HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+        export_output_cleanup_interval_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+        backup_output_retention_hours,
+        maximum = MAX_FUTURE_RETENTION_HOURS
+    ),
+    configuration_bound!(
+        "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
+        backup_max_active_tasks_per_user
+    ),
+    configuration_bound!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", backup_max_output_bytes),
+    configuration_bound!(
+        "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
+        restore_stage_retention_minutes,
+        maximum = MAX_FUTURE_RETENTION_MINUTES
+    ),
+    configuration_bound!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", restore_max_upload_bytes),
+    configuration_bound!(
+        "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
+        import_max_active_tasks_per_user
+    ),
+    configuration_bound!(
+        "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER",
+        export_max_active_tasks_per_user
+    ),
+    configuration_bound!(
+        "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT",
+        export_template_recursion_limit
+    ),
+    configuration_bound!("HUBUUM_EXPORT_TEMPLATE_FUEL", export_template_fuel),
+    configuration_bound!(
+        "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS",
+        export_template_max_objects
+    ),
+    configuration_bound!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", export_max_output_bytes),
+    configuration_bound!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", export_stage_timeout_ms),
+    configuration_bound!("HUBUUM_REMOTE_CALL_TIMEOUT_MS", remote_call_timeout_ms),
+    configuration_bound!(
+        "HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES",
+        remote_call_max_response_bytes
+    ),
+    configuration_bound!(
+        "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
+        remote_call_max_active_tasks_per_user
+    ),
+    configuration_bound!(
+        "HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS",
+        db_pool_acquire_timeout_ms
+    ),
+    configuration_bound!("HUBUUM_DB_POOL_SIZE", db_pool_size),
+    configuration_bound!(
+        "HUBUUM_TOKEN_LIFETIME_HOURS",
+        token_lifetime_hours,
+        maximum = TokenLifetime::MAX_HOURS
+    ),
+    configuration_bound!(
+        "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+        max_token_lifetime_hours,
+        maximum = TokenLifetime::MAX_HOURS
+    ),
+    configuration_bound!("HUBUUM_TOKEN_RETENTION_DAYS", token_retention_days),
+    configuration_bound!(
+        "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+        token_retention_purge_interval_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+        token_retention_purge_batch_size,
+        minimum = TokenRetentionBatchSize::MIN as i64,
+        maximum = TokenRetentionBatchSize::MAX as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
+        login_rate_limit_max_attempts
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        login_rate_limit_window_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+        login_rate_limit_backoff_base_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+        login_rate_limit_backoff_max_seconds
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4",
+        login_rate_limit_subnet_prefix_v4,
+        maximum = 32
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6",
+        login_rate_limit_subnet_prefix_v6,
+        maximum = 128
+    ),
+    configuration_bound!(
+        "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
+        login_rate_limit_valkey_io_timeout_ms
+    ),
+    configuration_bound!("HUBUUM_DEFAULT_PAGE_LIMIT", default_page_limit),
+    configuration_bound!("HUBUUM_MAX_PAGE_LIMIT", max_page_limit),
+    configuration_bound!("HUBUUM_MAX_TRANSITIVE_DEPTH", max_transitive_depth),
+];
+
+pub(crate) fn configuration_bounds(name: &str) -> (Option<i64>, Option<i64>) {
+    CONFIGURATION_BOUNDS
+        .iter()
+        .find(|bound| bound.name == name)
+        .map_or((None, None), |bound| (bound.minimum, bound.maximum))
+}
+
+pub(crate) fn validate_configuration_bounds(config: &AppConfig) -> Result<(), String> {
+    for bound in CONFIGURATION_BOUNDS {
+        let value = (bound.value)(config);
+        if bound
+            .minimum
+            .is_some_and(|minimum| value < i128::from(minimum))
+            || bound
+                .maximum
+                .is_some_and(|maximum| value > i128::from(maximum))
+        {
+            return Err(format!(
+                "{} must satisfy the registered operational bounds {:?}..={:?}",
+                bound.name, bound.minimum, bound.maximum
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) mod constraints {
+    pub(crate) use hubuum_domain::{
+        EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT as DELIVERY_RETRY_BACKOFF,
+        EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT as DELIVERY_TRANSPORT_TIMEOUT,
+        TOKEN_LIFETIME_CONSTRAINT as TOKEN_LIFETIME,
+    };
+
+    pub(crate) use crate::tasks::TASK_HEARTBEAT_CONSTRAINT as TASK_HEARTBEAT;
+
+    use hubuum_domain::{OrderedConstraint, PairedConstraint, RequiredConstraint};
+
+    pub(crate) const TRACING_BATCH_SIZE: OrderedConstraint = OrderedConstraint::less_than_or_equal(
+        "HUBUUM_TRACING_BATCH_SIZE",
+        "HUBUUM_TRACING_QUEUE_CAPACITY",
+    );
+    pub(crate) const TRACING_ENDPOINT: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_TRACING_ENABLED=true",
+        "HUBUUM_TRACING_OTLP_ENDPOINT",
+    );
+    pub(crate) const TRACING_KEY_PAIR: PairedConstraint = PairedConstraint::new(
+        "HUBUUM_TRACING_OTLP_CLIENT_CERT",
+        "HUBUUM_TRACING_OTLP_CLIENT_KEY",
+    );
+
+    pub(crate) const PAGE_LIMITS: OrderedConstraint =
+        OrderedConstraint::less_than_or_equal("HUBUUM_DEFAULT_PAGE_LIMIT", "HUBUUM_MAX_PAGE_LIMIT");
+    pub(crate) const WORKER_ROLE: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_RUNTIME_ROLE=worker",
+        "at least one task, fan-out, delivery, event-retention, or token-retention worker",
+    );
+    pub(crate) const RETENTION_ARCHIVE: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true",
+        "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+    );
+    pub(crate) const LOGIN_BACKOFF: OrderedConstraint = OrderedConstraint::less_than_or_equal(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+    );
+    pub(crate) const TLS_KEY_PAIR: PairedConstraint =
+        PairedConstraint::new("HUBUUM_TLS_CERT_PATH", "HUBUUM_TLS_KEY_PATH");
+    pub(crate) const TREETOP_BACKEND: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_PERMISSION_BACKEND=treetop",
+        "HUBUUM_TREETOP_URL and the compiled permissions-treetop feature",
+    );
+    pub(crate) const VALKEY_URL: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey",
+        "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
+    );
+    pub(crate) const SECRET_FILE_ROOT: RequiredConstraint =
+        RequiredConstraint::new("HUBUUM_SECRET_SOURCE=file", "HUBUUM_SECRET_FILE_ROOT");
+    pub(crate) const TOKEN_PREVIOUS_KEY_IDS: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
+        "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+    );
+    pub(crate) const STABLE_TOKEN_HASH_KEY: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true",
+        "resolvable stable token hash key material",
+    );
+}
+
+/// Cross-field configuration contracts shared with their runtime validators.
+pub(crate) const CONFIGURATION_CONSTRAINTS: &[OperationalConstraint] = &[
+    constraints::TRACING_BATCH_SIZE.definition(),
+    constraints::TRACING_ENDPOINT.definition(),
+    constraints::TRACING_KEY_PAIR.definition(),
+    constraints::PAGE_LIMITS.definition(),
+    constraints::TASK_HEARTBEAT.definition(),
+    constraints::WORKER_ROLE.definition(),
+    constraints::DELIVERY_TRANSPORT_TIMEOUT.definition(),
+    constraints::DELIVERY_RETRY_BACKOFF.definition(),
+    constraints::RETENTION_ARCHIVE.definition(),
+    constraints::LOGIN_BACKOFF.definition(),
+    constraints::TOKEN_LIFETIME.definition(),
+    constraints::TLS_KEY_PAIR.definition(),
+    constraints::TREETOP_BACKEND.definition(),
+    constraints::VALKEY_URL.definition(),
+    constraints::SECRET_FILE_ROOT.definition(),
+    constraints::TOKEN_PREVIOUS_KEY_IDS.definition(),
+    constraints::STABLE_TOKEN_HASH_KEY.definition(),
+];
+
+pub(crate) fn configuration_constraints() -> Vec<String> {
+    CONFIGURATION_CONSTRAINTS
+        .iter()
+        .map(|constraint| constraint.expression())
+        .collect()
+}
 
 /// Files allowed to translate Hubuum-owned environment values. This list is
 /// intentionally small and reviewable. The application secret adapter owns

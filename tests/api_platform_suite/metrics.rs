@@ -117,8 +117,8 @@ async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() 
         metrics::storage_backend_identity("postgresql");
         metrics::storage_operation_finished(
             "postgresql",
-            "objects",
-            "update",
+            "object",
+            "update_object",
             "conflict",
             Duration::from_millis(5),
         );
@@ -127,10 +127,10 @@ async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() 
 
     assert!(body.contains("hubuum_storage_backend_info{backend=\"postgresql\"} 1"));
     assert!(body.contains(
-        "hubuum_storage_operation_duration_seconds_bucket{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\""
+        "hubuum_storage_operation_duration_seconds_bucket{backend=\"postgresql\",capability=\"object\",operation=\"update_object\",result=\"conflict\""
     ));
     assert!(body.contains(
-        "hubuum_storage_operation_errors_total{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\"} 1"
+        "hubuum_storage_operation_errors_total{backend=\"postgresql\",capability=\"object\",operation=\"update_object\",result=\"conflict\"} 1"
     ));
 }
 
@@ -198,9 +198,30 @@ async fn client_allowlist_metrics_export_the_rejection_reason() {
 }
 
 #[actix_web::test]
+async fn http_metrics_group_extension_methods_under_the_fallback_label() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::http_request_finished(
+            "PROPFIND",
+            "/extension-method",
+            200,
+            Duration::from_millis(10),
+        );
+    })
+    .await;
+
+    assert!(body.contains(
+        "hubuum_http_requests_total{method=\"OTHER\",route=\"/extension-method\",status_code=\"200\",status_family=\"2xx\"} 1"
+    ));
+    assert!(body.contains(
+        "hubuum_http_request_duration_seconds_bucket{method=\"OTHER\",route=\"/extension-method\",status_family=\"2xx\""
+    ));
+    assert!(!body.contains("method=\"PROPFIND\""));
+}
+
+#[actix_web::test]
 async fn remote_call_metrics_export_the_terminal_outcome() {
     let body = scrape_recorded_metrics(|| {
-        metrics::remote_call_finished("GET", "none", "timeout", Duration::from_millis(10));
+        metrics::remote_call_finished("get", "none", "timeout", Duration::from_millis(10));
     })
     .await;
 

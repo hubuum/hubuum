@@ -1,5 +1,8 @@
 use chrono::{Duration, NaiveDateTime};
 
+pub(crate) const MAX_FUTURE_RETENTION_HOURS: i64 = Duration::MAX.num_hours();
+pub(crate) const MAX_FUTURE_RETENTION_MINUTES: i64 = Duration::MAX.num_minutes();
+
 /// A positive, representable duration used to place an artifact expiry in the future.
 ///
 /// Construction validates the configured unit without binding the value to one wall-clock
@@ -13,22 +16,35 @@ pub(crate) struct FutureRetention {
 
 impl FutureRetention {
     pub(crate) fn from_hours(value: i64, field: &'static str) -> Result<Self, String> {
-        Self::new(value, field, Duration::try_hours)
+        Self::new(
+            value,
+            MAX_FUTURE_RETENTION_HOURS,
+            field,
+            Duration::try_hours,
+        )
     }
 
     pub(crate) fn from_minutes(value: i64, field: &'static str) -> Result<Self, String> {
-        Self::new(value, field, Duration::try_minutes)
+        Self::new(
+            value,
+            MAX_FUTURE_RETENTION_MINUTES,
+            field,
+            Duration::try_minutes,
+        )
     }
 
     fn new(
         value: i64,
+        maximum: i64,
         field: &'static str,
         convert: fn(i64) -> Option<Duration>,
     ) -> Result<Self, String> {
         if value <= 0 {
             return Err(format!("{field} must be greater than 0"));
         }
-        let duration = convert(value)
+        let duration = (value <= maximum)
+            .then(|| convert(value))
+            .flatten()
             .ok_or_else(|| format!("{field} is outside the supported duration range"))?;
         Ok(Self { duration, field })
     }
@@ -82,6 +98,16 @@ mod tests {
             error,
             "artifact_retention is outside the supported duration range"
         );
+    }
+
+    #[rstest]
+    #[case::hours(MAX_FUTURE_RETENTION_HOURS, FutureRetention::from_hours)]
+    #[case::minutes(MAX_FUTURE_RETENTION_MINUTES, FutureRetention::from_minutes)]
+    fn accepts_the_published_duration_maximum(
+        #[case] value: i64,
+        #[case] constructor: fn(i64, &'static str) -> Result<FutureRetention, String>,
+    ) {
+        assert!(constructor(value, "artifact_retention").is_ok());
     }
 
     #[test]

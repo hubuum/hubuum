@@ -36,6 +36,7 @@ pub use types::{
 
 use std::sync::Arc;
 
+use crate::config::environment::constraints;
 use crate::config::{AppConfig, PermissionBackendKind};
 use crate::errors::ApiError;
 use crate::models::{Permissions, TokenScope};
@@ -132,17 +133,21 @@ pub(crate) async fn build_permission_backend(
 
         #[cfg(feature = "permissions-treetop")]
         PermissionBackendKind::Treetop => {
-            let url = cfg.treetop_url.as_deref().ok_or_else(|| {
-                ApiError::BadRequest("HUBUUM_TREETOP_URL is required".to_string())
-            })?;
+            let url = constraints::TREETOP_BACKEND
+                .require(cfg.treetop_url.as_deref())
+                .map_err(|_| ApiError::BadRequest("HUBUUM_TREETOP_URL is required".to_string()))?;
             let backend = treetop::TreetopPermissionBackend::connect(url, cfg, storage).await?;
             Ok(Arc::new(backend))
         }
 
         #[cfg(not(feature = "permissions-treetop"))]
-        PermissionBackendKind::Treetop => Err(ApiError::BadRequest(
-            "binary built without `permissions-treetop` feature".to_string(),
-        )),
+        PermissionBackendKind::Treetop => {
+            constraints::TREETOP_BACKEND.require(None).map_err(|_| {
+                ApiError::BadRequest(
+                    "binary built without `permissions-treetop` feature".to_string(),
+                )
+            })
+        }
     }
 }
 

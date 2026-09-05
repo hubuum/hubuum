@@ -50,6 +50,12 @@ assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
 assert_flag "$docs_output" treetop_conformance false
 
+for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py; do
+  probe_output="$(bash "$classifier" "$probe_path")"
+  assert_flag "$probe_output" code true
+  assert_flag "$probe_output" container true
+done
+
 policy_fixture_root="$(mktemp -d)"
 trap 'rm -rf "$policy_fixture_root"' EXIT
 mkdir -p "$policy_fixture_root/src"
@@ -147,6 +153,7 @@ assert_flag "$rust_api_policy_output" benchmarks false
 
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
+assert_flag "$openapi_output" operational_contract false
 assert_flag "$openapi_output" code false
 
 openapi_policy_output="$(bash "$classifier" \
@@ -160,6 +167,33 @@ assert_flag "$openapi_policy_output" openapi true
 assert_flag "$openapi_policy_output" code true
 assert_flag "$openapi_policy_output" container false
 assert_flag "$openapi_policy_output" artifacts false
+
+operational_contract_output="$(bash "$classifier" \
+  CHANGELOG.md \
+  docs/operational-contract.json \
+  docs/metrics-reference.md \
+  .github/operational-contract-breaking-exceptions.json \
+  scripts/check-operational-contract-compatibility.py \
+  scripts/resolve-operational-contract-baseline.sh \
+  scripts/test-operational-contract-github-api.sh \
+  scripts/test-operational-contract-compatibility.py \
+  scripts/test-operational-contract-compatibility.sh)"
+assert_flag "$operational_contract_output" operational_contract true
+assert_flag "$operational_contract_output" code true
+assert_flag "$operational_contract_output" container false
+assert_flag "$operational_contract_output" artifacts false
+
+changelog_output="$(bash "$classifier" CHANGELOG.md)"
+assert_flag "$changelog_output" markdown true
+assert_flag "$changelog_output" code true
+assert_flag "$changelog_output" operational_contract true
+
+ci_workflow_output="$(bash "$classifier" .github/workflows/ci.yml)"
+assert_flag "$ci_workflow_output" code true
+assert_flag "$ci_workflow_output" openapi true
+assert_flag "$ci_workflow_output" operational_contract true
+assert_flag "$ci_workflow_output" container true
+assert_flag "$ci_workflow_output" artifacts true
 
 embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
 assert_flag "$embedded_doc_output" markdown true
@@ -179,6 +213,7 @@ assert_flag "$source_output" container true
 assert_flag "$source_output" artifacts true
 assert_flag "$source_output" benchmarks true
 assert_flag "$source_output" runtime_benchmark true
+assert_flag "$source_output" operational_contract true
 assert_flag "$source_output" treetop_conformance false
 
 treetop_output="$(bash "$classifier" \
