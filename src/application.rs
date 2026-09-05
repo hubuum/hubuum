@@ -410,20 +410,20 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
-    if !constraints::TLS_KEY_PAIR.paired_values_satisfy(
-        config.tls_cert_path.is_some(),
-        config.tls_key_path.is_some(),
-    ) {
+    let tls_paths = constraints::TLS_KEY_PAIR.resolve(
+        config.tls_cert_path.as_ref(),
+        config.tls_key_path.as_ref(),
+    ).unwrap_or_else(|_| {
         let message = if config.tls_cert_path.is_some() {
             "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path"
         } else {
             "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path"
         };
-        fatal_error(message, EXIT_CODE_TLS_ERROR);
-    }
+        fatal_error(message, EXIT_CODE_TLS_ERROR)
+    });
 
-    let server = match (&config.tls_cert_path, &config.tls_key_path) {
-        (Some(cert), Some(key)) => match tls::configure_server(
+    let server = match tls_paths {
+        Some((cert, key)) => match tls::configure_server(
             server,
             &bind_address,
             cert,
@@ -437,10 +437,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
                 EXIT_CODE_TLS_ERROR,
             ),
         },
-        (Some(_), None) | (None, Some(_)) => {
-            unreachable!("TLS key-pair constraint rejected mismatched paths")
-        }
-        _ => server.bind(&bind_address)?,
+        None => server.bind(&bind_address)?,
     };
 
     if config.runtime_role.runs_background_workers() {
@@ -572,22 +569,18 @@ fn start_worker_metrics_server(
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
-    if !constraints::TLS_KEY_PAIR.paired_values_satisfy(
-        config.tls_cert_path.is_some(),
-        config.tls_key_path.is_some(),
-    ) {
-        let message = if config.tls_cert_path.is_some() {
-            "TLS certificate specified but key is missing"
-        } else {
-            "TLS key specified but certificate is missing"
-        };
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            message,
-        ));
-    }
-    let server = match (&config.tls_cert_path, &config.tls_key_path) {
-        (Some(cert), Some(key)) => tls::configure_server(
+    let tls_paths = constraints::TLS_KEY_PAIR
+        .resolve(config.tls_cert_path.as_ref(), config.tls_key_path.as_ref())
+        .map_err(|_| {
+            let message = if config.tls_cert_path.is_some() {
+                "TLS certificate specified but key is missing"
+            } else {
+                "TLS key specified but certificate is missing"
+            };
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
+        })?;
+    let server = match tls_paths {
+        Some((cert, key)) => tls::configure_server(
             server,
             &bind_address,
             cert,
@@ -595,10 +588,7 @@ fn start_worker_metrics_server(
             config.tls_key_passphrase.as_deref(),
             config.tls_backend,
         )?,
-        (Some(_), None) | (None, Some(_)) => {
-            unreachable!("TLS key-pair constraint rejected mismatched paths")
-        }
-        _ => server.bind(&bind_address)?,
+        None => server.bind(&bind_address)?,
     };
 
     // The worker supervisor owns SIGINT/SIGTERM handling and initiates a

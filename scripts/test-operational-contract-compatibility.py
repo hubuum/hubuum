@@ -57,9 +57,9 @@ def contract() -> dict[str, object]:
         "events": {
             "schema_version": 1,
             "revision_aware_schema_version": 2,
-            "envelope_fields": [{"name": "id", "nullable": False}],
-            "provenance_fields": [{"name": "actor", "nullable": False}],
-            "sink_payload_fields": [{"name": "id", "nullable": False}],
+            "envelope_fields": [{"name": "id", "nullable": False, "wire_type": "integer"}],
+            "provenance_fields": [{"name": "actor", "nullable": False, "wire_type": "object"}],
+            "sink_payload_fields": [{"name": "id", "nullable": False, "wire_type": "integer"}],
             "schema_version_semantics": ["positive integer"],
             "actors": ["user"],
             "entities": [{"name": "object", "actions": ["created"]}],
@@ -528,6 +528,43 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         kinds = {change["kind"] for change in self.report_json()["changes"]}
         self.assertIn("event-schema-version-not-increased", kinds)
+
+    def test_event_wire_types_require_both_production_versions_to_increase(self) -> None:
+        for section in ("envelope_fields", "provenance_fields", "sink_payload_fields"):
+            for wire_type in ("string", None):
+                with self.subTest(section=section, wire_type=wire_type):
+                    candidate = contract()
+                    candidate["events"][section][0]["wire_type"] = wire_type
+                    self.write_case(contract(), candidate)
+                    result = self.run_checker()
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    changes = self.report_json()["changes"]
+                    self.assertTrue(any(change["kind"].endswith("-type-changed") for change in changes))
+                    self.assertEqual(
+                        {change["path"] for change in changes if change["kind"] == "event-schema-version-not-increased"},
+                        {"events.schema_version", "events.revision_aware_schema_version"},
+                    )
+
+    def test_event_wire_type_metadata_can_be_added_to_legacy_artifacts(self) -> None:
+        baseline = contract()
+        for section in ("envelope_fields", "provenance_fields", "sink_payload_fields"):
+            del baseline["events"][section][0]["wire_type"]
+        self.write_case(baseline, contract())
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_event_wire_type_change_remains_breaking_after_version_bumps(self) -> None:
+        candidate = contract()
+        candidate["events"]["envelope_fields"][0]["wire_type"] = "string"
+        candidate["events"]["schema_version"] = 3
+        candidate["events"]["revision_aware_schema_version"] = 4
+        candidate["events"]["audit_document_versions"] = [3, 4]
+        self.write_case(contract(), candidate)
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        kinds = {change["kind"] for change in self.report_json()["changes"]}
+        self.assertIn("event-field-type-changed", kinds)
+        self.assertNotIn("event-schema-version-not-increased", kinds)
 
     def test_additive_event_catalog_entry_does_not_require_version_bump(self) -> None:
         candidate = contract()

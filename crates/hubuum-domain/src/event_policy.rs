@@ -4,18 +4,21 @@ use std::time::Duration as StdDuration;
 
 use chrono::{Duration, NaiveDateTime, Utc};
 
-use crate::OperationalConstraint;
+use crate::OrderedConstraint;
+
+/// Largest event batch representable by the signed database query limit.
+pub const MAX_EVENT_WORKER_BATCH_SIZE: usize = i64::MAX as usize;
 
 /// Operational constraint enforced when event-delivery timeouts are built.
-pub const EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT: OperationalConstraint =
-    OperationalConstraint::less_than(
+pub const EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT: OrderedConstraint =
+    OrderedConstraint::less_than(
         "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS",
         "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
     );
 
 /// Operational constraint enforced when event-delivery retry backoff is built.
-pub const EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT: OperationalConstraint =
-    OperationalConstraint::less_than_or_equal(
+pub const EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT: OrderedConstraint =
+    OrderedConstraint::less_than_or_equal(
         "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
         "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
     );
@@ -46,6 +49,11 @@ struct EventWorkerBatchSize {
 
 impl EventWorkerBatchSize {
     fn new(value: usize, field: &str) -> Result<Self, EventPolicyError> {
+        if value > MAX_EVENT_WORKER_BATCH_SIZE {
+            return Err(EventPolicyError::new(format!(
+                "{field} is too large for queries"
+            )));
+        }
         let value = NonZeroUsize::new(value)
             .ok_or_else(|| EventPolicyError::new(format!("{field} must be greater than 0")))?;
         let query_limit = i64::try_from(value.get())
@@ -368,7 +376,18 @@ impl EventRetentionSettings {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case(1, true)]
+    #[case(MAX_EVENT_WORKER_BATCH_SIZE, true)]
+    #[case(0, false)]
+    #[case(usize::MAX, cfg!(target_pointer_width = "32"))]
+    fn event_query_batch_bounds_match_validation(#[case] value: usize, #[case] accepted: bool) {
+        assert_eq!(EventWorkerBatchSize::new(value, "batch").is_ok(), accepted);
+    }
 
     fn valid_delivery_settings() -> EventDeliverySettings {
         EventDeliverySettings::builder()

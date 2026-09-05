@@ -960,6 +960,7 @@ struct CliContract {
 struct FieldContract {
     name: String,
     nullable: bool,
+    wire_type: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1701,9 +1702,16 @@ fn cli_contract(command_name: &'static str, mut command: Command) -> CliContract
 }
 
 fn validate_cli_requirements(command_name: &str, command: &Command) {
-    let mut command = command
-        .clone()
-        .mut_args(|argument| argument.env(None::<&str>));
+    let mut command = command.clone().mut_args(|argument| {
+        let argument = argument.env(None::<&str>);
+        // Dependency probes exercise clap's argument graph, not value
+        // validation. A made-up value cannot satisfy every custom parser.
+        if argument.get_action().takes_values() {
+            argument.value_parser(clap::builder::StringValueParser::new())
+        } else {
+            argument
+        }
+    });
     command.build();
     let command_requirements = command
         .get_arguments()
@@ -1787,6 +1795,7 @@ fn cli_invocation<'a>(
 ) -> Vec<String> {
     let mut invocation = vec![command_name.to_string()];
     let mut seen = BTreeSet::new();
+    let mut positionals = Vec::new();
     for argument_id in arguments {
         if !seen.insert(argument_id) {
             continue;
@@ -1795,24 +1804,29 @@ fn cli_invocation<'a>(
             .get_arguments()
             .find(|argument| argument.get_id().as_str() == argument_id)
             .unwrap_or_else(|| panic!("unknown CLI requirement {argument_id} for {command_name}"));
+        if let Some(index) = argument.get_index() {
+            positionals.push((index, argument));
+        } else {
+            invocation.extend(cli_argument_tokens(argument));
+        }
+    }
+    positionals.sort_by_key(|(index, _)| *index);
+    if !positionals.is_empty() {
+        invocation.push("--".to_string());
+    }
+    for (_, argument) in positionals {
         invocation.extend(cli_argument_tokens(argument));
     }
     invocation
 }
 
 fn cli_argument_tokens(argument: &Arg) -> Vec<String> {
-    let option = if let Some(long) = argument.get_long() {
-        format!("--{long}")
-    } else {
-        format!(
-            "-{}",
-            argument
-                .get_short()
-                .expect("filtered CLI option has a name")
-        )
-    };
+    let option = argument
+        .get_long()
+        .map(|long| format!("--{long}"))
+        .or_else(|| argument.get_short().map(|short| format!("-{short}")));
     if !argument.get_action().takes_values() {
-        return vec![option];
+        return option.into_iter().collect();
     }
 
     let value = argument
@@ -1835,11 +1849,11 @@ fn cli_argument_tokens(argument: &Arg) -> Vec<String> {
         .map(|range| range.min_values().max(1))
         .unwrap_or(1);
     let mut tokens = Vec::with_capacity(value_count + 1);
-    if argument.is_require_equals_set() {
+    if let Some(option) = option.as_ref().filter(|_| argument.is_require_equals_set()) {
         tokens.push(format!("{option}={value}"));
         tokens.extend(std::iter::repeat_n(value, value_count.saturating_sub(1)));
     } else {
-        tokens.push(option);
+        tokens.extend(option);
         tokens.extend(std::iter::repeat_n(value, value_count));
     }
     tokens
@@ -2005,13 +2019,15 @@ fn appears_in_running_configuration(name: &str) -> bool {
 }
 
 fn event_contract() -> EventContract {
-    let minimal_envelope = serialized_event_envelope(false);
-    let populated_envelope = serialized_event_envelope(true);
-    let envelope_fields = direct_field_contracts(&minimal_envelope);
+    let minimal_envelope = serialized_event_envelope(false, false);
+    let populated_envelope = serialized_event_envelope(true, false);
+    let typed_envelope = serialized_event_envelope(true, true);
+    let envelope_fields = direct_field_contracts(&minimal_envelope, &typed_envelope);
     let provenance_fields = nested_field_contracts(
         "",
         &minimal_envelope["provenance"],
         &populated_envelope["provenance"],
+        &typed_envelope["provenance"],
     );
     EventContract {
         schema_version: BASE_AUDIT_DOCUMENT_SCHEMA_VERSION,
@@ -2054,7 +2070,7 @@ fn event_contract() -> EventContract {
     }
 }
 
-fn serialized_event_envelope(populated: bool) -> serde_json::Value {
+fn serialized_event_envelope(populated: bool, resolve_names: bool) -> serde_json::Value {
     use crate::events::{
         EventEnvelope, EventSequence, PrincipalId, Provenance, ProvenanceActor,
         ProvenancePrincipal, TaskId,
@@ -2069,12 +2085,12 @@ fn serialized_event_envelope(populated: bool) -> serde_json::Value {
                 kind: Some(ActorKind::User.as_str().to_string()),
                 principal: Some(ProvenancePrincipal {
                     principal_id: actor_id,
-                    name: None,
+                    name: resolve_names.then(|| "actor".to_string()),
                 }),
             },
             initiator: Some(ProvenancePrincipal {
                 principal_id: initiator_id,
-                name: None,
+                name: resolve_names.then(|| "initiator".to_string()),
             }),
             task_id: Some(task_id),
         }
@@ -2136,7 +2152,22 @@ fn sample_event(revision_aware: bool) -> NewEvent {
     .expect("sample event must satisfy runtime invariants")
 }
 
-fn direct_field_contracts(value: &serde_json::Value) -> Vec<FieldContract> {
+fn field_wire_type(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => panic!("wire-type fixture must populate every nullable field"),
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+fn direct_field_contracts(
+    value: &serde_json::Value,
+    populated: &serde_json::Value,
+) -> Vec<FieldContract> {
     let mut fields = value
         .as_object()
         .expect("serialized event envelope must be an object")
@@ -2144,6 +2175,7 @@ fn direct_field_contracts(value: &serde_json::Value) -> Vec<FieldContract> {
         .map(|(name, value)| FieldContract {
             name: name.clone(),
             nullable: value.is_null(),
+            wire_type: field_wire_type(&populated[name]),
         })
         .collect::<Vec<_>>();
     fields.sort_by(|left, right| left.name.cmp(&right.name));
@@ -2154,6 +2186,7 @@ fn nested_field_contracts(
     prefix: &str,
     minimal: &serde_json::Value,
     populated: &serde_json::Value,
+    typed: &serde_json::Value,
 ) -> Vec<FieldContract> {
     let populated = populated
         .as_object()
@@ -2171,12 +2204,14 @@ fn nested_field_contracts(
             name: path.clone(),
             nullable: minimal_value
                 .map_or_else(|| populated_value.is_null(), serde_json::Value::is_null),
+            wire_type: field_wire_type(&typed[name]),
         });
         if populated_value.is_object() {
             fields.extend(nested_field_contracts(
                 &path,
                 minimal_value.unwrap_or(&serde_json::Value::Null),
                 populated_value,
+                &typed[name],
             ));
         }
     }
@@ -2420,6 +2455,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cli_dependency_probes_do_not_run_value_validators() {
+        let command = Command::new("fixture").arg(
+            Arg::new("port")
+                .long("port")
+                .value_parser(clap::value_parser!(u16).range(1024..)),
+        );
+        assert!(
+            command
+                .clone()
+                .try_get_matches_from(["fixture", "--port", "8080"])
+                .is_ok()
+        );
+        let contract = cli_contract("fixture", command);
+        assert_eq!(contract.options[0].value_kind, "integer");
+    }
+
+    #[test]
+    fn cli_dependency_probes_accept_custom_validated_types() {
+        let command = Command::new("fixture").arg(Arg::new("name").long("name").value_parser(
+            |value: &str| {
+                value
+                    .strip_prefix("valid:")
+                    .map(str::to_string)
+                    .ok_or("missing prefix")
+            },
+        ));
+        let contract = cli_contract("fixture", command);
+        assert!(contract.options[0].requires.is_empty());
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn cli_dependency_probes_supply_required_positionals_in_index_order(
+        #[case] with_defaults: bool,
+    ) {
+        let mut command = Command::new("fixture")
+            .arg(Arg::new("optional").long("optional"))
+            .arg(Arg::new("z_first").index(1).required(true))
+            .arg(Arg::new("a_second").index(2).required(true));
+        if with_defaults {
+            command = command
+                .mut_arg("z_first", |argument| argument.default_value("first"))
+                .mut_arg("a_second", |argument| argument.default_value("second"));
+        }
+        command.build();
+        let invocation = cli_invocation("fixture", &command, ["a_second", "optional", "z_first"]);
+        assert_eq!(
+            invocation,
+            if with_defaults {
+                ["fixture", "--optional", "value", "--", "first", "second"]
+            } else {
+                ["fixture", "--optional", "value", "--", "value", "value"]
+            }
+        );
+        let contract = cli_contract("fixture", command);
+        assert_eq!(
+            contract
+                .options
+                .iter()
+                .filter(|option| option.required)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn cli_dependency_probes_supply_last_positionals_after_the_separator() {
+        let command = Command::new("fixture")
+            .arg(Arg::new("optional").long("optional"))
+            .arg(Arg::new("last").last(true).required(true));
+        let contract = cli_contract("fixture", command);
+        assert!(
+            contract
+                .options
+                .iter()
+                .find(|option| option.id == "last")
+                .unwrap()
+                .required
+        );
+    }
+
     #[rstest]
     #[case("backup")]
     #[case("backup_without_history")]
@@ -2588,7 +2706,7 @@ mod tests {
 
     #[test]
     fn token_lifetime_settings_publish_the_runtime_integer_cap() {
-        let expected = (Some(1), Some(i64::from(i32::MAX)));
+        let expected = (Some(1), Some(hubuum_domain::TokenLifetime::MAX_HOURS));
 
         assert_eq!(
             configuration_bounds("HUBUUM_TOKEN_LIFETIME_HOURS"),
@@ -2597,6 +2715,84 @@ mod tests {
         assert_eq!(
             configuration_bounds("HUBUUM_MAX_TOKEN_LIFETIME_HOURS"),
             expected
+        );
+    }
+
+    #[rstest]
+    #[case(
+        "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+        1,
+        hubuum_domain::MAX_EVENT_WORKER_BATCH_SIZE
+    )]
+    #[case(
+        "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
+        1,
+        hubuum_domain::MAX_EVENT_WORKER_BATCH_SIZE
+    )]
+    #[case(
+        "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+        1,
+        hubuum_domain::MAX_EVENT_WORKER_BATCH_SIZE
+    )]
+    #[case(
+        "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+        hubuum_domain::TokenRetentionBatchSize::MIN,
+        hubuum_domain::TokenRetentionBatchSize::MAX
+    )]
+    #[case(
+        "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
+        1,
+        crate::config::MAX_COMPUTED_REINDEX_BATCH_SIZE
+    )]
+    fn batch_settings_publish_the_authoritative_runtime_bounds(
+        #[case] name: &str,
+        #[case] minimum: usize,
+        #[case] maximum: usize,
+    ) {
+        assert_eq!(
+            configuration_bounds(name),
+            (Some(minimum as i64), Some(maximum as i64))
+        );
+    }
+
+    #[rstest]
+    #[case(serde_json::json!(1), "integer")]
+    #[case(serde_json::json!(1.5), "number")]
+    #[case(serde_json::json!("1"), "string")]
+    #[case(serde_json::json!(true), "boolean")]
+    #[case(serde_json::json!([]), "array")]
+    #[case(serde_json::json!({}), "object")]
+    fn event_fields_follow_serialized_wire_types(
+        #[case] value: serde_json::Value,
+        #[case] expected: &str,
+    ) {
+        let minimal = serde_json::json!({"id": null});
+        let populated = serde_json::json!({"id": value});
+        let direct = direct_field_contracts(&minimal, &populated);
+        let nested = nested_field_contracts("", &minimal, &populated, &populated);
+        assert_eq!(direct, nested);
+        assert_eq!(direct[0].wire_type, expected);
+        assert!(direct[0].nullable);
+    }
+
+    #[test]
+    fn provenance_name_wire_types_preserve_optional_nullability() {
+        let contract = event_contract();
+        let name = contract
+            .provenance_fields
+            .iter()
+            .find(|field| field.name == "actor.principal.name")
+            .unwrap();
+        assert_eq!(name.wire_type, "string");
+        assert!(name.nullable);
+    }
+
+    #[test]
+    #[should_panic(expected = "wire-type fixture must populate every nullable field")]
+    fn event_type_fixtures_cannot_silently_omit_nullable_values() {
+        direct_field_contracts(
+            &serde_json::json!({"id": null}),
+            &serde_json::json!({"id": null}),
         );
     }
 
@@ -2727,7 +2923,7 @@ mod tests {
     #[test]
     fn event_contract_uses_serialized_envelope_shape() {
         let contract = event_contract();
-        let serialized = serialized_event_envelope(false);
+        let serialized = serialized_event_envelope(false, false);
         let serialized_fields = serialized
             .as_object()
             .unwrap()
@@ -2763,7 +2959,7 @@ mod tests {
 
         assert_eq!(version, event.schema_version());
         assert_eq!(
-            serialized_event_envelope(revision_aware)["schema_version"],
+            serialized_event_envelope(revision_aware, false)["schema_version"],
             version
         );
     }

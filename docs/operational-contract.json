@@ -3388,7 +3388,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 9223372036854775807,
       "runtime_roles": [
         "all",
         "api",
@@ -3585,7 +3585,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 9223372036854775807,
       "runtime_roles": [
         "all",
         "api",
@@ -3736,7 +3736,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 9223372036854775807,
       "runtime_roles": [
         "all",
         "api",
@@ -5128,7 +5128,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 10,
-      "maximum": null,
+      "maximum": 9223372036854775807,
       "runtime_roles": [
         "all",
         "api",
@@ -5485,187 +5485,232 @@
     "envelope_fields": [
       {
         "name": "action",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "actor_kind",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "actor_user_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "after",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "before",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "collection_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "correlation_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "entity_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "entity_name",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "entity_type",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "event_id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "metadata",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "object"
       },
       {
         "name": "occurred_at",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "provenance",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "object"
       },
       {
         "name": "request_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "schema_version",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "summary",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       }
     ],
     "provenance_fields": [
       {
         "name": "actor",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "object"
       },
       {
         "name": "actor.kind",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "actor.principal",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "actor.principal.name",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "actor.principal.principal_id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "initiator",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "initiator.name",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "initiator.principal_id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "task_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       }
     ],
     "sink_payload_fields": [
       {
         "name": "action",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "actor_kind",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "actor_user_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "after",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "before",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "object"
       },
       {
         "name": "collection_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "correlation_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "entity_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "integer"
       },
       {
         "name": "entity_name",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "entity_type",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "event_id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "id",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "metadata",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "object"
       },
       {
         "name": "occurred_at",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       },
       {
         "name": "provenance",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "object"
       },
       {
         "name": "request_id",
-        "nullable": true
+        "nullable": true,
+        "wire_type": "string"
       },
       {
         "name": "schema_version",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "integer"
       },
       {
         "name": "summary",
-        "nullable": false
+        "nullable": false,
+        "wire_type": "string"
       }
     ],
     "schema_version_semantics": [

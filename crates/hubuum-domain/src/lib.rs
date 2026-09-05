@@ -21,7 +21,7 @@ pub use event_delivery::{EventDeliveryStatus, EventDeliveryStatusParseError};
 pub use event_policy::{
     EVENT_DELIVERY_RETRY_BACKOFF_CONSTRAINT, EVENT_DELIVERY_TRANSPORT_TIMEOUT_CONSTRAINT,
     EventDeliverySettings, EventDeliverySettingsBuilder, EventFanoutSettings, EventPolicyError,
-    EventRetentionSettings,
+    EventRetentionSettings, MAX_EVENT_WORKER_BATCH_SIZE,
 };
 pub use identifier::{
     AuthorizationGrantId, ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId,
@@ -46,7 +46,10 @@ pub use json_value::{
     MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };
 pub use maintenance::{MaintenanceState, MaintenanceStateParseError};
-pub use operational_constraint::OperationalConstraint;
+pub use operational_constraint::{
+    ConstraintViolation, OperationalConstraint, OrderedConstraint, PairedConstraint,
+    RequiredConstraint,
+};
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{

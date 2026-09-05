@@ -14,7 +14,7 @@ The snapshot is generated from typed or validated sources and records:
 - environment-variable ownership, value types, non-secret defaults, numeric
   bounds, allowed enum values, cross-field constraints, process-role
   applicability, secret classification, and running-configuration exposure;
-- event-envelope, nested provenance, and sink-payload fields and nullability,
+- event-envelope, nested provenance, and sink-payload fields, JSON wire types, and nullability,
   actor/entity/action catalogs, schema-version semantics, and redaction rules;
 - backup and import versions and section catalogs, plus export formats and
   supported enum values; and
@@ -53,6 +53,12 @@ never serialized into the snapshot. Machine-dependent defaults are represented
 by `dynamic_default` instead of serializing the value observed on the machine
 that generated the snapshot.
 
+Numeric batch and token-lifetime limits reference the same bounds used by their
+validated runtime types. Cross-field constraints have kind-specific evaluators;
+required and paired values are passed directly to their consumers after validation.
+CLI dependency probes isolate the argument graph from custom value parsers and
+supply required positional arguments in their declared order.
+
 ## Compatibility Classification
 
 Changes are classified against the latest stable release snapshot:
@@ -76,6 +82,11 @@ for documents containing revision-bearing snapshots. These values come from the
 audit-document version sources used by event writes, stored-event projection,
 and sink fan-out; changing the envelope builder's default does not satisfy the
 gate. Import section names come from the serialized graph's Serde keys.
+Serialized wire-type changes are breaking and require both event versions to
+increase. Legacy snapshots without wire-type metadata can gain it without a
+version bump; once recorded, removing it is also a breaking change. Event
+fixtures populate nullable values so their underlying types cannot silently
+disappear from the contract.
 Backup and import shape or section changes must increase their document version. The
 checker reports both the shape change and a missing version bump so a format
 change cannot silently reuse an old version number.

@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use hubuum_domain::OperationalConstraint;
+use hubuum_domain::OrderedConstraint;
 
-pub(crate) const TASK_HEARTBEAT_CONSTRAINT: OperationalConstraint =
-    OperationalConstraint::less_than("HUBUUM_TASK_HEARTBEAT_SECONDS", "HUBUUM_TASK_LEASE_SECONDS");
+pub(crate) const TASK_HEARTBEAT_CONSTRAINT: OrderedConstraint =
+    OrderedConstraint::less_than("HUBUUM_TASK_HEARTBEAT_SECONDS", "HUBUUM_TASK_LEASE_SECONDS");
 
 /// Validated settings for task execution, lease renewal, and maintenance work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

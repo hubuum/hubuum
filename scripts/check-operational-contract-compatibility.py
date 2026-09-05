@@ -245,6 +245,13 @@ class Comparator:
         for name in sorted(old_fields.keys() - new_fields.keys()):
             self.add("breaking", f"{kind}-removed", f"{path}.{name}", old_fields[name], None, f"removed a {kind}")
         for name in sorted(old_fields.keys() & new_fields.keys()):
+            # Older artifacts did not record wire types. Adding that metadata
+            # alone does not change the event format, but removing it must not
+            # provide an escape hatch from version enforcement.
+            old_type = old_fields[name].get("wire_type")
+            new_type = new_fields[name].get("wire_type")
+            if old_type is not None and old_type != new_type:
+                self.add("breaking", f"{kind}-type-changed", f"{path}.{name}.wire_type", old_type, new_type, f"{kind} wire type changed")
             if old_fields[name].get("nullable") != new_fields[name].get("nullable"):
                 classification = "breaking" if not new_fields[name].get("nullable") else "additive"
                 self.add(classification, f"{kind}-nullability-changed", f"{path}.{name}.nullable", old_fields[name].get("nullable"), new_fields[name].get("nullable"), f"{kind} nullability changed")

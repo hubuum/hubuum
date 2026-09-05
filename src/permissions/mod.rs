@@ -133,30 +133,20 @@ pub(crate) async fn build_permission_backend(
 
         #[cfg(feature = "permissions-treetop")]
         PermissionBackendKind::Treetop => {
-            if !constraints::TREETOP_BACKEND
-                .requirement_is_satisfied(true, cfg.treetop_url.is_some())
-            {
-                return Err(ApiError::BadRequest(
-                    "HUBUUM_TREETOP_URL is required".to_string(),
-                ));
-            }
-            let url = cfg
-                .treetop_url
-                .as_deref()
-                .expect("treetop constraint accepted the configured URL");
+            let url = constraints::TREETOP_BACKEND
+                .require(cfg.treetop_url.as_deref())
+                .map_err(|_| ApiError::BadRequest("HUBUUM_TREETOP_URL is required".to_string()))?;
             let backend = treetop::TreetopPermissionBackend::connect(url, cfg, storage).await?;
             Ok(Arc::new(backend))
         }
 
         #[cfg(not(feature = "permissions-treetop"))]
         PermissionBackendKind::Treetop => {
-            if !constraints::TREETOP_BACKEND.requirement_is_satisfied(true, false) {
-                Err(ApiError::BadRequest(
+            constraints::TREETOP_BACKEND.require(None).map_err(|_| {
+                ApiError::BadRequest(
                     "binary built without `permissions-treetop` feature".to_string(),
-                ))
-            } else {
-                unreachable!("treetop constraint accepted a missing compiled feature")
-            }
+                )
+            })
         }
     }
 }

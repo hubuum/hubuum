@@ -191,13 +191,12 @@ fn consumer_resolver(
             builder.provider(provider)?.build()
         }
         SecretSource::File => {
-            if !constraints::SECRET_FILE_ROOT.requirement_is_satisfied(true, root.is_some()) {
-                return Err(SecretError::new(
+            let root = constraints::SECRET_FILE_ROOT.require(root).map_err(|_| {
+                SecretError::new(
                     SecretErrorKind::InvalidReference,
                     "file secret source requires a configured root",
-                ));
-            }
-            let root = root.expect("file-root constraint accepted the configured root");
+                )
+            })?;
             builder
                 .provider(
                     FileProvider::builder(root)

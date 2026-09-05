@@ -5,11 +5,13 @@
 //! declaring its owner and sensitivity here, which prevents a consumer from
 //! quietly introducing an ambiguous name such as `HUBUUM_TIMEOUT`.
 
-use hubuum_domain::OperationalConstraint;
+use hubuum_domain::{
+    MAX_EVENT_WORKER_BATCH_SIZE, OperationalConstraint, TokenLifetime, TokenRetentionBatchSize,
+};
 
 use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
 
-use super::AppConfig;
+use super::{AppConfig, defaults::MAX_COMPUTED_REINDEX_BATCH_SIZE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentOwner {
@@ -266,6 +268,14 @@ macro_rules! configuration_bound {
             value: |config| config.$field as i128,
         }
     };
+    ($name:literal, $field:ident, minimum = $minimum:expr, maximum = $maximum:expr) => {
+        ConfigurationBound {
+            name: $name,
+            minimum: Some($minimum),
+            maximum: Some($maximum),
+            value: |config| config.$field as i128,
+        }
+    };
     ($name:literal, $field:ident, maximum = $maximum:expr) => {
         ConfigurationBound {
             name: $name,
@@ -291,9 +301,13 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!(
         "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
         computed_reindex_batch_size,
-        maximum = 1_000
+        maximum = MAX_COMPUTED_REINDEX_BATCH_SIZE as i64
     ),
-    configuration_bound!("HUBUUM_EVENT_FANOUT_BATCH_SIZE", event_fanout_batch_size),
+    configuration_bound!(
+        "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+        event_fanout_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
+    ),
     configuration_bound!(
         "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
         event_fanout_poll_interval_ms
@@ -304,7 +318,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ),
     configuration_bound!(
         "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
-        event_delivery_batch_size
+        event_delivery_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
     ),
     configuration_bound!(
         "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS",
@@ -341,7 +356,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ),
     configuration_bound!(
         "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
-        event_retention_purge_batch_size
+        event_retention_purge_batch_size,
+        maximum = MAX_EVENT_WORKER_BATCH_SIZE as i64
     ),
     configuration_bound!(
         "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
@@ -404,12 +420,12 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!(
         "HUBUUM_TOKEN_LIFETIME_HOURS",
         token_lifetime_hours,
-        maximum = i32::MAX as i64
+        maximum = TokenLifetime::MAX_HOURS
     ),
     configuration_bound!(
         "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
         max_token_lifetime_hours,
-        maximum = i32::MAX as i64
+        maximum = TokenLifetime::MAX_HOURS
     ),
     configuration_bound!("HUBUUM_TOKEN_RETENTION_DAYS", token_retention_days),
     configuration_bound!(
@@ -419,7 +435,8 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!(
         "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
         token_retention_purge_batch_size,
-        minimum = 10
+        minimum = TokenRetentionBatchSize::MIN as i64,
+        maximum = TokenRetentionBatchSize::MAX as i64
     ),
     configuration_bound!(
         "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
@@ -491,43 +508,39 @@ pub(crate) mod constraints {
 
     pub(crate) use crate::tasks::TASK_HEARTBEAT_CONSTRAINT as TASK_HEARTBEAT;
 
-    use hubuum_domain::OperationalConstraint;
+    use hubuum_domain::{OrderedConstraint, PairedConstraint, RequiredConstraint};
 
-    pub(crate) const PAGE_LIMITS: OperationalConstraint = OperationalConstraint::less_than_or_equal(
-        "HUBUUM_DEFAULT_PAGE_LIMIT",
-        "HUBUUM_MAX_PAGE_LIMIT",
-    );
-    pub(crate) const WORKER_ROLE: OperationalConstraint = OperationalConstraint::requires(
+    pub(crate) const PAGE_LIMITS: OrderedConstraint =
+        OrderedConstraint::less_than_or_equal("HUBUUM_DEFAULT_PAGE_LIMIT", "HUBUUM_MAX_PAGE_LIMIT");
+    pub(crate) const WORKER_ROLE: RequiredConstraint = RequiredConstraint::new(
         "HUBUUM_RUNTIME_ROLE=worker",
         "at least one task, fan-out, delivery, event-retention, or token-retention worker",
     );
-    pub(crate) const RETENTION_ARCHIVE: OperationalConstraint = OperationalConstraint::requires(
+    pub(crate) const RETENTION_ARCHIVE: RequiredConstraint = RequiredConstraint::new(
         "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true",
         "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
     );
-    pub(crate) const LOGIN_BACKOFF: OperationalConstraint =
-        OperationalConstraint::less_than_or_equal(
-            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
-            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
-        );
-    pub(crate) const TLS_KEY_PAIR: OperationalConstraint =
-        OperationalConstraint::paired("HUBUUM_TLS_CERT_PATH", "HUBUUM_TLS_KEY_PATH");
-    pub(crate) const TREETOP_BACKEND: OperationalConstraint = OperationalConstraint::requires(
+    pub(crate) const LOGIN_BACKOFF: OrderedConstraint = OrderedConstraint::less_than_or_equal(
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+        "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+    );
+    pub(crate) const TLS_KEY_PAIR: PairedConstraint =
+        PairedConstraint::new("HUBUUM_TLS_CERT_PATH", "HUBUUM_TLS_KEY_PATH");
+    pub(crate) const TREETOP_BACKEND: RequiredConstraint = RequiredConstraint::new(
         "HUBUUM_PERMISSION_BACKEND=treetop",
         "HUBUUM_TREETOP_URL and the compiled permissions-treetop feature",
     );
-    pub(crate) const VALKEY_URL: OperationalConstraint = OperationalConstraint::requires(
+    pub(crate) const VALKEY_URL: RequiredConstraint = RequiredConstraint::new(
         "HUBUUM_LOGIN_RATE_LIMIT_BACKEND=valkey",
         "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL and the compiled valkey feature",
     );
-    pub(crate) const SECRET_FILE_ROOT: OperationalConstraint =
-        OperationalConstraint::requires("HUBUUM_SECRET_SOURCE=file", "HUBUUM_SECRET_FILE_ROOT");
-    pub(crate) const TOKEN_PREVIOUS_KEY_IDS: OperationalConstraint =
-        OperationalConstraint::requires(
-            "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
-            "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
-        );
-    pub(crate) const STABLE_TOKEN_HASH_KEY: OperationalConstraint = OperationalConstraint::requires(
+    pub(crate) const SECRET_FILE_ROOT: RequiredConstraint =
+        RequiredConstraint::new("HUBUUM_SECRET_SOURCE=file", "HUBUUM_SECRET_FILE_ROOT");
+    pub(crate) const TOKEN_PREVIOUS_KEY_IDS: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS",
+        "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID",
+    );
+    pub(crate) const STABLE_TOKEN_HASH_KEY: RequiredConstraint = RequiredConstraint::new(
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true",
         "resolvable stable token hash key material",
     );
@@ -535,20 +548,20 @@ pub(crate) mod constraints {
 
 /// Cross-field configuration contracts shared with their runtime validators.
 pub(crate) const CONFIGURATION_CONSTRAINTS: &[OperationalConstraint] = &[
-    constraints::PAGE_LIMITS,
-    constraints::TASK_HEARTBEAT,
-    constraints::WORKER_ROLE,
-    constraints::DELIVERY_TRANSPORT_TIMEOUT,
-    constraints::DELIVERY_RETRY_BACKOFF,
-    constraints::RETENTION_ARCHIVE,
-    constraints::LOGIN_BACKOFF,
-    constraints::TOKEN_LIFETIME,
-    constraints::TLS_KEY_PAIR,
-    constraints::TREETOP_BACKEND,
-    constraints::VALKEY_URL,
-    constraints::SECRET_FILE_ROOT,
-    constraints::TOKEN_PREVIOUS_KEY_IDS,
-    constraints::STABLE_TOKEN_HASH_KEY,
+    constraints::PAGE_LIMITS.definition(),
+    constraints::TASK_HEARTBEAT.definition(),
+    constraints::WORKER_ROLE.definition(),
+    constraints::DELIVERY_TRANSPORT_TIMEOUT.definition(),
+    constraints::DELIVERY_RETRY_BACKOFF.definition(),
+    constraints::RETENTION_ARCHIVE.definition(),
+    constraints::LOGIN_BACKOFF.definition(),
+    constraints::TOKEN_LIFETIME.definition(),
+    constraints::TLS_KEY_PAIR.definition(),
+    constraints::TREETOP_BACKEND.definition(),
+    constraints::VALKEY_URL.definition(),
+    constraints::SECRET_FILE_ROOT.definition(),
+    constraints::TOKEN_PREVIOUS_KEY_IDS.definition(),
+    constraints::STABLE_TOKEN_HASH_KEY.definition(),
 ];
 
 pub(crate) fn configuration_constraints() -> Vec<String> {
