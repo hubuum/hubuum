@@ -35,9 +35,10 @@ const MAX_OTLP_HEADERS: usize = 16;
 const MAX_OTLP_HEADERS_BYTES: usize = 8 * 1024;
 const MAX_TRACE_HEADER_BYTES: usize = 512;
 const MAX_TRACESTATE_MEMBERS: usize = 32;
-const MAX_QUEUE_CAPACITY: usize = 65_536;
-const MAX_BATCH_SIZE: usize = 8_192;
-const MAX_TIMEOUT_MS: u64 = 60_000;
+pub(crate) const MAX_QUEUE_CAPACITY: usize = 65_536;
+pub(crate) const MAX_BATCH_SIZE: usize = 8_192;
+pub(crate) const MAX_TIMEOUT_MS: u64 = 60_000;
+pub(crate) const SAMPLE_RATIO_BOUNDS: std::ops::RangeInclusive<f64> = 0.0..=1.0;
 const MAX_RESOURCE_VALUE_BYTES: usize = 128;
 
 const HTTP_SERVER_ATTRIBUTES: &[&str] = &[
@@ -272,8 +273,7 @@ pub struct TracingSettings {
     endpoint: Option<String>,
     headers: HashMap<String, String>,
     ca_cert_path: Option<String>,
-    client_cert_path: Option<String>,
-    client_key_path: Option<String>,
+    client_identity_paths: Option<(String, String)>,
     connect_timeout: Duration,
     export_timeout: Duration,
     flush_timeout: Duration,
@@ -297,8 +297,14 @@ impl fmt::Debug for TracingSettings {
             .field("endpoint_configured", &self.endpoint.is_some())
             .field("header_count", &self.headers.len())
             .field("ca_cert_configured", &self.ca_cert_path.is_some())
-            .field("client_cert_configured", &self.client_cert_path.is_some())
-            .field("client_key_configured", &self.client_key_path.is_some())
+            .field(
+                "client_cert_configured",
+                &self.client_identity_paths.is_some(),
+            )
+            .field(
+                "client_key_configured",
+                &self.client_identity_paths.is_some(),
+            )
             .field("connect_timeout", &self.connect_timeout)
             .field("export_timeout", &self.export_timeout)
             .field("flush_timeout", &self.flush_timeout)
@@ -318,6 +324,8 @@ impl fmt::Debug for TracingSettings {
 
 impl TracingSettings {
     pub fn from_config(config: &AppConfig) -> Result<Self, String> {
+        use crate::config::environment::constraints;
+
         validate_timeout(
             "tracing_connect_timeout_ms",
             config.tracing_connect_timeout_ms,
@@ -333,14 +341,15 @@ impl TracingSettings {
             ));
         }
         if !(1..=MAX_BATCH_SIZE).contains(&config.tracing_batch_size)
-            || config.tracing_batch_size > config.tracing_queue_capacity
+            || !constraints::TRACING_BATCH_SIZE
+                .ordered_values_satisfy(config.tracing_batch_size, config.tracing_queue_capacity)
         {
             return Err(format!(
                 "tracing_batch_size must be between 1 and {MAX_BATCH_SIZE} and no larger than tracing_queue_capacity"
             ));
         }
         if !config.tracing_sample_ratio.is_finite()
-            || !(0.0..=1.0).contains(&config.tracing_sample_ratio)
+            || !SAMPLE_RATIO_BOUNDS.contains(&config.tracing_sample_ratio)
         {
             return Err("tracing_sample_ratio must be a finite value between 0 and 1".to_string());
         }
@@ -359,23 +368,27 @@ impl TracingSettings {
             .as_deref()
             .map(validate_endpoint)
             .transpose()?;
-        if config.tracing_enabled && endpoint.is_none() {
+        if !constraints::TRACING_ENDPOINT
+            .requirement_is_satisfied(config.tracing_enabled, endpoint.is_some())
+        {
             return Err("tracing_otlp_endpoint is required when tracing is enabled".to_string());
         }
-        if config.tracing_otlp_client_cert.is_some() != config.tracing_otlp_client_key.is_some() {
-            return Err(
+        let client_identity_paths = constraints::TRACING_KEY_PAIR
+            .resolve(
+                config.tracing_otlp_client_cert.clone(),
+                config.tracing_otlp_client_key.clone(),
+            )
+            .map_err(|_| {
                 "tracing_otlp_client_cert and tracing_otlp_client_key must be configured together"
-                    .to_string(),
-            );
-        }
+                    .to_string()
+            })?;
 
         Ok(Self {
             enabled: config.tracing_enabled,
             endpoint,
             headers: parse_headers(config.tracing_otlp_headers.as_deref())?,
             ca_cert_path: config.tracing_otlp_ca_cert.clone(),
-            client_cert_path: config.tracing_otlp_client_cert.clone(),
-            client_key_path: config.tracing_otlp_client_key.clone(),
+            client_identity_paths,
             connect_timeout: Duration::from_millis(config.tracing_connect_timeout_ms),
             export_timeout: Duration::from_millis(config.tracing_export_timeout_ms),
             flush_timeout: Duration::from_millis(config.tracing_flush_timeout_ms),
@@ -645,10 +658,7 @@ fn build_otlp_exporter(
         // semantics for merging private roots into the native store.
         client = client.tls_certs_only(certificates);
     }
-    if let (Some(cert_path), Some(key_path)) = (
-        settings.client_cert_path.as_deref(),
-        settings.client_key_path.as_deref(),
-    ) {
+    if let Some((cert_path, key_path)) = &settings.client_identity_paths {
         let mut pem = read_bounded_regular_file(
             Path::new(cert_path),
             "OTLP client certificate",
@@ -1159,6 +1169,47 @@ mod tests {
         assert!(!debug.contains("collector.example"));
         assert!(!debug.contains("secret"));
         assert!(!debug.contains("key.pem"));
+    }
+
+    #[rstest::rstest]
+    #[case(-0.01, false)]
+    #[case(0.0, true)]
+    #[case(0.25, true)]
+    #[case(1.0, true)]
+    #[case(1.01, false)]
+    #[case(f64::NAN, false)]
+    #[case(f64::INFINITY, false)]
+    fn sampling_ratio_bounds_preserve_fractional_values(
+        #[case] ratio: f64,
+        #[case] accepted: bool,
+    ) {
+        let mut config = crate::config::get_config().unwrap();
+        config.tracing_sample_ratio = ratio;
+        assert_eq!(TracingSettings::from_config(&config).is_ok(), accepted);
+    }
+
+    #[rstest::rstest]
+    #[case(None, None, true)]
+    #[case(Some("cert.pem"), Some("key.pem"), true)]
+    #[case(Some("cert.pem"), None, false)]
+    #[case(None, Some("key.pem"), false)]
+    fn client_identity_paths_are_preserved_as_a_pair(
+        #[case] cert: Option<&str>,
+        #[case] key: Option<&str>,
+        #[case] accepted: bool,
+    ) {
+        let mut config = crate::config::get_config().unwrap();
+        config.tracing_otlp_client_cert = cert.map(str::to_string);
+        config.tracing_otlp_client_key = key.map(str::to_string);
+        let result = TracingSettings::from_config(&config);
+        assert_eq!(result.is_ok(), accepted);
+        if let Ok(settings) = result {
+            assert_eq!(
+                settings.client_identity_paths,
+                cert.zip(key)
+                    .map(|(cert, key)| (cert.to_string(), key.to_string()))
+            );
+        }
     }
 
     #[test]

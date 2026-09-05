@@ -338,6 +338,23 @@ pub enum StorageErrorKind {
 }
 
 impl StorageErrorKind {
+    pub const ALL: [Self; 14] = [
+        Self::AuthorizationUnavailable,
+        Self::InvalidInput,
+        Self::Conflict,
+        Self::Backend,
+        Self::PermissionDenied,
+        Self::Internal,
+        Self::NotFound,
+        Self::InputTooLarge,
+        Self::RevisionConflict,
+        Self::PreconditionFailed,
+        Self::RateLimited,
+        Self::Unavailable,
+        Self::AuthenticationRequired,
+        Self::ValidationFailed,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

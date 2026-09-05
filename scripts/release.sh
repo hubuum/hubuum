@@ -13,7 +13,8 @@ Usage:
 Commands:
   prepare <version>  Create release/v<version> from main, bump the package version,
                      roll Unreleased notes into the release section, regenerate
-                     docs/openapi.json, and run release checks.
+                     docs/openapi.json and docs/operational-contract.json, and run
+                     release checks.
   tag                Verify main is clean and create annotated tag v<current-version>.
 EOF
 }
@@ -131,6 +132,9 @@ prepare_release() {
 
   cargo update
   cargo run --bin hubuum-openapi --locked > docs/openapi.json
+  cargo run --bin hubuum-operational-contracts --locked \
+    --features embedded-migrations -- json \
+    > docs/operational-contract.json
   cargo fmt --all
 
   ./scripts/check-version-bump.sh

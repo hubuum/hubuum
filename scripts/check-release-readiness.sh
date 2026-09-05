@@ -32,6 +32,11 @@ if ! grep -Eq "\"version\": \"$package_version\"" docs/openapi.json; then
   exit 1
 fi
 
+if ! grep -Eq "\"release\": \"$package_version\"" docs/operational-contract.json; then
+  echo "docs/operational-contract.json does not match Cargo.toml version $package_version" >&2
+  exit 1
+fi
+
 release_ref="${1:-${GITHUB_REF_NAME:-}}"
 if [[ -n "$release_ref" && "$release_ref" == v* ]]; then
   expected_tag="v$package_version"
