@@ -155,6 +155,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   observe rotation after cache refresh; PostgreSQL pools and token hashing
   explicitly require restart rather than claiming unsafe live rotation.
 
+- **Breaking:** template execution requires `hubuum-template-worker` beside the
+  server and administrator binaries. Containers and release archives include
+  it. Rendering and validation now enforce worker heap, deadline, admission,
+  protocol, and output budgets. Async worker supervision keeps request threads
+  responsive, bounds waiting work, and cleans up cancelled children, with
+  lifecycle logs and metrics. Remote URLs and headers and email subjects have
+  smaller output caps. Existing integration and export trailing-newline
+  behavior is preserved. See `docs/template_worker.md` for limits and deployment.
+
 ### Fixed
 
 - The memory storage backend now returns HTTP 400 with an actionable message

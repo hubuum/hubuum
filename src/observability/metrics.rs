@@ -15,6 +15,7 @@ mod secret;
 mod security;
 mod storage;
 mod task;
+mod template;
 mod timer;
 mod token;
 mod tracing;
@@ -65,6 +66,7 @@ pub use self::task::{
     task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
     task_worker_config, task_worker_iteration,
 };
+pub(crate) use self::template::template_worker_event;
 pub(crate) use self::token::{token_authentication, token_hash_key_ring};
 pub(crate) use self::tracing::{
     trace_export_batch, trace_flush, trace_queue_utilization, trace_span_lifecycle,
@@ -153,6 +155,8 @@ struct Metrics {
     import_failed_items: Counter<u64>,
     remote_call_duration: Histogram<f64>,
     remote_call_results: Counter<u64>,
+    template_worker_events: Counter<u64>,
+    template_worker_duration: Histogram<f64>,
     login_attempts: Counter<u64>,
     login_lockouts: Counter<u64>,
     #[cfg(feature = "login-rate-limit-valkey")]
