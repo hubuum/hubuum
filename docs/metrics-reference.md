@@ -79,6 +79,15 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_token_hash_key_info` | gauge | none | process | `mode`, `active_key_id`, `ring_identity` | Token hash key-ring identity |
 | `hubuum_token_hash_keys` | gauge | none | process | `state` | Configured token hash keys |
 | `hubuum_token_hash_stored` | gauge | none | database | `key_state`, `lifecycle` | Stored bearer tokens by key lifecycle |
+| `hubuum_trace_export_batches_total` | counter | none | process | `outcome` | OpenTelemetry export batches by outcome |
+| `hubuum_trace_export_spans_total` | counter | none | process | `outcome` | OpenTelemetry spans submitted in export batches by outcome |
+| `hubuum_trace_flushes_total` | counter | none | process | `outcome` | OpenTelemetry shutdown flushes by outcome |
+| `hubuum_trace_spans_dropped_total` | counter | none | process | `reason` | OpenTelemetry spans dropped by bounded reason |
+| `hubuum_trace_spans_total` | counter | none | process | `category`, `state` | Sampled OpenTelemetry spans by closed category and lifecycle state |
+| `hubuum_tracing_info` | gauge | none | process | `sampling_mode` | Configured OpenTelemetry sampling mode |
+| `hubuum_tracing_queue_capacity` | gauge | none | process | none | Configured OpenTelemetry export queue capacity |
+| `hubuum_tracing_queue_utilization` | gauge | none | process | none | OpenTelemetry spans waiting for export |
+| `hubuum_tracing_sample_ratio` | gauge | none | process | none | Configured OpenTelemetry trace sampling ratio |
 | `process_cpu_seconds_total` | counter | seconds | process | none | Process user and system CPU time |
 | `process_max_fds` | gauge | none | process | none | Process file-descriptor limit |
 | `process_open_fds` | gauge | none | process | none | Open file descriptors or handles |

@@ -10,6 +10,7 @@ use hubuum_domain::{
 };
 
 use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
+use crate::observability::tracing::{MAX_BATCH_SIZE, MAX_QUEUE_CAPACITY, MAX_TIMEOUT_MS};
 
 use super::{AppConfig, defaults::MAX_COMPUTED_REINDEX_BATCH_SIZE};
 
@@ -290,6 +291,31 @@ macro_rules! configuration_bound {
 /// Runtime validation and the generated operational contract consume these
 /// same entries, including the accessor for the value being validated.
 pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
+    configuration_bound!(
+        "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
+        tracing_connect_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_EXPORT_TIMEOUT_MS",
+        tracing_export_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_FLUSH_TIMEOUT_MS",
+        tracing_flush_timeout_ms,
+        maximum = MAX_TIMEOUT_MS as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_QUEUE_CAPACITY",
+        tracing_queue_capacity,
+        maximum = MAX_QUEUE_CAPACITY as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TRACING_BATCH_SIZE",
+        tracing_batch_size,
+        maximum = MAX_BATCH_SIZE as i64
+    ),
     configuration_bound!("HUBUUM_ACTIX_WORKERS", actix_workers),
     configuration_bound!("HUBUUM_TASK_POLL_INTERVAL_MS", task_poll_interval_ms),
     configuration_bound!("HUBUUM_TASK_LEASE_SECONDS", task_lease_seconds),
@@ -510,6 +536,19 @@ pub(crate) mod constraints {
 
     use hubuum_domain::{OrderedConstraint, PairedConstraint, RequiredConstraint};
 
+    pub(crate) const TRACING_BATCH_SIZE: OrderedConstraint = OrderedConstraint::less_than_or_equal(
+        "HUBUUM_TRACING_BATCH_SIZE",
+        "HUBUUM_TRACING_QUEUE_CAPACITY",
+    );
+    pub(crate) const TRACING_ENDPOINT: RequiredConstraint = RequiredConstraint::new(
+        "HUBUUM_TRACING_ENABLED=true",
+        "HUBUUM_TRACING_OTLP_ENDPOINT",
+    );
+    pub(crate) const TRACING_KEY_PAIR: PairedConstraint = PairedConstraint::new(
+        "HUBUUM_TRACING_OTLP_CLIENT_CERT",
+        "HUBUUM_TRACING_OTLP_CLIENT_KEY",
+    );
+
     pub(crate) const PAGE_LIMITS: OrderedConstraint =
         OrderedConstraint::less_than_or_equal("HUBUUM_DEFAULT_PAGE_LIMIT", "HUBUUM_MAX_PAGE_LIMIT");
     pub(crate) const WORKER_ROLE: RequiredConstraint = RequiredConstraint::new(
@@ -548,6 +587,9 @@ pub(crate) mod constraints {
 
 /// Cross-field configuration contracts shared with their runtime validators.
 pub(crate) const CONFIGURATION_CONSTRAINTS: &[OperationalConstraint] = &[
+    constraints::TRACING_BATCH_SIZE.definition(),
+    constraints::TRACING_ENDPOINT.definition(),
+    constraints::TRACING_KEY_PAIR.definition(),
     constraints::PAGE_LIMITS.definition(),
     constraints::TASK_HEARTBEAT.definition(),
     constraints::WORKER_ROLE.definition(),

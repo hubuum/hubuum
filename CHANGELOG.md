@@ -50,8 +50,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   migration notes; the generated metric reference replaces a duplicated manual
   inventory. Runtime metric construction and label validation, numeric bounds,
   cross-field rules, serialized document fields, and CLI dependencies now feed
-  the same checked definitions used by the snapshot. Relaxed CLI constraints
-  remain additive, and exceptions must cite notes from the candidate release.
+  the same checked definitions used by the snapshot, including OpenTelemetry
+  configuration and metrics. Relaxed CLI constraints remain additive, and
+  exceptions must cite notes from the candidate release.
   Event version checks cover both base and revision-aware production events,
   including serialized field-type changes, and import section catalogs follow
   serialized graph names. Batch limits track validated runtime bounds, and

@@ -2784,6 +2784,165 @@
       "feature": null
     },
     {
+      "name": "hubuum_trace_export_batches_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "OpenTelemetry export batches by outcome",
+      "feature": null
+    },
+    {
+      "name": "hubuum_trace_export_spans_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "OpenTelemetry spans submitted in export batches by outcome",
+      "feature": null
+    },
+    {
+      "name": "hubuum_trace_flushes_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "OpenTelemetry shutdown flushes by outcome",
+      "feature": null
+    },
+    {
+      "name": "hubuum_trace_spans_dropped_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "reason",
+          "bounded_by": "enumerated values",
+          "values": [
+            "classification",
+            "queue_saturation"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "OpenTelemetry spans dropped by bounded reason",
+      "feature": null
+    },
+    {
+      "name": "hubuum_trace_spans_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "category",
+          "bounded_by": "enumerated values",
+          "values": [
+            "http",
+            "task",
+            "event",
+            "outbound",
+            "database",
+            "storage",
+            "authorization",
+            "authentication"
+          ]
+        },
+        {
+          "name": "state",
+          "bounded_by": "enumerated values",
+          "values": [
+            "started",
+            "ended"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Sampled OpenTelemetry spans by closed category and lifecycle state",
+      "feature": null
+    },
+    {
+      "name": "hubuum_tracing_info",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "sampling_mode",
+          "bounded_by": "enumerated values",
+          "values": [
+            "off",
+            "always_on",
+            "parent_based_ratio"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured OpenTelemetry sampling mode",
+      "feature": null
+    },
+    {
+      "name": "hubuum_tracing_queue_capacity",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured OpenTelemetry export queue capacity",
+      "feature": null
+    },
+    {
+      "name": "hubuum_tracing_queue_utilization",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "OpenTelemetry spans waiting for export",
+      "feature": null
+    },
+    {
+      "name": "hubuum_tracing_sample_ratio",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Configured OpenTelemetry trace sampling ratio",
+      "feature": null
+    },
+    {
       "name": "process_cpu_seconds_total",
       "kind": "counter",
       "unit": "seconds",
@@ -5183,6 +5342,396 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TRACING_BATCH_SIZE",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "512"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 8192,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 60000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_DEPLOYMENT_ENVIRONMENT",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "production"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_ENABLED",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_EXPORT_TIMEOUT_MS",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 60000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_FLUSH_TIMEOUT_MS",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "5000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 60000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_OTLP_CA_CERT",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_OTLP_CLIENT_CERT",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_OTLP_CLIENT_KEY",
+      "owner": "tracing",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_OTLP_ENDPOINT",
+      "owner": "tracing",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_OTLP_HEADERS",
+      "owner": "tracing",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_PROPAGATE_OUTBOUND",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "true"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_QUEUE_CAPACITY",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2048"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 65536,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_SAMPLE_RATIO",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "number",
+      "default_is_set": true,
+      "default": [
+        "0.1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_SAMPLING_MODE",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "parent-based-ratio"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "off",
+        "always-on",
+        "parent-based-ratio"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_SERVICE_NAME",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_SERVICE_NAMESPACE",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "hubuum"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TRACING_TRUST_INCOMING_SAMPLING",
+      "owner": "tracing",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TREETOP_ACCEPT_INVALID_CERTS",
       "owner": "permissions",
       "exposure": "public",
@@ -5464,6 +6013,9 @@
     }
   ],
   "configuration_constraints": [
+    "HUBUUM_TRACING_BATCH_SIZE must not exceed HUBUUM_TRACING_QUEUE_CAPACITY",
+    "HUBUUM_TRACING_ENABLED=true requires HUBUUM_TRACING_OTLP_ENDPOINT",
+    "HUBUUM_TRACING_OTLP_CLIENT_CERT and HUBUUM_TRACING_OTLP_CLIENT_KEY must be configured together",
     "HUBUUM_DEFAULT_PAGE_LIMIT must not exceed HUBUUM_MAX_PAGE_LIMIT",
     "HUBUUM_TASK_HEARTBEAT_SECONDS must be less than HUBUUM_TASK_LEASE_SECONDS",
     "HUBUUM_RUNTIME_ROLE=worker requires at least one task, fan-out, delivery, event-retention, or token-retention worker",
@@ -6093,6 +6645,342 @@
           },
           "default": [
             "info"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_enabled",
+          "long": "tracing-enabled",
+          "short": null,
+          "environment": "HUBUUM_TRACING_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_otlp_endpoint",
+          "long": "tracing-otlp-endpoint",
+          "short": null,
+          "environment": "HUBUUM_TRACING_OTLP_ENDPOINT",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_otlp_headers",
+          "long": "tracing-otlp-headers",
+          "short": null,
+          "environment": "HUBUUM_TRACING_OTLP_HEADERS",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_otlp_ca_cert",
+          "long": "tracing-otlp-ca-cert",
+          "short": null,
+          "environment": "HUBUUM_TRACING_OTLP_CA_CERT",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_otlp_client_cert",
+          "long": "tracing-otlp-client-cert",
+          "short": null,
+          "environment": "HUBUUM_TRACING_OTLP_CLIENT_CERT",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_otlp_client_key",
+          "long": "tracing-otlp-client-key",
+          "short": null,
+          "environment": "HUBUUM_TRACING_OTLP_CLIENT_KEY",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_connect_timeout_ms",
+          "long": "tracing-connect-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_export_timeout_ms",
+          "long": "tracing-export-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_TRACING_EXPORT_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_flush_timeout_ms",
+          "long": "tracing-flush-timeout-ms",
+          "short": null,
+          "environment": "HUBUUM_TRACING_FLUSH_TIMEOUT_MS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "5000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_queue_capacity",
+          "long": "tracing-queue-capacity",
+          "short": null,
+          "environment": "HUBUUM_TRACING_QUEUE_CAPACITY",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2048"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_batch_size",
+          "long": "tracing-batch-size",
+          "short": null,
+          "environment": "HUBUUM_TRACING_BATCH_SIZE",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "512"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_sampling_mode",
+          "long": "tracing-sampling-mode",
+          "short": null,
+          "environment": "HUBUUM_TRACING_SAMPLING_MODE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "parent-based-ratio"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "off",
+            "always-on",
+            "parent-based-ratio"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_sample_ratio",
+          "long": "tracing-sample-ratio",
+          "short": null,
+          "environment": "HUBUUM_TRACING_SAMPLE_RATIO",
+          "value_kind": "number",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "0.1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_service_name",
+          "long": "tracing-service-name",
+          "short": null,
+          "environment": "HUBUUM_TRACING_SERVICE_NAME",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_service_namespace",
+          "long": "tracing-service-namespace",
+          "short": null,
+          "environment": "HUBUUM_TRACING_SERVICE_NAMESPACE",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "hubuum"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_deployment_environment",
+          "long": "tracing-deployment-environment",
+          "short": null,
+          "environment": "HUBUUM_TRACING_DEPLOYMENT_ENVIRONMENT",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "production"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_trust_incoming_sampling",
+          "long": "tracing-trust-incoming-sampling",
+          "short": null,
+          "environment": "HUBUUM_TRACING_TRUST_INCOMING_SAMPLING",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "tracing_propagate_outbound",
+          "long": "tracing-propagate-outbound",
+          "short": null,
+          "environment": "HUBUUM_TRACING_PROPAGATE_OUTBOUND",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "true"
           ],
           "dynamic_default": null,
           "allowed_values": [],

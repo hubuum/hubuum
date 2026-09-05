@@ -114,7 +114,7 @@ impl<T> CheckedMetric<T> {
                     )
                 })
                 .collect::<Vec<_>>();
-            tracing::error!(
+            ::tracing::error!(
                 metric = self.definition.name,
                 expected_labels = ?self.definition.labels,
                 actual_attributes = ?actual,

@@ -3,12 +3,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, ValueEnum};
 use hubuum_events_core::{
-    AuditDocument, BASE_AUDIT_DOCUMENT_SCHEMA_VERSION, NewEvent,
+    AuditDocument, BASE_AUDIT_DOCUMENT_SCHEMA_VERSION, CorrelationId, NewEvent,
     REVISION_AWARE_AUDIT_DOCUMENT_SCHEMA_VERSION,
 };
 use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Number;
+
+use crate::config::TracingSamplingMode;
+use crate::observability::tracing::SAMPLE_RATIO_BOUNDS;
 
 use crate::config::environment::{
     APP_CONFIG_ENVIRONMENT, DYNAMIC_SECRET_PREFIXES, EnvironmentOwner, EnvironmentVariable,
@@ -110,6 +114,87 @@ macro_rules! metric {
 }
 
 pub(crate) const METRICS: &[MetricDefinition] = &[
+    metric!(
+        "hubuum_tracing_info",
+        Gauge,
+        None,
+        ["sampling_mode"],
+        &[],
+        Process,
+        "Configured OpenTelemetry sampling mode"
+    ),
+    metric!(
+        "hubuum_tracing_sample_ratio",
+        Gauge,
+        None,
+        [],
+        &[],
+        Process,
+        "Configured OpenTelemetry trace sampling ratio"
+    ),
+    metric!(
+        "hubuum_tracing_queue_capacity",
+        Gauge,
+        None,
+        [],
+        &[],
+        Process,
+        "Configured OpenTelemetry export queue capacity"
+    ),
+    metric!(
+        "hubuum_tracing_queue_utilization",
+        Gauge,
+        None,
+        [],
+        &[],
+        Process,
+        "OpenTelemetry spans waiting for export"
+    ),
+    metric!(
+        "hubuum_trace_spans_total",
+        Counter,
+        None,
+        ["category", "state"],
+        &[],
+        Process,
+        "Sampled OpenTelemetry spans by closed category and lifecycle state"
+    ),
+    metric!(
+        "hubuum_trace_spans_dropped_total",
+        Counter,
+        None,
+        ["reason"],
+        &[],
+        Process,
+        "OpenTelemetry spans dropped by bounded reason"
+    ),
+    metric!(
+        "hubuum_trace_export_batches_total",
+        Counter,
+        None,
+        ["outcome"],
+        &[],
+        Process,
+        "OpenTelemetry export batches by outcome"
+    ),
+    metric!(
+        "hubuum_trace_export_spans_total",
+        Counter,
+        None,
+        ["outcome"],
+        &[],
+        Process,
+        "OpenTelemetry spans submitted in export batches by outcome"
+    ),
+    metric!(
+        "hubuum_trace_flushes_total",
+        Counter,
+        None,
+        ["outcome"],
+        &[],
+        Process,
+        "OpenTelemetry shutdown flushes by outcome"
+    ),
     metric!(
         "hubuum_api_errors_total",
         Counter,
@@ -910,8 +995,8 @@ struct ConfigurationContract {
     default: Vec<String>,
     dynamic_default: Option<DynamicDefaultContract>,
     allowed_values: Vec<String>,
-    minimum: Option<i64>,
-    maximum: Option<i64>,
+    minimum: Option<Number>,
+    maximum: Option<Number>,
     runtime_roles: Vec<&'static str>,
     appears_in_running_configuration: bool,
     source: &'static str,
@@ -1142,6 +1227,30 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             .collect::<Vec<_>>()
     };
     let values = match (metric, label) {
+        ("hubuum_tracing_info", "sampling_mode") => TracingSamplingMode::value_variants()
+            .iter()
+            .map(|mode| mode.as_str().to_string())
+            .collect(),
+        ("hubuum_trace_spans_total", "category") => strings(&[
+            "http",
+            "task",
+            "event",
+            "outbound",
+            "database",
+            "storage",
+            "authorization",
+            "authentication",
+        ]),
+        ("hubuum_trace_spans_total", "state") => strings(&["started", "ended"]),
+        ("hubuum_trace_spans_dropped_total", "reason") => {
+            strings(&["classification", "queue_saturation"])
+        }
+        (
+            "hubuum_trace_export_batches_total"
+            | "hubuum_trace_export_spans_total"
+            | "hubuum_trace_flushes_total",
+            "outcome",
+        ) => strings(&["success", "failure"]),
         ("hubuum_api_errors_total", "class") => strings(&[
             "unauthorized",
             "internal_server_error",
@@ -1553,6 +1662,14 @@ fn configuration_contract(
     admin_applicable: bool,
 ) -> ConfigurationContract {
     let (minimum, maximum) = configuration_bounds(variable.name);
+    let (minimum, maximum) = if variable.name == "HUBUUM_TRACING_SAMPLE_RATIO" {
+        (
+            Some(Number::from_f64(*SAMPLE_RATIO_BOUNDS.start()).expect("finite ratio minimum")),
+            Some(Number::from_f64(*SAMPLE_RATIO_BOUNDS.end()).expect("finite ratio maximum")),
+        )
+    } else {
+        (minimum.map(Number::from), maximum.map(Number::from))
+    };
     let dynamic_default = dynamic_default(variable.name);
     let metadata = argument
         .cloned()
@@ -2073,7 +2190,7 @@ fn event_contract() -> EventContract {
 fn serialized_event_envelope(populated: bool, resolve_names: bool) -> serde_json::Value {
     use crate::events::{
         EventEnvelope, EventSequence, PrincipalId, Provenance, ProvenanceActor,
-        ProvenancePrincipal, TaskId,
+        ProvenancePrincipal, TaskId, TraceLink,
     };
 
     let actor_id = PrincipalId::new(1).expect("positive sample principal id");
@@ -2125,7 +2242,13 @@ fn serialized_event_envelope(populated: bool, resolve_names: bool) -> serde_json
             ))
             .actor_user_id(Some(actor_id))
             .request_id(Some(uuid::Uuid::nil()))
-            .correlation_id(Some("sample".to_string()))
+            .correlation_id(Some(
+                CorrelationId::new("sample").expect("valid fixture correlation ID"),
+            ))
+            .trace_link(Some(
+                TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0)
+                    .expect("valid fixture trace link"),
+            ))
             .before(event.before().cloned())
             .after(event.after().cloned());
     }
@@ -2357,6 +2480,7 @@ mod tests {
         include_str!("observability/metrics/storage.rs"),
         include_str!("observability/metrics/task.rs"),
         include_str!("observability/metrics/token.rs"),
+        include_str!("observability/metrics/tracing.rs"),
     ];
 
     #[test]
@@ -2702,6 +2826,33 @@ mod tests {
         for variable in APP_CONFIG_ENVIRONMENT.iter().chain(PROCESS_ENVIRONMENT) {
             assert!(inventory.iter().any(|item| item.name == variable.name));
         }
+    }
+
+    #[test]
+    fn tracing_context_stays_out_of_public_event_contract() {
+        let envelope = serialized_event_envelope(true, true);
+        assert_eq!(envelope["correlation_id"], "sample");
+        assert!(envelope.get("trace_link").is_none());
+    }
+
+    #[rstest]
+    #[case("HUBUUM_TRACING_CONNECT_TIMEOUT_MS", 1.0, 60_000.0)]
+    #[case("HUBUUM_TRACING_EXPORT_TIMEOUT_MS", 1.0, 60_000.0)]
+    #[case("HUBUUM_TRACING_FLUSH_TIMEOUT_MS", 1.0, 60_000.0)]
+    #[case("HUBUUM_TRACING_QUEUE_CAPACITY", 1.0, 65_536.0)]
+    #[case("HUBUUM_TRACING_BATCH_SIZE", 1.0, 8_192.0)]
+    #[case("HUBUUM_TRACING_SAMPLE_RATIO", 0.0, 1.0)]
+    fn tracing_configuration_publishes_numeric_bounds(
+        #[case] name: &str,
+        #[case] minimum: f64,
+        #[case] maximum: f64,
+    ) {
+        let contract = configuration_contracts()
+            .into_iter()
+            .find(|item| item.name == name)
+            .unwrap();
+        assert_eq!(contract.minimum.unwrap().as_f64(), Some(minimum));
+        assert_eq!(contract.maximum.unwrap().as_f64(), Some(maximum));
     }
 
     #[test]
