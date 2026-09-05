@@ -205,6 +205,7 @@ for path in "$@"; do
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
       scripts/test-install-script-refresh.sh | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \
+      scripts/single-host-health-probe.py | scripts/test-single-host-health-probe.py | \
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
       code=true
       container=true

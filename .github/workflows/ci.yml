@@ -304,6 +304,8 @@ jobs:
         run: bash scripts/test-install-script-refresh.sh
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
+      - name: Test health probe transport retry boundaries
+        run: python3 scripts/test-single-host-health-probe.py
       - name: Test migration compatibility policy
         run: |
           bash scripts/test-migration-compatibility.sh
@@ -1243,7 +1245,7 @@ jobs:
             ' compatibility-report/report.json
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload adjacent-release compatibility report
-        if: always()
+        if: always() && steps.adjacent_release.outcome != 'skipped'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: adjacent-release-compatibility

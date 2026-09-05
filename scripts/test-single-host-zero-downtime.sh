@@ -283,8 +283,8 @@ probe_worker() {
       path="readyz"
     fi
 
-    if status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 1 --max-time "$HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS" \
+    if status="$(python3 "$REPOSITORY_ROOT/scripts/single-host-health-probe.py" \
+      --timeout "$HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS" \
       "$PUBLIC_URL/$path" \
       2>> "$TEST_ROOT/probe-${worker}.stderr")"; then
       printf '%s %s\n' "$path" "$status" >> "$TEST_ROOT/probe-${worker}.log"
@@ -310,11 +310,13 @@ assert_probes_succeeded() {
   local health_request_count
   local ready_request_count
   local request_count
+  local transport_retry_count
   local failures="$TEST_ROOT/probe-failures.log"
 
   request_count="$(awk 'END { print NR }' "$TEST_ROOT"/probe-*.log)"
   health_request_count="$(awk '$1 == "healthz" && $2 == "200" { count++ } END { print count + 0 }' "$TEST_ROOT"/probe-*.log)"
   ready_request_count="$(awk '$1 == "readyz" && $2 == "200" { count++ } END { print count + 0 }' "$TEST_ROOT"/probe-*.log)"
+  transport_retry_count="$(awk '/^Retried one pre-response/ { count++ } END { print count + 0 }' "$TEST_ROOT"/probe-*.stderr)"
   grep -HnvE '^(healthz|readyz) 200$' "$TEST_ROOT"/probe-*.log > "$failures" || true
 
   if [[ -s "$failures" ]]; then
@@ -336,7 +338,7 @@ assert_probes_succeeded() {
     echo "ERROR: expected successful health and readiness probes, observed healthz=$health_request_count readyz=$ready_request_count" >&2
     return 1
   fi
-  echo "Observed $request_count successful HTTP requests with no failures (healthz=$health_request_count, readyz=$ready_request_count)."
+  echo "Observed $request_count successful HTTP probes with no failures (healthz=$health_request_count, readyz=$ready_request_count, pre_response_retries=$transport_retry_count)."
 }
 
 expect_rollout_failure() {
