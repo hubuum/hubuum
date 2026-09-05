@@ -5,9 +5,10 @@
 //! explicit data in the corpus so a backend cannot silently omit a case.
 
 use crate::models::{CollectionID, HubuumClassID, Permissions, TokenResourceScope, TokenScope};
+use crate::permissions::{ClassResourceEndpoint, ObjectResourceEndpoint};
 use crate::permissions::{
-    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef,
+    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
+    ResourceRef,
 };
 use crate::traits::{scope_allows, scope_allows_resource};
 
@@ -67,34 +68,42 @@ struct ConformanceCase {
 }
 
 fn resource(kind: ResourceKind, id: i32, collection_id: i32, class_id: Option<i32>) -> ResourceRef {
-    ResourceRef {
-        kind,
-        id,
-        attrs: ResourceAttrs {
-            collection_id: Some(collection_id),
-            class_id,
-            ..Default::default()
-        },
+    match kind {
+        ResourceKind::Collection => ResourceRef::collection(id),
+        ResourceKind::Class => ResourceRef::class(id, collection_id, None),
+        ResourceKind::Object => ResourceRef::object(
+            id,
+            ClassResourceEndpoint::new(collection_id, class_id.expect("object fixture class")),
+            None,
+        ),
+        ResourceKind::Template => ResourceRef::template(id, collection_id, None),
+        other => panic!("Unsupported fixture kind {other:?}"),
     }
 }
 
 fn relation_resource(fixture: &ConformanceFixture, kind: ResourceKind) -> ResourceRef {
-    let mut attrs = ResourceAttrs {
-        from_collection_id: Some(fixture.granted_collection_id),
-        to_collection_id: Some(fixture.denied_collection_id),
-        from_class_id: Some(fixture.class_id),
-        to_class_id: Some(fixture.class_id + 1),
-        ..Default::default()
-    };
-    if kind == ResourceKind::ObjectRelation {
-        attrs.from_object_id = Some(fixture.object_id);
-        attrs.to_object_id = Some(fixture.object_id + 1);
-        attrs.class_relation_id = Some(fixture.class_id + 100);
-    }
-    ResourceRef {
-        kind,
-        id: fixture.object_id + 100,
-        attrs,
+    let id = Some(fixture.object_id + 100);
+    match kind {
+        ResourceKind::ClassRelation => ResourceRef::class_relation(
+            id,
+            ClassResourceEndpoint::new(fixture.granted_collection_id, fixture.class_id),
+            ClassResourceEndpoint::new(fixture.denied_collection_id, fixture.class_id + 1),
+        ),
+        ResourceKind::ObjectRelation => ResourceRef::object_relation(
+            id,
+            ObjectResourceEndpoint::new(
+                fixture.granted_collection_id,
+                fixture.class_id,
+                fixture.object_id,
+            ),
+            ObjectResourceEndpoint::new(
+                fixture.denied_collection_id,
+                fixture.class_id + 1,
+                fixture.object_id + 1,
+            ),
+            fixture.class_id + 100,
+        ),
+        other => panic!("Unsupported relation fixture {other:?}"),
     }
 }
 
@@ -378,14 +387,7 @@ pub async fn assert_backend_conformance(
         "repeated candidates must preserve source order and duplicate decisions"
     );
 
-    let owned_task = ResourceRef {
-        kind: ResourceKind::Task,
-        id: fixture.task_id,
-        attrs: ResourceAttrs {
-            submitted_by: Some(fixture.normal.user_id),
-            ..Default::default()
-        },
-    };
+    let owned_task = ResourceRef::task(fixture.task_id, Some(fixture.normal.user_id));
     assert_eq!(
         backend
             .authorize_task(&fixture.normal, &owned_task)

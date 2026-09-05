@@ -12,7 +12,7 @@ mod tests {
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
-    use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::permissions::{ResourceFields, ResourceKind};
     use crate::services::computed_fields::{
         class_computation_state_for, create_personal_definition, create_shared_definition,
         request_class_rebuild,

@@ -12,6 +12,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::permissions::ClassResourceEndpoint;
     use regex::Regex;
     use std::sync::Arc;
 
@@ -23,7 +24,7 @@ mod tests {
     use crate::permissions::local::LocalPermissionBackend;
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::types::{
-        PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
+        PermissionDecision, PermissionRequest, PrincipalRef, ResourceFields, ResourceKind,
         ResourceRef,
     };
     use crate::storage::StorageHandle;
@@ -244,15 +245,11 @@ mod tests {
         let other_ns = ns_rel.collection.id + 999_999;
 
         let same_ns_relation = PermissionRequest {
-            resource: ResourceRef {
-                kind: ResourceKind::ClassRelation,
-                id: 42,
-                attrs: ResourceAttrs {
-                    from_collection_id: Some(ns_rel.collection.id),
-                    to_collection_id: Some(ns_rel.collection.id),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::class_relation(
+                Some(42),
+                ClassResourceEndpoint::new(ns_rel.collection.id, 1),
+                ClassResourceEndpoint::new(ns_rel.collection.id, 1),
+            ),
             permissions: vec![Permissions::ReadClassRelation],
         };
         assert_eq!(
@@ -262,15 +259,11 @@ mod tests {
         );
 
         let cross_ns_relation = PermissionRequest {
-            resource: ResourceRef {
-                kind: ResourceKind::ClassRelation,
-                id: 43,
-                attrs: ResourceAttrs {
-                    from_collection_id: Some(ns_rel.collection.id),
-                    to_collection_id: Some(other_ns),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::class_relation(
+                Some(43),
+                ClassResourceEndpoint::new(ns_rel.collection.id, 1),
+                ClassResourceEndpoint::new(other_ns, 1),
+            ),
             permissions: vec![Permissions::ReadClassRelation],
         };
         assert_eq!(
@@ -280,15 +273,11 @@ mod tests {
         );
 
         let no_endpoint_relation = PermissionRequest {
-            resource: ResourceRef {
-                kind: ResourceKind::ClassRelation,
-                id: 44,
-                attrs: ResourceAttrs {
-                    from_collection_id: Some(other_ns),
-                    to_collection_id: Some(other_ns),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::class_relation(
+                Some(44),
+                ClassResourceEndpoint::new(other_ns, 1),
+                ClassResourceEndpoint::new(other_ns, 1),
+            ),
             permissions: vec![Permissions::ReadClassRelation],
         };
         assert_eq!(
@@ -311,28 +300,14 @@ mod tests {
 
     fn req_class_on(ns_id: i32, class_id: i32, perm: Permissions) -> PermissionRequest {
         PermissionRequest {
-            resource: ResourceRef {
-                kind: ResourceKind::Class,
-                id: class_id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(ns_id),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::class(class_id, ns_id, None),
             permissions: vec![perm],
         }
     }
 
     fn req_object_on(ns_id: i32, obj_id: i32, perm: Permissions) -> PermissionRequest {
         PermissionRequest {
-            resource: ResourceRef {
-                kind: ResourceKind::Object,
-                id: obj_id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(ns_id),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::object(obj_id, ClassResourceEndpoint::new(ns_id, 1), None),
             permissions: vec![perm],
         }
     }
@@ -364,7 +339,7 @@ mod tests {
                         action: *action,
                         resource_kind: ResourceKind::Collection,
                         resource_id: Some(ns_id),
-                        attrs: ResourceAttrs::default(),
+                        attrs: ResourceFields::default(),
                     });
                 }
             } else if let Some((kind, ns_id)) = parse_child_resource(when_clause) {
@@ -374,7 +349,7 @@ mod tests {
                         action: *action,
                         resource_kind: kind.clone(),
                         resource_id: None,
-                        attrs: ResourceAttrs {
+                        attrs: ResourceFields {
                             collection_id: Some(ns_id),
                             ..Default::default()
                         },
@@ -395,7 +370,7 @@ mod tests {
                         action: *action,
                         resource_kind: kind.clone(),
                         resource_id: None,
-                        attrs: ResourceAttrs {
+                        attrs: ResourceFields {
                             from_collection_id: Some(ns_id),
                             ..Default::default()
                         },
@@ -405,7 +380,7 @@ mod tests {
                         action: *action,
                         resource_kind: kind.clone(),
                         resource_id: None,
-                        attrs: ResourceAttrs {
+                        attrs: ResourceFields {
                             to_collection_id: Some(ns_id),
                             ..Default::default()
                         },

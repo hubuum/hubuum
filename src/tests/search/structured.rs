@@ -11,7 +11,7 @@ use crate::models::{
     StructuredSearchResult, UserResponse,
 };
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::{ResourceAttrs, ResourceKind};
+use crate::permissions::{ResourceFields, ResourceKind};
 use crate::tests::api_operations::{post_request, post_request_with_permission_backend};
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{
@@ -855,7 +855,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(collection.collection.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     for class_id in [host_class.id, room_class.id] {
         permission_backend.add_rule(MockAllowRule {
@@ -863,7 +863,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
             action: Permissions::ReadClass,
             resource_kind: ResourceKind::Class,
             resource_id: Some(class_id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     for object_id in [visible_host.id, room.id] {
@@ -872,7 +872,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object_id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     permission_backend.add_rule(MockAllowRule {
@@ -880,7 +880,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
         action: Permissions::ReadObjectRelation,
         resource_kind: ResourceKind::ObjectRelation,
         resource_id: Some(visible_relation.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let request = request_for_class(
         &host_class,
@@ -940,7 +940,7 @@ async fn external_policy_object_search_requires_parent_collection_visibility() {
         action: Permissions::ReadObject,
         resource_kind: ResourceKind::Object,
         resource_id: Some(object.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let request = json!({
         "version": 1,
@@ -992,7 +992,7 @@ async fn external_policy_class_search_requires_parent_collection_visibility() {
         action: Permissions::ReadClass,
         resource_kind: ResourceKind::Class,
         resource_id: Some(class.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let request = json!({
         "version": 1,

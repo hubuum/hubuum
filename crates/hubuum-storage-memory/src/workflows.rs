@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::{FencedImportItem, FencedImportPlan, FencedImportResults};
 
 #[async_trait]
 impl RemoteTargetStorage for MemoryStorage {
@@ -574,12 +575,44 @@ impl TaskExecutionStorage for MemoryStorage {
             .collect::<Vec<_>>();
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
+            let results = state.import_task_results.get(&task_id.id());
+            let processed = results.map_or(0, |results| results.len()) as i32;
+            let failed = results.map_or(0, |results| {
+                results
+                    .iter()
+                    .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
+                    .count()
+            }) as i32;
             let task = state
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
-            task.status = StorageTaskStatus::Failed;
-            task.summary = Some("Task worker lease expired".to_string());
+            let completed_import = task.kind == StorageTaskKind::Import
+                && processed > 0
+                && processed == task.progress.total();
+            task.status = if completed_import && failed == 0 {
+                StorageTaskStatus::Succeeded
+            } else if completed_import && processed > failed {
+                StorageTaskStatus::PartiallySucceeded
+            } else {
+                StorageTaskStatus::Failed
+            };
+            if task.kind == StorageTaskKind::Import {
+                task.progress = StorageTaskProgress::try_new(
+                    task.progress.total(),
+                    processed,
+                    processed - failed,
+                    failed,
+                )
+                .map_err(invalid_contract_value)?;
+            }
+            let status = task.status;
+            let summary = if completed_import {
+                "Recovered completed import from durable item results"
+            } else {
+                "Task worker lease expired"
+            };
+            task.summary = Some(summary.to_string());
             task.finished_at = Some(now);
             task.request_payload = None;
             task.request_redacted_at = Some(now);
@@ -589,10 +622,7 @@ impl TaskExecutionStorage for MemoryStorage {
             recovered.push(task.projection()?);
             state.append_task_event_record(
                 task_id,
-                StorageTaskEventInput::new(
-                    StorageTaskStatus::Failed.as_str(),
-                    "Task worker lease expired",
-                ),
+                StorageTaskEventInput::new(status.as_str(), summary),
             )?;
         }
         Ok(recovered)
@@ -1488,6 +1518,20 @@ impl ImportStorage for MemoryStorage {
         Ok(StorageImportPreflight::new(items, aborted))
     }
 
+    async fn apply_claimed_import_strict(
+        &self,
+        plan: FencedImportPlan,
+    ) -> Result<(), StorageError> {
+        self.apply_claimed_import(plan, None).await.map(|_| ())
+    }
+    async fn apply_claimed_import_best_effort(
+        &self,
+        plan: FencedImportPlan,
+        mode: StorageImportMode,
+    ) -> Result<StorageImportApply, StorageError> {
+        self.apply_claimed_import(plan, Some(mode)).await
+    }
+
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         let scratch = Self {
             state: Arc::new(RwLock::new(self.state.read().await.clone())),
@@ -1520,6 +1564,34 @@ impl ImportStorage for MemoryStorage {
             }
         }
         Ok(StorageImportApply::new(items, false))
+    }
+
+    async fn record_claimed_import_results(
+        &self,
+        results: FencedImportResults,
+    ) -> Result<(), StorageError> {
+        let (lease, results) = results.into_parts();
+        let mut state = self.state.write().await;
+        let valid_claim = |state: &MemoryState| {
+            state.tasks.get(&lease.task_id().id()).is_some_and(|task| {
+                task.kind == StorageTaskKind::Import
+                    && task.status.is_active()
+                    && task.lease_matches(&lease)
+            })
+        };
+        if !valid_claim(&state) {
+            return Err(invalid_task_lease());
+        }
+        let scratch = Self {
+            state: Arc::new(RwLock::new(state.clone())),
+        };
+        scratch.record_import_results(results).await?;
+        let committed_state = scratch.state.read().await.clone();
+        if !valid_claim(&state) {
+            return Err(invalid_task_lease());
+        }
+        *state = committed_state;
+        Ok(())
     }
 
     async fn record_import_results(
@@ -1757,5 +1829,117 @@ impl ExportTemplateStorage for MemoryStorage {
             &context,
         )?;
         Ok(StorageMutationOutcome::committed((), receipt))
+    }
+}
+
+impl MemoryStorage {
+    async fn apply_claimed_import(
+        &self,
+        plan: FencedImportPlan,
+        mode: Option<StorageImportMode>,
+    ) -> Result<StorageImportApply, StorageError> {
+        let (lease, items) = plan.into_parts();
+        let mut references = BTreeMap::new();
+        let Some(mode) = mode else {
+            let indices = items
+                .iter()
+                .cloned()
+                .map(|item| item.into_parts().0)
+                .collect::<Vec<_>>();
+            self.commit_import_receipts(&lease, items, &mut references)
+                .await?;
+            return Ok(StorageImportApply::new(
+                indices
+                    .into_iter()
+                    .map(StorageImportApplyItem::success)
+                    .collect(),
+                false,
+            ));
+        };
+        let mut outcomes = Vec::new();
+        let mut aborted = false;
+        for item in items {
+            let (index, _, result) = item.clone().into_parts();
+            match self
+                .commit_import_receipts(&lease, vec![item], &mut references)
+                .await
+            {
+                Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
+                Err(error) => {
+                    aborted = match error.kind() {
+                        StorageErrorKind::PermissionDenied
+                        | StorageErrorKind::AuthenticationRequired => {
+                            mode.permission_policy() == StorageImportPermissionPolicy::Abort
+                        }
+                        StorageErrorKind::Conflict => {
+                            mode.collision_policy() == StorageImportCollisionPolicy::Abort
+                        }
+                        _ => false,
+                    };
+                    self.commit_import_receipts(
+                        &lease,
+                        vec![FencedImportItem::new(index, None, result.failed(&error))],
+                        &mut references,
+                    )
+                    .await?;
+                    outcomes.push(StorageImportApplyItem::failure(index, error));
+                    if aborted {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(StorageImportApply::new(outcomes, aborted))
+    }
+
+    async fn commit_import_receipts(
+        &self,
+        lease: &StorageTaskLease,
+        items: Vec<FencedImportItem>,
+        references: &mut BTreeMap<String, MemoryImportReference>,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        if !state.tasks.get(&lease.task_id().id()).is_some_and(|task| {
+            task.kind == StorageTaskKind::Import
+                && task.status.is_active()
+                && task.lease_matches(lease)
+        }) {
+            return Err(invalid_task_lease());
+        }
+        let scratch = Self {
+            state: Arc::new(RwLock::new(state.clone())),
+        };
+        let mut next_references = references.clone();
+        for item in items {
+            let (index, operation, result) = item.into_parts();
+            if !scratch
+                .state
+                .write()
+                .await
+                .import_execution_receipts
+                .insert((lease.task_id().id(), index))
+            {
+                return Err(StorageError::conflict(
+                    "import item already has an execution receipt",
+                ));
+            }
+            if let Some(operation) = operation {
+                scratch
+                    .apply_import_operation(operation, &mut next_references)
+                    .await?;
+            }
+            scratch.record_import_results(vec![result]).await?;
+        }
+        let committed_state = scratch.state.read().await.clone();
+        if !state
+            .tasks
+            .get(&lease.task_id().id())
+            .is_some_and(|task| task.lease_matches(lease))
+        {
+            return Err(invalid_task_lease());
+        }
+        *state = committed_state;
+        *references = next_references;
+        Ok(())
     }
 }

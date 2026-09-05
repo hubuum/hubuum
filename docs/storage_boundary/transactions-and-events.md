@@ -176,8 +176,11 @@ for an exception.
   `RestoreStorage::tick_restore_coordinator`, and
   `RestoreStorage::remove_restore_instance` form the capability-authenticated
   restore and coordinator protocol. `ImportStorage::apply_import_strict`,
-  `ImportStorage::apply_import_best_effort`, and
-  `ImportStorage::record_import_results` preserve or reconstruct imported
+  `ImportStorage::apply_import_best_effort`,
+  `ImportStorage::apply_claimed_import_strict`,
+  `ImportStorage::apply_claimed_import_best_effort`,
+  `ImportStorage::record_import_results`, and
+  `ImportStorage::record_claimed_import_results` preserve or reconstruct imported
   state and results under the typed import workflow.
 
 `BackupSnapshotStorage::capture_backup_snapshot` is not listed because it only

@@ -260,6 +260,7 @@ async fn object_graph_functions_keep_edge_lookup_predicates_pushable() {
                    'get_bidirectionally_related_objects', \
                    'get_transitively_linked_objects' \
                ]::text[]) \
+               AND (procedure.proname <> 'get_bidirectionally_related_objects' OR procedure.pronargs = 4) \
              ORDER BY procedure.proname",
         )
         .load::<FunctionSourceRow>(conn)
@@ -1884,4 +1885,111 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
         assert_eq!(small_queries.queries_matching(statement), 1);
         assert_eq!(large_queries.queries_matching(statement), 1);
     }
+}
+
+#[rstest::rstest]
+#[case::narrow(2, false)]
+#[case::dense(4, true)]
+#[case::denser(8, true)]
+#[actix_web::test]
+async fn dense_graph_exploration_is_bounded_before_output_pagination(
+    #[case] width: usize,
+    #[case] exceeds: bool,
+) {
+    use crate::storage::{RelationQueryStorage, StorageRelationGraphQuery, StorageVisibility};
+    use hubuum_domain::ResourceId;
+    use hubuum_query::{QueryOptions, TraversalBudget};
+    let scope = TestScope::new();
+    let fixture = scope.collection_fixture("dense_graph_growth").await;
+    let mut layers = Vec::new();
+    let mut classes = Vec::new();
+    for layer in 0..4 {
+        let class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: scope.scoped_name(&format!("dense_class_{layer}")),
+            description: "dense graph".into(),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .unwrap();
+        let mut objects = Vec::new();
+        for index in 0..if layer == 0 { 1 } else { width } {
+            objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.collection.id,
+                    hubuum_class_id: class.id,
+                    name: scope.scoped_name(&format!("dense_object_{layer}_{index}")),
+                    description: "dense graph".into(),
+                    data: serde_json::json!({}),
+                }
+                .save_without_events(&scope.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        classes.push(class);
+        layers.push(objects);
+    }
+    let mut edges = 0;
+    for layer in 0..3 {
+        let relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[layer].id,
+            to_hubuum_class_id: classes[layer + 1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .unwrap();
+        for from in &layers[layer] {
+            for to in &layers[layer + 1] {
+                NewHubuumObjectRelation {
+                    from_hubuum_object_id: from.id,
+                    to_hubuum_object_id: to.id,
+                    class_relation_id: relation.id,
+                }
+                .save_without_events(&scope.pool)
+                .await
+                .unwrap();
+                edges += 1;
+            }
+        }
+    }
+    let storage = StorageHandle::postgres(scope.pool.get_ref().clone());
+    let mut options = QueryOptions::empty();
+    options.set_limit(Some(1)).unwrap();
+    options.set_include_total(false);
+    let request = StorageRelationGraphQuery::new(
+        ResourceId::new(layers[0][0].id).unwrap(),
+        TraversalBudget::new(3, 64).unwrap(),
+        options,
+        StorageVisibility::new(
+            PrincipalId::new(1).unwrap(),
+            true,
+            None::<Vec<crate::storage::StorageAuthorizationPermission>>,
+            None,
+        ),
+    );
+    let started = std::time::Instant::now();
+    let result = storage.list_related_objects(request).await;
+    let elapsed = started.elapsed();
+    if exceeds {
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.kind() == crate::storage::StorageErrorKind::InvalidInput),
+            "{result:?}"
+        );
+    } else {
+        assert!(result.is_ok(), "{result:?}");
+    }
+    eprintln!(
+        "PERFORMANCE_EVIDENCE {}",
+        serde_json::json!({"scenario":"dense_graph_growth", "width":width, "vertices":1+3*width, "edges":edges, "depth":3, "work_limit":64, "output_limit":1, "budget_exceeded":exceeds, "elapsed_us":elapsed.as_micros()})
+    );
+    fixture.cleanup().await.unwrap();
 }

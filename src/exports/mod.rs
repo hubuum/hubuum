@@ -1,3 +1,7 @@
+mod pagination;
+use pagination::authorized_storage_page;
+
+use crate::services::authentication::ExecutionPrincipal;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
@@ -28,9 +32,7 @@ use crate::models::{
     TaskResultCounts, TaskStatus, TokenID, TokenScope, ValidatedExportScope,
 };
 use crate::observability::metrics;
-use crate::pagination::{
-    CursorPaginated, count_query_options, page_limits_or_defaults, paginate_in_memory,
-};
+use crate::pagination::page_limits_or_defaults;
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, AuthzTarget, PermissionBackend, PermissionDecision,
     PermissionRequest, PrincipalRef, ResourceRef,
@@ -544,22 +546,6 @@ where
         Ok(resources)
     }
 
-    async fn authorize_page<T>(
-        &self,
-        candidates: Vec<T>,
-        resources: Vec<ResourceRef>,
-        permissions: PermissionsList,
-        query: &QueryOptions,
-    ) -> Result<Vec<T>, ApiError>
-    where
-        T: CursorPaginated,
-    {
-        let authorized = self
-            .authorize_candidates(candidates, resources, permissions)
-            .await?;
-        paginate_in_memory(authorized, query)
-    }
-
     async fn authorized_object_graph(
         &self,
         paths: &[Vec<i32>],
@@ -608,20 +594,27 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let mut candidate_options = count_query_options(&query);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = catalog_service::list_collections(
-            self.pool(),
-            self.subject.principal_id(),
-            true,
-            None,
-            candidate_options,
-        )
-        .await?;
-        let resources = self.target_resources(&candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadCollection])?;
-        self.authorize_page(candidates, resources, permissions, &query)
-            .await
+        authorized_storage_page(
+            &query,
+            async |options| {
+                catalog_service::list_collections(
+                    self.pool(),
+                    self.subject.principal_id(),
+                    true,
+                    self.scopes,
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<Collection>| {
+                let resources = self.target_resources(&candidates).await?;
+                self.authorize_candidates(candidates, resources, permissions.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     async fn classes(&self, mut query: QueryOptions) -> Result<Vec<HubuumClassExpanded>, ApiError> {
@@ -637,31 +630,32 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let mut candidate_options = count_query_options(&query);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = catalog_service::list_classes(
-            self.pool(),
-            self.subject.principal_id(),
-            true,
-            None,
-            candidate_options,
-        )
-        .await?;
-        let resources = candidates
-            .iter()
-            .map(|class| crate::permissions::ResourceRef {
-                kind: crate::permissions::ResourceKind::Class,
-                id: class.id,
-                attrs: crate::permissions::ResourceAttrs {
-                    collection_id: Some(class.collection.id),
-                    name: Some(class.name.clone()),
-                    ..Default::default()
-                },
-            })
-            .collect();
         let permissions = query_permissions(&query, &[Permissions::ReadClass])?;
-        self.authorize_page(candidates, resources, permissions, &query)
-            .await
+        authorized_storage_page(
+            &query,
+            async |options| {
+                catalog_service::list_classes(
+                    self.pool(),
+                    self.subject.principal_id(),
+                    true,
+                    self.scopes,
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<HubuumClassExpanded>| {
+                let resources = candidates
+                    .iter()
+                    .map(|class| {
+                        ResourceRef::class(class.id, class.collection.id, Some(class.name.clone()))
+                    })
+                    .collect();
+                self.authorize_candidates(candidates, resources, permissions.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     async fn objects(&self, mut query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
@@ -677,20 +671,27 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let mut candidate_options = count_query_options(&query);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = catalog_service::list_objects(
-            self.pool(),
-            self.subject.principal_id(),
-            true,
-            None,
-            candidate_options,
-        )
-        .await?;
-        let resources = self.target_resources(&candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
-        self.authorize_page(candidates, resources, permissions, &query)
-            .await
+        authorized_storage_page(
+            &query,
+            async |options| {
+                catalog_service::list_objects(
+                    self.pool(),
+                    self.subject.principal_id(),
+                    true,
+                    self.scopes,
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<HubuumObject>| {
+                let resources = self.target_resources(&candidates).await?;
+                self.authorize_candidates(candidates, resources, permissions.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     async fn class_relations(
@@ -710,16 +711,30 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let (candidates, _) = relation_queries::list_class_relations(
-            self.pool(),
-            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
-            count_query_options(&query),
-        )
-        .await?;
-        let resources = class_relation_authorization_resources(self.pool(), &candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadClassRelation])?;
-        self.authorize_page(candidates, resources, permissions, &query)
-            .await
+        authorized_storage_page(
+            &query,
+            async |options| {
+                relation_queries::list_class_relations(
+                    self.pool(),
+                    relation_queries::RelationAccess::new(
+                        self.subject.principal_id(),
+                        true,
+                        self.scopes,
+                    ),
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<HubuumClassRelation>| {
+                let resources =
+                    class_relation_authorization_resources(self.pool(), &candidates).await?;
+                self.authorize_candidates(candidates, resources, permissions.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     async fn class_relations_touching_class_ids(
@@ -770,16 +785,30 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let (candidates, _) = relation_queries::list_object_relations(
-            self.pool(),
-            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
-            count_query_options(&query),
-        )
-        .await?;
-        let resources = object_relation_authorization_resources(self.pool(), &candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObjectRelation])?;
-        self.authorize_page(candidates, resources, permissions, &query)
-            .await
+        authorized_storage_page(
+            &query,
+            async |options| {
+                relation_queries::list_object_relations(
+                    self.pool(),
+                    relation_queries::RelationAccess::new(
+                        self.subject.principal_id(),
+                        true,
+                        self.scopes,
+                    ),
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<HubuumObjectRelation>| {
+                let resources =
+                    object_relation_authorization_resources(self.pool(), &candidates).await?;
+                self.authorize_candidates(candidates, resources, permissions.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     async fn related_objects(
@@ -801,27 +830,38 @@ where
             .await
             .map(|(rows, _)| rows);
         }
-        let (candidates, _) = relation_queries::list_related_objects(
-            self.pool(),
-            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
-            object.id(),
-            count_query_options(&query),
-        )
-        .await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
-        let authorized_graph = self
-            .authorized_object_graph(
-                &candidates
-                    .iter()
-                    .map(|row| row.path.clone())
-                    .collect::<Vec<_>>(),
-                permissions,
-                PermissionsList::new([Permissions::ReadObjectRelation]),
-            )
-            .await?;
-        let authorized =
-            authorized_graph.retain_allowed(candidates, |candidate| &candidate.path)?;
-        paginate_in_memory(authorized, &query)
+        authorized_storage_page(
+            &query,
+            async |options| {
+                relation_queries::list_related_objects(
+                    self.pool(),
+                    relation_queries::RelationAccess::new(
+                        self.subject.principal_id(),
+                        true,
+                        self.scopes,
+                    ),
+                    object.id(),
+                    options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            },
+            async |candidates: Vec<RelatedObjectGraphRow>| {
+                let authorized_graph = self
+                    .authorized_object_graph(
+                        &candidates
+                            .iter()
+                            .map(|row| row.path.clone())
+                            .collect::<Vec<_>>(),
+                        permissions.clone(),
+                        PermissionsList::new([Permissions::ReadObjectRelation]),
+                    )
+                    .await?;
+                authorized_graph.retain_allowed(candidates, |candidate| &candidate.path)
+            },
+        )
+        .await
     }
 
     async fn related_objects_for_roots(
@@ -1122,7 +1162,7 @@ async fn find_or_create_export_task(
 pub(crate) async fn execute_export_task<C>(
     backend: &C,
     task: &ClaimedTask,
-    subject: &impl crate::traits::Search,
+    subject: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
 ) -> Result<TaskStatus, ApiError>
 where
@@ -2940,6 +2980,8 @@ fn enforce_json_output_limit(
 
 #[cfg(test)]
 mod tests {
+    mod performance;
+
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
@@ -2952,7 +2994,7 @@ mod tests {
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-    use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::permissions::{ResourceFields, ResourceKind};
 
     use super::{
         AuthorizationCandidates, ExportRuntime, HydrationBudget, ObjectGraphEdge,
@@ -2976,11 +3018,7 @@ mod tests {
     fn authorization_candidates_reject_mismatched_resources() {
         let result = AuthorizationCandidates::new(
             vec![1, 2],
-            vec![crate::permissions::ResourceRef {
-                kind: ResourceKind::Object,
-                id: 1,
-                attrs: ResourceAttrs::default(),
-            }],
+            vec![crate::permissions::ResourceRef::collection(1)],
         );
 
         assert!(matches!(result, Err(ApiError::InternalServerError(_))));
@@ -3052,7 +3090,7 @@ mod tests {
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: None,
-            attrs: ResourceAttrs {
+            attrs: ResourceFields {
                 collection_id: Some(visible.collection.id),
                 ..Default::default()
             },
@@ -3142,7 +3180,7 @@ mod tests {
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(source_object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
         let backend = crate::tests::app_context_with_permission_backend(
             context.pool.get_ref().clone(),
@@ -3302,7 +3340,7 @@ mod tests {
                 action: Permissions::ReadObject,
                 resource_kind: ResourceKind::Object,
                 resource_id: Some(object_id),
-                attrs: ResourceAttrs::default(),
+                attrs: ResourceFields::default(),
             });
         }
         for relation_id in [allowed_first_edge.id, allowed_second_edge.id] {
@@ -3311,7 +3349,7 @@ mod tests {
                 action: Permissions::ReadObjectRelation,
                 resource_kind: ResourceKind::ObjectRelation,
                 resource_id: Some(relation_id),
-                attrs: ResourceAttrs::default(),
+                attrs: ResourceFields::default(),
             });
         }
         let backend = crate::tests::app_context_with_permission_backend(

@@ -13,7 +13,7 @@ rust-api = "workspace-internal"
 
 [dependencies]
 async-trait = "0.1"
-hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-storage-core = { version = "0.2.0", path = "../hubuum-storage-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"

@@ -22,7 +22,7 @@ use crate::permissions::backend::PermissionBackend;
 use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{
-    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceFields,
     ResourceKind, ResourceRef,
 };
 use crate::permissions::visibility::{
@@ -77,7 +77,7 @@ fn allow_all_collection_reads(backend: &MockTreetopBackend) {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: None,
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
 }
 
@@ -178,7 +178,7 @@ async fn candidate_authorization_bounds_each_expanded_permission_batch() {
             action,
             resource_kind: ResourceKind::Collection,
             resource_id: None,
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     let principal = PrincipalRef::new(1, [7]);
@@ -207,14 +207,14 @@ async fn candidate_authorization_normalizes_each_required_permission() {
         action: Permissions::ReadClass,
         resource_kind: ResourceKind::Class,
         resource_id: Some(11),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     backend.add_rule(MockAllowRule {
         group_id: 7,
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(5),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let principal = PrincipalRef::new(1, [7]);
 
@@ -224,14 +224,7 @@ async fn candidate_authorization_normalizes_each_required_permission() {
         vec![11],
         None,
         vec![Permissions::ReadClass, Permissions::ReadCollection],
-        |class_id| ResourceRef {
-            kind: ResourceKind::Class,
-            id: *class_id,
-            attrs: ResourceAttrs {
-                collection_id: Some(5),
-                ..Default::default()
-            },
-        },
+        |class_id| ResourceRef::class(*class_id, 5, None),
     )
     .await
     .expect("normalized candidate authorization should succeed");
@@ -248,24 +241,17 @@ async fn resource_permissions_are_normalized_to_policy_resource_kinds() {
         action: Permissions::ReadClass,
         resource_kind: ResourceKind::Class,
         resource_id: Some(11),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     backend.add_rule(MockAllowRule {
         group_id: 7,
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(5),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let principal = PrincipalRef::new(1, [7]);
-    let class_resource = ResourceRef {
-        kind: ResourceKind::Class,
-        id: 11,
-        attrs: ResourceAttrs {
-            collection_id: Some(5),
-            ..Default::default()
-        },
-    };
+    let class_resource = ResourceRef::class(11, 5, None);
 
     let authorized = authorize_resource_permissions(
         &backend,
@@ -289,7 +275,7 @@ async fn authorized_page_preserves_order_across_batch_boundaries() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: None,
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let principal = PrincipalRef::new(1, [7]);
 

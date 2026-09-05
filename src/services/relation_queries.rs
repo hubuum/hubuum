@@ -19,6 +19,7 @@ use crate::storage::{
     StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
     storage_handle,
 };
+use hubuum_query::{MAX_TRAVERSAL_WORK_ROWS, TraversalBudget};
 
 fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassRelation, ApiError> {
     let (
@@ -487,6 +488,7 @@ pub(crate) async fn list_related_classes(
 ) -> Result<(Vec<ClassGraphRow>, Option<i64>), ApiError> {
     let query = StorageRelationGraphQuery::new(
         resource_id_to_storage(class_id),
+        configured_traversal_budget()?,
         options,
         access.visibility()?,
     );
@@ -510,6 +512,7 @@ pub(crate) async fn list_related_objects(
 ) -> Result<(Vec<RelatedObjectGraphRow>, Option<i64>), ApiError> {
     let query = StorageRelationGraphQuery::new(
         resource_id_to_storage(object_id),
+        configured_traversal_budget()?,
         options,
         access.visibility()?,
     );
@@ -550,7 +553,7 @@ pub(crate) async fn list_related_objects_for_roots(
     .class_relation_id(include.class_relation_id.map(class_relation_id_to_storage))
     .direction(direction)
     .sort(sort)
-    .max_depth(include.max_depth)
+    .traversal_budget(configured_traversal_budget()?.for_requested_depth(include.max_depth)?)
     .limit(include.limit)
     .preserve_alternative_paths(preserve_alternative_paths);
     storage_handle(backend)
@@ -571,7 +574,7 @@ pub(crate) async fn list_bidirectionally_related_objects_for_roots(
 ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
     let query = StorageBidirectionalRelatedObjectsQuery::new(
         root_object_ids.iter().copied().map(object_id_to_storage),
-        max_depth,
+        configured_traversal_budget()?.for_requested_depth(max_depth)?,
         per_root_cap,
         preserve_alternative_paths,
         access.visibility()?,
@@ -582,4 +585,12 @@ pub(crate) async fn list_bidirectionally_related_objects_for_roots(
         .into_iter()
         .map(related_for_root_from_storage)
         .collect()
+}
+
+fn configured_traversal_budget() -> Result<TraversalBudget, ApiError> {
+    TraversalBudget::new(
+        crate::config::max_transitive_depth(),
+        MAX_TRAVERSAL_WORK_ROWS,
+    )
+    .map_err(ApiError::from)
 }

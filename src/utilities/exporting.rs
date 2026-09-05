@@ -1,60 +1,10 @@
-use std::cell::RefCell;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
-use std::num::NonZeroUsize;
-use std::sync::{Arc, OnceLock, RwLock};
-
-use hubuum_templates::{
-    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits,
-    json_value_to_template_value, prepare_template, register_curated_helpers,
-};
-use lru::LruCache;
-use minijinja::value::Value;
-use minijinja::{
-    AutoEscape, Environment, Error as MiniJinjaError, UndefinedBehavior, escape_formatter,
-};
-
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
-
-const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TemplateEnvCacheKey {
-    collection_id: i32,
-    collection_signature: CollectionTemplateSignature,
-    template_name: String,
-    content_type: ExportContentType,
-    missing_data_policy: ExportMissingDataPolicy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct CollectionTemplateSignature {
-    template_count: usize,
-    max_updated_at_micros: i64,
-    template_hash: u64,
-}
-
-struct CachedTemplateEnvironment {
-    env: Environment<'static>,
-    template_name: String,
-}
-
-static TEMPLATE_ENV_CACHE: OnceLock<
-    RwLock<LruCache<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>>,
-> = OnceLock::new();
-
-#[derive(Debug, Default)]
-struct TemplateWarningCapture {
-    missing_value_keys: HashSet<(String, Option<String>)>,
-    warnings: Vec<ExportWarning>,
-}
-
-thread_local! {
-    static TEMPLATE_WARNING_CAPTURE: RefCell<Option<TemplateWarningCapture>> = const { RefCell::new(None) };
-}
+use hubuum_templates::{
+    MissingDataPolicy, TemplateAutoEscape, TemplateExecution, TemplateLimits, prepare_template,
+};
+use std::collections::HashMap;
 
 pub fn validate_template(
     template_name: &str,
@@ -63,7 +13,6 @@ pub fn validate_template(
     collection_templates: &[ExportTemplate],
     content_type: ExportContentType,
 ) -> Result<(), ApiError> {
-    validate_template_syntax(template_name, template_source)?;
     let (recursion_limit, fuel) = template_limits_from_config();
     validate_template_with_limits(
         template_name,
@@ -75,7 +24,6 @@ pub fn validate_template(
         fuel,
     )
 }
-
 pub fn validate_template_syntax(
     template_name: &str,
     template_source: &str,
@@ -91,7 +39,6 @@ pub fn validate_template_syntax(
             ))
         })
 }
-
 pub fn validate_template_with_limits(
     template_name: &str,
     template_source: &str,
@@ -101,69 +48,43 @@ pub fn validate_template_with_limits(
     recursion_limit: usize,
     fuel: u64,
 ) -> Result<(), ApiError> {
-    let env = build_environment(
+    let sources = build_collection_template_map(
+        collection_id,
         template_name,
         template_source,
-        collection_id,
         collection_templates,
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
+    validate_template_sources_with_limits(
+        template_name,
+        template_source,
+        &sources,
         content_type,
-        ExportMissingDataPolicy::Omit,
-        TemplateLimits::new(recursion_limit, fuel),
-    )?;
-
-    env.env
-        .get_template(&env.template_name)
-        .map_err(|error| template_error("Template validation failed", error))?
-        .render(json_value_to_template_value(&validation_context(
-            content_type,
-        )))
-        .map_err(|error| template_error("Template validation failed", error))?;
-
-    Ok(())
+        recursion_limit,
+        fuel,
+    )
 }
-
 pub(crate) fn validate_template_sources_with_limits(
     template_name: &str,
     template_source: &str,
-    collection_templates: &[(String, String)],
+    sources: &[(String, String)],
     content_type: ExportContentType,
     recursion_limit: usize,
     fuel: u64,
 ) -> Result<(), ApiError> {
-    prepare_template(template_source)
-        .limit_recursion(recursion_limit)
-        .limit_fuel(fuel)
-        .validate()
-        .map_err(|error| {
-            ApiError::BadRequest(format!(
-                "Invalid export template '{template_name}': {error}"
-            ))
-        })?;
-    let mut template_map = collection_templates
-        .iter()
-        .cloned()
-        .collect::<HashMap<_, _>>();
-    template_map.insert(template_name.to_string(), template_source.to_string());
-    let env = build_environment_from_map(
+    TemplateExecution::new(
         template_name,
         template_source,
-        template_map,
-        content_type,
-        ExportMissingDataPolicy::Omit,
         TemplateLimits::new(recursion_limit, fuel),
-    )?;
-
-    env.env
-        .get_template(&env.template_name)
-        .map_err(|error| template_error("Template validation failed", error))?
-        .render(json_value_to_template_value(&validation_context(
-            content_type,
-        )))
-        .map_err(|error| template_error("Template validation failed", error))?;
-
-    Ok(())
+    )
+    .sources(sources)
+    .auto_escape(template_auto_escape(content_type))
+    .missing_data(MissingDataPolicy::Omit)
+    .render(&validation_context(content_type))
+    .map(|_| ())
+    .map_err(|error| ApiError::BadRequest(format!("Template validation failed: {error}")))
 }
-
 pub fn render_template(
     template: &ExportTemplate,
     collection_templates: &[ExportTemplate],
@@ -173,198 +94,57 @@ pub fn render_template(
     max_output_bytes: usize,
 ) -> Result<(String, Vec<ExportWarning>), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
-    let cache_key = TemplateEnvCacheKey {
-        collection_id: template.collection_id,
-        collection_signature: collection_signature(template.collection_id, collection_templates),
-        template_name: template.name.clone(),
-        content_type,
-        missing_data_policy,
-    };
-
-    let cached = {
-        // `LruCache::get` updates recency, so the read path needs a write lock. Cheap at this
-        // cache size and keeps eviction honest about what was most recently used.
-        let mut cache = template_env_cache()
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cache.get(&cache_key).cloned()
-    };
-
-    let env = match cached {
-        Some(env) => env,
-        None => {
-            let built = Arc::new(build_environment(
-                &template.name,
-                &template.template,
-                template.collection_id,
-                collection_templates,
-                content_type,
-                missing_data_policy,
-                TemplateLimits::new(recursion_limit, fuel),
-            )?);
-            let mut cache = template_env_cache()
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            // Drop now-stale environments for this collection (templates changed) before inserting.
-            let stale_keys = cache
-                .iter()
-                .filter(|(key, _)| {
-                    key.collection_id == cache_key.collection_id
-                        && key.collection_signature != cache_key.collection_signature
-                })
-                .map(|(key, _)| key.clone())
-                .collect::<Vec<_>>();
-            for key in stale_keys {
-                cache.pop(&key);
-            }
-            // `put` evicts the least-recently-used entry when the cache is at capacity.
-            cache.put(cache_key, built.clone());
-            built
-        }
-    };
-
-    begin_template_warning_capture();
-    let mut writer = SizeLimitedWriter::new(max_output_bytes);
-    let lookup = env.env.get_template(&env.template_name);
-    let render_result = match lookup {
-        Ok(template) => {
-            template.render_captured_to(json_value_to_template_value(context), &mut writer)
-        }
-        Err(error) => {
-            let _ = finish_template_warning_capture();
-            return Err(template_error("Template lookup failed", error));
-        }
-    };
-    let warnings = finish_template_warning_capture();
-
-    match render_result {
-        Ok(_captured) => Ok((
-            writer.into_string().map_err(|error| {
-                ApiError::InternalServerError(format!(
-                    "Rendered export was not valid UTF-8: {error}"
-                ))
-            })?,
-            warnings,
-        )),
-        Err(error) => {
-            if writer.exceeded() {
-                return Err(ApiError::PayloadTooLarge(format!(
-                    "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
-                )));
-            }
-            Err(template_error("Template render failed", error))
-        }
-    }
-}
-
-fn template_env_cache()
--> &'static RwLock<LruCache<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>> {
-    TEMPLATE_ENV_CACHE.get_or_init(|| {
-        let capacity = NonZeroUsize::new(TEMPLATE_ENV_CACHE_MAX_ENTRIES)
-            .expect("TEMPLATE_ENV_CACHE_MAX_ENTRIES must be non-zero");
-        RwLock::new(LruCache::new(capacity))
-    })
-}
-
-fn collection_signature(
-    collection_id: i32,
-    collection_templates: &[ExportTemplate],
-) -> CollectionTemplateSignature {
-    let mut templates = collection_templates
-        .iter()
-        .filter(|template| template.collection_id == collection_id)
-        .map(|template| {
-            (
-                template.id,
-                template.updated_at.and_utc().timestamp_micros(),
-                template.name.as_str(),
-                template.template.as_str(),
-            )
-        })
-        .collect::<Vec<_>>();
-    templates.sort_unstable();
-
-    let max_updated_at_micros = templates
-        .iter()
-        .map(|(_, updated_at_micros, _, _)| *updated_at_micros)
-        .max()
-        .unwrap_or_default();
-    let mut hasher = DefaultHasher::new();
-    templates.hash(&mut hasher);
-
-    CollectionTemplateSignature {
-        template_count: templates.len(),
-        max_updated_at_micros,
-        template_hash: hasher.finish(),
-    }
-}
-
-fn build_environment(
-    template_name: &str,
-    template_source: &str,
-    collection_id: i32,
-    collection_templates: &[ExportTemplate],
-    content_type: ExportContentType,
-    missing_data_policy: ExportMissingDataPolicy,
-    limits: TemplateLimits,
-) -> Result<CachedTemplateEnvironment, ApiError> {
-    let template_map = build_collection_template_map(
-        collection_id,
-        template_name,
-        template_source,
+    let sources = build_collection_template_map(
+        template.collection_id,
+        &template.name,
+        &template.template,
         collection_templates,
-    );
-    build_environment_from_map(
-        template_name,
-        template_source,
-        template_map,
-        content_type,
-        missing_data_policy,
-        limits,
     )
-}
-
-fn build_environment_from_map(
-    template_name: &str,
-    template_source: &str,
-    template_map: HashMap<String, String>,
-    content_type: ExportContentType,
-    missing_data_policy: ExportMissingDataPolicy,
-    limits: TemplateLimits,
-) -> Result<CachedTemplateEnvironment, ApiError> {
-    let mut env = Environment::new();
-    let template_map = Arc::new(template_map);
-
-    env.set_keep_trailing_newline(true);
-    env.set_undefined_behavior(undefined_behavior(missing_data_policy));
-    env.set_recursion_limit(limits.recursion_limit());
-    env.set_fuel(Some(limits.fuel()));
-    env.set_auto_escape_callback(move |_| match content_type {
-        ExportContentType::TextHtml => AutoEscape::Html,
-        _ => AutoEscape::None,
-    });
-    env.set_formatter(move |out, state, value| match missing_data_policy {
-        ExportMissingDataPolicy::Strict => escape_formatter(out, state, value),
-        ExportMissingDataPolicy::Omit => format_nullable_value(out, state, value, None),
-        ExportMissingDataPolicy::Null => format_nullable_value(out, state, value, Some("null")),
-    });
-    env.set_loader(move |name| {
-        if name.contains('/') || name.contains("::") {
-            return Ok(None);
-        }
-        Ok(template_map.get(name).cloned())
-    });
-    register_curated_helpers(
-        &mut env,
-        Some(record_missing_value_warning as MissingValueRecorder),
-    );
-    env.add_template_owned(template_name.to_string(), template_source.to_string())
-        .map_err(|error| template_error("Template load failed", error))?;
-
-    Ok(CachedTemplateEnvironment {
-        env,
-        template_name: template_name.to_string(),
+    .into_iter()
+    .collect::<Vec<_>>();
+    let (rendered, missing) = TemplateExecution::new(
+        &template.name,
+        &template.template,
+        TemplateLimits::new(recursion_limit, fuel),
+    )
+    .sources(&sources)
+    .auto_escape(template_auto_escape(content_type))
+    .missing_data(match missing_data_policy {
+        ExportMissingDataPolicy::Strict => MissingDataPolicy::Strict,
+        ExportMissingDataPolicy::Omit => MissingDataPolicy::Omit,
+        ExportMissingDataPolicy::Null => MissingDataPolicy::Null,
     })
+    .max_output_bytes(max_output_bytes)
+    .render(context)
+    .map_err(|error| {
+        if error.to_string().contains("output limit") {
+            ApiError::PayloadTooLarge(format!(
+                "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
+            ))
+        } else {
+            ApiError::BadRequest(format!("Template render failed: {error}"))
+        }
+    })?
+    .into_parts();
+    let warnings = missing
+        .into_iter()
+        .map(|missing| ExportWarning {
+            code: "template_missing_value".to_string(),
+            message: format!(
+                "Template '{}' rendered one or more missing values",
+                missing.template_name()
+            ),
+            path: missing.into_path(),
+        })
+        .collect();
+    Ok((rendered, warnings))
+}
+fn template_auto_escape(content_type: ExportContentType) -> TemplateAutoEscape {
+    if content_type == ExportContentType::TextHtml {
+        TemplateAutoEscape::Html
+    } else {
+        TemplateAutoEscape::None
+    }
 }
 
 fn template_limits_from_config() -> (usize, u64) {
@@ -432,80 +212,6 @@ fn validation_context(content_type: ExportContentType) -> serde_json::Value {
             "paths": {},
         },
     })
-}
-
-fn undefined_behavior(missing_data_policy: ExportMissingDataPolicy) -> UndefinedBehavior {
-    match missing_data_policy {
-        ExportMissingDataPolicy::Strict => UndefinedBehavior::Strict,
-        ExportMissingDataPolicy::Null | ExportMissingDataPolicy::Omit => {
-            UndefinedBehavior::Chainable
-        }
-    }
-}
-
-fn format_nullable_value(
-    out: &mut minijinja::Output,
-    state: &minijinja::State,
-    value: &Value,
-    replacement: Option<&str>,
-) -> Result<(), MiniJinjaError> {
-    if value.is_undefined() {
-        record_missing_value_warning(MissingValue::new(state.name(), None));
-        if let Some(replacement) = replacement {
-            out.write_str(replacement)?;
-        }
-        return Ok(());
-    }
-
-    if value.is_none() {
-        if let Some(replacement) = replacement {
-            out.write_str(replacement)?;
-        }
-        return Ok(());
-    }
-
-    escape_formatter(out, state, value)
-}
-
-fn template_error(prefix: &str, error: MiniJinjaError) -> ApiError {
-    ApiError::BadRequest(format!("{prefix}: {error}"))
-}
-
-fn begin_template_warning_capture() {
-    TEMPLATE_WARNING_CAPTURE.with(|capture| {
-        *capture.borrow_mut() = Some(TemplateWarningCapture::default());
-    });
-}
-
-fn finish_template_warning_capture() -> Vec<ExportWarning> {
-    TEMPLATE_WARNING_CAPTURE.with(|capture| {
-        capture
-            .borrow_mut()
-            .take()
-            .map(|capture| capture.warnings)
-            .unwrap_or_default()
-    })
-}
-
-fn record_missing_value_warning(missing: MissingValue) {
-    TEMPLATE_WARNING_CAPTURE.with(|capture| {
-        let mut capture = capture.borrow_mut();
-        let Some(capture) = capture.as_mut() else {
-            return;
-        };
-        let template_name = missing.template_name().to_string();
-        let path = missing.into_path();
-        let key = (template_name.clone(), path.clone());
-        if capture.missing_value_keys.contains(&key) {
-            return;
-        }
-        capture.missing_value_keys.insert(key);
-        capture.warnings.push(ExportWarning {
-            code: "template_missing_value".to_string(),
-            message: format!("Template '{template_name}' rendered one or more missing values"),
-            path,
-        });
-    });
 }
 
 #[cfg(test)]

@@ -1,0 +1,109 @@
+{
+  "captured_on": "2026-09-05",
+  "environment": {
+    "cpu": "Apple M2 Pro",
+    "logical_cpus": 12,
+    "memory_gib": 32,
+    "os": "macOS 26.6.2 arm64",
+    "rust": "1.98.0",
+    "database": "PostgreSQL 17 in a disposable Docker container",
+    "request_graph_export_profile": "test, unoptimized",
+    "template_schema_profile": "release, optimized",
+    "caveat": "Shared developer host; builds and other tests can contend. No baseline or production capacity claim."
+  },
+  "request_graph_export": [
+    {
+      "elapsed_us": 2288,
+      "max_live_candidates": 129,
+      "pages": 79,
+      "scenario": "denied_export_candidates"
+    },
+    {
+      "candidate_payload_bytes": 8192,
+      "candidates": 300,
+      "elapsed_us": 31991,
+      "output_rows": 3,
+      "policy_batches": [
+        128,
+        128,
+        44
+      ],
+      "policy_transport": "in-process deterministic backend",
+      "queries": 15,
+      "scenario": "external_policy_sparse_export"
+    },
+    {
+      "budget_exceeded": false,
+      "depth": 3,
+      "edges": 10,
+      "elapsed_us": 16316,
+      "output_limit": 1,
+      "scenario": "dense_graph_growth",
+      "vertices": 7,
+      "width": 2,
+      "work_limit": 64
+    },
+    {
+      "budget_exceeded": true,
+      "depth": 3,
+      "edges": 36,
+      "elapsed_us": 6974,
+      "output_limit": 1,
+      "scenario": "dense_graph_growth",
+      "vertices": 13,
+      "width": 4,
+      "work_limit": 64
+    },
+    {
+      "budget_exceeded": true,
+      "depth": 3,
+      "edges": 136,
+      "elapsed_us": 6463,
+      "output_limit": 1,
+      "scenario": "dense_graph_growth",
+      "vertices": 25,
+      "width": 8,
+      "work_limit": 64
+    },
+    {
+      "p50_us": 7359,
+      "p95_us": 12280,
+      "samples": 20,
+      "scenario": "authenticated_collection_http",
+      "total_queries": 100
+    }
+  ],
+  "template_schema": [
+    {
+      "elapsed_us": 493237,
+      "scenario": "template_schema_cold_start"
+    },
+    {
+      "concurrency": 1,
+      "elapsed_ms": 87,
+      "p50_us": 7997,
+      "p95_us": 8082,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 10,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 4,
+      "elapsed_ms": 89,
+      "p50_us": 8042,
+      "p95_us": 8446,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 40,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 8,
+      "elapsed_ms": 173,
+      "p50_us": 16161,
+      "p95_us": 24197,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 80,
+      "scenario": "template_schema_concurrency"
+    }
+  ]
+}

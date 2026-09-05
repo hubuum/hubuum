@@ -30,7 +30,7 @@ use crate::pagination::{
     effective_page_limit, finalize_page, paginate_in_memory, prepare_db_pagination,
 };
 use crate::permissions::visibility::authorize_cursor_page;
-use crate::permissions::{AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use crate::services::related_filter_authorization::externally_authorized_structured_objects;
 use crate::storage::{StorageAuditEventFilters, StorageAuthenticationPrincipal};
 use crate::traits::{
@@ -519,14 +519,8 @@ pub(crate) async fn execute_structured_search(
                     candidates,
                     &query_options,
                     vec![Permissions::ReadClass, Permissions::ReadCollection],
-                    |class| ResourceRef {
-                        kind: ResourceKind::Class,
-                        id: class.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(class.collection.id),
-                            name: Some(class.name.clone()),
-                            ..Default::default()
-                        },
+                    |class| {
+                        ResourceRef::class(class.id, class.collection.id, Some(class.name.clone()))
                     },
                 )
                 .await?

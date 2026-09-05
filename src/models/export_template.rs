@@ -13,7 +13,7 @@ use crate::models::{
     ExportTemplateRunRequest, ResourceRevision,
 };
 use crate::pagination::{CursorPaginated, CursorValue};
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
 use crate::storage::{
     ExportTemplateStorage, StorageClassSelector, StorageContext, StorageErrorKind,
@@ -1282,15 +1282,11 @@ impl AuthzTarget for ExportTemplate {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
-        Ok(ResourceRef {
-            kind: ResourceKind::Template,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.collection_id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::template(
+            self.id,
+            self.collection_id,
+            Some(self.name.clone()),
+        ))
     }
 }
 

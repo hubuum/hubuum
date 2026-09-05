@@ -1,4 +1,8 @@
 //! Atomic PostgreSQL execution for validated backend-neutral import plans.
+use super::task_execution::{claimed_task, live_claimed_task};
+use hubuum_storage_core::{
+    FencedImportItem, FencedImportPlan, FencedImportResults, StorageImportResult, StorageTaskLease,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -59,7 +63,7 @@ const IMPORT_TEMPLATE_FUEL: u64 = 50_000;
 static PASSWORD_WORK_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(PASSWORD_WORK_MAX_CONCURRENCY)));
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ImportRuntime {
     identity_scopes_by_ref: HashMap<String, i32>,
     groups_by_ref: HashMap<String, i32>,
@@ -156,6 +160,138 @@ pub async fn preflight_import(
             }
         })
         .await
+}
+
+fn fenced_operations(items: &[FencedImportItem]) -> Vec<StorageImportPlanItem> {
+    items
+        .iter()
+        .cloned()
+        .filter_map(|item| {
+            let (index, operation, _) = item.into_parts();
+            operation.map(|operation| StorageImportPlanItem::new(index, operation))
+        })
+        .collect()
+}
+
+pub async fn apply_claimed_import_strict(
+    runtime: &PostgresRuntime,
+    plan: FencedImportPlan,
+) -> Result<(), PostgresStorageError> {
+    let (lease, items) = plan.into_parts();
+    runtime
+        .with_transaction(async move |connection| {
+            let mut state = ImportRuntime::for_plan(&fenced_operations(&items));
+            for item in items {
+                let (index, operation, result) = item.into_parts();
+                if let Some(operation) = operation {
+                    execute_operation(connection, &mut state, operation).await?;
+                }
+                record_execution_receipt(connection, &lease, Some(index), result).await?;
+            }
+            // Lock only at the commit boundary so long imports do not block lease
+            // renewal. The deferred receipt trigger checks expiry again at commit.
+            live_claimed_task(connection, claimed_task(&lease)?).await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await?;
+    crate::reach_fault_point(crate::PostgresFaultPoint::ImportAfterCommit, None).await
+}
+
+pub async fn apply_claimed_import_best_effort(
+    runtime: &PostgresRuntime,
+    plan: FencedImportPlan,
+    mode: StorageImportMode,
+) -> Result<StorageImportApply, PostgresStorageError> {
+    let (lease, items) = plan.into_parts();
+    let mut state = ImportRuntime::for_plan(&fenced_operations(&items));
+    let mut outcomes = Vec::new();
+    let mut aborted = false;
+    for item in items {
+        let (index, operation, result) = item.into_parts();
+        let receipt = result.clone();
+        let before = state.clone();
+        let outcome = runtime
+            .with_transaction(async |connection| {
+                if let Some(operation) = operation {
+                    execute_operation(connection, &mut state, operation).await?;
+                }
+                record_execution_receipt(connection, &lease, Some(index), receipt).await?;
+                live_claimed_task(connection, claimed_task(&lease)?).await?;
+                Ok::<_, PostgresStorageError>(())
+            })
+            .await;
+        match outcome {
+            Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
+            Err(error) => {
+                state = before;
+                record_revision_condition(runtime, &error);
+                aborted = should_abort_best_effort(&error, &mode);
+                let error = StorageError::from(error);
+                runtime
+                    .with_transaction(async |connection| {
+                        live_claimed_task(connection, claimed_task(&lease)?).await?;
+                        record_execution_receipt(
+                            connection,
+                            &lease,
+                            Some(index),
+                            result.failed(&error),
+                        )
+                        .await
+                    })
+                    .await?;
+                outcomes.push(StorageImportApplyItem::failure(index, error));
+                if aborted {
+                    break;
+                }
+            }
+        }
+    }
+    crate::reach_fault_point(crate::PostgresFaultPoint::ImportAfterCommit, None).await?;
+    Ok(StorageImportApply::new(outcomes, aborted))
+}
+
+pub async fn record_claimed_import_results(
+    runtime: &PostgresRuntime,
+    results: FencedImportResults,
+) -> Result<(), PostgresStorageError> {
+    let (lease, results) = results.into_parts();
+    runtime
+        .with_transaction(async move |connection| {
+            for result in results {
+                record_execution_receipt(connection, &lease, None, result).await?;
+            }
+            live_claimed_task(connection, claimed_task(&lease)?).await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await
+}
+
+async fn record_execution_receipt(
+    connection: &mut PostgresConnection,
+    lease: &StorageTaskLease,
+    index: Option<usize>,
+    result: StorageImportResult,
+) -> Result<(), PostgresStorageError> {
+    use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Text, Uuid as SqlUuid};
+    let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
+        result.into_parts();
+    let token = claimed_task(lease)?.token;
+    let index = index.map(|index| {
+        i64::try_from(index).expect("fenced plan indexes fit the storage representation")
+    });
+    diesel::sql_query("INSERT INTO import_task_results (task_id, item_ref, entity_kind, action, identifier, outcome, error, details, execution_index, execution_claim_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+        .bind::<Integer, _>(task_id.id())
+        .bind::<Nullable<Text>, _>(item_ref)
+        .bind::<Text, _>(entity_kind)
+        .bind::<Text, _>(action)
+        .bind::<Nullable<Text>, _>(identifier)
+        .bind::<Text, _>(outcome)
+        .bind::<Nullable<Text>, _>(error)
+        .bind::<Nullable<Jsonb>, _>(details)
+        .bind::<Nullable<BigInt>, _>(index)
+        .bind::<SqlUuid, _>(token)
+        .execute(connection).await?;
+    Ok(())
 }
 
 pub async fn apply_import_strict(

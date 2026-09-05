@@ -80,6 +80,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** template execution requires `hubuum-template-worker` beside the
+  server and administrator binaries. Containers and release archives include
+  it. Rendering and validation now enforce worker heap, deadline, admission,
+  protocol, and output budgets; remote URLs and headers and email subjects have
+  smaller output caps. See `docs/runtime_hardening.md` for limits and deployment.
+- **Breaking (external authorization):** prospective resources use distinct
+  identities and omit unknown endpoint IDs. Upload the updated Treetop schema
+  and guard optional ID attributes with Cedar `has` checks before deployment.
+- **Breaking (experimental storage SDK 0.2):** update all seven packages together,
+  supply traversal budgets, and implement fenced import execution with atomic
+  item receipts.
+  Apply the single runtime-hardening migration before starting workers.
+- **Breaking (resource limits):** graph depth is now bounded by
+  `HUBUUM_MAX_TRANSITIVE_DEPTH` even when requests
+  omit depth. Traversals reject excessive generated work before pagination;
+  external-policy exports use bounded candidate pages and a total scan limit.
+  Narrow oversized export queries and reduce traversal depth when upgrading.
 - **Breaking (experimental storage SDK):** computed-field definitions, task
   execution updates, completion artifacts, computation rebuild state, and class
   schema policy now use proof-carrying types that make invalid combinations
@@ -157,6 +174,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Queued executions refresh external identity state and apply max-stale policy
+  before constructing an execution principal.
+- Import effects and item results commit together under a task claim fence;
+  recovery reconciles completed imports from durable results after worker loss.
+  Planning and dry-run result writes also require the current claim, and backups
+  omit execution claim metadata.
+- Authenticated reads avoid unnecessary audit transactions, and failed bearer
+  authentication is reused by handler extractors instead of repeated.
+- Outbound HTTP timeouts and duration measurements now include DNS screening.
 - The memory storage backend now returns HTTP 400 with an actionable message
   when a class update enables schema validation without a schema.
 - Recursive object-relation graph queries now expand through indexed adjacency

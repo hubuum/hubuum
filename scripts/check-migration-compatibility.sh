@@ -60,10 +60,34 @@ sql_statements() {
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   checked=$((checked + 1))
+  lock_timeout_is_bounded=false
+  statement_timeout_is_bounded=false
+  transactional=true
+  metadata_file="$repository_root/$(dirname "$file")/metadata.toml"
+  if [[ -f "$metadata_file" ]] \
+    && rg --quiet '^[[:space:]]*run_in_transaction[[:space:]]*=[[:space:]]*false' "$metadata_file"; then
+    transactional=false
+  fi
+  bounded_timeout_pattern="=[[:space:]]*'[1-9][0-9]*(MS|S)'[[:space:]]*;"
 
   while IFS=: read -r line_number statement; do
     [[ -n "$line_number" ]] || continue
     upper_statement="$(printf '%s' "$statement" | tr '[:lower:]' '[:upper:]')"
+
+    if [[ "$upper_statement" == "SET LOCAL LOCK_TIMEOUT "* ]]; then
+      lock_timeout_is_bounded=false
+      if [[ "$upper_statement" =~ $bounded_timeout_pattern ]]; then
+        lock_timeout_is_bounded=true
+      fi
+    elif [[ "$upper_statement" == "SET LOCAL STATEMENT_TIMEOUT "* ]]; then
+      statement_timeout_is_bounded=false
+      if [[ "$upper_statement" =~ $bounded_timeout_pattern ]]; then
+        statement_timeout_is_bounded=true
+      fi
+    elif [[ "$upper_statement" =~ ^(COMMIT|ROLLBACK|RESET)([[:space:]]|\;) ]]; then
+      lock_timeout_is_bounded=false
+      statement_timeout_is_bounded=false
+    fi
 
     if [[ "$upper_statement" =~ DROP[[:space:]]+(TABLE|COLUMN|CONSTRAINT|INDEX) ]]; then
       report_failure "$file" "$line_number" "dropping schema objects is not adjacent-release compatible"
@@ -83,7 +107,12 @@ while IFS= read -r file; do
       report_failure "$file" "$line_number" "new constraints must use NOT VALID before separate validation"
     elif [[ "$upper_statement" =~ CREATE([[:space:]]+UNIQUE)?[[:space:]]+INDEX[[:space:]] ]] \
       && [[ ! "$upper_statement" =~ INDEX[[:space:]]+CONCURRENTLY[[:space:]] ]]; then
-      report_failure "$file" "$line_number" "indexes on an adjacent-release path must be created concurrently"
+      if [[ "$upper_statement" != *"HUBUUM-COMPAT: BOUNDED-TRANSACTIONAL-INDEX"* \
+        || "$transactional" != true \
+        || "$lock_timeout_is_bounded" != true \
+        || "$statement_timeout_is_bounded" != true ]]; then
+        report_failure "$file" "$line_number" "indexes require CONCURRENTLY or a reviewed bounded transactional build"
+      fi
     fi
   done < <(sql_statements "$repository_root/$file")
 done < <(

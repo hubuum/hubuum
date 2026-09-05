@@ -109,7 +109,7 @@ pub async fn resolve_class(
 ) -> Result<StorageResolvedClass, PostgresStorageError> {
     validate_class_selector(&selector)?;
     runtime
-        .with_connection(async move |connection| resolve_class_on(connection, selector).await)
+        .with_read_connection(async move |connection| resolve_class_on(connection, selector).await)
         .await
 }
 
@@ -255,7 +255,7 @@ pub async fn resolve_class_names(
         ));
     }
     runtime
-        .with_connection(async move |connection| class_names_on(connection, class_ids).await)
+        .with_read_connection(async move |connection| class_names_on(connection, class_ids).await)
         .await
 }
 
