@@ -176,6 +176,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Preserved integration templates' trailing-newline behavior while retaining
+  newline preservation for exports. Best-effort imports now publish only the
+  current item's references after commit, avoiding repeated copies of earlier
+  imported objects and schemas.
 - Queued executions refresh external identity state and apply max-stale policy
   before constructing an execution principal.
 - Import effects and item results commit together under a task claim fence;

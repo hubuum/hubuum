@@ -132,6 +132,7 @@ impl SizeLimitedWriter {
 }
 
 impl Write for SizeLimitedWriter {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
             self.exceeded = true;
@@ -140,6 +141,12 @@ impl Write for SizeLimitedWriter {
 
         self.buffer.extend_from_slice(buf);
         Ok(buf.len())
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        // Writes either append the entire slice or fail at the byte limit.
+        self.write(buf).map(|_| ())
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -312,6 +319,7 @@ impl PreparedTemplateRender<'_, '_> {
     pub async fn render(self) -> Result<String, TemplateError> {
         let limits = self.template.limits_or_error()?;
         TemplateExecution::new("template", self.template.source, limits)
+            .keep_trailing_newline(false)
             .missing_data(MissingDataPolicy::Lenient)
             .render(self.context)
             .await
@@ -502,7 +510,44 @@ fn parse_template_datetime(raw: &str) -> Option<chrono::DateTime<chrono::FixedOf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::io::Write;
+
+    #[rstest]
+    #[case::unterminated("Alert {{ summary }}", "Alert ready")]
+    #[case::one_newline("Alert {{ summary }}\n", "Alert ready")]
+    #[case::two_newlines("Alert {{ summary }}\n\n", "Alert ready\n")]
+    #[case::rendered_newline("Alert {{ summary }}{{ '\n' }}", "Alert ready\n")]
+    #[tokio::test]
+    async fn integration_templates_strip_one_source_newline(
+        #[case] source: &str,
+        #[case] expected: &str,
+    ) {
+        let output = prepare_template(source)
+            .limits(TemplateLimits::new(64, 50_000))
+            .context(&serde_json::json!({ "summary": "ready" }))
+            .render()
+            .await
+            .unwrap();
+        assert_eq!(output, expected);
+    }
+
+    #[rstest]
+    #[case::root("Alert {{ summary }}\n", &[], "Alert ready\n")]
+    #[case::fragment("{% include 'fragment' %}\n", &[("fragment".into(), "Alert {{ summary }}\n".into())], "Alert ready\n\n")]
+    #[tokio::test]
+    async fn composed_exports_preserve_source_newlines(
+        #[case] source: &str,
+        #[case] sources: &[(String, String)],
+        #[case] expected: &str,
+    ) {
+        let output = TemplateExecution::new("export", source, TemplateLimits::new(64, 50_000))
+            .sources(sources)
+            .render(&serde_json::json!({ "summary": "ready" }))
+            .await
+            .unwrap();
+        assert_eq!(output.into_parts().0, expected);
+    }
 
     #[test]
     fn size_limited_writer_accumulates_under_limit() {

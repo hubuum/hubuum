@@ -65,7 +65,7 @@ while IFS= read -r file; do
   transactional=true
   metadata_file="$repository_root/$(dirname "$file")/metadata.toml"
   if [[ -f "$metadata_file" ]] \
-    && rg --quiet '^[[:space:]]*run_in_transaction[[:space:]]*=[[:space:]]*false' "$metadata_file"; then
+    && grep -Eq '^[[:space:]]*run_in_transaction[[:space:]]*=[[:space:]]*false' "$metadata_file"; then
     transactional=false
   fi
   bounded_timeout_pattern="=[[:space:]]*'[1-9][0-9]*(MS|S)'[[:space:]]*;"

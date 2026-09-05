@@ -56,6 +56,7 @@ pub(crate) struct WorkerRequest<'a> {
     pub context: Cow<'a, serde_json::Value>,
     pub limits: TemplateLimits,
     pub auto_escape: TemplateAutoEscape,
+    pub keep_trailing_newline: bool,
     pub missing_data: MissingDataPolicy,
     pub max_output_bytes: usize,
 }
@@ -93,6 +94,7 @@ pub struct TemplateExecution<'a> {
     sources: &'a [(String, String)],
     limits: TemplateLimits,
     auto_escape: TemplateAutoEscape,
+    keep_trailing_newline: bool,
     missing_data: MissingDataPolicy,
     max_output_bytes: usize,
 }
@@ -104,6 +106,7 @@ impl<'a> TemplateExecution<'a> {
             sources: &[],
             limits,
             auto_escape: TemplateAutoEscape::None,
+            keep_trailing_newline: true,
             missing_data: MissingDataPolicy::Strict,
             max_output_bytes: limits.max_output_bytes().min(MAX_OUTPUT_BYTES),
         }
@@ -118,6 +121,12 @@ impl<'a> TemplateExecution<'a> {
     }
     pub fn missing_data(mut self, value: MissingDataPolicy) -> Self {
         self.missing_data = value;
+        self
+    }
+    /// Composed exports preserve trailing newlines by default. Simple
+    /// integration templates retain MiniJinja's default stripping behavior.
+    pub fn keep_trailing_newline(mut self, value: bool) -> Self {
+        self.keep_trailing_newline = value;
         self
     }
     pub fn max_output_bytes(mut self, value: usize) -> Self {
@@ -149,6 +158,7 @@ impl<'a> TemplateExecution<'a> {
             context: Cow::Borrowed(context),
             limits: self.limits,
             auto_escape: self.auto_escape,
+            keep_trailing_newline: self.keep_trailing_newline,
             missing_data: self.missing_data,
             max_output_bytes: self.max_output_bytes,
         })
@@ -171,6 +181,7 @@ pub(crate) async fn validate_syntax(
         context: Cow::Owned(serde_json::Value::Null),
         limits,
         auto_escape: TemplateAutoEscape::None,
+        keep_trailing_newline: false,
         missing_data: MissingDataPolicy::Strict,
         max_output_bytes: 0,
     })

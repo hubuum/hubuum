@@ -63,7 +63,7 @@ const IMPORT_TEMPLATE_FUEL: u64 = 50_000;
 static PASSWORD_WORK_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(PASSWORD_WORK_MAX_CONCURRENCY)));
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct ImportRuntime {
     identity_scopes_by_ref: HashMap<String, i32>,
     groups_by_ref: HashMap<String, i32>,
@@ -75,7 +75,46 @@ struct ImportRuntime {
     export_templates: Vec<StorageImportExportTemplate>,
 }
 
+// Each operation stages at most one reference. Ownership moves into the runtime
+// only after its transaction (including any receipt and deferred checks) succeeds.
+enum ImportReferenceChange {
+    IdentityScope(String, i32),
+    Group(String, i32),
+    Principal(String, i32),
+    Collection(String, StorageCollection),
+    Class(String, StorageClass),
+    Object(String, StorageObject),
+    EventSink(String, i32),
+}
+
 impl ImportRuntime {
+    fn publish(&mut self, change: Option<ImportReferenceChange>) {
+        match change {
+            Some(ImportReferenceChange::IdentityScope(reference, value)) => {
+                self.identity_scopes_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::Group(reference, value)) => {
+                self.groups_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::Principal(reference, value)) => {
+                self.principals_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::Collection(reference, value)) => {
+                self.collections_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::Class(reference, value)) => {
+                self.classes_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::Object(reference, value)) => {
+                self.objects_by_ref.insert(reference, value);
+            }
+            Some(ImportReferenceChange::EventSink(reference, value)) => {
+                self.event_sinks_by_ref.insert(reference, value);
+            }
+            None => {}
+        }
+    }
+
     fn for_plan(items: &[StorageImportPlanItem]) -> Self {
         let export_templates = items
             .iter()
@@ -112,9 +151,9 @@ pub async fn preflight_import(
                         let (revision, result) = match observed_revision {
                             Ok(revision) => {
                                 let result = connection
-                                    .transaction::<(), PostgresStorageError, _>(
+                                    .transaction::<Option<ImportReferenceChange>, PostgresStorageError, _>(
                                         async |connection| {
-                                            execute_operation(connection, &mut state, operation)
+                                            execute_operation(connection, &state, operation)
                                                 .await
                                         },
                                     )
@@ -124,10 +163,13 @@ pub async fn preflight_import(
                             Err(error) => (None, Err(error)),
                         };
                         match result {
-                            Ok(()) => outcomes.push(StorageImportPreflightItem::success(
-                                index,
-                                revision.map(PostgresRevision::into_domain),
-                            )),
+                            Ok(change) => {
+                                state.publish(change);
+                                outcomes.push(StorageImportPreflightItem::success(
+                                    index,
+                                    revision.map(PostgresRevision::into_domain),
+                                ));
+                            }
                             Err(error) => {
                                 record_revision_condition(&telemetry_runtime, &error);
                                 aborted = should_abort_preflight(&error, &mode);
@@ -184,7 +226,7 @@ pub async fn apply_claimed_import_strict(
             for item in items {
                 let (index, operation, result) = item.into_parts();
                 if let Some(operation) = operation {
-                    execute_operation(connection, &mut state, operation).await?;
+                    state.publish(execute_operation(connection, &state, operation).await?);
                 }
                 record_execution_receipt(connection, &lease, Some(index), result).await?;
             }
@@ -209,21 +251,24 @@ pub async fn apply_claimed_import_best_effort(
     for item in items {
         let (index, operation, result) = item.into_parts();
         let receipt = result.clone();
-        let before = state.clone();
         let outcome = runtime
             .with_transaction(async |connection| {
-                if let Some(operation) = operation {
-                    execute_operation(connection, &mut state, operation).await?;
-                }
+                let change = if let Some(operation) = operation {
+                    execute_operation(connection, &state, operation).await?
+                } else {
+                    None
+                };
                 record_execution_receipt(connection, &lease, Some(index), receipt).await?;
                 live_claimed_task(connection, claimed_task(&lease)?).await?;
-                Ok::<_, PostgresStorageError>(())
+                Ok::<_, PostgresStorageError>(change)
             })
             .await;
         match outcome {
-            Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
+            Ok(change) => {
+                state.publish(change);
+                outcomes.push(StorageImportApplyItem::success(index));
+            }
             Err(error) => {
-                state = before;
                 record_revision_condition(runtime, &error);
                 aborted = should_abort_best_effort(&error, &mode);
                 let error = StorageError::from(error);
@@ -304,7 +349,7 @@ pub async fn apply_import_strict(
             let mut state = ImportRuntime::for_plan(&items);
             for item in items {
                 let (_, operation) = item.into_parts();
-                execute_operation(connection, &mut state, operation).await?;
+                state.publish(execute_operation(connection, &state, operation).await?);
             }
             Ok::<_, PostgresStorageError>(())
         })
@@ -328,14 +373,17 @@ pub async fn apply_import_best_effort(
         let (index, operation) = item.into_parts();
         let result = runtime
             .with_transaction(async |connection| {
-                execute_operation(connection, &mut state, operation).await
+                execute_operation(connection, &state, operation).await
             })
             .await;
         if let Err(error) = &result {
             record_revision_condition(runtime, error);
         }
         match result {
-            Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
+            Ok(change) => {
+                state.publish(change);
+                outcomes.push(StorageImportApplyItem::success(index));
+            }
             Err(error) => {
                 aborted = should_abort_best_effort(&error, &mode);
                 outcomes.push(StorageImportApplyItem::failure(
@@ -359,17 +407,17 @@ fn record_revision_condition(runtime: &PostgresRuntime, error: &PostgresStorageE
 
 async fn execute_operation(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
+    state: &ImportRuntime,
     operation: StorageImportOperation,
-) -> Result<(), PostgresStorageError> {
+) -> Result<Option<ImportReferenceChange>, PostgresStorageError> {
     match operation {
         StorageImportOperation::CreateCollection(input) => {
             let parent = resolve_collection_parent(connection, state, &input).await?;
             let reference = input.clone().into_parts().reference;
             let created = create_collection(connection, input, Some(parent.id().id())).await?;
-            if let Some(reference) = reference {
-                state.collections_by_ref.insert(reference, created);
-            }
+            return Ok(
+                reference.map(|reference| ImportReferenceChange::Collection(reference, created))
+            );
         }
         StorageImportOperation::UpdateCollection {
             collection_id,
@@ -377,9 +425,9 @@ async fn execute_operation(
         } => {
             let reference = input.clone().into_parts().reference;
             let updated = update_collection(connection, collection_id.id(), input).await?;
-            if let Some(reference) = reference {
-                state.collections_by_ref.insert(reference, updated);
-            }
+            return Ok(
+                reference.map(|reference| ImportReferenceChange::Collection(reference, updated))
+            );
         }
         StorageImportOperation::CreateClass(input) => {
             let parts = input.clone().into_parts();
@@ -391,16 +439,14 @@ async fn execute_operation(
             )
             .await?;
             let created = create_class(connection, input, collection.id().id()).await?;
-            if let Some(reference) = parts.reference {
-                state.classes_by_ref.insert(reference, created);
-            }
+            return Ok(parts
+                .reference
+                .map(|reference| ImportReferenceChange::Class(reference, created)));
         }
         StorageImportOperation::UpdateClass { class_id, input } => {
             let reference = input.clone().into_parts().reference;
             let updated = update_class(connection, class_id.id(), input).await?;
-            if let Some(reference) = reference {
-                state.classes_by_ref.insert(reference, updated);
-            }
+            return Ok(reference.map(|reference| ImportReferenceChange::Class(reference, updated)));
         }
         StorageImportOperation::CreateObject(input) => {
             let parts = input.clone().into_parts();
@@ -412,25 +458,23 @@ async fn execute_operation(
             )
             .await?;
             let created = create_object(connection, input, &class).await?;
-            if let Some(reference) = parts.reference {
-                state.objects_by_ref.insert(reference, created);
-            }
+            return Ok(parts
+                .reference
+                .map(|reference| ImportReferenceChange::Object(reference, created)));
         }
         StorageImportOperation::UpdateObject { object_id, input } => {
             let reference = input.clone().into_parts().reference;
             let updated = update_object(connection, object_id.id(), input).await?;
-            if let Some(reference) = reference {
-                state.objects_by_ref.insert(reference, updated);
-            }
+            return Ok(reference.map(|reference| ImportReferenceChange::Object(reference, updated)));
         }
         StorageImportOperation::UpsertIdentityScope { input, overwrite } => {
-            execute_identity_scope(connection, state, input, overwrite).await?;
+            return execute_identity_scope(connection, input, overwrite).await;
         }
         StorageImportOperation::UpsertGroup { input, overwrite } => {
-            execute_group(connection, state, input, overwrite).await?;
+            return execute_group(connection, state, input, overwrite).await;
         }
         StorageImportOperation::UpsertPrincipal { input, overwrite } => {
-            execute_principal(connection, state, input, overwrite).await?;
+            return execute_principal(connection, state, input, overwrite).await;
         }
         StorageImportOperation::UpsertGroupMembership { input, overwrite } => {
             execute_group_membership(connection, state, input, overwrite).await?;
@@ -466,13 +510,13 @@ async fn execute_operation(
             upsert_remote_target(connection, state, input, overwrite).await?;
         }
         StorageImportOperation::UpsertEventSink { input, overwrite } => {
-            execute_event_sink(connection, state, input, overwrite).await?;
+            return execute_event_sink(connection, input, overwrite).await;
         }
         StorageImportOperation::UpsertEventSubscription { input, overwrite } => {
             upsert_event_subscription(connection, state, input, overwrite).await?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 async fn resolve_collection(
@@ -1057,10 +1101,9 @@ fn should_abort_for_policy(
 
 async fn execute_identity_scope(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
     input: StorageImportIdentityScope,
     overwrite: bool,
-) -> Result<(), PostgresStorageError> {
+) -> Result<Option<ImportReferenceChange>, PostgresStorageError> {
     let parts = input.into_parts();
     let reference = parts.reference.clone();
     let existing = crate::schema::identity_scopes::table
@@ -1132,20 +1175,16 @@ async fn execute_identity_scope(
                 .await?
         }
     };
-    if let Some(reference) = reference {
-        state
-            .identity_scopes_by_ref
-            .insert(reference, identity_scope_id);
-    }
-    Ok(())
+    Ok(reference
+        .map(|reference| ImportReferenceChange::IdentityScope(reference, identity_scope_id)))
 }
 
 async fn execute_group(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
+    state: &ImportRuntime,
     input: StorageImportGroup,
     overwrite: bool,
-) -> Result<(), PostgresStorageError> {
+) -> Result<Option<ImportReferenceChange>, PostgresStorageError> {
     let parts = input.into_parts();
     let identity_scope_id = resolve_identity_scope(
         connection,
@@ -1235,18 +1274,17 @@ async fn execute_group(
                 .await?
         }
     };
-    if let Some(reference) = parts.reference {
-        state.groups_by_ref.insert(reference, group_id);
-    }
-    Ok(())
+    Ok(parts
+        .reference
+        .map(|reference| ImportReferenceChange::Group(reference, group_id)))
 }
 
 async fn execute_principal(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
+    state: &ImportRuntime,
     input: StorageImportPrincipal,
     overwrite: bool,
-) -> Result<(), PostgresStorageError> {
+) -> Result<Option<ImportReferenceChange>, PostgresStorageError> {
     let parts = input.into_parts();
     let identity_scope_id = resolve_identity_scope(
         connection,
@@ -1297,15 +1335,14 @@ async fn execute_principal(
         overwrite,
     )
     .await?;
-    if let Some(reference) = parts.reference {
-        state.principals_by_ref.insert(reference, principal_id);
-    }
-    Ok(())
+    Ok(parts
+        .reference
+        .map(|reference| ImportReferenceChange::Principal(reference, principal_id)))
 }
 
 async fn execute_group_membership(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
+    state: &ImportRuntime,
     input: StorageImportGroupMembership,
     overwrite: bool,
 ) -> Result<(), PostgresStorageError> {
@@ -2675,10 +2712,9 @@ async fn upsert_remote_target(
 
 async fn execute_event_sink(
     connection: &mut PostgresConnection,
-    state: &mut ImportRuntime,
     input: StorageImportEventSink,
     overwrite: bool,
-) -> Result<(), PostgresStorageError> {
+) -> Result<Option<ImportReferenceChange>, PostgresStorageError> {
     let parts = input.into_parts();
     let existing = crate::schema::event_sinks::table
         .filter(crate::schema::event_sinks::name.eq(&parts.name))
@@ -2740,10 +2776,9 @@ async fn execute_event_sink(
                 .await?
         }
     };
-    if let Some(reference) = parts.reference {
-        state.event_sinks_by_ref.insert(reference, sink_id);
-    }
-    Ok(())
+    Ok(parts
+        .reference
+        .map(|reference| ImportReferenceChange::EventSink(reference, sink_id)))
 }
 
 async fn upsert_event_subscription(

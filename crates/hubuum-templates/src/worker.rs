@@ -46,7 +46,7 @@ pub fn serve_template_worker(heap_peak: fn() -> usize) -> Result<(), Box<dyn std
 
 fn render(request: WorkerRequest<'_>) -> Result<RenderedTemplate, minijinja::Error> {
     let mut environment = Environment::new();
-    environment.set_keep_trailing_newline(true);
+    environment.set_keep_trailing_newline(request.keep_trailing_newline);
     environment.set_recursion_limit(request.limits.recursion_limit());
     environment.set_fuel(Some(request.limits.fuel()));
     environment.set_undefined_behavior(match request.missing_data {

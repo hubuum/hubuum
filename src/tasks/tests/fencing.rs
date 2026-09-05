@@ -41,6 +41,65 @@ async fn exists(context: &TestContext, name: &str) -> bool {
 }
 
 #[tokio::test]
+async fn best_effort_import_does_not_publish_references_from_failed_commits() {
+    let context = TestContext::new().await;
+    let name = context.scoped_name("uncommitted_import_reference");
+    let mut child = ImportCollectionInput {
+        ref_: None,
+        name: context.scoped_name("uncommitted_import_child"),
+        description: "depends on a rolled-back parent".into(),
+        condition: None,
+        timestamps: None,
+        parent_collection_ref: None,
+        parent_collection_key: None,
+    };
+    let parent = child.clone();
+    child.parent_collection_ref = Some("parent".into());
+    let parent = ImportCollectionInput {
+        ref_: Some("parent".into()),
+        name: name.clone(),
+        ..parent
+    };
+    let plan = StorageImportPlan::try_new(
+        [parent, child]
+            .into_iter()
+            .enumerate()
+            .map(|(index, input)| {
+                StorageImportPlanItem::new(
+                    index,
+                    crate::services::import_boundary::import_operation_to_storage(
+                        crate::storage::ApplicationImportOperation::CreateCollection(input),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect(),
+    )
+    .unwrap();
+    let storage = crate::storage::storage_handle(&context.pool);
+    let mode = crate::services::import_boundary::import_mode_to_storage(ImportMode {
+        atomicity: Some(ImportAtomicity::BestEffort),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Continue),
+    });
+    let (outcomes, _) =
+        PostgresFaultController::failing(PostgresFaultPoint::TransactionBeforeCommit)
+            .run(storage.apply_import_best_effort(plan, mode))
+            .await
+            .unwrap()
+            .into_parts();
+    assert!(!exists(&context, &name).await, "the parent must roll back");
+    let (_, error) = outcomes.into_iter().nth(1).unwrap().into_parts();
+    assert!(
+        error
+            .unwrap()
+            .to_string()
+            .contains("Unknown collection ref 'parent'"),
+        "the child must fail reference resolution before attempting a database write"
+    );
+}
+
+#[tokio::test]
 async fn expired_claim_rolls_back_import_domain_mutations() {
     let context = TestContext::new().await;
     let name = context.scoped_name("expired_import");
