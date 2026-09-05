@@ -48,7 +48,6 @@
     "hubuum-openapi",
     "hubuum-runtime-behavior-check",
     "hubuum-scale-benchmark",
-    "hubuum-server",
-    "hubuum-template-worker"
+    "hubuum-server"
   ]
 }

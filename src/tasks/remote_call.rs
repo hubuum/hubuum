@@ -4,7 +4,7 @@ use base64::Engine;
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
 };
-use hubuum_templates::{TemplateLimits, prepare_template};
+use hubuum_templates::prepare_template;
 #[cfg(feature = "integration-test-support")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -150,8 +150,7 @@ where
         request.body_override.clone(),
     )?;
 
-    let rendered_url =
-        render_template(RemoteTemplateSurface::Url, &target.url_template, &context).await?;
+    let rendered_url = render_template("url_template", &target.url_template, &context)?;
     let start = Instant::now();
     let failure_context = RemoteFailureContext {
         task_id,
@@ -172,13 +171,12 @@ where
         }
     };
 
-    let rendered_headers = render_headers(&target.headers_template, &context).await?;
-    let rendered_body = match target.body_template.as_deref() {
-        Some(template) => {
-            Some(render_template(RemoteTemplateSurface::Body, template, &context).await?)
-        }
-        None => None,
-    };
+    let rendered_headers = render_headers(&target.headers_template, &context)?;
+    let rendered_body = target
+        .body_template
+        .as_deref()
+        .map(|template| render_template("body_template", template, &context))
+        .transpose()?;
 
     let mut headers = rendered_headers;
     apply_auth(&mut headers, &target.auth_config).await?;
@@ -409,42 +407,17 @@ fn invocation_context(
     Ok(context.into_value())
 }
 
-#[derive(Clone, Copy)]
-enum RemoteTemplateSurface {
-    Url,
-    Header,
-    Body,
-}
-impl RemoteTemplateSurface {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Url => "url_template",
-            Self::Header => "header template",
-            Self::Body => "body_template",
-        }
-    }
-    fn max_bytes(self) -> usize {
-        match self {
-            Self::Url | Self::Header => 8192,
-            Self::Body => 1024 * 1024,
-        }
-    }
-}
-
-async fn render_template(
-    surface: RemoteTemplateSurface,
+fn render_template(
+    label: &str,
     template: &str,
     context: &serde_json::Value,
 ) -> Result<String, ApiError> {
     let (recursion_limit, fuel) = remote_template_limits();
-    let label = surface.label();
     prepare_template(template)
-        .limits(
-            TemplateLimits::new(recursion_limit, fuel).with_max_output_bytes(surface.max_bytes()),
-        )
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
         .context(context)
         .render()
-        .await
         .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
 }
 
@@ -462,7 +435,7 @@ fn remote_template_limits() -> (usize, u64) {
         ))
 }
 
-async fn render_headers(
+fn render_headers(
     headers_template: &serde_json::Value,
     context: &serde_json::Value,
 ) -> Result<OutboundHeaders, ApiError> {
@@ -470,25 +443,11 @@ async fn render_headers(
     let object = headers_template.as_object().ok_or_else(|| {
         ApiError::BadRequest("headers_template must be a JSON object".to_string())
     })?;
-    if object.len() > 128 {
-        return Err(ApiError::BadRequest(
-            "remote calls support at most 128 headers".into(),
-        ));
-    }
-    let mut total_bytes: usize = 0;
     for (name, value) in object {
         let value = value.as_str().ok_or_else(|| {
             ApiError::BadRequest("header template values must be strings".to_string())
         })?;
-        let rendered = render_template(RemoteTemplateSurface::Header, value, context).await?;
-        total_bytes = total_bytes
-            .saturating_add(name.len())
-            .saturating_add(rendered.len());
-        if total_bytes > 64 * 1024 {
-            return Err(ApiError::BadRequest(
-                "rendered remote headers exceed 64 KiB".into(),
-            ));
-        }
+        let rendered = render_template("header template", value, context)?;
         headers
             .insert(name, &rendered)
             .map_err(outbound_error_to_bad_request)?;
@@ -699,30 +658,24 @@ mod tests {
         assert_eq!(remote_error_outcome(&error), expected);
     }
 
-    #[tokio::test]
-    async fn render_template_supports_curated_filters() {
+    #[test]
+    fn render_template_supports_curated_filters() {
         // The `tojson` filter is documented for remote target body templates; it must
         // actually render, not just compile, so execution matches the docs.
         let context = serde_json::json!({ "object": { "data": { "host": "h1" } } });
-        let rendered = render_template(
-            RemoteTemplateSurface::Body,
-            "{{ object.data | tojson }}",
-            &context,
-        )
-        .await
-        .unwrap();
+        let rendered =
+            render_template("body_template", "{{ object.data | tojson }}", &context).unwrap();
         assert_eq!(rendered, "{\"host\":\"h1\"}");
     }
 
-    #[tokio::test]
-    async fn render_template_is_fuel_bounded() {
+    #[test]
+    fn render_template_is_fuel_bounded() {
         let context = serde_json::json!({});
         let error = render_template(
-            RemoteTemplateSurface::Body,
+            "body_template",
             "{% for _ in range(1000000000) %}x{% endfor %}",
             &context,
         )
-        .await
         .unwrap_err();
 
         assert!(

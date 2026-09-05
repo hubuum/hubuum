@@ -11,25 +11,13 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
 minijinja = { version = "2", features = ["fuel"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 
-tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "time", "macros"] }
-tracing = "0.1"
-
 [dev-dependencies]
-rstest = "0.26"
-libc = "0.2"
-tempfile = "3"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
 gungraun = "0.19.4"
 
 [[bench]]
 name = "size_limited_writer_callgrind"
 harness = false
-
-[[bin]]
-name = "hubuum-template-worker"
-path = "src/bin/hubuum-template-worker.rs"

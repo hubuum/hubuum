@@ -280,7 +280,7 @@ fn container_dependency_images_are_pinned() {
 }
 
 #[test]
-fn benchmark_workflows_cover_every_cargo_benchmark() {
+fn benchmark_action_autodiscovers_every_cargo_benchmark() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
         .expect("benchmark workflow should be readable");
@@ -341,17 +341,6 @@ fn benchmark_workflows_cover_every_cargo_benchmark() {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("benches/{name}.rs")));
         let path = Path::new(&path);
-        if name == "template_schema_concurrency" {
-            assert_eq!(
-                path,
-                Path::new("benches/template_schema_concurrency/main.rs")
-            );
-            assert!(repository.join(path).is_file());
-            let workflow = read_repository_text(".github/workflows/benchmarks.yml");
-            assert!(workflow.contains("cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency"));
-            assert!(workflow.contains("template-schema-evidence.jsonl"));
-            continue;
-        }
         assert!(
             path.parent() == Some(Path::new("benches")),
             "benchmark '{name}' must be a direct child of benches/ for action auto-discovery"

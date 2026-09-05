@@ -1203,9 +1203,7 @@ async fn audit_templates(
             content_type,
             export_template_recursion_limit,
             export_template_fuel,
-        )
-        .await
-        {
+        ) {
             failures.push((
                 template.collection_id(),
                 template.name().to_string(),

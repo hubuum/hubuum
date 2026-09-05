@@ -36,7 +36,7 @@ where
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Import task payload is missing".to_string()))?;
     let request: ImportRequest = serde_json::from_value(payload)?;
-    request.validate().await?;
+    request.validate()?;
     let mode = request.mode();
     let atomicity = mode.atomicity.unwrap_or(ImportAtomicity::Strict);
     let collision_policy = mode

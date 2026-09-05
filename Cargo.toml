@@ -18,7 +18,6 @@ rust-api = "internal-application"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-default-members = [".", "crates/hubuum-templates"]
 members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
@@ -157,7 +156,6 @@ rstest = "0.26"
 tokio-rustls = "0.26"
 
 [features]
-runtime-limit-bench = []
 default = ["swagger-ui", "login-rate-limit-valkey"]
 amqp = ["dep:hubuum-event-sink-amqp"]
 email = ["dep:hubuum-event-sink-email"]
@@ -312,9 +310,3 @@ harness = false
 name = "storage_postgres_criterion"
 harness = false
 required-features = ["postgres-bench"]
-
-[[bench]]
-name = "template_schema_concurrency"
-path = "benches/template_schema_concurrency/main.rs"
-harness = false
-required-features = ["runtime-limit-bench"]

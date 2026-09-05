@@ -80,13 +80,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking:** template execution requires `hubuum-template-worker` beside the
-  server and administrator binaries. Containers and release archives include
-  it. Rendering and validation now enforce worker heap, deadline, admission,
-  protocol, and output budgets. Async worker supervision keeps request threads
-  responsive, bounds waiting work, and cleans up cancelled children, with
-  lifecycle logs and metrics. Remote URLs and headers and email subjects have
-  smaller output caps. See `docs/runtime_hardening.md` for limits and deployment.
 - **Breaking (external authorization):** prospective resources use distinct
   identities and omit unknown endpoint IDs. Upload the updated Treetop schema
   and guard optional ID attributes with Cedar `has` checks before deployment.
@@ -176,9 +169,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- Preserved integration templates' trailing-newline behavior while retaining
-  newline preservation for exports. Best-effort imports now publish only the
-  current item's references after commit, avoiding repeated copies of earlier
+- Best-effort imports now publish only the current item's references after
+  commit, avoiding repeated copies of earlier
   imported objects and schemas.
 - Queued executions refresh external identity state and apply max-stale policy
   before constructing an execution principal.

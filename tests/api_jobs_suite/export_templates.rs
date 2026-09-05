@@ -91,44 +91,6 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn authenticated_requests_remain_responsive_during_template_saturation() {
-        use hubuum_templates::{TemplateExecution, TemplateLimits};
-        use std::time::{Duration, Instant};
-        use tokio::task::JoinSet;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let response = get_request(&pool, &admin_token, "/api/v1/collections").await;
-        assert_response_status(response, StatusCode::OK).await;
-
-        let started = Instant::now();
-        let mut renders = JoinSet::new();
-        for _ in 0..4 {
-            renders.spawn(async {
-                TemplateExecution::new(
-                    "responsiveness",
-                    "{% for x in range(100000000) %}{% set y = x %}{% endfor %}",
-                    TemplateLimits::new(64, u64::MAX),
-                )
-                .render(&serde_json::json!({}))
-                .await
-            });
-        }
-        // All callers use this same current-thread runtime. A synchronous render
-        // would stall it until a worker deadline, including this timer/request.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let response = get_request(&pool, &admin_token, "/api/v1/collections").await;
-        let response = assert_response_status(response, StatusCode::OK).await;
-        let _ = test::read_body(response).await;
-        let elapsed = started.elapsed();
-        renders.abort_all();
-        while renders.join_next().await.is_some() {}
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "unrelated authenticated request stalled for {elapsed:?}"
-        );
-    }
-
-    #[actix_web::test]
     async fn test_template_crud_admin() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "crud").await;

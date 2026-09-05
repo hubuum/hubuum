@@ -8,7 +8,6 @@
     "rust": "1.98.0",
     "database": "PostgreSQL 17 in a disposable Docker container",
     "request_graph_export_profile": "test, unoptimized",
-    "template_schema_profile": "release, optimized",
     "caveat": "Shared developer host; builds and other tests can contend. No baseline or production capacity claim."
   },
   "request_graph_export": [
@@ -71,72 +70,6 @@
       "samples": 20,
       "scenario": "authenticated_collection_http",
       "total_queries": 100
-    }
-  ],
-  "template_schema": [
-    {
-      "elapsed_us": 282556,
-      "scenario": "template_schema_cold_start"
-    },
-    {
-      "concurrency": 1,
-      "elapsed_ms": 82,
-      "p50_us": 8253,
-      "p95_us": 9370,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 10,
-      "scenario": "template_schema_concurrency"
-    },
-    {
-      "concurrency": 4,
-      "elapsed_ms": 88,
-      "p50_us": 8777,
-      "p95_us": 9534,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 40,
-      "scenario": "template_schema_concurrency"
-    },
-    {
-      "concurrency": 8,
-      "elapsed_ms": 166,
-      "p50_us": 16046,
-      "p95_us": 18045,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 80,
-      "scenario": "template_schema_concurrency"
-    }
-  ],
-  "template_schema_previous_synchronous": [
-    {
-      "elapsed_us": 493237,
-      "scenario": "template_schema_cold_start"
-    },
-    {
-      "concurrency": 1,
-      "elapsed_ms": 87,
-      "p50_us": 7997,
-      "p95_us": 8082,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 10,
-      "scenario": "template_schema_concurrency"
-    },
-    {
-      "concurrency": 4,
-      "elapsed_ms": 89,
-      "p50_us": 8042,
-      "p95_us": 8446,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 40,
-      "scenario": "template_schema_concurrency"
-    },
-    {
-      "concurrency": 8,
-      "elapsed_ms": 173,
-      "p50_us": 16161,
-      "p95_us": 24197,
-      "peak_worker_rust_heap_bytes": 1960075,
-      "renders": 80,
-      "scenario": "template_schema_concurrency"
     }
   ]
 }

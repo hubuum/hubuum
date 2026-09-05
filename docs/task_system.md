@@ -581,4 +581,4 @@ The simplest accurate mental model is:
 
 The [generated project inventory](generated/project_inventory.md) lists all current
 task kinds. The [runtime hardening guide](runtime_hardening.md) describes claim
-fencing, recovery, and isolated template execution.
+fencing and recovery.

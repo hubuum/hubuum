@@ -69,8 +69,7 @@ pub(crate) async fn create_remote_target(
         &input.auth_config,
         &input.allowed_subject_types,
         input.timeout_ms,
-    )
-    .await?;
+    )?;
     let definition = StorageRemoteTargetDefinition::new(
         input.description,
         StorageRemoteTargetTransport::try_new(
@@ -139,8 +138,7 @@ pub(crate) async fn update_remote_target(
         effective_auth_config,
         effective_allowed_subject_types,
         update.timeout_ms.unwrap_or(existing.timeout_ms),
-    )
-    .await?;
+    )?;
 
     let patch = StorageRemoteTargetPatch::new()
         .with_collection_id(
