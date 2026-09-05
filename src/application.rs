@@ -56,6 +56,7 @@ use crate::{api, logger, middlewares, observability, tls, utilities};
 /// This is the workspace-internal composition boundary used by the server
 /// binary. It is not a supported third-party embedding API.
 pub async fn run_runtime_from_environment() -> std::io::Result<()> {
+    hubuum_templates::set_worker_event_handler(observability::metrics::template_worker_event);
     if let Err(e) = tls::install_default_crypto_provider() {
         fatal_error(
             &format!("Failed to initialize TLS cryptography: {e}"),
@@ -332,6 +333,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             );
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
+        hubuum_templates::shutdown_template_workers().await;
         drop(app_context);
         if let Err(error) = trace_runtime.shutdown().await {
             warn!(
@@ -475,6 +477,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         server.await
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
+    hubuum_templates::shutdown_template_workers().await;
     drop(app_context);
     if let Err(error) = trace_runtime.shutdown().await {
         warn!(

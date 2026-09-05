@@ -6,7 +6,7 @@ use hubuum_templates::{
 };
 use std::collections::HashMap;
 
-pub fn validate_template(
+pub async fn validate_template(
     template_name: &str,
     template_source: &str,
     collection_id: i32,
@@ -23,8 +23,9 @@ pub fn validate_template(
         recursion_limit,
         fuel,
     )
+    .await
 }
-pub fn validate_template_syntax(
+pub async fn validate_template_syntax(
     template_name: &str,
     template_source: &str,
 ) -> Result<(), ApiError> {
@@ -33,13 +34,14 @@ pub fn validate_template_syntax(
         .limit_recursion(recursion_limit)
         .limit_fuel(fuel)
         .validate()
+        .await
         .map_err(|error| {
             ApiError::BadRequest(format!(
                 "Invalid export template '{template_name}': {error}"
             ))
         })
 }
-pub fn validate_template_with_limits(
+pub async fn validate_template_with_limits(
     template_name: &str,
     template_source: &str,
     collection_id: i32,
@@ -64,8 +66,9 @@ pub fn validate_template_with_limits(
         recursion_limit,
         fuel,
     )
+    .await
 }
-pub(crate) fn validate_template_sources_with_limits(
+pub(crate) async fn validate_template_sources_with_limits(
     template_name: &str,
     template_source: &str,
     sources: &[(String, String)],
@@ -82,10 +85,11 @@ pub(crate) fn validate_template_sources_with_limits(
     .auto_escape(template_auto_escape(content_type))
     .missing_data(MissingDataPolicy::Omit)
     .render(&validation_context(content_type))
+    .await
     .map(|_| ())
     .map_err(|error| ApiError::BadRequest(format!("Template validation failed: {error}")))
 }
-pub fn render_template(
+pub async fn render_template(
     template: &ExportTemplate,
     collection_templates: &[ExportTemplate],
     context: &serde_json::Value,
@@ -116,6 +120,7 @@ pub fn render_template(
     })
     .max_output_bytes(max_output_bytes)
     .render(context)
+    .await
     .map_err(|error| {
         if error.to_string().contains("output limit") {
             ApiError::PayloadTooLarge(format!(
@@ -310,7 +315,8 @@ mod tests {
         true
     )]
     #[case::missing(Vec::new(), false)]
-    fn validates_composed_template_sources(
+    #[tokio::test]
+    async fn validates_composed_template_sources(
         #[case] sources: Vec<(String, String)>,
         #[case] expected_valid: bool,
     ) {
@@ -321,7 +327,8 @@ mod tests {
             ExportContentType::TextPlain,
             64,
             50_000,
-        );
+        )
+        .await;
 
         assert_eq!(result.is_ok(), expected_valid);
     }
@@ -330,7 +337,7 @@ mod tests {
         required_labeled_block(TEMPLATE_GUIDE, label).unwrap().body
     }
 
-    fn assert_template_guide_example(
+    async fn assert_template_guide_example(
         name: &str,
         content_type: ExportContentType,
         missing_data_policy: ExportMissingDataPolicy,
@@ -351,16 +358,18 @@ mod tests {
             missing_data_policy,
             usize::MAX,
         )
+        .await
         .unwrap()
     }
 
-    #[test]
-    fn template_guide_plain_text_example_matches_renderer() {
+    #[tokio::test]
+    async fn template_guide_plain_text_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "plain",
             ExportContentType::TextPlain,
             ExportMissingDataPolicy::Strict,
-        );
+        )
+        .await;
 
         assert_eq!(
             rendered,
@@ -369,37 +378,40 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn template_guide_html_example_matches_renderer() {
+    #[tokio::test]
+    async fn template_guide_html_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "html",
             ExportContentType::TextHtml,
             ExportMissingDataPolicy::Strict,
-        );
+        )
+        .await;
 
         assert_eq!(rendered, template_guide_block("template-guide/html/output"));
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn template_guide_csv_example_matches_renderer() {
+    #[tokio::test]
+    async fn template_guide_csv_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "csv",
             ExportContentType::TextCsv,
             ExportMissingDataPolicy::Strict,
-        );
+        )
+        .await;
 
         assert_eq!(rendered, template_guide_block("template-guide/csv/output"));
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn template_guide_nested_array_example_matches_renderer() {
+    #[tokio::test]
+    async fn template_guide_nested_array_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "nested-array",
             ExportContentType::TextPlain,
             ExportMissingDataPolicy::Strict,
-        );
+        )
+        .await;
 
         assert_eq!(
             rendered,
@@ -408,18 +420,20 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn template_guide_missing_data_policy_examples_match_renderer() {
+    #[tokio::test]
+    async fn template_guide_missing_data_policy_examples_match_renderer() {
         let (null_rendered, null_warnings) = assert_template_guide_example(
             "missing-data",
             ExportContentType::TextPlain,
             ExportMissingDataPolicy::Null,
-        );
+        )
+        .await;
         let (omit_rendered, omit_warnings) = assert_template_guide_example(
             "missing-data",
             ExportContentType::TextPlain,
             ExportMissingDataPolicy::Omit,
-        );
+        )
+        .await;
 
         assert_eq!(
             null_rendered,
@@ -435,8 +449,8 @@ mod tests {
         assert_eq!(omit_warnings[0].code, "template_missing_value");
     }
 
-    #[test]
-    fn renders_jinja_loops_and_nested_values() {
+    #[tokio::test]
+    async fn renders_jinja_loops_and_nested_values() {
         let template = template(
             1,
             10,
@@ -459,14 +473,15 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "srv-01=alice\nsrv-02=bob\n");
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn supports_same_collection_includes() {
+    #[tokio::test]
+    async fn supports_same_collection_includes() {
         let layout = template(
             2,
             10,
@@ -493,13 +508,14 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "<ul><li>srv-01</li></ul>");
     }
 
-    #[test]
-    fn omits_missing_values_when_requested() {
+    #[tokio::test]
+    async fn omits_missing_values_when_requested() {
         let template = template(
             4,
             10,
@@ -519,6 +535,7 @@ mod tests {
             ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "srv-01=\n");
@@ -527,8 +544,8 @@ mod tests {
         assert!(warnings[0].message.contains("missing.txt"));
     }
 
-    #[test]
-    fn renders_null_for_missing_values_and_exports_warning() {
+    #[tokio::test]
+    async fn renders_null_for_missing_values_and_exports_warning() {
         let template = template(
             5,
             10,
@@ -548,6 +565,7 @@ mod tests {
             ExportMissingDataPolicy::Null,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "srv-01=null\n");
@@ -556,8 +574,8 @@ mod tests {
         assert!(warnings[0].message.contains("missing-null.txt"));
     }
 
-    #[test]
-    fn autoescapes_html_but_not_plain_text() {
+    #[tokio::test]
+    async fn autoescapes_html_but_not_plain_text() {
         let html_template = template(
             6,
             10,
@@ -584,6 +602,7 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
         let (text, text_warnings) = render_template(
             &text_template,
@@ -593,6 +612,7 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(html, "&lt;b&gt;srv&amp;01&lt;&#x2f;b&gt;");
@@ -601,8 +621,8 @@ mod tests {
         assert!(text_warnings.is_empty());
     }
 
-    #[test]
-    fn supports_same_collection_imports() {
+    #[tokio::test]
+    async fn supports_same_collection_imports() {
         let macros = template(
             8,
             10,
@@ -629,14 +649,15 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "srv-01=alice");
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn missing_value_warning_identifies_composed_template_name() {
+    #[tokio::test]
+    async fn missing_value_warning_identifies_composed_template_name() {
         let partial = template(
             15,
             10,
@@ -663,6 +684,7 @@ mod tests {
             ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(rendered, "");
@@ -670,8 +692,8 @@ mod tests {
         assert!(warnings[0].message.contains("partial.owner.txt"));
     }
 
-    #[test]
-    fn supports_curated_template_helpers() {
+    #[tokio::test]
+    async fn supports_curated_template_helpers() {
         let template = template(
             14,
             10,
@@ -694,6 +716,7 @@ mod tests {
             ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -704,8 +727,8 @@ mod tests {
         assert!(warnings[0].message.contains("helpers.txt"));
     }
 
-    #[test]
-    fn rejects_cross_collection_template_loading() {
+    #[tokio::test]
+    async fn rejects_cross_collection_template_loading() {
         let layout = template(
             10,
             20,
@@ -732,13 +755,14 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap_err();
 
         assert!(error.to_string().contains("template not found"));
     }
 
-    #[test]
-    fn invalidates_cached_environment_when_templates_change() {
+    #[tokio::test]
+    async fn invalidates_cached_environment_when_templates_change() {
         let child = template(
             12,
             10,
@@ -768,6 +792,7 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
         layout_v1.updated_at += chrono::Duration::seconds(2);
         let (second, _) = render_template(
@@ -778,14 +803,15 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(first, "<ul class=\"v1\"><li>srv-01</li></ul>");
         assert_eq!(second, "<ol class=\"v2\"><li>srv-01</li></ol>");
     }
 
-    #[test]
-    fn invalidates_cached_environment_when_template_body_changes_without_timestamp_change() {
+    #[tokio::test]
+    async fn invalidates_cached_environment_when_template_body_changes_without_timestamp_change() {
         let child = template(
             17,
             10,
@@ -814,6 +840,7 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
         let (second, _) = render_template(
             &child,
@@ -823,6 +850,7 @@ mod tests {
             ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
+        .await
         .unwrap();
 
         assert_eq!(first, "<ul class=\"v1\"><li>srv-01</li></ul>");

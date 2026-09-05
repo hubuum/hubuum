@@ -1,8 +1,9 @@
 //! End-to-end execution evidence, including child startup and schema contention.
 use hubuum_templates::{TemplateExecution, TemplateLimits};
 use serde_json::{Value, json};
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Barrier;
 
 const TEMPLATE: &str = "{% macro item(x) %}{{ x.id }}:{{ x.name }}:{{ x.payload }}\n{% endmacro %}{% for x in items %}{{ item(x) }}{% endfor %}";
 
@@ -12,12 +13,14 @@ fn workload(worker: usize) -> (Value, Value) {
     (context, schema)
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let (context, schema) = workload(0);
     let started = Instant::now();
     hubuum_domain::validate_json_value(&schema, &context).unwrap();
     TemplateExecution::new("cold", TEMPLATE, TemplateLimits::new(64, 500_000))
         .render(&context)
+        .await
         .unwrap();
     println!(
         "{}",
@@ -34,9 +37,9 @@ fn main() {
         let workers = (0..concurrency)
             .map(|worker| {
                 let barrier = barrier.clone();
-                std::thread::spawn(move || {
+                tokio::spawn(async move {
                     let (context, schema) = workload(worker);
-                    barrier.wait();
+                    barrier.wait().await;
                     let mut peak_heap = 0;
                     let mut samples = Vec::new();
                     for _ in 0..10 {
@@ -48,6 +51,7 @@ fn main() {
                             TemplateLimits::new(64, 500_000),
                         )
                         .render(&context)
+                        .await
                         .unwrap();
                         samples.push(started.elapsed().as_micros());
                         peak_heap = peak_heap.max(rendered.peak_heap_bytes());
@@ -56,10 +60,10 @@ fn main() {
                 })
             })
             .collect::<Vec<_>>();
-        let results = workers
-            .into_iter()
-            .map(|worker| worker.join().unwrap())
-            .collect::<Vec<_>>();
+        let mut results = Vec::new();
+        for worker in workers {
+            results.push(worker.await.unwrap());
+        }
         let peak_heap = results.iter().map(|(peak, _)| *peak).max().unwrap();
         let mut samples = results
             .into_iter()

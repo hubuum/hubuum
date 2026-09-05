@@ -44,20 +44,28 @@ payloads per item and renders it through a macro in a fresh worker process.
 Every iteration includes input serialization, admission, process creation,
 template compilation, rendering and response transport. Schema compilation is
 warmed before concurrency comparisons. A separate cold-start observation was
-493 ms; one cold sample cannot establish a startup latency distribution.
+283 ms; one cold sample cannot establish a startup latency distribution.
 
 | Concurrent callers | Completed renders | Total time | Median operation | p95 operation | Peak live Rust heap per worker |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 10 | 87 ms | 8.00 ms | 8.08 ms | 1,960,075 bytes |
-| 4 | 40 | 89 ms | 8.04 ms | 8.45 ms | 1,960,075 bytes |
-| 8 | 80 | 173 ms | 16.16 ms | 24.20 ms | 1,960,075 bytes |
+| 1 | 10 | 82 ms | 8.25 ms | 9.37 ms | 1,960,075 bytes |
+| 4 | 40 | 88 ms | 8.78 ms | 9.53 ms | 1,960,075 bytes |
+| 8 | 80 | 166 ms | 16.05 ms | 18.05 ms | 1,960,075 bytes |
 
+These samples use asynchronous callers and a dedicated process supervisor.
+The earlier synchronous samples remain in the JSON for provenance; the shared
+machine and separate runs do not establish a controlled speed comparison.
 At eight callers, the four-worker admission limit increases waiting time. The
 heap counter includes worker compilation and rendering allocations, but excludes
 allocator bookkeeping, stacks, executable pages and the parent's protocol
 buffers. Separate tests exercise oversized output, retained intermediate strings
 and large macro captures, proving that budget exhaustion terminates the worker
-and leaves the parent able to render again. These tests cover limits that normal
+and leaves the parent able to render again. Further regression tests saturate
+admission, cancel queued and executing work, stall pipes, enforce deadlines,
+verify OS child reaping, shut down the caller runtime and supervisor, and check
+lifecycle logging without sensitive content. An authenticated request regression
+runs long template operations on the same single-thread runtime and requires an
+unrelated request to complete before the template deadline. These tests cover limits that normal
 workload measurements alone cannot establish.
 
 ## Reproduction

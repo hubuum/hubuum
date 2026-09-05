@@ -15,7 +15,8 @@
 mod isolation;
 mod worker;
 pub use isolation::{
-    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateExecution,
+    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateExecution, WorkerEvent,
+    set_worker_event_handler, shutdown_template_workers,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -42,7 +43,7 @@ pub enum TemplateAutoEscape {
 ///
 /// The loader deliberately rejects path-like names. Hubuum fragments are
 /// collection-local names, not filesystem paths or namespace lookups.
-pub fn validate_template_composition(
+pub async fn validate_template_composition(
     template_name: &str,
     template_source: &str,
     sources: &[(String, String)],
@@ -55,6 +56,7 @@ pub fn validate_template_composition(
         .auto_escape(auto_escape)
         .missing_data(MissingDataPolicy::Omit)
         .render(context)
+        .await
         .map(|_| ())
 }
 
@@ -285,9 +287,9 @@ impl<'source> PreparedTemplate<'source> {
         }
     }
 
-    pub fn validate(self) -> Result<(), TemplateError> {
+    pub async fn validate(self) -> Result<(), TemplateError> {
         let limits = self.limits_or_error()?;
-        isolation::validate_syntax(self.source, limits)
+        isolation::validate_syntax(self.source, limits).await
     }
 
     fn limits_or_error(&self) -> Result<TemplateLimits, TemplateError> {
@@ -307,11 +309,12 @@ pub struct PreparedTemplateRender<'source, 'context> {
 }
 
 impl PreparedTemplateRender<'_, '_> {
-    pub fn render(self) -> Result<String, TemplateError> {
+    pub async fn render(self) -> Result<String, TemplateError> {
         let limits = self.template.limits_or_error()?;
         TemplateExecution::new("template", self.template.source, limits)
             .missing_data(MissingDataPolicy::Lenient)
             .render(self.context)
+            .await
             .map(|result| result.into_parts().0)
     }
 }
@@ -535,20 +538,21 @@ mod tests {
         assert_eq!(csv_cell_filter(Value::from("3.14")), "3.14");
     }
 
-    #[test]
-    fn render_template_supports_curated_filters() {
+    #[tokio::test]
+    async fn render_template_supports_curated_filters() {
         let context = serde_json::json!({ "object": { "data": { "host": "h1" } } });
         let rendered = prepare_template("{{ object.data | tojson }}")
             .limit_recursion(64)
             .limit_fuel(50_000)
             .context(&context)
             .render()
+            .await
             .unwrap();
         assert_eq!(rendered, "{\"host\":\"h1\"}");
     }
 
-    #[test]
-    fn arbitrary_precision_numbers_are_template_scalars() {
+    #[tokio::test]
+    async fn arbitrary_precision_numbers_are_template_scalars() {
         let context: serde_json::Value = serde_json::from_str(
             r#"{"integer":1234567890123456789012345678901234,"decimal":0.1234567890123456789012345678901234}"#,
         )
@@ -558,19 +562,21 @@ mod tests {
             .limit_fuel(50_000)
             .context(&context)
             .render()
+            .await
             .unwrap();
         assert!(rendered.starts_with("1234567890123456789012345678901234|0.123456789"));
         assert!(!rendered.contains("$serde_json"));
     }
 
-    #[test]
-    fn render_template_is_fuel_bounded() {
+    #[tokio::test]
+    async fn render_template_is_fuel_bounded() {
         let context = serde_json::json!({});
         let error = prepare_template("{% for _ in range(1000000000) %}x{% endfor %}")
             .limit_recursion(64)
             .limit_fuel(100)
             .context(&context)
             .render()
+            .await
             .unwrap_err();
 
         assert!(
@@ -580,8 +586,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn composed_template_resolves_named_fragment() {
+    #[tokio::test]
+    async fn composed_template_resolves_named_fragment() {
         let sources = vec![("fragment.txt".to_string(), "fragment".to_string())];
 
         validate_template_composition(
@@ -592,11 +598,12 @@ mod tests {
             TemplateAutoEscape::None,
             TemplateLimits::new(64, 50_000),
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn composed_template_rejects_missing_fragment() {
+    #[tokio::test]
+    async fn composed_template_rejects_missing_fragment() {
         let error = validate_template_composition(
             "export.txt",
             "{% include \"missing.txt\" %}",
@@ -605,6 +612,7 @@ mod tests {
             TemplateAutoEscape::None,
             TemplateLimits::new(64, 50_000),
         )
+        .await
         .unwrap_err();
 
         assert!(error.to_string().contains("missing.txt"));

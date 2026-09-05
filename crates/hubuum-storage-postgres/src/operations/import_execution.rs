@@ -2553,6 +2553,7 @@ async fn validate_import_template_composition(
         auto_escape,
         TemplateLimits::new(IMPORT_TEMPLATE_RECURSION_LIMIT, IMPORT_TEMPLATE_FUEL),
     )
+    .await
     .map_err(|error| {
         PostgresStorageError::invalid_input(format!(
             "Invalid export template composition '{name}': {error}"

@@ -350,3 +350,11 @@ assert_flag "$worker_output" artifacts true
 performance_output="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
 assert_flag "$performance_output" code true
 assert_flag "$performance_output" benchmarks true
+
+async_worker_tests="$(bash "$classifier" crates/hubuum-templates/src/isolation/tests.rs)"
+assert_flag "$async_worker_tests" code true
+assert_flag "$async_worker_tests" container true
+async_worker_metrics="$(bash "$classifier" src/observability/metrics/template.rs)"
+assert_flag "$async_worker_metrics" code true
+async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telemetry.rs)"
+assert_flag "$async_worker_telemetry" code true

@@ -83,7 +83,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking:** template execution requires `hubuum-template-worker` beside the
   server and administrator binaries. Containers and release archives include
   it. Rendering and validation now enforce worker heap, deadline, admission,
-  protocol, and output budgets; remote URLs and headers and email subjects have
+  protocol, and output budgets. Async worker supervision keeps request threads
+  responsive, bounds waiting work, and cleans up cancelled children, with
+  lifecycle logs and metrics. Remote URLs and headers and email subjects have
   smaller output caps. See `docs/runtime_hardening.md` for limits and deployment.
 - **Breaking (external authorization):** prospective resources use distinct
   identities and omit unknown endpoint IDs. Upload the updated Treetop schema

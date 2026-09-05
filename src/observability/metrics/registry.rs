@@ -30,6 +30,7 @@ const DB_CONNECTION_ACQUIRE_DURATION: &str = "hubuum_db_connection_acquire_durat
 const DB_OPERATION_DURATION: &str = "hubuum_db_operation_duration";
 const STORAGE_OPERATION_DURATION: &str = "hubuum_storage_operation_duration";
 const SECRET_RESOLUTION_DURATION: &str = "hubuum_secret_resolution_duration";
+const TEMPLATE_WORKER_DURATION: &str = "hubuum_template_worker_duration";
 const REMOTE_CALL_DURATION: &str = "hubuum_remote_call_duration";
 const TASK_QUEUE_WAIT_DURATION: &str = "hubuum_task_queue_wait_duration";
 const TASK_EXECUTION_DURATION: &str = "hubuum_task_execution_duration";
@@ -44,7 +45,8 @@ fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
         | DB_CONNECTION_ACQUIRE_DURATION
         | DB_OPERATION_DURATION
         | STORAGE_OPERATION_DURATION
-        | SECRET_RESOLUTION_DURATION => LATENCY_BUCKETS_SECONDS,
+        | SECRET_RESOLUTION_DURATION
+        | TEMPLATE_WORKER_DURATION => LATENCY_BUCKETS_SECONDS,
         REMOTE_CALL_DURATION => OUTBOUND_BUCKETS_SECONDS,
         TASK_QUEUE_WAIT_DURATION
         | TASK_EXECUTION_DURATION
@@ -361,6 +363,15 @@ pub fn init() -> Result<(), ApiError> {
             &meter,
             REMOTE_CALL_DURATION,
             "Remote call duration",
+        ),
+        template_worker_events: meter
+            .u64_counter("hubuum_template_worker_events")
+            .with_description("Template worker lifecycle events by bounded event kind")
+            .build(),
+        template_worker_duration: duration_histogram(
+            &meter,
+            TEMPLATE_WORKER_DURATION,
+            "Template operation duration including queueing and cleanup",
         ),
         remote_call_results: meter
             .u64_counter("hubuum_remote_call_results")
