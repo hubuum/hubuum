@@ -51,7 +51,7 @@ fn event_from_storage(event: hubuum_storage_core::StorageRecordedEvent) -> Event
         actor_user_id: event.actor_user_id().map(PrincipalId::id),
         actor_kind: event.actor_kind().as_str().to_string(),
         request_id: event.request_id(),
-        correlation_id: event.correlation_id().map(ToOwned::to_owned),
+        correlation_id: event.correlation_id().map(|id| id.as_str().to_owned()),
         summary: event.summary().to_string(),
         before: event.before().cloned(),
         after: event.after().cloned(),
@@ -94,7 +94,10 @@ fn new_event_accepts_a_validated_correlation_id() {
     )
     .unwrap()
     .with_correlation_id(correlation_id("bounded-client-value-!@#$%"));
-    assert_eq!(ev.correlation_id(), Some("bounded-client-value-!@#$%"));
+    assert_eq!(
+        ev.correlation_id(),
+        Some(&correlation_id("bounded-client-value-!@#$%"))
+    );
 }
 
 #[test]
@@ -115,7 +118,10 @@ fn new_event_applies_event_context() {
     assert_eq!(ev.actor_kind(), ActorKind::User);
     assert_eq!(ev.actor_user_id().map(PrincipalId::id), Some(42));
     assert_eq!(ev.request_id(), Some(request_id));
-    assert_eq!(ev.correlation_id(), Some("client-correlation"));
+    assert_eq!(
+        ev.correlation_id(),
+        Some(&correlation_id("client-correlation"))
+    );
 }
 
 #[actix_web::test]

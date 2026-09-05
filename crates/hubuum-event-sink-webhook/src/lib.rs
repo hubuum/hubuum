@@ -233,6 +233,7 @@ mod tests {
 
     use base64::Engine;
     use chrono::Utc;
+    use hubuum_events_core::CorrelationId;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
@@ -294,7 +295,7 @@ mod tests {
                 }),
                 task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
             })
-            .correlation_id(Some("corr-1".to_string()))
+            .correlation_id(Some(CorrelationId::new("corr-1").unwrap()))
             .summary("collection created".to_string())
             .after(Some(serde_json::json!({"name": "example"})))
             .metadata(serde_json::json!({"source": "test"}))

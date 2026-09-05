@@ -431,8 +431,8 @@ impl EventContext {
         self.request_id
     }
 
-    pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_ref().map(CorrelationId::as_str)
+    pub fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     #[must_use]
@@ -786,7 +786,8 @@ pub struct EventEnvelope {
     actor_kind: ActorKind,
     provenance: Provenance,
     request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+    #[cfg_attr(feature = "schema", schema(value_type = Option<String>))]
+    correlation_id: Option<CorrelationId>,
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schema(ignore))]
     trace_link: Option<TraceLink>,
@@ -818,7 +819,7 @@ struct EventEnvelopeWire {
     actor_kind: ActorKind,
     provenance: Provenance,
     request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+    correlation_id: Option<CorrelationId>,
     summary: String,
     before: Option<serde_json::Value>,
     after: Option<serde_json::Value>,
@@ -888,7 +889,7 @@ pub struct EventEnvelopeBuilder {
     actor_kind: Option<ActorKind>,
     provenance: Provenance,
     request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+    correlation_id: Option<CorrelationId>,
     trace_link: Option<TraceLink>,
     summary: Option<String>,
     before: Option<serde_json::Value>,
@@ -929,7 +930,7 @@ impl EventEnvelopeBuilder {
     event_envelope_builder_optional_setter!(actor_user_id, actor_user_id, PrincipalId);
     event_envelope_builder_required_setter!(actor_kind, actor_kind, ActorKind);
     event_envelope_builder_optional_setter!(request_id, request_id, Uuid);
-    event_envelope_builder_optional_setter!(correlation_id, correlation_id, String);
+    event_envelope_builder_optional_setter!(correlation_id, correlation_id, CorrelationId);
     event_envelope_builder_required_setter!(summary, summary, String);
     event_envelope_builder_optional_setter!(before, before, serde_json::Value);
     event_envelope_builder_optional_setter!(after, after, serde_json::Value);
@@ -997,11 +998,6 @@ impl EventEnvelopeBuilder {
                 ));
             }
             _ => {}
-        }
-
-        if let Some(correlation_id) = self.correlation_id.as_ref() {
-            CorrelationId::new(correlation_id.clone())
-                .map_err(|error| EventEnvelopeError::new(error.to_string()))?;
         }
 
         let metadata = self
@@ -1153,8 +1149,8 @@ impl EventEnvelope {
     }
 
     #[must_use]
-    pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_deref()
+    pub fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     #[must_use]
@@ -1275,7 +1271,10 @@ impl EventSubscriptionFilter {
                     .map(|principal| principal.principal_id),
             )
             && matches_optional_uuid(&self.request_ids, event.request_id())
-            && matches_optional_str(&self.correlation_ids, event.correlation_id())
+            && matches_optional_str(
+                &self.correlation_ids,
+                event.correlation_id().map(CorrelationId::as_str),
+            )
     }
 
     pub fn validate(&self) -> Result<(), EventFilterError> {
@@ -1860,8 +1859,8 @@ impl NewEvent {
     }
 
     #[must_use]
-    pub fn correlation_id(&self) -> Option<&str> {
-        self.correlation_id.as_ref().map(CorrelationId::as_str)
+    pub fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     #[must_use]
@@ -2261,7 +2260,7 @@ mod tests {
             .action(Action::Created)
             .actor_user_id(Some(PrincipalId::new(40).unwrap()))
             .actor_kind(ActorKind::User)
-            .correlation_id(Some("correlation".to_string()))
+            .correlation_id(Some(CorrelationId::new("correlation").unwrap()))
             .summary("summary".to_string())
             .metadata(serde_json::json!({"related_collection_ids": [20, "21"]}))
             .schema_version(1)
@@ -2374,6 +2373,38 @@ mod tests {
         assert_eq!(value["occurred_at"], "2026-01-01T00:00:00");
         let decoded: EventEnvelope = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.occurred_at(), event.occurred_at());
+    }
+
+    #[test]
+    fn event_envelope_preserves_the_correlation_id_proof() {
+        let correlation_id = CorrelationId::new("validated-correlation").unwrap();
+        let context = EventContext::user(
+            PrincipalId::new(40).unwrap(),
+            None,
+            Some(correlation_id.clone()),
+        );
+        let event = envelope_builder()
+            .correlation_id(context.correlation_id().cloned())
+            .try_build()
+            .unwrap();
+        let retained: &CorrelationId = event.correlation_id().unwrap();
+        assert_eq!(retained, &correlation_id);
+    }
+
+    #[test]
+    fn event_envelope_correlation_id_keeps_its_string_wire_format() {
+        let event = envelope();
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["correlation_id"], "correlation");
+        let decoded: EventEnvelope = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.correlation_id(), event.correlation_id());
+    }
+
+    #[test]
+    fn event_envelope_deserialization_rejects_invalid_correlation_ids() {
+        let mut value = serde_json::to_value(envelope()).unwrap();
+        value["correlation_id"] = serde_json::json!("invalid correlation");
+        assert!(serde_json::from_value::<EventEnvelope>(value).is_err());
     }
 
     #[test]

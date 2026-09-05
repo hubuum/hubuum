@@ -6,8 +6,8 @@ use diesel::{Queryable, Selectable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence, Provenance,
-    ProvenanceActor, ProvenancePrincipal, TraceLink,
+    Action, ActorKind, CorrelationId, EntityType, EventEntityId, EventEnvelope, EventSequence,
+    Provenance, ProvenanceActor, ProvenancePrincipal, TraceLink,
 };
 use hubuum_storage_core::StorageAuditEvent;
 use serde_json::Value;
@@ -126,7 +126,12 @@ impl StoredEventProjection {
             .actor_kind(actor_kind)
             .provenance(provenance)
             .request_id(self.request_id)
-            .correlation_id(self.correlation_id)
+            .correlation_id(
+                self.correlation_id
+                    .map(CorrelationId::new)
+                    .transpose()
+                    .map_err(invalid_event_envelope)?,
+            )
             .trace_link(trace_link)
             .summary(self.summary)
             .before(self.before)

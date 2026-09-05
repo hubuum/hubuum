@@ -4,7 +4,6 @@ use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use diesel::QueryableByName;
 use diesel::sql_types::Jsonb;
 use diesel_async::RunQueryDsl;
-use hubuum_events_core::CorrelationId;
 use hubuum_storage_core::{
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
     StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
@@ -429,11 +428,16 @@ pub(crate) fn state_row_to_postgres(
 
 pub(crate) fn history_row_to_postgres(
     section: StorageBackupHistorySection,
-    mut row: Value,
+    row: Value,
 ) -> Result<Value, PostgresStorageError> {
-    let object = row.as_object_mut().ok_or_else(|| {
+    let mut row = StorageBackupRow::try_from_value(row).map_err(|_| {
         PostgresStorageError::invalid_input("Logical backup history row is not a JSON object")
     })?;
+    row.normalize_legacy_history(section);
+    let mut row = row.into_value();
+    let object = row
+        .as_object_mut()
+        .expect("validated backup row is an object");
     if let Some(field) = history_private_fields(section)
         .iter()
         .find(|field| object.contains_key(**field))
@@ -441,9 +445,6 @@ pub(crate) fn history_row_to_postgres(
         return Err(PostgresStorageError::invalid_input(format!(
             "Logical backup history row contains adapter-private field '{field}'"
         )));
-    }
-    if section == StorageBackupHistorySection::AuditEvents {
-        normalize_legacy_event_correlation_id(object);
     }
     if matches!(
         section,
@@ -463,16 +464,6 @@ pub(crate) fn history_row_to_postgres(
     rename_fields(object, history_field_mappings(section), false)?;
     physicalize_timestamps(object)?;
     Ok(row)
-}
-
-fn normalize_legacy_event_correlation_id(row: &mut Map<String, Value>) {
-    let invalid = row
-        .get("correlation_id")
-        .and_then(Value::as_str)
-        .is_some_and(|value| CorrelationId::new(value).is_err());
-    if invalid {
-        row.insert("correlation_id".to_string(), Value::Null);
-    }
 }
 
 fn validate_snapshot_table(table: &str) -> Result<(), PostgresStorageError> {

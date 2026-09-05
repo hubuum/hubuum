@@ -20,8 +20,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   without storing baggage or exposing trace context through public task or
   event JSON. Storage spans cover every selected backend, computed-field
   rebuild tasks retain their initiating request link, and audit trace links
-  remain immutable. Version 5 backups without trace fields remain compatible
-  with restore verification.
+  remain immutable. Version 5 backups without trace fields or with legacy
+  invalid correlation IDs remain compatible with restore verification.
+  Database readiness checks require both tracing migrations even when a
+  newer migration from another release is already applied.
 - Added opt-in deterministic large and huge operational benchmark profiles with
   skewed relational, history, computed, authorization, task, and event data;
   production API and worker workloads; standard and extended limit coverage;
@@ -93,7 +95,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the validated `CorrelationId` newtype, and event provenance can carry an
   optional validated `TraceLink`. Callers must construct correlation IDs with
   `CorrelationId::new` before passing them to event context or envelope
-  builders; public event serialization remains unchanged.
+  builders. Correlation-ID accessors retain the validated type; call `as_str()`
+  when a string is needed at a serialization boundary. Public event
+  serialization remains unchanged.
 - **Breaking (experimental `hubuum-storage-core` API):**
   `EventFanoutStorage::process_event_fanout_batch` now returns
   `StorageEventFanoutOutcome` instead of `usize`, and task create/projection

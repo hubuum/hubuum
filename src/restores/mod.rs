@@ -700,6 +700,13 @@ pub(crate) fn verify_restored_backup_matches(
 ) -> Result<(), ApiError> {
     let mut source = source.clone();
     normalize_legacy_class_schema_policies(&mut source);
+    if let Some(history) = &mut source.history {
+        for (section, rows) in &mut history.sections {
+            for row in rows {
+                row.normalize_legacy_history(*section);
+            }
+        }
+    }
     if source.state != restored.state {
         return Err(ApiError::InternalServerError(
             "Restored logical state does not match the verified backup".to_string(),
@@ -2259,6 +2266,61 @@ mod tests {
         normalize_legacy_class_schema_policies(&mut restored);
 
         assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[rstest]
+    #[case::legacy_spaces(json!("legacy correlation"), json!(null), true)]
+    #[case::legacy_empty(json!(""), json!(null), true)]
+    #[case::legacy_overlong(json!("x".repeat(129)), json!(null), true)]
+    #[case::valid_unchanged(json!("client-correlation"), json!("client-correlation"), true)]
+    #[case::valid_cleared(json!("client-correlation"), json!(null), false)]
+    #[case::valid_replaced(json!("client-correlation"), json!("different-correlation"), false)]
+    #[case::restored_invalid(json!(null), json!("invalid correlation"), false)]
+    #[case::legacy_replaced_with_invalid(json!("legacy correlation"), json!("invalid correlation"), false)]
+    #[case::malformed_non_string(json!(42), json!(null), false)]
+    fn restored_backup_comparison_normalizes_only_legacy_source_correlation_ids(
+        #[case] source_correlation: serde_json::Value,
+        #[case] restored_correlation: serde_json::Value,
+        #[case] accepted: bool,
+    ) {
+        let row = |correlation: serde_json::Value| {
+            StorageBackupRow::try_from_value(json!({
+                "id": 1,
+                "correlation_id": correlation
+            }))
+            .unwrap()
+        };
+        let mut source = minimally_valid_document();
+        source.history = Some(BackupHistory {
+            sections: StorageBackupHistorySection::ALL
+                .iter()
+                .copied()
+                .map(|section| (section, Vec::new()))
+                .collect(),
+        });
+        source.history.as_mut().unwrap().sections.insert(
+            StorageBackupHistorySection::AuditEvents,
+            vec![row(source_correlation)],
+        );
+        let mut restored = source.clone();
+        restored.history.as_mut().unwrap().sections.insert(
+            StorageBackupHistorySection::AuditEvents,
+            vec![
+                row(restored_correlation),
+                StorageBackupRow::try_from_value(json!({
+                    "id": 2,
+                    "entity_type": "restore",
+                    "action": "succeeded"
+                }))
+                .unwrap(),
+            ],
+        );
+
+        assert_eq!(
+            verify_restored_backup_matches(&source, &restored).is_ok(),
+            accepted
+        );
     }
 
     #[cfg(feature = "embedded-migrations")]

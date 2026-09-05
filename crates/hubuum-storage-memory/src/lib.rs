@@ -437,7 +437,7 @@ impl MemoryState {
             .actor_kind(context.actor_kind())
             .provenance(provenance)
             .request_id(context.request_id())
-            .correlation_id(context.correlation_id().map(ToOwned::to_owned))
+            .correlation_id(context.correlation_id().cloned())
             .trace_link(context.trace_link().cloned())
             .summary(document.summary_text().to_string())
             .before(document.before().cloned())

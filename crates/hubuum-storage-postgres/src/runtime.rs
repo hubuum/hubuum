@@ -21,6 +21,13 @@ use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, Postgres
 
 /// Latest migration required by this adapter.
 pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260904000001";
+// These migrations were added on a parallel branch and precede the latest
+// checkpoint. Its presence alone does not prove that tracing is installed.
+const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
+    "20260903000002",
+    "20260903000003",
+    REQUIRED_DATABASE_MIGRATION_VERSION,
+];
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level observation hook supplied by the application composition root.
@@ -622,17 +629,19 @@ pub(crate) async fn postgres_schema_is_ready(
     connection: &mut PostgresConnection,
 ) -> Result<bool, diesel::result::Error> {
     Ok(diesel::sql_query(
-        "SELECT EXISTS (\
-            SELECT 1 FROM __diesel_schema_migrations WHERE version = $1\
+        "SELECT NOT EXISTS (\
+            SELECT unnest($1::text[]) \
+            EXCEPT SELECT version::text FROM __diesel_schema_migrations\
         ) AS ready",
     )
-    .bind::<diesel::sql_types::Text, _>(REQUIRED_DATABASE_MIGRATION_VERSION)
+    .bind::<diesel::sql_types::Array<Text>, _>(REQUIRED_DATABASE_MIGRATION_VERSIONS)
     .get_result::<DatabaseSchemaReadiness>(connection)
     .await?
     .ready)
 }
 
-/// Verify that the latest schema required by this adapter is installed.
+/// Verify that every required schema checkpoint is installed, including
+/// migrations added out of order on parallel branches.
 #[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 pub async fn schema_is_ready(pool: &PostgresPool) -> Result<bool, PostgresStorageError> {
     with_connection(pool, postgres_schema_is_ready).await
@@ -736,6 +745,44 @@ mod tests {
     use std::path::PathBuf;
 
     use super::REQUIRED_DATABASE_MIGRATION_VERSION;
+
+    #[cfg(feature = "integration-test-support")]
+    #[rstest::rstest]
+    #[case::complete(None)]
+    #[case::trace_schema(Some("20260903000002"))]
+    #[case::trace_validation(Some("20260903000003"))]
+    #[case::latest(Some(REQUIRED_DATABASE_MIGRATION_VERSION))]
+    #[tokio::test]
+    async fn readiness_requires_every_schema_checkpoint(#[case] missing: Option<&str>) {
+        use diesel::sql_types::Text;
+        use diesel_async::RunQueryDsl;
+
+        use crate::test_support::{database_role_tests_enabled, integration_test_migration_pool};
+        use crate::with_connection;
+
+        if !database_role_tests_enabled() {
+            return;
+        }
+        let pool = integration_test_migration_pool(1);
+        let ready = with_connection(&pool, async |connection| {
+            diesel::sql_query("BEGIN").execute(&mut *connection).await?;
+            if let Some(version) = missing {
+                diesel::sql_query("DELETE FROM __diesel_schema_migrations WHERE version = $1")
+                    .bind::<Text, _>(version)
+                    .execute(&mut *connection)
+                    .await?;
+            }
+            let result = super::postgres_schema_is_ready(connection).await;
+            diesel::sql_query("ROLLBACK")
+                .execute(&mut *connection)
+                .await?;
+            result
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(ready, missing.is_none());
+    }
 
     #[test]
     fn required_database_migration_version_matches_latest_migration() {

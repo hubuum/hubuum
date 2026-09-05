@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
+use hubuum_events_core::CorrelationId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -99,9 +100,12 @@ pub struct StorageBackupRow(Map<String, Value>);
 
 impl StorageBackupRow {
     pub fn try_from_value(value: Value) -> Result<Self, StorageValidationError> {
-        value.as_object().cloned().map(Self).ok_or_else(|| {
-            StorageValidationError::invalid("A backup section item must be a JSON object")
-        })
+        match value {
+            Value::Object(fields) => Ok(Self(fields)),
+            _ => Err(StorageValidationError::invalid(
+                "A backup section item must be a JSON object",
+            )),
+        }
     }
 
     #[must_use]
@@ -112,6 +116,21 @@ impl StorageBackupRow {
     #[must_use]
     pub fn fields(&self) -> &Map<String, Value> {
         &self.0
+    }
+
+    /// Apply version-5 legacy repairs shared by restore and source comparison.
+    /// Only previously accepted invalid correlation strings are cleared; other
+    /// field types remain intact so malformed rows and unrelated drift fail.
+    pub fn normalize_legacy_history(&mut self, section: StorageBackupHistorySection) {
+        if section == StorageBackupHistorySection::AuditEvents
+            && self
+                .0
+                .get("correlation_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| CorrelationId::new(value).is_err())
+        {
+            self.0.insert("correlation_id".to_string(), Value::Null);
+        }
     }
 
     /// Canonicalize optional history fields added within backup version 5.
@@ -294,6 +313,33 @@ mod tests {
         let mut row = StorageBackupRow::try_from_value(value.clone()).unwrap();
         row.canonicalize_history(StorageBackupHistorySection::AuditEvents);
         assert_eq!(row.into_value(), value);
+    }
+
+    #[rstest]
+    #[case::whitespace(json!("legacy correlation"), Value::Null)]
+    #[case::overlong(json!("x".repeat(129)), Value::Null)]
+    #[case::empty(json!(""), Value::Null)]
+    #[case::valid(json!("valid-correlation"), json!("valid-correlation"))]
+    #[case::null(Value::Null, Value::Null)]
+    #[case::malformed(json!(42), json!(42))]
+    fn legacy_history_normalization_is_limited_to_invalid_audit_correlation_strings(
+        #[case] original: Value,
+        #[case] normalized: Value,
+        #[values(
+            StorageBackupHistorySection::AuditEvents,
+            StorageBackupHistorySection::TerminalTasks
+        )]
+        section: StorageBackupHistorySection,
+    ) {
+        let mut row =
+            StorageBackupRow::try_from_value(json!({"correlation_id": original})).unwrap();
+        row.normalize_legacy_history(section);
+        let expected = if section == StorageBackupHistorySection::AuditEvents {
+            normalized
+        } else {
+            original
+        };
+        assert_eq!(row.get("correlation_id"), Some(&expected));
     }
 
     fn complete_state() -> StorageBackupStateSections {

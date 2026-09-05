@@ -6,7 +6,7 @@ use diesel::{QueryResult, Queryable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventDeliveryStatus, EventFanoutSettings, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence,
+    Action, ActorKind, CorrelationId, EntityType, EventEntityId, EventEnvelope, EventSequence,
     EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair,
 };
 use hubuum_storage_core::StorageEventFanoutOutcome;
@@ -116,7 +116,12 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
                     .map_err(invalid_fanout_event)?,
             })
             .request_id(row.request_id)
-            .correlation_id(row.correlation_id)
+            .correlation_id(
+                row.correlation_id
+                    .map(CorrelationId::new)
+                    .transpose()
+                    .map_err(invalid_fanout_event)?,
+            )
             .trace_link(trace_link)
             .summary(row.summary)
             .before(row.before)

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_events_core::NewEvent;
 #[cfg(feature = "integration-test-support")]
 use hubuum_events_core::{Action, EntityType, EventEntityId};
+use hubuum_events_core::{CorrelationId, NewEvent};
 use hubuum_storage_core::StorageRecordedEvent;
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
             initiator_user_id: event.initiator_user_id().map(Into::into),
             task_id: event.task_id().map(Into::into),
             request_id: event.request_id(),
-            correlation_id: event.correlation_id(),
+            correlation_id: event.correlation_id().map(CorrelationId::as_str),
             summary: event.summary(),
             before: event.before(),
             after: event.after(),
