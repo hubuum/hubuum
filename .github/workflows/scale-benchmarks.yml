@@ -169,7 +169,7 @@ jobs:
             --package hubuum-scale-benchmark
           CARGO_TARGET_DIR=target/scale-head cargo build --locked \
             --release --features embedded-migrations \
-            --bin hubuum-server --bin hubuum-admin
+            --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker
       - name: Measure controlled corpus growth
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

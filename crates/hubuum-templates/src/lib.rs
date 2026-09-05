@@ -12,16 +12,19 @@
 //! provide an optional missing-value recorder callback when they need
 //! app-specific warning collection.
 
-use std::collections::HashMap;
+mod isolation;
+mod worker;
+pub use isolation::{
+    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateExecution, WorkerEvent,
+    set_worker_event_handler, shutdown_template_workers,
+};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Write};
-use std::sync::Arc;
+pub use worker::serve_template_worker;
 
 use minijinja::value::Value;
-use minijinja::{
-    AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
-    UndefinedBehavior,
-};
+use minijinja::{Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State};
 
 pub type MissingValueRecorder = fn(MissingValue);
 
@@ -30,7 +33,7 @@ pub fn prepare_template(source: &str) -> PreparedTemplate<'_> {
 }
 
 /// Auto-escaping policy used while validating a composed template set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TemplateAutoEscape {
     None,
     Html,
@@ -40,7 +43,7 @@ pub enum TemplateAutoEscape {
 ///
 /// The loader deliberately rejects path-like names. Hubuum fragments are
 /// collection-local names, not filesystem paths or namespace lookups.
-pub fn validate_template_composition(
+pub async fn validate_template_composition(
     template_name: &str,
     template_source: &str,
     sources: &[(String, String)],
@@ -48,33 +51,13 @@ pub fn validate_template_composition(
     auto_escape: TemplateAutoEscape,
     limits: TemplateLimits,
 ) -> Result<(), TemplateError> {
-    let mut source_map = sources.iter().cloned().collect::<HashMap<_, _>>();
-    source_map.insert(template_name.to_string(), template_source.to_string());
-    let source_map = Arc::new(source_map);
-    let mut environment = Environment::new();
-    environment.set_keep_trailing_newline(true);
-    environment.set_undefined_behavior(UndefinedBehavior::Chainable);
-    environment.set_recursion_limit(limits.recursion_limit());
-    environment.set_fuel(Some(limits.fuel()));
-    environment.set_auto_escape_callback(move |_| match auto_escape {
-        TemplateAutoEscape::None => AutoEscape::None,
-        TemplateAutoEscape::Html => AutoEscape::Html,
-    });
-    environment.set_loader(move |name| {
-        if name.contains('/') || name.contains("::") {
-            return Ok(None);
-        }
-        Ok(source_map.get(name).cloned())
-    });
-    register_curated_helpers(&mut environment, None);
-    environment
-        .add_template_owned(template_name.to_string(), template_source.to_string())
-        .map_err(TemplateError::validation)?;
-    environment
-        .get_template(template_name)
-        .and_then(|template| template.render(json_value_to_template_value(context)))
+    TemplateExecution::new(template_name, template_source, limits)
+        .sources(sources)
+        .auto_escape(auto_escape)
+        .missing_data(MissingDataPolicy::Omit)
+        .render(context)
+        .await
         .map(|_| ())
-        .map_err(TemplateError::validation)
 }
 
 /// Converts JSON into a MiniJinja value without exposing serde_json's internal
@@ -149,6 +132,7 @@ impl SizeLimitedWriter {
 }
 
 impl Write for SizeLimitedWriter {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
             self.exceeded = true;
@@ -159,12 +143,18 @@ impl Write for SizeLimitedWriter {
         Ok(buf.len())
     }
 
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        // Writes either append the entire slice or fail at the byte limit.
+        self.write(buf).map(|_| ())
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingValue {
     template_name: String,
     path: Option<String>,
@@ -191,10 +181,11 @@ impl MissingValue {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TemplateLimits {
     recursion_limit: usize,
     fuel: u64,
+    max_output_bytes: usize,
 }
 
 impl TemplateLimits {
@@ -202,7 +193,16 @@ impl TemplateLimits {
         Self {
             recursion_limit,
             fuel,
+            max_output_bytes: 1024 * 1024,
         }
+    }
+
+    pub fn with_max_output_bytes(mut self, value: usize) -> Self {
+        self.max_output_bytes = value;
+        self
+    }
+    pub fn max_output_bytes(self) -> usize {
+        self.max_output_bytes
     }
 
     pub fn recursion_limit(self) -> usize {
@@ -221,17 +221,10 @@ pub struct TemplateError {
 }
 
 impl TemplateError {
-    fn validation(source: MiniJinjaError) -> Self {
+    fn boundary(message: &str) -> Self {
         Self {
-            message: source.to_string(),
-            source: Some(source),
-        }
-    }
-
-    fn render(source: MiniJinjaError) -> Self {
-        Self {
-            message: source.to_string(),
-            source: Some(source),
+            message: message.to_string(),
+            source: None,
         }
     }
 
@@ -261,6 +254,7 @@ pub struct PreparedTemplate<'source> {
     source: &'source str,
     recursion_limit: Option<usize>,
     fuel: Option<u64>,
+    max_output_bytes: usize,
 }
 
 impl<'source> PreparedTemplate<'source> {
@@ -269,12 +263,14 @@ impl<'source> PreparedTemplate<'source> {
             source,
             recursion_limit: None,
             fuel: None,
+            max_output_bytes: 1024 * 1024,
         }
     }
 
     pub fn limits(mut self, limits: TemplateLimits) -> Self {
         self.recursion_limit = Some(limits.recursion_limit());
         self.fuel = Some(limits.fuel());
+        self.max_output_bytes = limits.max_output_bytes();
         self
     }
 
@@ -298,12 +294,9 @@ impl<'source> PreparedTemplate<'source> {
         }
     }
 
-    pub fn validate(self) -> Result<(), TemplateError> {
+    pub async fn validate(self) -> Result<(), TemplateError> {
         let limits = self.limits_or_error()?;
-        bounded_environment(limits)
-            .template_from_str(self.source)
-            .map(|_| ())
-            .map_err(TemplateError::validation)
+        isolation::validate_syntax(self.source, limits).await
     }
 
     fn limits_or_error(&self) -> Result<TemplateLimits, TemplateError> {
@@ -313,7 +306,7 @@ impl<'source> PreparedTemplate<'source> {
         let fuel = self
             .fuel
             .ok_or_else(|| TemplateError::missing_limit("fuel"))?;
-        Ok(TemplateLimits::new(recursion_limit, fuel))
+        Ok(TemplateLimits::new(recursion_limit, fuel).with_max_output_bytes(self.max_output_bytes))
     }
 }
 
@@ -323,21 +316,15 @@ pub struct PreparedTemplateRender<'source, 'context> {
 }
 
 impl PreparedTemplateRender<'_, '_> {
-    pub fn render(self) -> Result<String, TemplateError> {
+    pub async fn render(self) -> Result<String, TemplateError> {
         let limits = self.template.limits_or_error()?;
-        bounded_environment(limits)
-            .template_from_str(self.template.source)
-            .and_then(|compiled| compiled.render(json_value_to_template_value(self.context)))
-            .map_err(TemplateError::render)
+        TemplateExecution::new("template", self.template.source, limits)
+            .keep_trailing_newline(false)
+            .missing_data(MissingDataPolicy::Lenient)
+            .render(self.context)
+            .await
+            .map(|result| result.into_parts().0)
     }
-}
-
-fn bounded_environment(limits: TemplateLimits) -> Environment<'static> {
-    let mut env = Environment::new();
-    env.set_recursion_limit(limits.recursion_limit);
-    env.set_fuel(Some(limits.fuel));
-    register_curated_helpers(&mut env, None);
-    env
 }
 
 pub fn register_curated_helpers(
@@ -523,7 +510,44 @@ fn parse_template_datetime(raw: &str) -> Option<chrono::DateTime<chrono::FixedOf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::io::Write;
+
+    #[rstest]
+    #[case::unterminated("Alert {{ summary }}", "Alert ready")]
+    #[case::one_newline("Alert {{ summary }}\n", "Alert ready")]
+    #[case::two_newlines("Alert {{ summary }}\n\n", "Alert ready\n")]
+    #[case::rendered_newline("Alert {{ summary }}{{ '\n' }}", "Alert ready\n")]
+    #[tokio::test]
+    async fn integration_templates_strip_one_source_newline(
+        #[case] source: &str,
+        #[case] expected: &str,
+    ) {
+        let output = prepare_template(source)
+            .limits(TemplateLimits::new(64, 50_000))
+            .context(&serde_json::json!({ "summary": "ready" }))
+            .render()
+            .await
+            .unwrap();
+        assert_eq!(output, expected);
+    }
+
+    #[rstest]
+    #[case::root("Alert {{ summary }}\n", &[], "Alert ready\n")]
+    #[case::fragment("{% include 'fragment' %}\n", &[("fragment".into(), "Alert {{ summary }}\n".into())], "Alert ready\n\n")]
+    #[tokio::test]
+    async fn composed_exports_preserve_source_newlines(
+        #[case] source: &str,
+        #[case] sources: &[(String, String)],
+        #[case] expected: &str,
+    ) {
+        let output = TemplateExecution::new("export", source, TemplateLimits::new(64, 50_000))
+            .sources(sources)
+            .render(&serde_json::json!({ "summary": "ready" }))
+            .await
+            .unwrap();
+        assert_eq!(output.into_parts().0, expected);
+    }
 
     #[test]
     fn size_limited_writer_accumulates_under_limit() {
@@ -559,20 +583,21 @@ mod tests {
         assert_eq!(csv_cell_filter(Value::from("3.14")), "3.14");
     }
 
-    #[test]
-    fn render_template_supports_curated_filters() {
+    #[tokio::test]
+    async fn render_template_supports_curated_filters() {
         let context = serde_json::json!({ "object": { "data": { "host": "h1" } } });
         let rendered = prepare_template("{{ object.data | tojson }}")
             .limit_recursion(64)
             .limit_fuel(50_000)
             .context(&context)
             .render()
+            .await
             .unwrap();
         assert_eq!(rendered, "{\"host\":\"h1\"}");
     }
 
-    #[test]
-    fn arbitrary_precision_numbers_are_template_scalars() {
+    #[tokio::test]
+    async fn arbitrary_precision_numbers_are_template_scalars() {
         let context: serde_json::Value = serde_json::from_str(
             r#"{"integer":1234567890123456789012345678901234,"decimal":0.1234567890123456789012345678901234}"#,
         )
@@ -582,19 +607,21 @@ mod tests {
             .limit_fuel(50_000)
             .context(&context)
             .render()
+            .await
             .unwrap();
         assert!(rendered.starts_with("1234567890123456789012345678901234|0.123456789"));
         assert!(!rendered.contains("$serde_json"));
     }
 
-    #[test]
-    fn render_template_is_fuel_bounded() {
+    #[tokio::test]
+    async fn render_template_is_fuel_bounded() {
         let context = serde_json::json!({});
         let error = prepare_template("{% for _ in range(1000000000) %}x{% endfor %}")
             .limit_recursion(64)
             .limit_fuel(100)
             .context(&context)
             .render()
+            .await
             .unwrap_err();
 
         assert!(
@@ -604,8 +631,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn composed_template_resolves_named_fragment() {
+    #[tokio::test]
+    async fn composed_template_resolves_named_fragment() {
         let sources = vec![("fragment.txt".to_string(), "fragment".to_string())];
 
         validate_template_composition(
@@ -616,11 +643,12 @@ mod tests {
             TemplateAutoEscape::None,
             TemplateLimits::new(64, 50_000),
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn composed_template_rejects_missing_fragment() {
+    #[tokio::test]
+    async fn composed_template_rejects_missing_fragment() {
         let error = validate_template_composition(
             "export.txt",
             "{% include \"missing.txt\" %}",
@@ -629,6 +657,7 @@ mod tests {
             TemplateAutoEscape::None,
             TemplateLimits::new(64, 50_000),
         )
+        .await
         .unwrap_err();
 
         assert!(error.to_string().contains("missing.txt"));

@@ -1334,7 +1334,7 @@ where
 
     let render_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Render, metric_template_id);
-    let artifact = build_export_artifact(&runtime, execution, timings)?;
+    let artifact = build_export_artifact(&runtime, execution, timings).await?;
     let mut timings = artifact.timings;
     if let Err(error) = enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
     {
@@ -1484,7 +1484,7 @@ fn add_truncation_warning(warnings: &mut Vec<ExportWarning>, truncated: bool) {
     }
 }
 
-fn build_export_artifact(
+async fn build_export_artifact(
     runtime: &ExportRuntime,
     execution: ExportExecution,
     timings: ExportExecutionTimings,
@@ -1494,7 +1494,7 @@ fn build_export_artifact(
             build_json_export_artifact(runtime, execution, timings)
         }
         ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
-            build_text_export_artifact(runtime, execution, timings)
+            build_text_export_artifact(runtime, execution, timings).await
         }
     }
 }
@@ -1523,7 +1523,7 @@ fn build_json_export_artifact(
     })
 }
 
-fn build_text_export_artifact(
+async fn build_text_export_artifact(
     runtime: &ExportRuntime,
     execution: ExportExecution,
     timings: ExportExecutionTimings,
@@ -1543,7 +1543,8 @@ fn build_text_export_artifact(
         runtime.content_type,
         runtime.missing_data_policy,
         max_output_bytes,
-    )?;
+    )
+    .await?;
     let mut warnings = execution.warnings;
     warnings.extend(template_warnings);
 

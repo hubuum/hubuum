@@ -114,6 +114,29 @@ jobs:
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
 
+  runtime-limits:
+    name: Template and schema resource evidence
+    needs: changes
+    if: needs.changes.outputs.run_benchmarks == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install application build dependencies
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libpq-dev libssl-dev
+      - name: Cache Cargo and target directories
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Build the isolated renderer
+        run: cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
+      - name: Measure concurrent templates and schema validation
+        run: cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency | tee template-schema-evidence.jsonl
+      - name: Retain template and schema measurements
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: template-schema-evidence
+          path: template-schema-evidence.jsonl
+
   runtime-behavior:
     name: Runtime behavior validation
     needs: changes

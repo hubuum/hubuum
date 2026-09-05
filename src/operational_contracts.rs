@@ -638,6 +638,24 @@ pub(crate) const METRICS: &[MetricDefinition] = &[
         "Remote HTTP execution outcomes"
     ),
     metric!(
+        "hubuum_template_worker_events_total",
+        Counter,
+        None,
+        ["event"],
+        &[],
+        Process,
+        "Template worker lifecycle events"
+    ),
+    metric!(
+        "hubuum_template_worker_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["event"],
+        LATENCY_BUCKETS_SECONDS,
+        Process,
+        "Template worker terminal operation duration"
+    ),
+    metric!(
         "hubuum_revision_conditions_total",
         Counter,
         None,
@@ -1356,6 +1374,11 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             strings(&["principal_ip", "ip", "subnet", "unknown"])
         }
         ("hubuum_metrics_refresh_skipped_total", "reason") => strings(&["concurrent"]),
+        (name, "event") if name.starts_with("hubuum_template_worker") => strings(&[
+            "admitted", "started", "completed", "cancelled", "shutdown", "overloaded",
+            "input_limit", "admission_timeout", "spawn_failed", "worker_failed",
+            "execution_timeout", "render_failed",
+        ]),
         (name, "outcome") if name.starts_with("hubuum_remote_call") => strings(&[
             "success",
             "failure",

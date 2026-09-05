@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Rendering tests use the same isolated executable shipped in production.
+cargo build --locked -p hubuum-templates --bin hubuum-template-worker
+
 # Fetching database details from environment variables with HUBUUM_TEST_ prefix
 DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
 DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD:-}"  # No default for password
