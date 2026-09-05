@@ -328,7 +328,7 @@ fn event_response(event: hubuum_storage_core::StorageRecordedEvent) -> EventResp
         actor_kind: event.actor_kind().as_str().to_string(),
         provenance: event.provenance().clone(),
         request_id: event.request_id(),
-        correlation_id: event.correlation_id().map(ToOwned::to_owned),
+        correlation_id: event.correlation_id().map(|id| id.as_str().to_owned()),
         summary: event.summary().to_string(),
         before: event.before().cloned(),
         after: event.after().cloned(),

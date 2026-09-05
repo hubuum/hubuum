@@ -342,7 +342,7 @@ impl EventFanoutStorage for StorageHandle {
     async fn process_event_fanout_batch(
         &self,
         settings: EventFanoutSettings,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<StorageEventFanoutOutcome, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::EventFanout,

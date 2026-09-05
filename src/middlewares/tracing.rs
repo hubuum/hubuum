@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::net::IpAddr;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
@@ -14,45 +15,31 @@ use tracing::{Dispatch, instrument::WithSubscriber};
 use tracing::{Instrument, Level, Span, debug, error, field, info, span, warn};
 use uuid::Uuid;
 
-use crate::events::RequestProvenance;
-use crate::observability::metrics;
+use crate::events::{CorrelationId, RequestProvenance};
+use crate::observability::{metrics, tracing as telemetry};
 
 use super::client_allowlist::{ProxyTrust, extract_client_ip};
 
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
-const MAX_CORRELATION_ID_LEN: usize = 128;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CorrelationId(String);
-
-impl CorrelationId {
-    fn from_request(req: &ServiceRequest) -> Result<Option<Self>, &'static str> {
-        let Some(value) = req.headers().get(&CORRELATION_ID) else {
-            return Ok(None);
-        };
-        let value = value
-            .to_str()
-            .map_err(|_| "correlation ID must contain visible ASCII characters")?;
-        if value.is_empty() {
-            return Err("correlation ID must not be empty");
-        }
-        if value.len() > MAX_CORRELATION_ID_LEN {
-            return Err("correlation ID exceeds 128 bytes");
-        }
-        if !value.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err("correlation ID must contain visible ASCII characters without whitespace");
-        }
-        Ok(Some(Self(value.to_string())))
-    }
-
-    fn as_str(&self) -> &str {
-        &self.0
-    }
+fn correlation_id_from_request(
+    req: &ServiceRequest,
+) -> Result<Option<CorrelationId>, &'static str> {
+    let Some(value) = req.headers().get(&CORRELATION_ID) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| "correlation ID must contain visible ASCII characters")?;
+    CorrelationId::new(value)
+        .map(Some)
+        .map_err(|_| "correlation ID must contain 1 to 128 visible ASCII bytes without whitespace")
 }
 
 pub(crate) fn record_principal_on_current_span(principal_id: i32) {
-    Span::current().record("principal_id", principal_id);
+    let span = Span::current();
+    span.record("principal_id", principal_id);
+    span.record("auth.principal.kind", "authenticated");
 }
 
 fn elapsed_millis(start_time: Instant) -> u64 {
@@ -156,26 +143,10 @@ where
         let request_id = Uuid::new_v4();
         let request_id_s = request_id.to_string();
 
-        let (correlation_id, invalid_correlation_reason) = match CorrelationId::from_request(&req) {
+        let (correlation_id, invalid_correlation_reason) = match correlation_id_from_request(&req) {
             Ok(correlation_id) => (correlation_id, None),
             Err(reason) => (None, Some(reason)),
         };
-        let span = span!(
-            Level::INFO,
-            "request",
-            request_id = %request_id_s,
-            correlation_id = field::Empty,
-            principal_id = field::Empty
-        );
-        if let Some(correlation_id) = correlation_id.as_ref() {
-            span.record("correlation_id", correlation_id.as_str());
-        }
-        if let Some(reason) = invalid_correlation_reason {
-            span.in_scope(|| {
-                tracing::warn!(message = "invalid correlation ID ignored", reason);
-            });
-        }
-
         let method = req.method().to_string();
         let path = req.path().to_string();
         let route = req
@@ -184,14 +155,43 @@ where
             .unwrap_or_else(|| route_group(&path));
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
-        req.extensions_mut()
-            .insert(RequestProvenance::new_with_client_ip(
-                request_id,
-                correlation_id
-                    .as_ref()
-                    .map(|correlation_id| correlation_id.as_str().to_string()),
-                client_ip,
-            ));
+        let span = span!(
+            Level::INFO,
+            "http.server.request",
+            otel.kind = "server",
+            http.request.method = method.as_str(),
+            http.route = route.as_ref(),
+            http.response.status_code = field::Empty,
+            client.network.category = client_network_category(client_ip),
+            auth.principal.kind = "anonymous",
+            request_id = %request_id_s,
+            correlation_id = field::Empty,
+            principal_id = field::Empty
+        );
+        let (remote_parent, invalid_trace_reason) =
+            match telemetry::extract_remote_parent(req.headers()) {
+                Ok(parent) => (parent, None),
+                Err(reason) => (None, Some(reason)),
+            };
+        telemetry::set_remote_parent(&span, remote_parent);
+        if let Some(correlation_id) = correlation_id.as_ref() {
+            span.record("correlation_id", correlation_id.as_str());
+        }
+        if let Some(reason) = invalid_correlation_reason {
+            span.in_scope(|| {
+                tracing::warn!(message = "invalid correlation ID ignored", reason);
+            });
+        }
+        if let Some(reason) = invalid_trace_reason {
+            span.in_scope(|| {
+                tracing::warn!(message = "invalid trace context ignored", reason);
+            });
+        }
+        let trace_link = telemetry::trace_link_from_span(&span);
+        req.extensions_mut().insert(
+            RequestProvenance::new_with_client_ip(request_id, correlation_id.clone(), client_ip)
+                .with_trace_link(trace_link),
+        );
 
         let start_time = Instant::now();
         let in_flight_guard = metrics::http_request_started_for_route(&route);
@@ -213,6 +213,7 @@ where
                         let elapsed_ms = elapsed_millis(start_time);
                         let status = err.as_response_error().status_code();
                         let status_code = status.as_u16();
+                        Span::current().record("http.response.status_code", status_code);
                         if status.is_server_error() {
                             error!(
                                 message = "request complete",
@@ -265,6 +266,7 @@ where
                 let elapsed_ms = elapsed_millis(start_time);
                 let status = res.status();
                 let status_code = status.as_u16();
+                Span::current().record("http.response.status_code", status_code);
                 if status.is_server_error() {
                     error!(
                         message = "request complete",
@@ -317,6 +319,20 @@ where
         }
 
         future
+    }
+}
+
+fn client_network_category(client_ip: Option<IpAddr>) -> &'static str {
+    match client_ip {
+        None => "unknown",
+        Some(ip) if ip.is_loopback() => "loopback",
+        Some(IpAddr::V4(ip)) if ip.is_private() || ip.is_link_local() => "private",
+        Some(IpAddr::V6(ip))
+            if ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_unspecified() =>
+        {
+            "private"
+        }
+        Some(_) => "public",
     }
 }
 

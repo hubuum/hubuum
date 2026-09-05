@@ -7,7 +7,7 @@
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use hubuum_storage_core::{StorageCallSite, StorageNotification};
 use hubuum_storage_postgres::{
@@ -19,6 +19,9 @@ use hubuum_storage_postgres::{
 };
 use serde::Serialize;
 use tracing::{error, info};
+
+use opentelemetry::trace::{Span as _, Status, Tracer};
+use opentelemetry::{KeyValue, global};
 
 use super::{
     DatabaseDiagnosticsProvider, DatabasePoolAcquisitions, DatabasePoolCapacity,
@@ -150,10 +153,26 @@ struct ApplicationPostgresObserver;
 impl PostgresObserver for ApplicationPostgresObserver {
     fn connection_acquired(&self, call_site: StorageCallSite, duration: Duration) {
         crate::observability::metrics::db_connection_acquired(call_site.as_str(), duration);
+        record_completed_database_span(
+            &global::tracer("hubuum"),
+            "db.connection",
+            call_site,
+            "pool_acquire",
+            duration,
+            "ok",
+        );
     }
 
     fn connection_acquisition_failed(&self, call_site: StorageCallSite, duration: Duration) {
         crate::observability::metrics::db_connection_acquire_failed(call_site.as_str(), duration);
+        record_completed_database_span(
+            &global::tracer("hubuum"),
+            "db.connection",
+            call_site,
+            "pool_acquire",
+            duration,
+            "error",
+        );
     }
 
     fn operation_finished(
@@ -171,6 +190,14 @@ impl PostgresObserver for ApplicationPostgresObserver {
             operation,
             duration,
             &result,
+        );
+        record_completed_database_span(
+            &global::tracer("hubuum"),
+            "db.operation",
+            call_site,
+            operation,
+            duration,
+            error.map_or("ok", StorageErrorKind::as_str),
         );
     }
 
@@ -201,6 +228,37 @@ impl PostgresObserver for ApplicationPostgresObserver {
     fn computed_rebuild_batch(&self, object_count: usize) {
         crate::observability::metrics::computed_rebuild_batch(object_count);
     }
+}
+
+fn record_completed_database_span(
+    tracer: &impl Tracer,
+    name: &'static str,
+    call_site: StorageCallSite,
+    operation: &'static str,
+    duration: Duration,
+    result: &'static str,
+) {
+    let ended_at = SystemTime::now();
+    let started_at = ended_at.checked_sub(duration).unwrap_or(ended_at);
+    let parent = opentelemetry::Context::current();
+    let mut span = tracer
+        .span_builder(name)
+        .with_start_time(started_at)
+        .with_attributes([
+            KeyValue::new("db.caller", call_site.as_str()),
+            KeyValue::new("db.operation.category", operation),
+            KeyValue::new("db.connection.mode", "pooled"),
+            KeyValue::new(
+                "db.duration_ms",
+                i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            ),
+            KeyValue::new("db.result", result),
+        ])
+        .start_with_context(tracer, &parent);
+    if result != "ok" {
+        span.set_status(Status::error(result));
+    }
+    span.end_with_timestamp(ended_at);
 }
 
 pub(super) fn compose_postgres(pool: PostgresPool) -> PostgresStorage {
@@ -573,6 +631,39 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::observability::tracing::test_support::TraceCapture;
+
+    #[rstest]
+    #[case::connection("db.connection")]
+    #[case::operation("db.operation")]
+    fn database_spans_keep_the_ambient_parent(#[case] name: &'static str) {
+        let capture = TraceCapture::new("debug");
+        tracing::dispatcher::with_default(&capture.dispatch(), || {
+            let request = tracing::info_span!("http.server.request");
+            let _request = request.enter();
+            let internal = tracing::info_span!("import_planning");
+            let _internal = internal.enter();
+            record_completed_database_span(
+                &capture.tracer(),
+                name,
+                StorageCallSite::HttpRequest,
+                "with_connection",
+                Duration::from_millis(1),
+                "ok",
+            );
+        });
+        let spans = capture.spans();
+        let request = spans
+            .iter()
+            .find(|span| span.name == "http.server.request")
+            .unwrap();
+        let database = spans.iter().find(|span| span.name == name).unwrap();
+        assert_eq!(database.parent_span_id, request.span_context.span_id());
+        assert_eq!(
+            database.span_context.trace_id(),
+            request.span_context.trace_id()
+        );
+    }
 
     fn postgres_settings(url: &str) -> StorageSettings {
         StorageSettings::postgres(url)

@@ -428,11 +428,16 @@ pub(crate) fn state_row_to_postgres(
 
 pub(crate) fn history_row_to_postgres(
     section: StorageBackupHistorySection,
-    mut row: Value,
+    row: Value,
 ) -> Result<Value, PostgresStorageError> {
-    let object = row.as_object_mut().ok_or_else(|| {
+    let mut row = StorageBackupRow::try_from_value(row).map_err(|_| {
         PostgresStorageError::invalid_input("Logical backup history row is not a JSON object")
     })?;
+    row.normalize_legacy_history(section);
+    let mut row = row.into_value();
+    let object = row
+        .as_object_mut()
+        .expect("validated backup row is an object");
     if let Some(field) = history_private_fields(section)
         .iter()
         .find(|field| object.contains_key(**field))
@@ -861,5 +866,18 @@ mod tests {
             state_row_to_postgres(StorageBackupStateSection::Collections, logical).unwrap(),
             physical
         );
+    }
+
+    #[rstest]
+    #[case::whitespace("legacy correlation")]
+    #[case::overlong(&"x".repeat(129))]
+    fn restore_normalizes_legacy_invalid_event_correlation_ids(#[case] correlation_id: &str) {
+        let restored = history_row_to_postgres(
+            StorageBackupHistorySection::AuditEvents,
+            json!({"correlation_id": correlation_id}),
+        )
+        .unwrap();
+
+        assert_eq!(restored.get("correlation_id"), Some(&Value::Null));
     }
 }

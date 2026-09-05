@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_events_core::NewEvent;
 #[cfg(feature = "integration-test-support")]
 use hubuum_events_core::{Action, EntityType, EventEntityId};
+use hubuum_events_core::{CorrelationId, NewEvent};
 use hubuum_storage_core::StorageRecordedEvent;
 use uuid::Uuid;
 
@@ -36,6 +36,10 @@ struct NewEventRow<'event> {
     after: Option<&'event serde_json::Value>,
     metadata: &'event serde_json::Value,
     schema_version: i32,
+    trace_id: Option<&'event str>,
+    trace_span_id: Option<&'event str>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
@@ -52,12 +56,16 @@ impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
             initiator_user_id: event.initiator_user_id().map(Into::into),
             task_id: event.task_id().map(Into::into),
             request_id: event.request_id(),
-            correlation_id: event.correlation_id(),
+            correlation_id: event.correlation_id().map(CorrelationId::as_str),
             summary: event.summary(),
             before: event.before(),
             after: event.after(),
             metadata: event.metadata(),
             schema_version: event.schema_version(),
+            trace_id: event.trace_link().map(|link| link.trace_id()),
+            trace_span_id: event.trace_link().map(|link| link.span_id()),
+            trace_flags: event.trace_link().map(|link| i16::from(link.trace_flags())),
+            trace_context_version: event.trace_link().map(|link| i16::from(link.version())),
         }
     }
 }

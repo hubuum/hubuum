@@ -211,7 +211,7 @@ impl EventFanoutStorage for PostgresStorage {
     async fn process_event_fanout_batch(
         &self,
         settings: EventFanoutSettings,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<StorageEventFanoutOutcome, StorageError> {
         crate::operations::event_fanout::process_event_fanout_batch(self.runtime(), settings)
             .await
             .map_err(StorageError::from)

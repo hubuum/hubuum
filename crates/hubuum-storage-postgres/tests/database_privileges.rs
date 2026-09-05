@@ -3,9 +3,10 @@
 use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Bool, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
+use hubuum_events_core::{Action, ActorKind, EntityType, NewEvent, TraceLink};
 use hubuum_storage_postgres::test_support::{
-    database_role_tests_enabled, integration_test_database_roles, integration_test_migration_pool,
-    integration_test_pool,
+    append_event_on_connection, database_role_tests_enabled, integration_test_database_roles,
+    integration_test_migration_pool, integration_test_pool,
 };
 use hubuum_storage_postgres::{
     DatabaseRoleNames, database_role_reconciliation_sql, inspect_database_privileges,
@@ -107,6 +108,55 @@ async fn runtime_cannot_change_application_schema(#[case] statement: &str) {
 async fn runtime_cannot_rewrite_integrity_records(#[case] statement: &str) {
     require_database_role_fixture!();
     assert_runtime_rejects(statement.to_string()).await;
+}
+
+#[rstest]
+#[case::trace_id("trace_id = '6bf92f3577b34da6a3ce929d0e0e4738'")]
+#[case::span_id("trace_span_id = '10f067aa0ba902b8'")]
+#[case::flags("trace_flags = 0")]
+#[case::version("trace_context_version = 1")]
+#[case::clear(
+    "trace_id = NULL, trace_span_id = NULL, trace_flags = NULL, trace_context_version = NULL"
+)]
+#[tokio::test]
+async fn event_trigger_rejects_trace_rewrites_even_for_the_owner(#[case] assignment: &str) {
+    require_database_role_fixture!();
+    let pool = integration_test_migration_pool(1);
+    let roles = role_names();
+    let event = NewEvent::new(
+        EntityType::Collection,
+        Action::Created,
+        ActorKind::System,
+        "trace immutability test",
+    )
+    .unwrap()
+    .with_trace_link(
+        TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0).unwrap(),
+    );
+    let error = with_connection(&pool, async |connection| {
+        diesel::sql_query("BEGIN").execute(&mut *connection).await?;
+        diesel::sql_query(format!("SET LOCAL ROLE \"{}\"", roles.owner().as_str()))
+            .execute(&mut *connection)
+            .await?;
+        let event = append_event_on_connection(connection, &event).await?;
+        let id = event.into_parts().0.id().get();
+        let result = diesel::sql_query(format!("UPDATE events SET {assignment} WHERE id = $1"))
+            .bind::<BigInt, _>(id)
+            .execute(&mut *connection)
+            .await;
+        diesel::sql_query("ROLLBACK")
+            .execute(&mut *connection)
+            .await?;
+        Ok::<_, hubuum_storage_postgres::PostgresStorageError>(result)
+    })
+    .await
+    .unwrap()
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains("events table is append-only"),
+        "{error}"
+    );
 }
 
 #[rstest]

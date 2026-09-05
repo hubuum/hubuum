@@ -6862,7 +6862,7 @@ async fn every_available_storage_backend_processes_event_fanout() {
             .process_event_fanout_batch(settings)
             .await
             .expect("certified backend should process event fan-out");
-        assert!(processed <= settings.batch_size());
+        assert!(processed.processed() <= settings.batch_size());
     }
 }
 

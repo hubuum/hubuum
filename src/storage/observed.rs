@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
-use tracing::{Instrument, debug, debug_span, warn};
+use tracing::{Instrument, Span, debug, debug_span, field, warn};
 
 use super::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
@@ -18,6 +18,73 @@ use super::{
     StorageResolvedObjectRelation,
 };
 use crate::events::EventContext;
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry::KeyValue;
+    use opentelemetry::trace::Status;
+    use rstest::rstest;
+    use tracing::instrument::WithSubscriber;
+
+    use super::*;
+    use crate::observability::tracing::test_support::TraceCapture;
+    use crate::storage::StorageHandle;
+
+    #[rstest]
+    #[case::debug("debug")]
+    #[case::warn("warn")]
+    #[tokio::test]
+    async fn memory_storage_exports_operations_independently_of_logging(#[case] level: &str) {
+        let capture = TraceCapture::new(level);
+        async {
+            let request = tracing::info_span!("http.server.request");
+            async {
+                let internal = tracing::info_span!("import_planning");
+                async {
+                    let result = StorageHandle::memory()
+                        .collection_store()
+                        .get_collection(CollectionId::new(999).unwrap())
+                        .await;
+                    assert!(result.is_err());
+                }
+                .instrument(internal)
+                .await;
+            }
+            .instrument(request)
+            .await;
+        }
+        .with_subscriber(capture.dispatch())
+        .await;
+
+        let spans = capture.spans();
+        let request = spans
+            .iter()
+            .find(|span| span.name == "http.server.request")
+            .unwrap();
+        let operations = spans
+            .iter()
+            .filter(|span| span.name == "storage_operation")
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 1);
+        let operation = operations[0];
+        assert_eq!(operation.parent_span_id, request.span_context.span_id());
+        assert_eq!(
+            operation.span_context.trace_id(),
+            request.span_context.trace_id()
+        );
+        assert!(
+            operation
+                .attributes
+                .contains(&KeyValue::new("backend", "memory"))
+        );
+        assert!(
+            operation
+                .attributes
+                .contains(&KeyValue::new("operation", "get_collection"))
+        );
+        assert!(matches!(operation.status, Status::Error { .. }));
+    }
+}
 
 /// Uniform diagnostics around whichever storage capabilities `S` implements.
 ///
@@ -87,6 +154,10 @@ pub(super) async fn observe_storage_call_with<T>(
         backend,
         capability = capability.as_str(),
         operation,
+        storage.result = field::Empty,
+        storage.duration_ms = field::Empty,
+        otel.status_code = field::Empty,
+        error.type = field::Empty,
     );
     async move {
         let started_at = Instant::now();
@@ -96,6 +167,16 @@ pub(super) async fn observe_storage_call_with<T>(
             .as_ref()
             .map(|_| "ok")
             .unwrap_or_else(|error| error.kind().as_str());
+        let span = Span::current();
+        span.record("storage.result", result_kind);
+        span.record(
+            "storage.duration_ms",
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+        );
+        if result.is_err() {
+            span.record("otel.status_code", "ERROR");
+            span.record("error.type", result_kind);
+        }
         observer.operation_finished(&StorageObservation::new(
             backend,
             capability,

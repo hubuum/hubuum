@@ -6,7 +6,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
-use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
+use crate::events::{
+    Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance, TraceLink,
+};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
@@ -234,6 +236,7 @@ pub struct TaskRecord {
     pub lease_expires_at: Option<NaiveDateTime>,
     pub attempt_count: i32,
     pub initiator_user_id: Option<i32>,
+    pub(crate) trace_link: Option<TraceLink>,
 }
 
 impl fmt::Debug for TaskRecord {
@@ -272,6 +275,7 @@ impl fmt::Debug for TaskRecord {
             .field("lease_expires_at", &self.lease_expires_at)
             .field("attempt_count", &self.attempt_count)
             .field("initiator_user_id", &self.initiator_user_id)
+            .field("has_trace_link", &self.trace_link.is_some())
             .finish()
     }
 }
@@ -1526,6 +1530,7 @@ mod tests {
             lease_expires_at: Some(timestamp),
             attempt_count: 1,
             initiator_user_id: Some(1),
+            trace_link: None,
         };
 
         let debug = format!("{task:?}");
@@ -1571,6 +1576,7 @@ mod tests {
             lease_expires_at: None,
             attempt_count: 1,
             initiator_user_id: Some(1),
+            trace_link: None,
         };
         let output = ExportTaskOutputSummary {
             task_id: task.id,

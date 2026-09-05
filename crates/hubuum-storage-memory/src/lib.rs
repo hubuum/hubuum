@@ -81,6 +81,7 @@ struct MemoryTaskRecord {
     lease_expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
     initiator_principal_id: Option<PrincipalId>,
+    trace_link: Option<TraceLink>,
     claim_token: Option<String>,
 }
 
@@ -260,6 +261,7 @@ impl MemoryTaskRecord {
         .lease_expires_at(self.lease_expires_at)
         .attempt_count(self.attempt_count)
         .initiator_principal_id(self.initiator_principal_id)
+        .trace_link(self.trace_link.clone())
         .try_build()
         .map_err(invalid_contract_value)
     }
@@ -435,7 +437,8 @@ impl MemoryState {
             .actor_kind(context.actor_kind())
             .provenance(provenance)
             .request_id(context.request_id())
-            .correlation_id(context.correlation_id().map(ToOwned::to_owned))
+            .correlation_id(context.correlation_id().cloned())
+            .trace_link(context.trace_link().cloned())
             .summary(document.summary_text().to_string())
             .before(document.before().cloned())
             .after(document.after().cloned())

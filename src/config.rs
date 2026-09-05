@@ -197,6 +197,25 @@ pub enum LoginRateLimitBackendKind {
     Valkey,
 }
 
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TracingSamplingMode {
+    Off,
+    AlwaysOn,
+    #[default]
+    ParentBasedRatio,
+}
+
+impl TracingSamplingMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::AlwaysOn => "always_on",
+            Self::ParentBasedRatio => "parent_based_ratio",
+        }
+    }
+}
+
 impl LoginRateLimitBackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -233,6 +252,121 @@ pub struct AppConfig {
     /// Logging level
     #[clap(long, env = "HUBUUM_LOG_LEVEL", default_value = "info")]
     pub log_level: String,
+
+    /// Enable OpenTelemetry trace export through OTLP/HTTP protobuf.
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_ENABLED",
+        default_value_t = DEFAULT_TRACING_ENABLED
+    )]
+    pub tracing_enabled: bool,
+
+    /// HTTPS OTLP collector base endpoint. `/v1/traces` is appended by the exporter.
+    #[clap(long, env = "HUBUUM_TRACING_OTLP_ENDPOINT", default_value = None)]
+    pub tracing_otlp_endpoint: Option<String>,
+
+    /// Comma-separated bounded OTLP headers in `name=value` form.
+    #[clap(long, env = "HUBUUM_TRACING_OTLP_HEADERS", default_value = None)]
+    pub tracing_otlp_headers: Option<String>,
+
+    /// Optional private CA PEM bundle for the OTLP collector.
+    #[clap(long, env = "HUBUUM_TRACING_OTLP_CA_CERT", default_value = None)]
+    pub tracing_otlp_ca_cert: Option<String>,
+
+    /// Optional client certificate PEM for OTLP mutual TLS.
+    #[clap(long, env = "HUBUUM_TRACING_OTLP_CLIENT_CERT", default_value = None)]
+    pub tracing_otlp_client_cert: Option<String>,
+
+    /// Optional client private key PEM for OTLP mutual TLS.
+    #[clap(long, env = "HUBUUM_TRACING_OTLP_CLIENT_KEY", default_value = None)]
+    pub tracing_otlp_client_key: Option<String>,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRACING_CONNECT_TIMEOUT_MS
+    )]
+    pub tracing_connect_timeout_ms: u64,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_EXPORT_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRACING_EXPORT_TIMEOUT_MS
+    )]
+    pub tracing_export_timeout_ms: u64,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_FLUSH_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRACING_FLUSH_TIMEOUT_MS
+    )]
+    pub tracing_flush_timeout_ms: u64,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_QUEUE_CAPACITY",
+        default_value_t = DEFAULT_TRACING_QUEUE_CAPACITY
+    )]
+    pub tracing_queue_capacity: usize,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_BATCH_SIZE",
+        default_value_t = DEFAULT_TRACING_BATCH_SIZE
+    )]
+    pub tracing_batch_size: usize,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_SAMPLING_MODE",
+        value_enum,
+        default_value = "parent-based-ratio"
+    )]
+    pub tracing_sampling_mode: TracingSamplingMode,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_SAMPLE_RATIO",
+        default_value_t = DEFAULT_TRACING_SAMPLE_RATIO
+    )]
+    pub tracing_sample_ratio: f64,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_SERVICE_NAME",
+        default_value = DEFAULT_TRACING_SERVICE_NAME
+    )]
+    pub tracing_service_name: String,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_SERVICE_NAMESPACE",
+        default_value = DEFAULT_TRACING_SERVICE_NAMESPACE
+    )]
+    pub tracing_service_namespace: String,
+
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_DEPLOYMENT_ENVIRONMENT",
+        default_value = DEFAULT_TRACING_DEPLOYMENT_ENVIRONMENT
+    )]
+    pub tracing_deployment_environment: String,
+
+    /// Let a valid remote sampled flag control parent-based sampling.
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_TRUST_INCOMING_SAMPLING",
+        default_value_t = false
+    )]
+    pub tracing_trust_incoming_sampling: bool,
+
+    /// Inject W3C trace context into supported outbound integrations.
+    #[clap(
+        long,
+        env = "HUBUUM_TRACING_PROPAGATE_OUTBOUND",
+        default_value_t = true
+    )]
+    pub tracing_propagate_outbound: bool,
 
     /// Database URL
     #[clap(
@@ -1377,6 +1511,9 @@ impl AppConfig {
             ));
         }
 
+        crate::observability::tracing::TracingSettings::from_config(&self)
+            .map_err(ApiError::BadRequest)?;
+
         Ok(self)
     }
 }
@@ -1603,6 +1740,57 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .parse()
             .unwrap_or(8080),
         log_level: env_or_default("HUBUUM_LOG_LEVEL", "debug"),
+        tracing_enabled: env_or_default("HUBUUM_TRACING_ENABLED", "false")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_ENABLED),
+        tracing_otlp_endpoint: env_or_default_opt("HUBUUM_TRACING_OTLP_ENDPOINT", None),
+        tracing_otlp_headers: env_or_default_opt("HUBUUM_TRACING_OTLP_HEADERS", None),
+        tracing_otlp_ca_cert: env_or_default_opt("HUBUUM_TRACING_OTLP_CA_CERT", None),
+        tracing_otlp_client_cert: env_or_default_opt("HUBUUM_TRACING_OTLP_CLIENT_CERT", None),
+        tracing_otlp_client_key: env_or_default_opt("HUBUUM_TRACING_OTLP_CLIENT_KEY", None),
+        tracing_connect_timeout_ms: env_or_default("HUBUUM_TRACING_CONNECT_TIMEOUT_MS", "2000")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_CONNECT_TIMEOUT_MS),
+        tracing_export_timeout_ms: env_or_default("HUBUUM_TRACING_EXPORT_TIMEOUT_MS", "5000")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_EXPORT_TIMEOUT_MS),
+        tracing_flush_timeout_ms: env_or_default("HUBUUM_TRACING_FLUSH_TIMEOUT_MS", "5000")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_FLUSH_TIMEOUT_MS),
+        tracing_queue_capacity: env_or_default("HUBUUM_TRACING_QUEUE_CAPACITY", "2048")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_QUEUE_CAPACITY),
+        tracing_batch_size: env_or_default("HUBUUM_TRACING_BATCH_SIZE", "512")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_BATCH_SIZE),
+        tracing_sampling_mode: env::var("HUBUUM_TRACING_SAMPLING_MODE")
+            .ok()
+            .and_then(|value| TracingSamplingMode::from_str(&value, true).ok())
+            .unwrap_or_default(),
+        tracing_sample_ratio: env_or_default("HUBUUM_TRACING_SAMPLE_RATIO", "0.1")
+            .parse()
+            .unwrap_or(DEFAULT_TRACING_SAMPLE_RATIO),
+        tracing_service_name: env_or_default(
+            "HUBUUM_TRACING_SERVICE_NAME",
+            DEFAULT_TRACING_SERVICE_NAME,
+        ),
+        tracing_service_namespace: env_or_default(
+            "HUBUUM_TRACING_SERVICE_NAMESPACE",
+            DEFAULT_TRACING_SERVICE_NAMESPACE,
+        ),
+        tracing_deployment_environment: env_or_default(
+            "HUBUUM_TRACING_DEPLOYMENT_ENVIRONMENT",
+            DEFAULT_TRACING_DEPLOYMENT_ENVIRONMENT,
+        ),
+        tracing_trust_incoming_sampling: env_or_default(
+            "HUBUUM_TRACING_TRUST_INCOMING_SAMPLING",
+            "false",
+        )
+        .parse()
+        .unwrap_or(false),
+        tracing_propagate_outbound: env_or_default("HUBUUM_TRACING_PROPAGATE_OUTBOUND", "true")
+            .parse()
+            .unwrap_or(true),
         database_url: env_or_default("HUBUUM_DATABASE_URL", "postgres://test"),
         database_role_mode: env::var("HUBUUM_DATABASE_ROLE_MODE")
             .ok()

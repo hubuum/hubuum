@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use actix_rt::time::{Instant as TokioInstant, sleep, sleep_until};
 use chrono::Utc;
 use tokio::sync::{Notify, oneshot};
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::backups::{BackupSettings, execute_backup_task};
 use crate::config::{
@@ -18,8 +18,8 @@ use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
-use crate::models::{NewTaskEventRecord, TaskKind};
-use crate::observability::metrics;
+use crate::models::{NewTaskEventRecord, TaskKind, TaskStatus};
+use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
@@ -312,16 +312,27 @@ async fn process_one_task_with_settings(
     metrics::task_worker_iteration("claimed");
     metrics::task_claimed(&task.kind, duration_since(task.created_at));
 
-    info!(
-        message = "Task picked up by worker",
-        task_id = task.id,
-        task_kind = task.kind.as_str(),
-        status = task.status.as_str(),
-        worker = std::thread::current().name().unwrap_or("task-worker")
+    let execution_span = info_span!(
+        "task.execute",
+        otel.kind = "consumer",
+        task.kind = task.kind.as_str(),
+        task.outcome = field::Empty,
+        task.attempt = task.attempt_count,
     );
+    telemetry::add_link(&execution_span, task.trace_link.as_ref());
+    async {
+        info!(
+            message = "Task picked up by worker",
+            task_id = task.id,
+            task_kind = task.kind.as_str(),
+            status = task.status.as_str(),
+            worker = std::thread::current().name().unwrap_or("task-worker")
+        );
 
-    let provenance = task.worker_provenance();
-    with_mutation_provenance(context, Some(provenance), async {
+        let provenance = task
+            .worker_provenance()
+            .with_trace_link(telemetry::current_trace_link());
+        with_mutation_provenance(context, Some(provenance), async {
         let mut heartbeat = start_task_lease_heartbeat(
             context.backend().clone(),
             &task,
@@ -351,6 +362,7 @@ async fn process_one_task_with_settings(
                 ))
             }
         };
+        let mut terminal_status = result.as_ref().ok().copied();
         if let Err(err) = &result
             && !ownership_lost
         {
@@ -359,7 +371,9 @@ async fn process_one_task_with_settings(
                 mark_claimed_task_failed(context, &task, err),
             )
             .await?;
-            if !finalized {
+            if finalized {
+                terminal_status = Some(TaskStatus::Failed);
+            } else {
                 warn!(
                     message = "Task failure finalization stopped because its worker lease was lost",
                     task_id = task.id,
@@ -370,8 +384,16 @@ async fn process_one_task_with_settings(
             heartbeat.stop().await;
         }
 
+        tracing::Span::current().record(
+            "task.outcome",
+            task_span_outcome(terminal_status),
+        );
+
         Ok(true)
-    })
+        })
+        .await
+    }
+    .instrument(execution_span)
     .await
 }
 
@@ -683,11 +705,12 @@ async fn process_claimed_task(
     context: &AppContext,
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
-) -> Result<(), ApiError> {
+) -> Result<TaskStatus, ApiError> {
     let task_kind = TaskKind::from_db(&task.kind)?;
     if task_kind == TaskKind::Reindex {
-        crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
-        return Ok(());
+        let completed =
+            crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
+        return TaskStatus::from_db(&completed.status);
     }
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
@@ -737,6 +760,29 @@ async fn process_claimed_task(
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         TaskKind::Reindex => unreachable!("reindex tasks are dispatched before principal loading"),
+    }
+}
+
+fn task_span_outcome(terminal_status: Option<TaskStatus>) -> &'static str {
+    terminal_status.map(TaskStatus::as_str).unwrap_or("error")
+}
+
+#[cfg(test)]
+mod task_span_outcome_tests {
+    use rstest::rstest;
+
+    use super::{TaskStatus, task_span_outcome};
+
+    #[rstest]
+    #[case::succeeded(Some(TaskStatus::Succeeded), "succeeded")]
+    #[case::failed(Some(TaskStatus::Failed), "failed")]
+    #[case::partially_succeeded(Some(TaskStatus::PartiallySucceeded), "partially_succeeded")]
+    #[case::not_persisted(None, "error")]
+    fn span_outcome_reports_the_persisted_terminal_status(
+        #[case] status: Option<TaskStatus>,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(task_span_outcome(status), expected);
     }
 }
 

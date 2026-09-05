@@ -2,15 +2,18 @@
 use std::future::Future;
 use std::{cell::RefCell, fmt};
 
+use opentelemetry::trace::TraceContextExt;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::FormattedFields;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
-use crate::events::{Action, EntityType};
+use crate::events::{Action, EntityType, TraceLink};
 use crate::models::Permissions;
 
 pub struct HubuumLoggingFormat;
@@ -25,6 +28,7 @@ struct OperationMutationLog {
     actor_principal_id: Option<i32>,
     request_id: Option<uuid::Uuid>,
     correlation_id: Option<String>,
+    trace_link: Option<TraceLink>,
 }
 
 impl OperationMutationLog {
@@ -39,6 +43,8 @@ impl OperationMutationLog {
             actor_principal_id = self.actor_principal_id,
             request_id = self.request_id.map(|id| id.to_string()),
             correlation_id = self.correlation_id.as_deref(),
+            trace_id = self.trace_link.as_ref().map(TraceLink::trace_id),
+            span_id = self.trace_link.as_ref().map(TraceLink::span_id),
         );
     }
 }
@@ -48,16 +54,36 @@ tokio::task_local! {
 }
 
 pub fn init_json_logging(log_level: &str) -> Result<(), String> {
+    init_json_logging_with_tracer(log_level, None)
+}
+
+pub fn init_json_logging_with_tracer(
+    log_level: &str,
+    tracer: Option<opentelemetry_sdk::trace::SdkTracer>,
+) -> Result<(), String> {
     let filter = EnvFilter::try_new(log_level)
         .map_err(|err| format!("Error parsing log level '{log_level}': {err}"))?;
+    let telemetry_layer = tracer.map(|tracer| {
+        tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_location(false)
+            .with_threads(false)
+            .with_level(false)
+            .with_target(false)
+            .with_filter(filter_fn(|metadata| {
+                metadata.is_span()
+                    && crate::observability::tracing::is_catalog_span(metadata.name())
+            }))
+    });
 
     tracing_subscriber::registry()
-        .with(filter)
         .with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .event_format(HubuumLoggingFormat),
+                .event_format(HubuumLoggingFormat)
+                .with_filter(filter),
         )
+        .with(telemetry_layer)
         .try_init()
         .map_err(|err| format!("Failed to initialize logging: {err}"))
 }
@@ -83,6 +109,7 @@ pub fn log_operation_mutation(
         actor_principal_id,
         request_id,
         correlation_id: correlation_id.map(ToOwned::to_owned),
+        trace_link: crate::observability::tracing::current_trace_link(),
     };
     if DEFERRED_OPERATION_MUTATIONS
         .try_with(|operations| operations.borrow_mut().push(operation.clone()))
@@ -318,6 +345,22 @@ where
             }
         }
 
+        let context = opentelemetry::Context::current();
+        let span = context.span();
+        let span_context = span.span_context();
+        if span_context.is_valid() {
+            fields.insert(
+                "trace_id".to_string(),
+                serde_json::Value::String(span_context.trace_id().to_string()),
+            );
+            fields.insert(
+                "span_id".to_string(),
+                serde_json::Value::String(span_context.span_id().to_string()),
+            );
+        }
+
+        // Explicit event fields, including a trace link captured before a
+        // transaction committed, take precedence over ambient span fields.
         let mut visitor = JsonFieldVisitor {
             fields: &mut fields,
         };
@@ -392,6 +435,8 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
     use serde_json::json;
     use test_support::JsonLogWriter;
     use tracing::{info, info_span};
@@ -459,6 +504,67 @@ mod tests {
         assert_eq!(event["correlation_id"], "correlation-1");
         assert_eq!(event["principal_id"], 42);
         assert_eq!(event["message"], "inside request");
+    }
+
+    #[test]
+    fn logging_format_adds_fixed_trace_and_span_identifiers() {
+        let writer = JsonLogWriter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(writer.clone())
+                    .event_format(HubuumLoggingFormat),
+            )
+            .with(
+                tracing_opentelemetry::layer().with_tracer(provider.tracer("log-correlation-test")),
+            );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = info_span!("http.server.request");
+            let _guard = span.enter();
+            info!(message = "trace-correlated log");
+        });
+
+        let event = writer.output().into_iter().next().unwrap();
+        let trace_id = event["trace_id"].as_str().unwrap();
+        let span_id = event["span_id"].as_str().unwrap();
+        assert_eq!(trace_id.len(), 32);
+        assert_eq!(span_id.len(), 16);
+        assert!(trace_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(span_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn log_filter_does_not_disable_catalog_trace_spans() {
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::sink)
+                    .with_filter(EnvFilter::new("warn")),
+            )
+            .with(
+                tracing_opentelemetry::layer()
+                    .with_tracer(provider.tracer("filter-independence-test"))
+                    .with_filter(filter_fn(|metadata| {
+                        metadata.is_span()
+                            && crate::observability::tracing::is_catalog_span(metadata.name())
+                    })),
+            );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = info_span!("http.server.request");
+            assert!(!span.is_disabled());
+            let _guard = span.enter();
+            let context = opentelemetry::Context::current();
+            assert!(context.span().span_context().is_valid());
+        });
     }
 
     #[test]

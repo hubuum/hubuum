@@ -1,4 +1,5 @@
 use chrono::SubsecRound;
+use tracing::{Instrument, field, info_span};
 
 use crate::errors::ApiError;
 use crate::models::{Token, configured_token_lifetime};
@@ -46,8 +47,15 @@ pub async fn authenticate_bearer_token(
         legacy_valid_after.and_utc(),
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    let span = info_span!(
+        "auth.token_validation",
+        auth.token.format = format,
+        auth.token.key_state = key_state,
+        auth.result = field::Empty,
+    );
     match storage_handle(context)
         .authenticate_bearer_token(attempt)
+        .instrument(span.clone())
         .await
     {
         Ok(authenticated) => {
@@ -56,10 +64,12 @@ pub async fn authenticate_bearer_token(
                 StorageTokenMigrationOutcome::Migrated => "migrated",
                 StorageTokenMigrationOutcome::Conflict => "migration_conflict",
             };
+            span.record("auth.result", outcome);
             crate::observability::metrics::token_authentication(format, key_state, outcome);
             Ok(authenticated)
         }
         Err(error) => {
+            span.record("auth.result", "rejected");
             crate::observability::metrics::token_authentication(format, key_state, "rejected");
             Err(error.into())
         }

@@ -1,4 +1,4 @@
-use crate::events::MutationProvenance;
+use crate::events::{MutationProvenance, RequestProvenance};
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::Token;
 use crate::permissions::AppContext;
@@ -65,7 +65,9 @@ pub async fn actor_context(
         record_principal_on_current_span(principal_id.id());
     }
     req.extensions_mut().insert(resolved);
-    let provenance = actor.map(MutationProvenance::user);
+    let trace_link = RequestProvenance::from_request(req.request())
+        .and_then(|provenance| provenance.trace_link().cloned());
+    let provenance = actor.map(|actor| MutationProvenance::user(actor).with_trace_link(trace_link));
     let res = with_mutation_provenance(&backend, provenance, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
 }
@@ -73,7 +75,6 @@ pub async fn actor_context(
 #[cfg(test)]
 mod tests {
     use super::is_public_path;
-
     #[test]
     fn public_paths_skip_authentication_resolution() {
         for path in [

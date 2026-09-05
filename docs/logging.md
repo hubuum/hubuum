@@ -18,7 +18,7 @@ Every log record includes:
 | `severity` | Log level as `TRACE`, `DEBUG`, `INFO`, `WARN`, or `ERROR` |
 | `message` | Stable event message |
 
-Request-scoped records also include `request_id` and, when accepted from the client, `correlation_id`. Authenticated requests record `principal_id` on the request span after bearer token resolution.
+Request-scoped records also include `request_id` and, when accepted from the client, `correlation_id`. Authenticated requests record `principal_id` on the request span after bearer token resolution. When an OpenTelemetry span is active, records also include fixed-width lowercase `trace_id` and `span_id` fields. See [Distributed Tracing](tracing.md) for export and propagation policy.
 
 The server emits one `server startup` record at `INFO` after binding succeeds. It includes the package version, build Git SHA, bind address, TLS state, worker counts, storage and authorization backends, log format and level, and the number of enabled event sinks. Release and container builds populate `git_sha`; local builds report `unknown` unless `HUBUUM_BUILD_GIT_SHA` is set while compiling.
 
@@ -126,6 +126,12 @@ Trace a client-supplied correlation ID:
 
 ```bash
 jq 'select(.correlation_id == "REPLACE-WITH-CORRELATION-ID")' hubuum.log
+```
+
+Find all local records for an OpenTelemetry trace:
+
+```bash
+jq 'select(.trace_id == "REPLACE-WITH-32-HEX-TRACE-ID")' hubuum.log
 ```
 
 List authorization denials:

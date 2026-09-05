@@ -283,6 +283,7 @@ fn default_body_template() -> String {
 #[cfg(test)]
 mod tests {
     use hubuum_event_sinks_common::SecretValue;
+    use hubuum_events_core::CorrelationId;
 
     use chrono::Utc;
     use uuid::Uuid;
@@ -346,7 +347,7 @@ mod tests {
                 }),
                 task_id: Some(hubuum_events_core::TaskId::new(99).unwrap()),
             })
-            .correlation_id(Some("corr-1".to_string()))
+            .correlation_id(Some(CorrelationId::new("corr-1").unwrap()))
             .summary("collection created".to_string())
             .after(Some(serde_json::json!({"name": "example"})))
             .metadata(serde_json::json!({"source": "test"}))

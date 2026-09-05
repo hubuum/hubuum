@@ -3,7 +3,7 @@ use hubuum_domain::{
     EventDeliveryId, EventFanoutSettings, EventRetentionSettings, EventSinkId, EventSubscriptionId,
     ResourceRevision,
 };
-use hubuum_events_core::{EventEnvelope, EventId, EventSequence};
+use hubuum_events_core::{EventEnvelope, EventId, EventSequence, TraceLink};
 use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
@@ -65,12 +65,48 @@ impl StorageRecordedEvent {
 ///
 /// The implementation owns claiming, subscription matching, delivery-row
 /// insertion, claim release, and worker notification as one backend operation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageEventFanoutOutcome {
+    processed: usize,
+    trace_links: Vec<TraceLink>,
+}
+
+impl StorageEventFanoutOutcome {
+    #[must_use]
+    pub const fn new(processed: usize, trace_links: Vec<TraceLink>) -> Self {
+        Self {
+            processed,
+            trace_links,
+        }
+    }
+
+    #[must_use]
+    pub const fn processed(&self) -> usize {
+        self.processed
+    }
+
+    #[must_use]
+    pub fn trace_links(&self) -> &[TraceLink] {
+        &self.trace_links
+    }
+}
+
+impl std::fmt::Debug for StorageEventFanoutOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StorageEventFanoutOutcome")
+            .field("processed", &self.processed)
+            .field("trace_link_count", &self.trace_links.len())
+            .finish()
+    }
+}
+
 #[async_trait]
 pub trait EventFanoutStorage: Send + Sync {
     async fn process_event_fanout_batch(
         &self,
         settings: EventFanoutSettings,
-    ) -> Result<usize, StorageError>;
+    ) -> Result<StorageEventFanoutOutcome, StorageError>;
 }
 
 /// Opaque ownership proof for an in-flight event delivery.

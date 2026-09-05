@@ -302,6 +302,7 @@ impl TaskQueueStorage for MemoryStorage {
             lease_expires_at: None,
             attempt_count: 0,
             initiator_principal_id: Some(request.submitted_by()),
+            trace_link: request.trace_link().cloned(),
             claim_token: None,
         };
         let task = record.projection()?;

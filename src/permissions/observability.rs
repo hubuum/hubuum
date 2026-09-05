@@ -21,8 +21,10 @@
 //! `_us` field, but the operational signal we care about — slow
 //! authorize batches, slow reverse queries — is well above that floor.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use opentelemetry::trace::{Span as _, Tracer};
+use opentelemetry::{KeyValue, global};
 use tracing::debug;
 
 const TARGET: &str = "hubuum::permissions";
@@ -51,6 +53,15 @@ pub fn record_authorize_many(
         latency_ms = elapsed.as_millis() as u64,
         "authorize_many"
     );
+    record_authorization_span(
+        &global::tracer("hubuum"),
+        "authz.permission_backend",
+        backend,
+        "authorize_many",
+        request_count,
+        if deny_count > 0 { "deny" } else { "allow" },
+        elapsed,
+    );
 }
 
 /// Emit an event for `PermissionBackend::is_admin`.
@@ -61,6 +72,15 @@ pub fn record_is_admin(backend: &'static str, allowed: bool, elapsed: Duration) 
         allowed,
         latency_ms = elapsed.as_millis() as u64,
         "is_admin"
+    );
+    record_authorization_span(
+        &global::tracer("hubuum"),
+        "authz.permission_backend",
+        backend,
+        "is_admin",
+        1,
+        if allowed { "allow" } else { "deny" },
+        elapsed,
     );
 }
 
@@ -95,6 +115,15 @@ pub fn record_reverse_query(
         latency_ms = elapsed.as_millis() as u64,
         "reverse_query"
     );
+    record_authorization_span(
+        &global::tracer("hubuum"),
+        "authz.scope_intersection",
+        backend,
+        query,
+        candidate_count,
+        "complete",
+        elapsed,
+    );
 }
 
 /// Emit an event for the `paginate_authorized` helper.
@@ -124,4 +153,85 @@ pub fn record_paginate_authorized(
         latency_ms = elapsed.as_millis() as u64,
         "paginate_authorized"
     );
+    record_authorization_span(
+        &global::tracer("hubuum"),
+        "authz.scope_intersection",
+        backend,
+        "paginate_authorized",
+        candidate_count,
+        "complete",
+        elapsed,
+    );
+}
+
+fn record_authorization_span(
+    tracer: &impl Tracer,
+    name: &'static str,
+    backend: &'static str,
+    operation: &'static str,
+    request_count: usize,
+    result: &'static str,
+    duration: Duration,
+) {
+    let ended_at = SystemTime::now();
+    let started_at = ended_at.checked_sub(duration).unwrap_or(ended_at);
+    let parent = opentelemetry::Context::current();
+    let mut span = tracer
+        .span_builder(name)
+        .with_start_time(started_at)
+        .with_attributes([
+            KeyValue::new("authorization.backend", backend),
+            KeyValue::new("authorization.operation", operation),
+            KeyValue::new(
+                "authorization.request.count",
+                i64::try_from(request_count).unwrap_or(i64::MAX),
+            ),
+            KeyValue::new("authorization.result", result),
+            KeyValue::new(
+                "authorization.duration_ms",
+                i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            ),
+        ])
+        .start_with_context(tracer, &parent);
+    span.end_with_timestamp(ended_at);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::tracing::test_support::TraceCapture;
+
+    #[test]
+    fn authorization_spans_keep_the_ambient_parent() {
+        let capture = TraceCapture::new("debug");
+        tracing::dispatcher::with_default(&capture.dispatch(), || {
+            let request = tracing::info_span!("http.server.request");
+            let _request = request.enter();
+            let internal = tracing::info_span!("import_planning");
+            let _internal = internal.enter();
+            record_authorization_span(
+                &capture.tracer(),
+                "authz.permission_backend",
+                "local",
+                "authorize_many",
+                1,
+                "allow",
+                Duration::from_millis(1),
+            );
+        });
+        let spans = capture.spans();
+        let request = spans
+            .iter()
+            .find(|span| span.name == "http.server.request")
+            .unwrap();
+        let authorization = spans
+            .iter()
+            .find(|span| span.name == "authz.permission_backend")
+            .unwrap();
+        assert_eq!(authorization.parent_span_id, request.span_context.span_id());
+        assert_eq!(
+            authorization.span_context.trace_id(),
+            request.span_context.trace_id()
+        );
+    }
 }

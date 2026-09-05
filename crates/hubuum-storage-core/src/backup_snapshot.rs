@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
+use hubuum_events_core::CorrelationId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -99,9 +100,12 @@ pub struct StorageBackupRow(Map<String, Value>);
 
 impl StorageBackupRow {
     pub fn try_from_value(value: Value) -> Result<Self, StorageValidationError> {
-        value.as_object().cloned().map(Self).ok_or_else(|| {
-            StorageValidationError::invalid("A backup section item must be a JSON object")
-        })
+        match value {
+            Value::Object(fields) => Ok(Self(fields)),
+            _ => Err(StorageValidationError::invalid(
+                "A backup section item must be a JSON object",
+            )),
+        }
     }
 
     #[must_use]
@@ -112,6 +116,47 @@ impl StorageBackupRow {
     #[must_use]
     pub fn fields(&self) -> &Map<String, Value> {
         &self.0
+    }
+
+    /// Apply version-5 legacy repairs shared by restore and source comparison.
+    /// Only previously accepted invalid correlation strings are cleared; other
+    /// field types remain intact so malformed rows and unrelated drift fail.
+    pub fn normalize_legacy_history(&mut self, section: StorageBackupHistorySection) {
+        if section == StorageBackupHistorySection::AuditEvents
+            && self
+                .0
+                .get("correlation_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| CorrelationId::new(value).is_err())
+        {
+            self.0.insert("correlation_id".to_string(), Value::Null);
+        }
+    }
+
+    /// Canonicalize optional history fields added within backup version 5.
+    /// An absent trace link and an all-null link carry the same information;
+    /// populated or partial links must remain intact for validation/comparison.
+    pub fn canonicalize_history(&mut self, section: StorageBackupHistorySection) {
+        if !matches!(
+            section,
+            StorageBackupHistorySection::TerminalTasks | StorageBackupHistorySection::AuditEvents
+        ) {
+            return;
+        }
+        const TRACE_FIELDS: [&str; 4] = [
+            "trace_id",
+            "trace_span_id",
+            "trace_flags",
+            "trace_context_version",
+        ];
+        if TRACE_FIELDS
+            .iter()
+            .all(|field| self.0.get(*field).is_none_or(Value::is_null))
+        {
+            for field in TRACE_FIELDS {
+                self.0.remove(field);
+            }
+        }
     }
 
     #[must_use]
@@ -147,7 +192,7 @@ pub struct StorageBackupSnapshot {
 impl StorageBackupSnapshot {
     pub fn try_new(
         state_sections: StorageBackupStateSections,
-        history_sections: Option<StorageBackupHistorySections>,
+        mut history_sections: Option<StorageBackupHistorySections>,
     ) -> Result<Self, StorageValidationError> {
         let missing_state = StorageBackupStateSection::ALL
             .iter()
@@ -166,6 +211,14 @@ impl StorageBackupSnapshot {
                 return Err(StorageValidationError::invalid(format!(
                     "Backup snapshot is missing required history section '{section}'"
                 )));
+            }
+        }
+
+        if let Some(history) = &mut history_sections {
+            for (section, rows) in history {
+                for row in rows {
+                    row.canonicalize_history(*section);
+                }
             }
         }
 
@@ -221,7 +274,73 @@ pub trait BackupSnapshotStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+    use serde_json::json;
+
     use super::*;
+
+    #[rstest]
+    #[case::tasks(StorageBackupHistorySection::TerminalTasks)]
+    #[case::events(StorageBackupHistorySection::AuditEvents)]
+    fn snapshots_omit_empty_trace_links(#[case] section: StorageBackupHistorySection) {
+        let mut history = complete_history();
+        history.insert(
+            section,
+            vec![
+                StorageBackupRow::try_from_value(json!({
+                    "id": 1, "trace_id": null, "trace_span_id": null,
+                    "trace_flags": null, "trace_context_version": null,
+                }))
+                .unwrap(),
+            ],
+        );
+        let (_, history) = StorageBackupSnapshot::try_new(complete_state(), Some(history))
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            history.unwrap()[&section][0].fields(),
+            json!({"id": 1}).as_object().unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::populated(json!({
+        "id": 1, "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0,
+    }))]
+    #[case::partial(json!({"id": 1, "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": null}))]
+    fn canonicalization_preserves_nonempty_trace_links(#[case] value: Value) {
+        let mut row = StorageBackupRow::try_from_value(value.clone()).unwrap();
+        row.canonicalize_history(StorageBackupHistorySection::AuditEvents);
+        assert_eq!(row.into_value(), value);
+    }
+
+    #[rstest]
+    #[case::whitespace(json!("legacy correlation"), Value::Null)]
+    #[case::overlong(json!("x".repeat(129)), Value::Null)]
+    #[case::empty(json!(""), Value::Null)]
+    #[case::valid(json!("valid-correlation"), json!("valid-correlation"))]
+    #[case::null(Value::Null, Value::Null)]
+    #[case::malformed(json!(42), json!(42))]
+    fn legacy_history_normalization_is_limited_to_invalid_audit_correlation_strings(
+        #[case] original: Value,
+        #[case] normalized: Value,
+        #[values(
+            StorageBackupHistorySection::AuditEvents,
+            StorageBackupHistorySection::TerminalTasks
+        )]
+        section: StorageBackupHistorySection,
+    ) {
+        let mut row =
+            StorageBackupRow::try_from_value(json!({"correlation_id": original})).unwrap();
+        row.normalize_legacy_history(section);
+        let expected = if section == StorageBackupHistorySection::AuditEvents {
+            normalized
+        } else {
+            original
+        };
+        assert_eq!(row.get("correlation_id"), Some(&expected));
+    }
 
     fn complete_state() -> StorageBackupStateSections {
         StorageBackupStateSection::ALL

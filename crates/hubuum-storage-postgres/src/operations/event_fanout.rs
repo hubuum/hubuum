@@ -6,9 +6,10 @@ use diesel::{QueryResult, Queryable};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventDeliveryStatus, EventFanoutSettings, PrincipalId, TaskId};
 use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventEntityId, EventEnvelope, EventSequence,
+    Action, ActorKind, CorrelationId, EntityType, EventEntityId, EventEnvelope, EventSequence,
     EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair,
 };
+use hubuum_storage_core::StorageEventFanoutOutcome;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -44,6 +45,10 @@ struct FanoutEventRow {
     schema_version: i32,
     initiator_user_id: Option<i32>,
     task_id: Option<i32>,
+    trace_id: Option<String>,
+    trace_span_id: Option<String>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 impl TryFrom<FanoutEventRow> for EventEnvelope {
@@ -74,6 +79,12 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
             principal_id,
             name: None,
         });
+        let trace_link = super::event_rows::trace_link_from_columns(
+            row.trace_id,
+            row.trace_span_id,
+            row.trace_flags,
+            row.trace_context_version,
+        )?;
         Self::builder()
             .id(EventSequence::new(row.id).map_err(invalid_fanout_event)?)
             .event_id(row.event_id)
@@ -105,7 +116,13 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
                     .map_err(invalid_fanout_event)?,
             })
             .request_id(row.request_id)
-            .correlation_id(row.correlation_id)
+            .correlation_id(
+                row.correlation_id
+                    .map(CorrelationId::new)
+                    .transpose()
+                    .map_err(invalid_fanout_event)?,
+            )
+            .trace_link(trace_link)
             .summary(row.summary)
             .before(row.before)
             .after(row.after)
@@ -205,7 +222,7 @@ where
 pub async fn process_event_fanout_batch(
     runtime: &PostgresRuntime,
     settings: EventFanoutSettings,
-) -> Result<usize, PostgresStorageError> {
+) -> Result<StorageEventFanoutOutcome, PostgresStorageError> {
     let event_ids = claim_event_ids(runtime, settings).await?;
     fanout_events(runtime, &event_ids).await
 }
@@ -280,7 +297,9 @@ pub async fn fanout_event(
     runtime: &PostgresRuntime,
     event_id: i64,
 ) -> Result<usize, PostgresStorageError> {
-    fanout_events(runtime, &[event_id]).await
+    fanout_events(runtime, &[event_id])
+        .await
+        .map(|outcome| outcome.processed())
 }
 
 /// Fan out selected pending events atomically.
@@ -288,87 +307,101 @@ pub async fn fanout_event(
 pub async fn fanout_events(
     runtime: &PostgresRuntime,
     event_ids: &[i64],
-) -> Result<usize, PostgresStorageError> {
+) -> Result<StorageEventFanoutOutcome, PostgresStorageError> {
     use crate::schema::events::dsl::{
         action, actor_kind, actor_user_id, after, before, collection_id, correlation_id,
         dispatched_at, entity_id, entity_name, entity_type, event_id, events, fanout_claim_token,
         fanout_locked_until, id, initiator_user_id, metadata, occurred_at, request_id,
-        schema_version, summary, task_id,
+        schema_version, summary, task_id, trace_context_version, trace_flags, trace_id,
+        trace_span_id,
     };
 
     if event_ids.is_empty() {
-        return Ok(0);
+        return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
     }
 
     runtime
-        .with_transaction(async |connection| -> Result<usize, PostgresStorageError> {
-            let envelopes = events
-                .filter(id.eq_any(event_ids))
-                .filter(dispatched_at.is_null())
-                .order(id.asc())
-                .select((
-                    id,
-                    event_id,
-                    occurred_at,
-                    entity_type,
-                    entity_id,
-                    entity_name,
-                    collection_id,
-                    action,
-                    actor_user_id,
-                    actor_kind,
-                    request_id,
-                    correlation_id,
-                    summary,
-                    before,
-                    after,
-                    metadata,
-                    schema_version,
-                    initiator_user_id,
-                    task_id,
-                ))
-                .load::<FanoutEventRow>(connection)
-                .await?
-                .into_iter()
-                .map(EventEnvelope::try_from)
-                .collect::<Result<Vec<_>, _>>()?;
-            if envelopes.is_empty() {
-                return Ok(0);
-            }
+        .with_transaction(
+            async |connection| -> Result<StorageEventFanoutOutcome, PostgresStorageError> {
+                let envelopes = events
+                    .filter(id.eq_any(event_ids))
+                    .filter(dispatched_at.is_null())
+                    .order(id.asc())
+                    .select((
+                        id,
+                        event_id,
+                        occurred_at,
+                        entity_type,
+                        entity_id,
+                        entity_name,
+                        collection_id,
+                        action,
+                        actor_user_id,
+                        actor_kind,
+                        request_id,
+                        correlation_id,
+                        summary,
+                        before,
+                        after,
+                        metadata,
+                        schema_version,
+                        initiator_user_id,
+                        task_id,
+                        trace_id,
+                        trace_span_id,
+                        trace_flags,
+                        trace_context_version,
+                    ))
+                    .load::<FanoutEventRow>(connection)
+                    .await?
+                    .into_iter()
+                    .map(EventEnvelope::try_from)
+                    .collect::<Result<Vec<_>, _>>()?;
+                if envelopes.is_empty() {
+                    return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
+                }
+                let processed = envelopes.len();
 
-            let candidate_collection_ids = candidate_subscription_collection_ids(&envelopes);
-            let subscriptions = load_enabled_subscriptions(connection, &candidate_collection_ids)
-                .await?
-                .into_iter()
-                .map(CompiledEventSubscription::try_from)
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut inserted = 0;
-            let mut processed_event_ids = Vec::with_capacity(envelopes.len());
-            for envelope in &envelopes {
-                let subscription_ids = subscriptions
+                let trace_links = envelopes
                     .iter()
-                    .filter(|subscription| subscription.matches(envelope))
-                    .map(|subscription| subscription.id)
-                    .collect::<Vec<_>>();
-                inserted +=
-                    insert_delivery_rows(connection, envelope.id().get(), &subscription_ids)
-                        .await?;
-                processed_event_ids.push(envelope.id().get());
-            }
+                    .filter_map(|envelope| envelope.trace_link().cloned())
+                    .collect();
 
-            diesel::update(events.filter(id.eq_any(processed_event_ids)))
-                .set((
-                    dispatched_at.eq(Some(Utc::now().naive_utc())),
-                    fanout_locked_until.eq::<Option<NaiveDateTime>>(None),
-                    fanout_claim_token.eq::<Option<Uuid>>(None),
-                ))
-                .execute(connection)
-                .await?;
-            if inserted > 0 {
-                notify_event_delivery(connection).await?;
-            }
-            Ok(inserted)
-        })
+                let candidate_collection_ids = candidate_subscription_collection_ids(&envelopes);
+                let subscriptions =
+                    load_enabled_subscriptions(connection, &candidate_collection_ids)
+                        .await?
+                        .into_iter()
+                        .map(CompiledEventSubscription::try_from)
+                        .collect::<Result<Vec<_>, _>>()?;
+                let mut inserted = 0;
+                let mut processed_event_ids = Vec::with_capacity(envelopes.len());
+                for envelope in &envelopes {
+                    let subscription_ids = subscriptions
+                        .iter()
+                        .filter(|subscription| subscription.matches(envelope))
+                        .map(|subscription| subscription.id)
+                        .collect::<Vec<_>>();
+                    inserted +=
+                        insert_delivery_rows(connection, envelope.id().get(), &subscription_ids)
+                            .await?;
+                    processed_event_ids.push(envelope.id().get());
+                }
+
+                diesel::update(events.filter(id.eq_any(processed_event_ids)))
+                    .set((
+                        dispatched_at.eq(Some(Utc::now().naive_utc())),
+                        fanout_locked_until.eq::<Option<NaiveDateTime>>(None),
+                        fanout_claim_token.eq::<Option<Uuid>>(None),
+                    ))
+                    .execute(connection)
+                    .await?;
+                if inserted > 0 {
+                    notify_event_delivery(connection).await?;
+                }
+                Ok(StorageEventFanoutOutcome::new(processed, trace_links))
+            },
+        )
         .await
 }
 

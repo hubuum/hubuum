@@ -205,6 +205,10 @@ struct NewInternalTaskRow {
     started_at: Option<NaiveDateTime>,
     finished_at: Option<NaiveDateTime>,
     initiator_user_id: Option<i32>,
+    trace_id: Option<String>,
+    trace_span_id: Option<String>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 #[derive(QueryableByName)]
@@ -1502,6 +1506,7 @@ async fn insert_internal_task(
     total_items: i32,
     actor_id: Option<i32>,
 ) -> Result<TaskRow, PostgresStorageError> {
+    let trace_link = crate::runtime::ambient_mutation_trace_link();
     let task = diesel::insert_into(crate::schema::tasks::table)
         .values(NewInternalTaskRow {
             kind: StorageTaskKind::Reindex.as_str().to_string(),
@@ -1522,6 +1527,12 @@ async fn insert_internal_task(
             started_at: None,
             finished_at: None,
             initiator_user_id: actor_id,
+            trace_id: trace_link.as_ref().map(|link| link.trace_id().to_string()),
+            trace_span_id: trace_link.as_ref().map(|link| link.span_id().to_string()),
+            trace_flags: trace_link
+                .as_ref()
+                .map(|link| i16::from(link.trace_flags())),
+            trace_context_version: trace_link.as_ref().map(|link| i16::from(link.version())),
         })
         .returning(TaskRow::as_returning())
         .get_result::<TaskRow>(connection)
@@ -1559,6 +1570,9 @@ fn task_event(
     summary: &str,
     provenance: &MutationProvenance,
 ) -> Result<NewEvent, PostgresStorageError> {
+    let provenance = provenance
+        .clone()
+        .with_trace_link(crate::runtime::ambient_mutation_trace_link().or(task.trace_link()?));
     let document = AuditDocument::try_new(
         summary,
         None,
@@ -1573,7 +1587,7 @@ fn task_event(
         .and_then(|event| {
             Ok(event
                 .with_entity_id(hubuum_events_core::EventEntityId::new(task.id)?)
-                .with_mutation_provenance(provenance))
+                .with_mutation_provenance(&provenance))
         })
 }
 

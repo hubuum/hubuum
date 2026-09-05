@@ -91,7 +91,7 @@ pub(crate) async fn execute_backup_task(
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
     settings: &BackupSettings,
-) -> Result<(), ApiError> {
+) -> Result<TaskStatus, ApiError> {
     let payload = task
         .request_payload
         .clone()
@@ -144,7 +144,7 @@ pub(crate) async fn execute_backup_task(
         )?),
     )
     .await?;
-    Ok(())
+    Ok(TaskStatus::Succeeded)
 }
 
 pub(crate) async fn authorize_backup_request(

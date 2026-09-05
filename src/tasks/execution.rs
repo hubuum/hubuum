@@ -23,7 +23,7 @@ pub(super) async fn execute_import_task<C>(
     task: &ClaimedTask,
     user: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
-) -> Result<(), ApiError>
+) -> Result<TaskStatus, ApiError>
 where
     C: AuthorizationContext,
 {
@@ -109,7 +109,7 @@ where
             .await?;
             metrics::import_items(failed_count, 0, failed_count);
             total_timer.finish(metrics::ImportMetricOutcome::Failed);
-            return Ok(());
+            return Ok(TaskStatus::Failed);
         }
 
         let super::types::PlanningOutcome {
@@ -259,7 +259,7 @@ where
         );
         total_timer.finish(metric_outcome);
 
-        Ok(())
+        Ok(status)
     }
     .instrument(import_span)
     .await
@@ -269,7 +269,8 @@ async fn finalize_task(
     pool: &impl crate::storage::StorageContext,
     task: &ClaimedTask,
     terminal: TerminalTaskUpdate,
-) -> Result<(), ApiError> {
+) -> Result<TaskStatus, ApiError> {
+    let status = terminal.status;
     complete_task(
         pool,
         task,
@@ -284,7 +285,7 @@ async fn finalize_task(
         StorageTaskCompletionPayload::Import,
     )
     .await?;
-    Ok(())
+    Ok(status)
 }
 
 fn import_storage_plan(

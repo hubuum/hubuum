@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use actix_rt::time::sleep;
 use tokio::sync::Notify;
-use tracing::{error, info};
+use tracing::{Instrument, error, field, info, info_span};
 
 use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
@@ -104,11 +104,7 @@ async fn event_fanout_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_storage_call_site(
-                &pool,
-                StorageCallSite::EventFanout,
-                pool.process_event_fanout_batch(settings),
-            ) => result,
+            result = process_event_fanout_iteration(&pool, settings) => result,
         };
         drop(activity);
         if fanout_worker_should_continue(&result) {
@@ -118,6 +114,34 @@ async fn event_fanout_worker_loop(
             break;
         }
     }
+}
+
+async fn process_event_fanout_iteration(
+    pool: &StorageHandle,
+    settings: EventFanoutSettings,
+) -> Result<usize, StorageError> {
+    let span = info_span!(
+        "event.fanout",
+        otel.kind = "consumer",
+        fanout.outcome = field::Empty,
+    );
+    let result = with_storage_call_site(
+        pool,
+        StorageCallSite::EventFanout,
+        pool.process_event_fanout_batch(settings),
+    )
+    .instrument(span.clone())
+    .await;
+    if let Ok(outcome) = &result {
+        for link in outcome.trace_links() {
+            crate::observability::tracing::add_link(&span, Some(link));
+        }
+    }
+    span.record(
+        "fanout.outcome",
+        if result.is_ok() { "complete" } else { "failed" },
+    );
+    result.map(|outcome| outcome.processed())
 }
 
 fn spawn_event_fanout_worker_loop(

@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
-use hubuum_events_core::EventSequence;
+use hubuum_events_core::{EventSequence, TraceLink};
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
@@ -250,6 +250,7 @@ pub struct StorageTaskCreateRequest {
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
+    trace_link: Option<TraceLink>,
     maximum_active_tasks: usize,
 }
 
@@ -269,6 +270,7 @@ impl StorageTaskCreateRequest {
             idempotency_key: None,
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
+            trace_link: None,
         }
     }
 
@@ -308,6 +310,11 @@ impl StorageTaskCreateRequest {
     }
 
     #[must_use]
+    pub const fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
+    }
+
+    #[must_use]
     pub const fn maximum_active_tasks(&self) -> usize {
         self.maximum_active_tasks
     }
@@ -322,6 +329,7 @@ impl fmt::Debug for StorageTaskCreateRequest {
             .field("has_idempotency_key", &self.idempotency_key.is_some())
             .field("has_request_hash", &self.request_hash.is_some())
             .field("scope", &self.scope_snapshot)
+            .field("has_trace_link", &self.trace_link.is_some())
             .field("maximum_active_tasks", &self.maximum_active_tasks)
             .field("identity_and_payload", &"[redacted]")
             .finish()
@@ -336,6 +344,7 @@ pub struct StorageTaskCreateRequestBuilder {
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
+    trace_link: Option<TraceLink>,
 }
 
 impl StorageTaskCreateRequestBuilder {
@@ -354,6 +363,12 @@ impl StorageTaskCreateRequestBuilder {
     #[must_use]
     pub fn scope_snapshot(mut self, scope_snapshot: StorageTaskScopeSnapshot) -> Self {
         self.scope_snapshot = scope_snapshot;
+        self
+    }
+
+    #[must_use]
+    pub fn trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
+        self.trace_link = trace_link;
         self
     }
 
@@ -380,6 +395,7 @@ impl StorageTaskCreateRequestBuilder {
             idempotency_key: self.idempotency_key,
             request_hash: self.request_hash,
             scope_snapshot: self.scope_snapshot,
+            trace_link: self.trace_link,
             maximum_active_tasks,
         })
     }
@@ -407,6 +423,7 @@ pub struct StorageTask {
     lease_expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
     initiator_principal_id: Option<PrincipalId>,
+    trace_link: Option<TraceLink>,
 }
 
 impl StorageTask {
@@ -440,6 +457,7 @@ impl StorageTask {
                 lease_expires_at: None,
                 attempt_count: 0,
                 initiator_principal_id: None,
+                trace_link: None,
             },
         }
     }
@@ -548,6 +566,11 @@ impl StorageTask {
     pub const fn initiator_principal_id(&self) -> Option<PrincipalId> {
         self.initiator_principal_id
     }
+
+    #[must_use]
+    pub const fn trace_link(&self) -> Option<&TraceLink> {
+        self.trace_link.as_ref()
+    }
 }
 
 impl fmt::Debug for StorageTask {
@@ -561,6 +584,7 @@ impl fmt::Debug for StorageTask {
             .field("has_summary", &self.summary.is_some())
             .field("has_request_payload", &self.request_payload.is_some())
             .field("has_lease", &self.has_lease())
+            .field("has_trace_link", &self.trace_link.is_some())
             .field("identity_and_payload", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -660,6 +684,12 @@ impl StorageTaskBuilder {
         initiator_principal_id: Option<PrincipalId>,
     ) -> Self {
         self.task.initiator_principal_id = initiator_principal_id;
+        self
+    }
+
+    #[must_use]
+    pub fn trace_link(mut self, trace_link: Option<TraceLink>) -> Self {
+        self.task.trace_link = trace_link;
         self
     }
 
@@ -1746,6 +1776,36 @@ mod tests {
         .expect_err("zero task capacity must be rejected");
 
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn task_create_and_projection_preserve_only_a_typed_trace_link() {
+        let link =
+            TraceLink::new("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", 1, 0).unwrap();
+        let request = StorageTaskCreateRequest::builder(
+            StorageTaskKind::Import,
+            PrincipalId::new(91_001).unwrap(),
+            serde_json::json!({}),
+            0,
+        )
+        .trace_link(Some(link.clone()))
+        .try_build(1)
+        .unwrap();
+        assert_eq!(request.trace_link(), Some(&link));
+
+        let now = chrono::Utc::now();
+        let task = StorageTask::builder(
+            TaskId::new(91_002).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Queued,
+            now,
+            now,
+        )
+        .trace_link(Some(link.clone()))
+        .try_build()
+        .unwrap();
+        assert_eq!(task.trace_link(), Some(&link));
+        assert!(!format!("{task:?}").contains(link.trace_id()));
     }
 
     #[test]

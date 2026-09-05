@@ -55,6 +55,10 @@ struct NewTaskRow {
     started_at: Option<NaiveDateTime>,
     finished_at: Option<NaiveDateTime>,
     initiator_user_id: Option<i32>,
+    trace_id: Option<String>,
+    trace_span_id: Option<String>,
+    trace_flags: Option<i16>,
+    trace_context_version: Option<i16>,
 }
 
 impl NewTaskRow {
@@ -81,6 +85,12 @@ impl NewTaskRow {
             started_at: None,
             finished_at: None,
             initiator_user_id: Some(request.submitted_by().id()),
+            trace_id: request.trace_link().map(|link| link.trace_id().to_string()),
+            trace_span_id: request.trace_link().map(|link| link.span_id().to_string()),
+            trace_flags: request
+                .trace_link()
+                .map(|link| i16::from(link.trace_flags())),
+            trace_context_version: request.trace_link().map(|link| i16::from(link.version())),
         })
     }
 }
@@ -799,7 +809,8 @@ async fn insert_queued_task(
         PrincipalId::new(actor_user_id)?,
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
-    );
+    )
+    .with_trace_link(task.trace_link()?);
     let document = AuditDocument::try_new(
         "Task queued",
         None,

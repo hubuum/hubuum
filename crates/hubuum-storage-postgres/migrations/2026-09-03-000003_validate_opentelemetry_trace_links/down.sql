@@ -1,0 +1,1 @@
+-- Validation changes no schema state and requires no rollback action.
