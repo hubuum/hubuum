@@ -35,7 +35,7 @@ fn allow_read_collection(backend: &MockTreetopBackend, group_id: i32, collection
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(collection_id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
 }
 
@@ -58,7 +58,7 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -109,7 +109,7 @@ async fn non_pushdown_authorization_excludes_hidden_measure_inputs(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -170,7 +170,7 @@ async fn non_pushdown_aggregation_preserves_large_internal_sums(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -217,7 +217,7 @@ async fn non_pushdown_authorization_requires_collection_read_access(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -285,7 +285,7 @@ async fn non_pushdown_scalar_grouping_does_not_load_object_json(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -331,7 +331,7 @@ async fn non_pushdown_high_cardinality_groups_paginate_from_bounded_accumulator(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -401,7 +401,7 @@ async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
         action: Permissions::ReadObject,
         resource_kind: ResourceKind::Object,
         resource_id: Some(authorized_object.id),
-        attrs: ResourceAttrs {
+        attrs: ResourceFields {
             name: Some(authorized_object.name.clone()),
             ..Default::default()
         },
@@ -464,7 +464,7 @@ async fn non_pushdown_authorization_honors_permission_filters(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     backend.add_rule(MockAllowRule {
@@ -472,7 +472,7 @@ async fn non_pushdown_authorization_honors_permission_filters(
         action: Permissions::UpdateObject,
         resource_kind: ResourceKind::Object,
         resource_id: Some(fixture.objects[0].id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
 
     let response = get_with_permission_backend(
@@ -525,7 +525,7 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     let (filtered_resource_id, resource_name) = if uses_class_resource {
@@ -541,7 +541,7 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
         action: filtered_permission,
         resource_kind: filtered_resource_kind,
         resource_id: Some(filtered_resource_id),
-        attrs: ResourceAttrs {
+        attrs: ResourceFields {
             name: Some(resource_name),
             ..Default::default()
         },
@@ -602,15 +602,15 @@ async fn non_pushdown_create_permission_filters_use_prospective_resources(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
-    backend.add_rule(MockAllowRule {
+    backend.add_prospective_rule(MockAllowRule {
         group_id: group.id,
         action: filtered_permission,
         resource_kind: filtered_resource_kind,
-        resource_id: Some(0),
-        attrs: ResourceAttrs {
+        resource_id: None,
+        attrs: ResourceFields {
             collection_id: Some(fixture.collection.collection.id),
             class_id: (filtered_permission == Permissions::CreateObject)
                 .then_some(fixture.class.id),
@@ -661,7 +661,7 @@ async fn denied_parent_permission_stops_before_object_authorization(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -813,7 +813,7 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     let pool = test_context.pool.clone();
@@ -910,7 +910,7 @@ async fn non_pushdown_computed_filters_apply_before_authorized_aggregation(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -960,7 +960,7 @@ async fn non_pushdown_permission_filters_respect_token_scopes(
             action,
             resource_kind: ResourceKind::Object,
             resource_id: Some(fixture.objects[0].id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     let token = scoped_token(
@@ -1014,7 +1014,7 @@ async fn non_pushdown_collection_read_respects_token_scopes(
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object.id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     let token = scoped_token(

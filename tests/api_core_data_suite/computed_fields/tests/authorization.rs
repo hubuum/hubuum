@@ -68,7 +68,7 @@ async fn computed_query_honors_object_specific_treetop_visibility(
         action: Permissions::ReadObject,
         resource_kind: ResourceKind::Object,
         resource_id: Some(fixture.objects[0].id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     let (response, queries) = capture_queries(get_request_with_permission_backend(
         &test_context.pool,
@@ -124,12 +124,12 @@ async fn computed_query_keys_are_hidden_when_only_the_synthetic_object_is_visibl
     finish_active_rebuild(&test_context, fixture.class.id).await;
 
     let backend = Arc::new(MockTreetopBackend::new());
-    backend.add_rule(MockAllowRule {
+    backend.add_prospective_rule(MockAllowRule {
         group_id: group.id,
         action: Permissions::ReadObject,
         resource_kind: ResourceKind::Object,
-        resource_id: Some(0),
-        attrs: ResourceAttrs::default(),
+        resource_id: None,
+        attrs: ResourceFields::default(),
     });
     let response = get_request_with_permission_backend(
         &test_context.pool,

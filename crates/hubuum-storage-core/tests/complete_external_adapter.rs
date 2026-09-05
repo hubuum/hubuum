@@ -1799,6 +1799,20 @@ impl ImportStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
+    async fn apply_claimed_import_strict(
+        &self,
+        plan: FencedImportPlan,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn apply_claimed_import_best_effort(
+        &self,
+        plan: FencedImportPlan,
+        mode: StorageImportMode,
+    ) -> Result<StorageImportApply, StorageError> {
+        fixture_result()
+    }
+
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         fixture_result()
     }
@@ -1814,6 +1828,13 @@ impl ImportStorage for CompleteExternalAdapter {
     async fn record_import_results(
         &self,
         results: Vec<StorageImportResult>,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+
+    async fn record_claimed_import_results(
+        &self,
+        results: FencedImportResults,
     ) -> Result<(), StorageError> {
         fixture_result()
     }

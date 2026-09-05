@@ -39,6 +39,7 @@ struct DeliverySubscriptionRow {
     sink_id: i32,
     name: String,
     routing: Value,
+    collection_id: i32,
 }
 
 #[derive(Queryable)]
@@ -62,6 +63,7 @@ fn delivery_subscription_value(
 ) -> Result<StorageEventDeliverySubscription, PostgresStorageError> {
     StorageEventDeliverySubscription::try_new(
         EventSubscriptionId::new(row.id)?,
+        hubuum_domain::CollectionId::new(row.collection_id)?,
         row.name.clone(),
         row.routing.clone(),
     )
@@ -360,6 +362,7 @@ async fn load_work_items(
             event_subscriptions::sink_id,
             event_subscriptions::name,
             event_subscriptions::routing,
+            event_subscriptions::collection_id,
         ))
         .load::<DeliverySubscriptionRow>(connection)
         .await?
@@ -892,6 +895,7 @@ mod tests {
     fn corrupt_delivery_transport_values_are_backend_failures() {
         let subscription = DeliverySubscriptionRow {
             id: 1,
+            collection_id: 1,
             sink_id: 2,
             name: "subscription".to_string(),
             routing: serde_json::json!([]),

@@ -358,7 +358,7 @@ impl TokenScope {
         let Some(resources) = &self.resources else {
             return true;
         };
-        match resource.kind {
+        match resource.kind() {
             ResourceKind::System => false,
             ResourceKind::Collection
             | ResourceKind::Template
@@ -367,31 +367,32 @@ impl TokenScope {
             | ResourceKind::EventSubscription => {
                 resources.allows_collection(resource.collection_id())
             }
-            ResourceKind::Class => resources.allows_class(
-                resource.attrs.collection_id,
-                Some(resource.id).filter(|id| *id > 0),
-            ),
+            ResourceKind::Class => {
+                resources.allows_class(resource.fields().collection_id, resource.id())
+            }
             ResourceKind::Object => resources.allows_object(
-                resource.attrs.collection_id,
-                resource.attrs.class_id,
-                Some(resource.id).filter(|id| *id > 0),
+                resource.fields().collection_id,
+                resource.fields().class_id,
+                resource.id(),
             ),
             ResourceKind::ClassRelation => {
                 resources.allows_class(
-                    resource.attrs.from_collection_id,
-                    resource.attrs.from_class_id,
-                ) && resources
-                    .allows_class(resource.attrs.to_collection_id, resource.attrs.to_class_id)
+                    resource.fields().from_collection_id,
+                    resource.fields().from_class_id,
+                ) && resources.allows_class(
+                    resource.fields().to_collection_id,
+                    resource.fields().to_class_id,
+                )
             }
             ResourceKind::ObjectRelation => {
                 resources.allows_object(
-                    resource.attrs.from_collection_id,
-                    resource.attrs.from_class_id,
-                    resource.attrs.from_object_id,
+                    resource.fields().from_collection_id,
+                    resource.fields().from_class_id,
+                    resource.fields().from_object_id,
                 ) && resources.allows_object(
-                    resource.attrs.to_collection_id,
-                    resource.attrs.to_class_id,
-                    resource.attrs.to_object_id,
+                    resource.fields().to_collection_id,
+                    resource.fields().to_class_id,
+                    resource.fields().to_object_id,
                 )
             }
             // Task visibility is principal-owned rather than part of the
@@ -501,7 +502,7 @@ impl TokenScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
+    use crate::permissions::{ClassResourceEndpoint, ResourceRef};
 
     fn scope(resources: Vec<TokenResourceScope>) -> TokenScope {
         TokenScope::from_stored_parts(None, Some(resources)).unwrap()
@@ -512,15 +513,7 @@ mod tests {
         let scope = scope(vec![TokenResourceScope::Collection(
             CollectionID::new(7).unwrap(),
         )]);
-        let object = ResourceRef {
-            kind: ResourceKind::Object,
-            id: 11,
-            attrs: ResourceAttrs {
-                collection_id: Some(7),
-                class_id: Some(9),
-                ..Default::default()
-            },
-        };
+        let object = ResourceRef::object(11, ClassResourceEndpoint::new(7, 9), None);
 
         assert!(scope.allows_resource(&object));
     }
@@ -539,15 +532,7 @@ mod tests {
         let scope = scope(vec![TokenResourceScope::Object(
             HubuumObjectID::new(11).unwrap(),
         )]);
-        let resource = |id| ResourceRef {
-            kind: ResourceKind::Object,
-            id,
-            attrs: ResourceAttrs {
-                collection_id: Some(7),
-                class_id: Some(9),
-                ..Default::default()
-            },
-        };
+        let resource = |id| ResourceRef::object(id, ClassResourceEndpoint::new(7, 9), None);
 
         assert!(scope.allows_resource(&resource(11)));
         assert!(!scope.allows_resource(&resource(12)));
@@ -604,17 +589,11 @@ mod tests {
         let scope = scope(vec![TokenResourceScope::Class(
             HubuumClassID::new(9).unwrap(),
         )]);
-        let relation = ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: 13,
-            attrs: ResourceAttrs {
-                from_collection_id: Some(7),
-                to_collection_id: Some(7),
-                from_class_id: Some(9),
-                to_class_id: Some(10),
-                ..Default::default()
-            },
-        };
+        let relation = ResourceRef::class_relation(
+            Some(13),
+            ClassResourceEndpoint::new(7, 9),
+            ClassResourceEndpoint::new(7, 10),
+        );
 
         assert!(!scope.allows_resource(&relation));
     }

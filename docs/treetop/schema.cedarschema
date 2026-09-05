@@ -1,3 +1,4 @@
+// Prospective collection probes omit unknown class/object identities.
 // Cedar entity schema for Hubuum permission model.
 //
 // This schema describes the entity types and actions that Hubuum's Treetop
@@ -52,7 +53,7 @@ entity HubuumClass {
 entity HubuumObject {
     id: String,
     collection_id: Long,
-    class_id: Long,
+    class_id?: Long,
     name?: String
 };
 
@@ -73,8 +74,8 @@ entity HubuumClassRelation {
     id: String,
     from_collection_id: Long,
     to_collection_id: Long,
-    from_class_id: Long,
-    to_class_id: Long,
+    from_class_id?: Long,
+    to_class_id?: Long,
     collection_id?: Long
 };
 
@@ -84,11 +85,11 @@ entity HubuumObjectRelation {
     id: String,
     from_collection_id: Long,
     to_collection_id: Long,
-    from_class_id: Long,
-    to_class_id: Long,
-    from_object_id: Long,
-    to_object_id: Long,
-    class_relation_id: Long,
+    from_class_id?: Long,
+    to_class_id?: Long,
+    from_object_id?: Long,
+    to_object_id?: Long,
+    class_relation_id?: Long,
     collection_id?: Long
 };
 

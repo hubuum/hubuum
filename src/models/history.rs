@@ -1,4 +1,5 @@
-use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::ClassResourceEndpoint;
+use crate::permissions::ResourceRef;
 
 use super::{
     CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
@@ -59,72 +60,35 @@ pub struct HistoryAuthorizationSnapshot {
 impl HistoryAuthorizationSnapshot {
     pub fn collection(id: i32, name: String) -> Self {
         Self {
-            resource: ResourceRef {
-                kind: ResourceKind::Collection,
-                id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(id),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::named_collection(id, Some(name)),
         }
     }
 
     pub fn class(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            resource: ResourceRef {
-                kind: ResourceKind::Class,
-                id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(collection_id),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::class(id, collection_id, Some(name)),
         }
     }
 
     pub fn object(id: i32, collection_id: i32, class_id: i32, name: String) -> Self {
         Self {
-            resource: ResourceRef {
-                kind: ResourceKind::Object,
+            resource: ResourceRef::object(
                 id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(collection_id),
-                    class_id: Some(class_id),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            },
+                ClassResourceEndpoint::new(collection_id, class_id),
+                Some(name),
+            ),
         }
     }
 
     pub fn template(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            resource: ResourceRef {
-                kind: ResourceKind::Template,
-                id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(collection_id),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::template(id, collection_id, Some(name)),
         }
     }
 
     pub fn remote_target(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            resource: ResourceRef {
-                kind: ResourceKind::RemoteTarget,
-                id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(collection_id),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            },
+            resource: ResourceRef::remote_target(id, collection_id, Some(name)),
         }
     }
 

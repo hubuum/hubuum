@@ -849,6 +849,12 @@ mod tests {
         let context = TestContext::new().await;
         let (port, request_rx) = spawn_https_remote_server().await;
         let (collection_id, class_id, object_id) = setup_object(&context, "rt_success").await;
+        let _credential = crate::models::credential::bind_test_remote_credential(
+            "remote_success_token",
+            collection_id,
+            &format!("https://localhost:{port}"),
+        )
+        .unwrap();
         let payload = serde_json::json!({
             "collection_id": collection_id,
             "class_id": class_id,

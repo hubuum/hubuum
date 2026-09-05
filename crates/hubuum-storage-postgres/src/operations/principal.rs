@@ -67,7 +67,7 @@ pub async fn get_principal(
 ) -> Result<StoragePrincipal, PostgresStorageError> {
     validate_principal_id(principal_id)?;
     runtime
-        .with_connection(async |connection| {
+        .with_read_connection(async |connection| {
             crate::schema::principals::table
                 .filter(crate::schema::principals::id.eq(principal_id))
                 .select(PrincipalRow::as_select())
@@ -85,7 +85,7 @@ pub async fn get_principal_settings(
 ) -> Result<StoragePrincipalSettings, PostgresStorageError> {
     validate_principal_id(principal_id)?;
     let (document, revision) = runtime
-        .with_connection(async |connection| {
+        .with_read_connection(async |connection| {
             crate::schema::principals::table
                 .filter(crate::schema::principals::id.eq(principal_id))
                 .select((

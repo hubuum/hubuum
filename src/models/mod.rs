@@ -10,6 +10,7 @@ pub mod backup;
 pub mod class;
 pub mod collection;
 pub mod computed_field;
+pub mod credential;
 pub mod event_delivery;
 pub mod event_subscription;
 pub mod export;

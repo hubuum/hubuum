@@ -1,3 +1,4 @@
+use crate::permissions::ClassResourceEndpoint;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -6,7 +7,7 @@ use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::computed_field::HubuumObjectComputedResponse;
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, ToSchema)]
@@ -25,16 +26,11 @@ pub struct HubuumObject {
 
 impl HubuumObject {
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
-        ResourceRef {
-            kind: ResourceKind::Object,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.collection_id),
-                class_id: Some(self.hubuum_class_id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        }
+        ResourceRef::object(
+            self.id,
+            ClassResourceEndpoint::new(self.collection_id, self.hubuum_class_id),
+            Some(self.name.clone()),
+        )
     }
 }
 

@@ -7,7 +7,8 @@ use crate::errors::ApiError;
 #[cfg(test)]
 use crate::models::{HubuumClass, ImportMode};
 use crate::models::{ImportAtomicity, ImportCollisionPolicy, ImportPermissionPolicy};
-use crate::storage::{ImportStorage, storage_handle};
+use crate::services::tasks::ClaimedTask;
+use crate::storage::{FencedImportResults, ImportStorage, storage_handle};
 
 use super::types::{
     ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,
@@ -113,17 +114,6 @@ pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMo
     }
 }
 
-pub(super) fn import_failure_outcome(error: &ApiError) -> &'static str {
-    match error {
-        ApiError::PreconditionFailed(message, _) | ApiError::RevisionConflict(message, _)
-            if message.starts_with("stale_revision") =>
-        {
-            "stale_revision"
-        }
-        _ => "failed",
-    }
-}
-
 pub(super) fn should_abort_import(
     atomicity: ImportAtomicity,
     permission_policy: ImportPermissionPolicy,
@@ -212,6 +202,7 @@ pub(super) fn storage_object_to_resolution(
 
 pub(super) async fn flush_import_result_batches(
     pool: &impl crate::storage::StorageContext,
+    task: &ClaimedTask,
     accumulator: &mut ExecutionAccumulator,
     force: bool,
 ) -> Result<(), ApiError> {
@@ -220,12 +211,22 @@ pub(super) async fn flush_import_result_batches(
             .results
             .drain(..IMPORT_RESULTS_BATCH_SIZE)
             .collect::<Vec<_>>();
-        storage_handle(pool).record_import_results(batch).await?;
+        storage_handle(pool)
+            .record_claimed_import_results(FencedImportResults::try_new(
+                task.lease().clone(),
+                batch,
+            )?)
+            .await?;
     }
 
     if force && !accumulator.results.is_empty() {
         let batch = std::mem::take(&mut accumulator.results);
-        storage_handle(pool).record_import_results(batch).await?;
+        storage_handle(pool)
+            .record_claimed_import_results(FencedImportResults::try_new(
+                task.lease().clone(),
+                batch,
+            )?)
+            .await?;
     }
 
     Ok(())

@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, ToSchema)]
@@ -82,15 +82,7 @@ impl UpdateHubuumClass {
 
 impl HubuumClass {
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
-        ResourceRef {
-            kind: ResourceKind::Class,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.collection_id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        }
+        ResourceRef::class(self.id, self.collection_id, Some(self.name.clone()))
     }
 
     /// Enforce the collection boundary shared by class-scoped domain records.

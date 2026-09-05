@@ -20,7 +20,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260904000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260905000004";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
@@ -208,7 +208,48 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        let context = TransactionLocalContext::ambient();
+        self.with_connection_context(operation, TransactionLocalContext::ambient())
+            .await
+    }
+
+    /// Execute a read without installing mutation provenance. Query deadlines
+    /// remain effective. Callers that can mutate must use `with_connection` or
+    /// `with_transaction`, including read-repair and token activity updates.
+    pub async fn with_read_connection<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        self.with_connection_context(operation, TransactionLocalContext::read_only())
+            .await
+    }
+
+    async fn with_connection_context<F, R, E>(
+        &self,
+        operation: F,
+        context: TransactionLocalContext,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
         let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
         let result = if context.is_empty() {
@@ -323,6 +364,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let context = TransactionLocalContext::read_only();
         let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
         let result = connection
@@ -330,6 +372,7 @@ impl PostgresRuntime {
                 diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                     .execute(connection)
                     .await?;
+                context.apply(connection).await?;
                 operation(connection)
                     .await
                     .map_err(PostgresStorageError::from)
@@ -538,6 +581,16 @@ struct TransactionLocalContext {
 }
 
 impl TransactionLocalContext {
+    fn read_only() -> Self {
+        Self {
+            query_budget: AMBIENT_QUERY_BUDGET
+                .try_with(|budget| *budget)
+                .unwrap_or(None),
+            provenance: None,
+            revision_precondition: None,
+        }
+    }
+
     fn ambient() -> Self {
         Self {
             query_budget: AMBIENT_QUERY_BUDGET

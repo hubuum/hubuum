@@ -394,9 +394,17 @@ pub(crate) async fn create_event_subscription(
     subscription: NewEventSubscription,
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
-    storage_handle(backend)
+    let sink = storage_handle(backend)
         .get_event_sink(subscription.sink_id)
         .await?;
+    if sink.kind() == "webhook" {
+        crate::models::credential::AuthorizedWebhookDelivery::authorize(
+            sink.configuration(),
+            &subscription.routing,
+            sink.secret_ref(),
+            collection_id_to_storage(collection_id),
+        )?;
+    }
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,
@@ -434,9 +442,10 @@ pub(crate) async fn update_event_subscription(
     existing: &EventSubscription,
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
-    if let Some(sink_id) = update.sink_id {
-        storage_handle(backend).get_event_sink(sink_id).await?;
-    }
+    let sink_id = update
+        .sink_id
+        .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
+    let sink = storage_handle(backend).get_event_sink(sink_id).await?;
     let entity_types = update
         .entity_types
         .as_deref()
@@ -444,6 +453,14 @@ pub(crate) async fn update_event_subscription(
     let actions = update.actions.as_deref().unwrap_or(&existing.actions);
     let filter = update.filter.as_ref().unwrap_or(&existing.filter);
     let routing = update.routing.as_ref().unwrap_or(&existing.routing);
+    if sink.kind() == "webhook" {
+        crate::models::credential::AuthorizedWebhookDelivery::authorize(
+            sink.configuration(),
+            routing,
+            sink.secret_ref(),
+            collection_id_to_storage(collection_id),
+        )?;
+    }
     validate_subscription_parts(entity_types, actions, filter, routing)?;
     let storage_entity_types = update
         .entity_types

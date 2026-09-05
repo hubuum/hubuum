@@ -158,8 +158,9 @@ pub use hubuum_storage_core::{
     TransactionalObjects, execute_event_retention_batch,
 };
 pub(crate) use hubuum_storage_core::{
-    ImportStorage, StorageImportApply, StorageImportCollectionKey, StorageImportMode,
-    StorageImportPlan, StorageImportPlanItem, StorageImportPreflight, StorageImportResult,
+    FencedImportItem, FencedImportPlan, FencedImportResults, ImportStorage, StorageImportApply,
+    StorageImportCollectionKey, StorageImportMode, StorageImportPlan, StorageImportPlanItem,
+    StorageImportPreflight, StorageImportResult,
 };
 pub(crate) use hubuum_storage_core::{
     MetricsStorage, StorageEventMetricsSnapshot, StorageInventoryGaugeSnapshot,

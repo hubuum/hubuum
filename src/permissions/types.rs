@@ -58,7 +58,7 @@ pub enum ResourceKind {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ResourceAttrs {
+pub struct ResourceFields {
     pub collection_id: Option<i32>,
     pub class_id: Option<i32>,
     pub from_collection_id: Option<i32>,
@@ -72,157 +72,365 @@ pub struct ResourceAttrs {
     pub name: Option<String>,
 }
 
+/// A resolved class endpoint, keeping the class and its collection together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassResourceEndpoint {
+    collection_id: i32,
+    class_id: i32,
+}
+impl ClassResourceEndpoint {
+    pub fn new(collection_id: i32, class_id: i32) -> Self {
+        Self {
+            collection_id,
+            class_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectResourceEndpoint {
+    class: ClassResourceEndpoint,
+    object_id: i32,
+}
+impl ObjectResourceEndpoint {
+    pub fn new(collection_id: i32, class_id: i32, object_id: i32) -> Self {
+        Self {
+            class: ClassResourceEndpoint::new(collection_id, class_id),
+            object_id,
+        }
+    }
+}
+
+/// Identity is explicit: a prospective resource has no database identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResourceIdentity {
+    Existing(i32),
+    Prospective,
+}
+
+/// Correlated attributes are selected by the resource variant, never a caller's
+/// independent kind tag. Optional names and task owners reflect stored data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResourceAttrs {
+    Collection {
+        collection_id: i32,
+        name: Option<String>,
+    },
+    Class {
+        collection_id: i32,
+        name: Option<String>,
+    },
+    Object {
+        class: ClassResourceEndpoint,
+        name: Option<String>,
+    },
+    ClassRelation {
+        from: ClassResourceEndpoint,
+        to: ClassResourceEndpoint,
+    },
+    ObjectRelation {
+        from: ObjectResourceEndpoint,
+        to: ObjectResourceEndpoint,
+        class_relation_id: i32,
+    },
+    Template {
+        collection_id: i32,
+        name: Option<String>,
+    },
+    RemoteTarget {
+        collection_id: i32,
+        name: Option<String>,
+    },
+    Task {
+        submitted_by: Option<i32>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResourceState {
+    System,
+    Entity {
+        identity: ResourceIdentity,
+        attrs: ResourceAttrs,
+    },
+    CollectionProbe {
+        permission: Permissions,
+        collection_id: i32,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRef {
-    pub kind: ResourceKind,
-    pub id: i32,
-    pub attrs: ResourceAttrs,
+    state: ResourceState,
 }
 
 impl ResourceRef {
-    pub fn collection(collection_id: i32) -> Self {
+    fn entity(id: Option<i32>, attrs: ResourceAttrs) -> Self {
         Self {
-            kind: ResourceKind::Collection,
-            id: collection_id,
-            attrs: ResourceAttrs {
-                collection_id: Some(collection_id),
-                ..Default::default()
+            state: ResourceState::Entity {
+                identity: id.map_or(ResourceIdentity::Prospective, ResourceIdentity::Existing),
+                attrs,
             },
         }
     }
-
-    /// Build the resource shape used to ask whether a permission applies
-    /// anywhere within a collection. Child kinds use a prospective entity
-    /// with complete collection-scoping attributes; exported Cedar policies
-    /// match those attributes rather than the placeholder id.
-    pub fn for_permission_on_collection(permission: Permissions, collection_id: i32) -> Self {
-        let mut attrs = ResourceAttrs {
-            collection_id: Some(collection_id),
-            ..Default::default()
-        };
-        let kind = match permission {
-            Permissions::ReadCollection
-            | Permissions::UpdateCollection
-            | Permissions::DeleteCollection
-            | Permissions::DelegateCollection
-            | Permissions::ReadRemoteTarget
-            | Permissions::CreateRemoteTarget
-            | Permissions::UpdateRemoteTarget
-            | Permissions::DeleteRemoteTarget
-            | Permissions::ExecuteRemoteTarget
-            | Permissions::ReadAudit
-            | Permissions::ManageEventSubscription => ResourceKind::Collection,
-            Permissions::CreateClass
-            | Permissions::ReadClass
-            | Permissions::UpdateClass
-            | Permissions::DeleteClass => ResourceKind::Class,
-            Permissions::CreateObject
-            | Permissions::ReadObject
-            | Permissions::UpdateObject
-            | Permissions::DeleteObject => {
-                attrs.class_id = Some(0);
-                ResourceKind::Object
-            }
-            Permissions::CreateClassRelation
-            | Permissions::ReadClassRelation
-            | Permissions::UpdateClassRelation
-            | Permissions::DeleteClassRelation => {
-                attrs.from_collection_id = Some(collection_id);
-                attrs.to_collection_id = Some(collection_id);
-                attrs.from_class_id = Some(0);
-                attrs.to_class_id = Some(0);
-                ResourceKind::ClassRelation
-            }
-            Permissions::CreateObjectRelation
-            | Permissions::ReadObjectRelation
-            | Permissions::UpdateObjectRelation
-            | Permissions::DeleteObjectRelation => {
-                attrs.from_collection_id = Some(collection_id);
-                attrs.to_collection_id = Some(collection_id);
-                attrs.from_class_id = Some(0);
-                attrs.to_class_id = Some(0);
-                attrs.from_object_id = Some(0);
-                attrs.to_object_id = Some(0);
-                attrs.class_relation_id = Some(0);
-                ResourceKind::ObjectRelation
-            }
-            Permissions::ReadTemplate
-            | Permissions::CreateTemplate
-            | Permissions::UpdateTemplate
-            | Permissions::DeleteTemplate => ResourceKind::Template,
-        };
-        let id = if kind == ResourceKind::Collection {
-            collection_id
-        } else {
-            0
-        };
-        Self { kind, id, attrs }
+    pub fn collection(collection_id: i32) -> Self {
+        Self::named_collection(collection_id, None)
     }
-
-    pub fn normalized_for_permission(&self, permission: Permissions) -> Self {
-        let expected_kind = match permission {
-            Permissions::ReadCollection
-            | Permissions::UpdateCollection
-            | Permissions::DeleteCollection
-            | Permissions::DelegateCollection
-            | Permissions::ReadRemoteTarget
-            | Permissions::CreateRemoteTarget
-            | Permissions::UpdateRemoteTarget
-            | Permissions::DeleteRemoteTarget
-            | Permissions::ExecuteRemoteTarget
-            | Permissions::ReadAudit
-            | Permissions::ManageEventSubscription => ResourceKind::Collection,
-            Permissions::CreateClass
-            | Permissions::ReadClass
-            | Permissions::UpdateClass
-            | Permissions::DeleteClass => ResourceKind::Class,
-            Permissions::CreateObject
-            | Permissions::ReadObject
-            | Permissions::UpdateObject
-            | Permissions::DeleteObject => ResourceKind::Object,
-            Permissions::CreateClassRelation
-            | Permissions::ReadClassRelation
-            | Permissions::UpdateClassRelation
-            | Permissions::DeleteClassRelation => ResourceKind::ClassRelation,
-            Permissions::CreateObjectRelation
-            | Permissions::ReadObjectRelation
-            | Permissions::UpdateObjectRelation
-            | Permissions::DeleteObjectRelation => ResourceKind::ObjectRelation,
-            Permissions::ReadTemplate
-            | Permissions::CreateTemplate
-            | Permissions::UpdateTemplate
-            | Permissions::DeleteTemplate => ResourceKind::Template,
-        };
-        if self.kind == expected_kind {
-            return self.clone();
-        }
-
-        let collection_id = self
-            .collection_id()
-            .or(self.attrs.from_collection_id)
-            .or(self.attrs.to_collection_id)
-            .unwrap_or(self.id);
-        let mut prospective = Self::for_permission_on_collection(permission, collection_id);
-        if expected_kind == ResourceKind::Object && self.kind == ResourceKind::Class {
-            prospective.attrs.class_id = Some(self.id);
-        }
-        prospective
+    pub fn named_collection(collection_id: i32, name: Option<String>) -> Self {
+        Self::entity(
+            Some(collection_id),
+            ResourceAttrs::Collection {
+                collection_id,
+                name,
+            },
+        )
     }
-
-    /// Construct the global System resource. Currently only Treetop's
-    /// `is_admin` dispatches against it; the local backend checks membership in
-    /// the configured admin group. Marked `dead_code`-allow so a build without the
-    /// optional Treetop backend doesn't lint the helper away.
+    pub fn class(id: i32, collection_id: i32, name: Option<String>) -> Self {
+        Self::entity(
+            Some(id),
+            ResourceAttrs::Class {
+                collection_id,
+                name,
+            },
+        )
+    }
+    pub fn object(id: i32, class: ClassResourceEndpoint, name: Option<String>) -> Self {
+        Self::entity(Some(id), ResourceAttrs::Object { class, name })
+    }
+    pub fn prospective_object(class: ClassResourceEndpoint) -> Self {
+        Self::entity(None, ResourceAttrs::Object { class, name: None })
+    }
+    pub fn class_relation(
+        id: Option<i32>,
+        from: ClassResourceEndpoint,
+        to: ClassResourceEndpoint,
+    ) -> Self {
+        Self::entity(id, ResourceAttrs::ClassRelation { from, to })
+    }
+    pub fn object_relation(
+        id: Option<i32>,
+        from: ObjectResourceEndpoint,
+        to: ObjectResourceEndpoint,
+        class_relation_id: i32,
+    ) -> Self {
+        Self::entity(
+            id,
+            ResourceAttrs::ObjectRelation {
+                from,
+                to,
+                class_relation_id,
+            },
+        )
+    }
+    pub fn template(id: i32, collection_id: i32, name: Option<String>) -> Self {
+        Self::entity(
+            Some(id),
+            ResourceAttrs::Template {
+                collection_id,
+                name,
+            },
+        )
+    }
+    pub fn remote_target(id: i32, collection_id: i32, name: Option<String>) -> Self {
+        Self::entity(
+            Some(id),
+            ResourceAttrs::RemoteTarget {
+                collection_id,
+                name,
+            },
+        )
+    }
+    pub fn task(id: i32, submitted_by: Option<i32>) -> Self {
+        Self::entity(Some(id), ResourceAttrs::Task { submitted_by })
+    }
     pub fn system() -> Self {
         Self {
-            kind: ResourceKind::System,
-            id: 0,
-            attrs: ResourceAttrs::default(),
+            state: ResourceState::System,
         }
     }
-
+    pub fn for_permission_on_collection(permission: Permissions, collection_id: i32) -> Self {
+        if permission_kind(permission) == ResourceKind::Collection {
+            Self::collection(collection_id)
+        } else {
+            Self {
+                state: ResourceState::CollectionProbe {
+                    permission,
+                    collection_id,
+                },
+            }
+        }
+    }
+    pub fn normalized_for_permission(&self, permission: Permissions) -> Self {
+        if self.kind() == permission_kind(permission) {
+            return self.clone();
+        }
+        if permission_kind(permission) == ResourceKind::Object
+            && let ResourceState::Entity {
+                identity: ResourceIdentity::Existing(class_id),
+                attrs: ResourceAttrs::Class { collection_id, .. },
+            } = &self.state
+        {
+            return Self::prospective_object(ClassResourceEndpoint::new(*collection_id, *class_id));
+        }
+        let fields = self.fields();
+        match fields
+            .collection_id
+            .or(fields.from_collection_id)
+            .or(fields.to_collection_id)
+        {
+            Some(collection_id) => Self::for_permission_on_collection(permission, collection_id),
+            None => self.clone(),
+        }
+    }
+    pub fn id(&self) -> Option<i32> {
+        match self.state {
+            ResourceState::Entity {
+                identity: ResourceIdentity::Existing(id),
+                ..
+            } => Some(id),
+            _ => None,
+        }
+    }
+    pub fn policy_identity(&self) -> String {
+        match self.state {
+            ResourceState::System => "global".into(),
+            ResourceState::Entity {
+                identity: ResourceIdentity::Existing(id),
+                ..
+            } => id.to_string(),
+            ResourceState::Entity {
+                identity: ResourceIdentity::Prospective,
+                ..
+            } => "prospective".into(),
+            ResourceState::CollectionProbe { collection_id, .. } => {
+                format!("collection-probe:{collection_id}")
+            }
+        }
+    }
+    pub fn kind(&self) -> ResourceKind {
+        match &self.state {
+            ResourceState::System => ResourceKind::System,
+            ResourceState::CollectionProbe { permission, .. } => permission_kind(*permission),
+            ResourceState::Entity { attrs, .. } => match attrs {
+                ResourceAttrs::Collection { .. } => ResourceKind::Collection,
+                ResourceAttrs::Class { .. } => ResourceKind::Class,
+                ResourceAttrs::Object { .. } => ResourceKind::Object,
+                ResourceAttrs::ClassRelation { .. } => ResourceKind::ClassRelation,
+                ResourceAttrs::ObjectRelation { .. } => ResourceKind::ObjectRelation,
+                ResourceAttrs::Template { .. } => ResourceKind::Template,
+                ResourceAttrs::RemoteTarget { .. } => ResourceKind::RemoteTarget,
+                ResourceAttrs::Task { .. } => ResourceKind::Task,
+            },
+        }
+    }
     pub fn collection_id(&self) -> Option<i32> {
-        self.attrs.collection_id
+        self.fields().collection_id
+    }
+    /// Read-only policy projection. This optional-field record is never accepted
+    /// as an authorization resource; it also supports partial mock rule filters.
+    pub fn fields(&self) -> ResourceFields {
+        let mut fields = ResourceFields::default();
+        match &self.state {
+            ResourceState::System => {}
+            ResourceState::CollectionProbe {
+                permission,
+                collection_id,
+            } => {
+                fields.collection_id = Some(*collection_id);
+                if matches!(
+                    permission_kind(*permission),
+                    ResourceKind::ClassRelation | ResourceKind::ObjectRelation
+                ) {
+                    fields.from_collection_id = Some(*collection_id);
+                    fields.to_collection_id = Some(*collection_id);
+                }
+            }
+            ResourceState::Entity { attrs, .. } => match attrs {
+                ResourceAttrs::Collection {
+                    collection_id,
+                    name,
+                }
+                | ResourceAttrs::Class {
+                    collection_id,
+                    name,
+                }
+                | ResourceAttrs::Template {
+                    collection_id,
+                    name,
+                }
+                | ResourceAttrs::RemoteTarget {
+                    collection_id,
+                    name,
+                } => {
+                    fields.collection_id = Some(*collection_id);
+                    fields.name = name.clone();
+                }
+                ResourceAttrs::Object { class, name } => {
+                    fields.collection_id = Some(class.collection_id);
+                    fields.class_id = Some(class.class_id);
+                    fields.name = name.clone();
+                }
+                ResourceAttrs::ClassRelation { from, to } => fields.set_class_endpoints(from, to),
+                ResourceAttrs::ObjectRelation {
+                    from,
+                    to,
+                    class_relation_id,
+                } => {
+                    fields.set_class_endpoints(&from.class, &to.class);
+                    fields.from_object_id = Some(from.object_id);
+                    fields.to_object_id = Some(to.object_id);
+                    fields.class_relation_id = Some(*class_relation_id);
+                }
+                ResourceAttrs::Task { submitted_by } => fields.submitted_by = *submitted_by,
+            },
+        }
+        fields
+    }
+}
+
+impl ResourceFields {
+    fn set_class_endpoints(&mut self, from: &ClassResourceEndpoint, to: &ClassResourceEndpoint) {
+        self.collection_id = (from.collection_id == to.collection_id).then_some(from.collection_id);
+        self.from_collection_id = Some(from.collection_id);
+        self.to_collection_id = Some(to.collection_id);
+        self.from_class_id = Some(from.class_id);
+        self.to_class_id = Some(to.class_id);
+    }
+}
+
+fn permission_kind(permission: Permissions) -> ResourceKind {
+    match permission {
+        Permissions::ReadCollection
+        | Permissions::UpdateCollection
+        | Permissions::DeleteCollection
+        | Permissions::DelegateCollection
+        | Permissions::ReadRemoteTarget
+        | Permissions::CreateRemoteTarget
+        | Permissions::UpdateRemoteTarget
+        | Permissions::DeleteRemoteTarget
+        | Permissions::ExecuteRemoteTarget
+        | Permissions::ReadAudit
+        | Permissions::ManageEventSubscription => ResourceKind::Collection,
+        Permissions::CreateClass
+        | Permissions::ReadClass
+        | Permissions::UpdateClass
+        | Permissions::DeleteClass => ResourceKind::Class,
+        Permissions::CreateObject
+        | Permissions::ReadObject
+        | Permissions::UpdateObject
+        | Permissions::DeleteObject => ResourceKind::Object,
+        Permissions::CreateClassRelation
+        | Permissions::ReadClassRelation
+        | Permissions::UpdateClassRelation
+        | Permissions::DeleteClassRelation => ResourceKind::ClassRelation,
+        Permissions::CreateObjectRelation
+        | Permissions::ReadObjectRelation
+        | Permissions::UpdateObjectRelation
+        | Permissions::DeleteObjectRelation => ResourceKind::ObjectRelation,
+        Permissions::ReadTemplate
+        | Permissions::CreateTemplate
+        | Permissions::UpdateTemplate
+        | Permissions::DeleteTemplate => ResourceKind::Template,
     }
 }
 
@@ -285,15 +493,15 @@ mod tests {
     #[test]
     fn collection_helper_sets_collection_id_attr() {
         let r = ResourceRef::collection(42);
-        assert_eq!(r.kind, ResourceKind::Collection);
-        assert_eq!(r.id, 42);
+        assert_eq!(r.kind(), ResourceKind::Collection);
+        assert_eq!(r.id(), Some(42));
         assert_eq!(r.collection_id(), Some(42));
     }
 
     #[test]
     fn system_resource_has_no_collection() {
         let r = ResourceRef::system();
-        assert_eq!(r.kind, ResourceKind::System);
+        assert_eq!(r.kind(), ResourceKind::System);
         assert_eq!(r.collection_id(), None);
     }
 
@@ -315,9 +523,9 @@ mod tests {
         let resource =
             ResourceRef::collection(42).normalized_for_permission(Permissions::CreateClass);
 
-        assert_eq!(resource.kind, ResourceKind::Class);
-        assert_eq!(resource.id, 0);
-        assert_eq!(resource.attrs.collection_id, Some(42));
+        assert_eq!(resource.kind(), ResourceKind::Class);
+        assert_eq!(resource.id(), None);
+        assert_eq!(resource.fields().collection_id, Some(42));
     }
 
     #[test]
@@ -325,8 +533,8 @@ mod tests {
         let resource =
             ResourceRef::collection(42).normalized_for_permission(Permissions::CreateTemplate);
 
-        assert_eq!(resource.kind, ResourceKind::Template);
-        assert_eq!(resource.attrs.collection_id, Some(42));
+        assert_eq!(resource.kind(), ResourceKind::Template);
+        assert_eq!(resource.fields().collection_id, Some(42));
     }
 
     #[test]
@@ -334,10 +542,10 @@ mod tests {
         let resource =
             ResourceRef::for_permission_on_collection(Permissions::ReadObjectRelation, 42);
 
-        assert_eq!(resource.kind, ResourceKind::ObjectRelation);
-        assert_eq!(resource.attrs.from_collection_id, Some(42));
-        assert_eq!(resource.attrs.to_collection_id, Some(42));
-        assert_eq!(resource.attrs.from_object_id, Some(0));
-        assert_eq!(resource.attrs.to_object_id, Some(0));
+        assert_eq!(resource.kind(), ResourceKind::ObjectRelation);
+        assert_eq!(resource.fields().from_collection_id, Some(42));
+        assert_eq!(resource.fields().to_collection_id, Some(42));
+        assert_eq!(resource.fields().from_object_id, None);
+        assert_eq!(resource.fields().to_object_id, None);
     }
 }

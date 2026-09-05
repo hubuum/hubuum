@@ -11,6 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
 minijinja = { version = "2", features = ["fuel"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
@@ -21,3 +22,7 @@ gungraun = "0.19.4"
 [[bench]]
 name = "size_limited_writer_callgrind"
 harness = false
+
+[[bin]]
+name = "hubuum-template-worker"
+path = "src/bin/hubuum-template-worker.rs"

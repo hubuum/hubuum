@@ -14,6 +14,7 @@ use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_query::TraversalBudget;
 use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SortParam};
 use hubuum_storage_core::{
     StorageAuthorizationPermission, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
@@ -289,7 +290,7 @@ pub async fn list_object_relations_between_ids(
     }
     let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &[OBJECT_RELATION_PERMISSION])
                     .await?;
@@ -329,7 +330,7 @@ pub async fn list_object_relations_touching_ids(
         .map(|id| id.id())
         .collect::<Vec<_>>();
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &[OBJECT_RELATION_PERMISSION])
                     .await?;
@@ -364,7 +365,7 @@ pub async fn list_related_classes(
     query: StorageRelationGraphQuery,
 ) -> Result<StoragePage<StorageClassGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
-    let (root_id, options, visibility) = query.into_parts();
+    let (root_id, traversal, options, visibility) = query.into_parts();
     validate_positive_id(root_id.id(), "class id")?;
     let permissions = required_permissions(
         &options,
@@ -387,6 +388,7 @@ pub async fn list_related_classes(
             let base = build_related_graph_query_spec(
                 GraphKind::Class,
                 root_id.id(),
+                traversal,
                 &collection_ids,
                 &options,
                 &visibility,
@@ -427,7 +429,7 @@ pub async fn list_related_objects(
     query: StorageRelationGraphQuery,
 ) -> Result<StoragePage<StorageObjectGraphRow>, PostgresStorageError> {
     let include_total = query.options().include_total();
-    let (root_id, options, visibility) = query.into_parts();
+    let (root_id, traversal, options, visibility) = query.into_parts();
     validate_positive_id(root_id.id(), "object id")?;
     let permissions = required_permissions(
         &options,
@@ -450,6 +452,7 @@ pub async fn list_related_objects(
             let base = build_related_graph_query_spec(
                 GraphKind::Object,
                 root_id.id(),
+                traversal,
                 &collection_ids,
                 &options,
                 &visibility,
@@ -495,7 +498,7 @@ pub async fn list_related_objects_for_roots(
         class_relation_id,
         direction,
         sort,
-        max_depth,
+        traversal,
         limit,
         preserve_alternative_paths,
         visibility,
@@ -503,6 +506,7 @@ pub async fn list_related_objects_for_roots(
     if root_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let max_depth = traversal.max_depth();
     validate_graph_bounds(max_depth, limit)?;
     let permissions = [
         StorageAuthorizationPermission::ReadObject,
@@ -519,7 +523,7 @@ pub async fn list_related_objects_for_roots(
     let class_id = class_id.id();
 
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
@@ -529,7 +533,7 @@ pub async fn list_related_objects_for_roots(
                 root_ids: &root_ids,
                 collection_ids: &collection_ids,
                 visibility: &visibility,
-                max_depth,
+                traversal,
                 per_root_limit: limit,
                 edges: GraphWalkEdges::Directional {
                     direction,
@@ -561,11 +565,12 @@ pub async fn list_bidirectionally_related_objects_for_roots(
     runtime: &PostgresRuntime,
     query: StorageBidirectionalRelatedObjectsQuery,
 ) -> Result<Vec<StorageRelatedObjectForRootRow>, PostgresStorageError> {
-    let (root_ids, max_depth, per_root_cap, preserve_alternative_paths, visibility) =
+    let (root_ids, traversal, per_root_cap, preserve_alternative_paths, visibility) =
         query.into_parts();
     if root_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let max_depth = traversal.max_depth();
     validate_graph_bounds(max_depth, per_root_cap)?;
     let permissions = [
         StorageAuthorizationPermission::ReadObject,
@@ -580,7 +585,7 @@ pub async fn list_bidirectionally_related_objects_for_roots(
         .collect::<Vec<_>>();
 
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &permissions).await?;
             if collection_ids.is_empty() {
@@ -590,7 +595,7 @@ pub async fn list_bidirectionally_related_objects_for_roots(
                 root_ids: &root_ids,
                 collection_ids: &collection_ids,
                 visibility: &visibility,
-                max_depth,
+                traversal,
                 per_root_limit: per_root_cap,
                 edges: GraphWalkEdges::Bidirectional,
                 ranking: GraphWalkRanking::ByDescendant,
@@ -672,25 +677,25 @@ impl GraphKind {
 fn build_related_graph_query_spec(
     kind: GraphKind,
     root_id: i32,
+    traversal: TraversalBudget,
     collection_ids: &[i32],
     options: &QueryOptions,
     visibility: &StorageVisibility,
 ) -> Result<RawSqlQuerySpec, PostgresStorageError> {
     let mut bind_variables = vec![SqlValue::Integer(root_id)];
     let collection_array_sql = sql_integer_array(collection_ids, &mut bind_variables);
-    let max_depth = related_depth_upper_bound(options.filters())?;
-    let depth_sql = if let Some(max_depth) = max_depth {
-        bind_variables.push(SqlValue::Integer(max_depth));
-        "?"
-    } else {
-        "NULL"
-    };
+    let max_depth = related_depth_upper_bound(options.filters())?
+        .unwrap_or(traversal.max_depth())
+        .min(traversal.max_depth());
+    bind_variables.push(SqlValue::Integer(max_depth));
+    let depth_sql = "?";
     let mut sql = match kind {
         GraphKind::Class => format!(
             "SELECT list_related_classes.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_classes(?, {collection_array_sql}, {depth_sql}) AS list_related_classes JOIN hubuumclass ancestor ON ancestor.id = list_related_classes.ancestor_class_id JOIN hubuumclass descendant ON descendant.id = list_related_classes.descendant_class_id"
         ),
         GraphKind::Object => format!(
-            "SELECT list_related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, {depth_sql}) AS list_related_objects JOIN hubuumobject ancestor ON ancestor.id = list_related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = list_related_objects.descendant_object_id"
+            "SELECT list_related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, {depth_sql}, {}) AS list_related_objects JOIN hubuumobject ancestor ON ancestor.id = list_related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = list_related_objects.descendant_object_id",
+            traversal.max_work_rows()
         ),
     };
 
@@ -1263,7 +1268,7 @@ struct RootGraphWalkSpec<'a> {
     root_ids: &'a [i32],
     collection_ids: &'a [i32],
     visibility: &'a StorageVisibility,
-    max_depth: i32,
+    traversal: TraversalBudget,
     per_root_limit: i32,
     edges: GraphWalkEdges,
     ranking: GraphWalkRanking,
@@ -1272,6 +1277,8 @@ struct RootGraphWalkSpec<'a> {
 }
 
 fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> RawSqlQuerySpec {
+    let max_work_rows = spec.traversal.max_work_rows();
+    let work_lookahead = max_work_rows + 1;
     let mut bind_variables = Vec::new();
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
     let valid_scope_objects_sql = scoped_objects_sql(spec.visibility, &mut bind_variables);
@@ -1281,13 +1288,13 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> RawSqlQuerySpec {
         "root_objects.root_object_id",
         &mut bind_variables,
     );
-    bind_variables.push(SqlValue::Integer(spec.max_depth));
+    bind_variables.push(SqlValue::Integer(spec.traversal.max_depth()));
     let recursive_object_edges_sql = object_neighbors_sql(
         spec.edges,
         "graph_walk.descendant_object_id",
         &mut bind_variables,
     );
-    bind_variables.push(SqlValue::Integer(spec.max_depth));
+    bind_variables.push(SqlValue::Integer(spec.traversal.max_depth()));
 
     let deduplicated_walk_sql = if spec.preserve_alternative_paths {
         r#"    SELECT
@@ -1296,7 +1303,8 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> RawSqlQuerySpec {
         descendant_object_id,
         depth,
         path
-    FROM graph_walk"#
+    FROM bounded_walk CROSS JOIN walk_budget
+    WHERE walk_budget.allowed"#
     } else {
         r#"    SELECT DISTINCT ON (root_object_id, descendant_object_id)
         root_object_id,
@@ -1304,7 +1312,8 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec<'_>) -> RawSqlQuerySpec {
         descendant_object_id,
         depth,
         path
-    FROM graph_walk
+    FROM bounded_walk CROSS JOIN walk_budget
+    WHERE walk_budget.allowed
     ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC"#
     };
 
@@ -1449,6 +1458,12 @@ graph_walk AS (
       AND graph_walk.depth < ?
       AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
       AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+),
+bounded_walk AS MATERIALIZED (
+    SELECT * FROM graph_walk LIMIT {work_lookahead}
+),
+walk_budget AS MATERIALIZED (
+    SELECT hubuum_require_graph_budget(count(*), {max_work_rows}) AS allowed FROM bounded_walk
 ),
 deduped_walk AS (
 {deduplicated_walk_sql}
@@ -1919,7 +1934,7 @@ async fn class_relations_for_ids(
     }
     let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             let collection_ids =
                 authorized_collection_ids(connection, &visibility, &[CLASS_RELATION_PERMISSION])
                     .await?;
@@ -2340,7 +2355,7 @@ mod tests {
             root_ids: &root_ids,
             collection_ids: &collection_ids,
             visibility: &visibility,
-            max_depth: 4,
+            traversal: TraversalBudget::new(4, hubuum_query::MAX_TRAVERSAL_WORK_ROWS).unwrap(),
             per_root_limit: 250,
             edges: GraphWalkEdges::Bidirectional,
             ranking: GraphWalkRanking::ByDescendant,
@@ -2387,7 +2402,7 @@ mod tests {
             root_ids: &root_ids,
             collection_ids: &collection_ids,
             visibility: &visibility,
-            max_depth: 3,
+            traversal: TraversalBudget::new(3, hubuum_query::MAX_TRAVERSAL_WORK_ROWS).unwrap(),
             per_root_limit: 50,
             edges: GraphWalkEdges::Directional {
                 direction: StorageRelatedDirection::Any,

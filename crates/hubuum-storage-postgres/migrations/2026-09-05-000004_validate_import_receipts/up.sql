@@ -1,0 +1,1 @@
+ALTER TABLE import_task_results VALIDATE CONSTRAINT import_execution_receipt_fields;

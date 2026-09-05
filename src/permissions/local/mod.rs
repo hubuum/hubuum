@@ -80,12 +80,12 @@ impl PermissionBackend for LocalPermissionBackend {
                 continue;
             }
 
-            let allowed = match request.resource.kind {
+            let allowed = match request.resource.kind() {
                 ResourceKind::System => false,
                 ResourceKind::ClassRelation | ResourceKind::ObjectRelation => {
                     match (
-                        request.resource.attrs.from_collection_id,
-                        request.resource.attrs.to_collection_id,
+                        request.resource.fields().from_collection_id,
+                        request.resource.fields().to_collection_id,
                     ) {
                         (Some(from_ns_id), Some(to_ns_id)) if from_ns_id == to_ns_id => {
                             self.collection_allows(principal, from_ns_id, request.permissions)

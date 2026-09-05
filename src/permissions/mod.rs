@@ -4,16 +4,18 @@ pub mod export;
 pub mod local;
 pub mod observability;
 mod storage;
+#[cfg(any(
+    test,
+    feature = "integration-test-support",
+    feature = "permissions-treetop"
+))]
+mod synthesis;
 #[cfg(feature = "permissions-treetop")]
 pub mod treetop;
 pub mod types;
 pub mod visibility;
 
-// Test support module provides mock backends for testing trait-level
-// semantics without depending on SQL or external APIs. Always compiled
-// because src/tests/ is a library submodule (not a separate integration
-// test binary), but documented as test-only infrastructure — production
-// code should never use MockTreetopBackend.
+#[cfg(any(test, feature = "integration-test-support"))]
 #[doc(hidden)]
 pub mod test_support;
 
@@ -30,8 +32,8 @@ pub(crate) use storage::{
     permission_to_storage,
 };
 pub use types::{
-    AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
-    ResourceRef,
+    AuthzTarget, ClassResourceEndpoint, ObjectResourceEndpoint, PermissionDecision,
+    PermissionRequest, PrincipalRef, ResourceFields, ResourceKind, ResourceRef,
 };
 
 use std::sync::Arc;

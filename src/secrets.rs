@@ -257,8 +257,10 @@ pub(crate) async fn resolve_database_url(fallback: &str) -> Result<String, Secre
     }
 }
 
-pub(crate) async fn resolve_remote_secret(alias: &str) -> Result<ResolvedSecret, SecretError> {
-    configured()?.remote.resolve(alias).await
+pub(crate) async fn resolve_remote_secret(
+    credential: &crate::models::credential::AuthorizedRemoteCredential,
+) -> Result<ResolvedSecret, SecretError> {
+    configured()?.remote.resolve(credential.alias()).await
 }
 
 pub(crate) async fn resolve_ldap_secret(alias: &str) -> Result<ResolvedSecret, SecretError> {

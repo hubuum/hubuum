@@ -167,10 +167,11 @@ pub use identity_users::{
     StorageUserUpdate, UserStorage,
 };
 pub use import_workflow::{
-    ImportStorage, StorageImportApply, StorageImportApplyItem, StorageImportAtomicity,
-    StorageImportClass, StorageImportClassKey, StorageImportClassKeyParts, StorageImportClassParts,
-    StorageImportClassRelation, StorageImportClassRelationParts, StorageImportCollection,
-    StorageImportCollectionKey, StorageImportCollectionKeyParts, StorageImportCollectionParts,
+    FencedImportItem, FencedImportPlan, FencedImportResults, ImportStorage, StorageImportApply,
+    StorageImportApplyItem, StorageImportAtomicity, StorageImportClass, StorageImportClassKey,
+    StorageImportClassKeyParts, StorageImportClassParts, StorageImportClassRelation,
+    StorageImportClassRelationParts, StorageImportCollection, StorageImportCollectionKey,
+    StorageImportCollectionKeyParts, StorageImportCollectionParts,
     StorageImportCollectionPermission, StorageImportCollectionPermissionParts,
     StorageImportCollisionPolicy, StorageImportComputedField, StorageImportComputedFieldParts,
     StorageImportComputedFieldVisibility, StorageImportEventSink, StorageImportEventSinkKey,

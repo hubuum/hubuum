@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use hubuum_domain::{
-    EventDeliveryId, EventFanoutSettings, EventRetentionSettings, EventSinkId, EventSubscriptionId,
-    ResourceRevision,
+    CollectionId, EventDeliveryId, EventFanoutSettings, EventRetentionSettings, EventSinkId,
+    EventSubscriptionId, ResourceRevision,
 };
 use hubuum_events_core::{EventEnvelope, EventId, EventSequence, TraceLink};
 use serde_json::Value;
@@ -263,6 +263,7 @@ impl std::fmt::Debug for StorageEventDeliverySink {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventDeliverySubscription {
     id: EventSubscriptionId,
+    collection_id: CollectionId,
     name: String,
     routing: Value,
 }
@@ -270,6 +271,7 @@ pub struct StorageEventDeliverySubscription {
 impl StorageEventDeliverySubscription {
     pub fn try_new(
         id: EventSubscriptionId,
+        collection_id: CollectionId,
         name: impl Into<String>,
         routing: Value,
     ) -> Result<Self, StorageValidationError> {
@@ -284,12 +286,22 @@ impl StorageEventDeliverySubscription {
                 "Event delivery subscription routing must be a JSON object",
             ));
         }
-        Ok(Self { id, name, routing })
+        Ok(Self {
+            id,
+            collection_id,
+            name,
+            routing,
+        })
     }
 
     #[must_use]
     pub const fn id(&self) -> EventSubscriptionId {
         self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> CollectionId {
+        self.collection_id
     }
 
     #[must_use]
@@ -598,6 +610,7 @@ mod tests {
         .unwrap();
         let subscription = StorageEventDeliverySubscription::try_new(
             EventSubscriptionId::new(9).unwrap(),
+            hubuum_domain::CollectionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({"url": "https://routing-secret.invalid"}),
         )
@@ -638,6 +651,7 @@ mod tests {
         assert!(
             StorageEventDeliverySubscription::try_new(
                 EventSubscriptionId::new(9).unwrap(),
+                hubuum_domain::CollectionId::new(1).unwrap(),
                 "subscription",
                 serde_json::json!([]),
             )

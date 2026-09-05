@@ -61,7 +61,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
     std::process::exit(exit_code);
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
     Unauthorized(String),
     InternalServerError(String),

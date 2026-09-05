@@ -182,6 +182,7 @@ pub struct RestoreConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RemoteCallConfig {
+    pub credential_policy_count: usize,
     pub timeout_ms: u64,
     pub max_response_bytes: usize,
     pub allow_private_targets: bool,
@@ -230,6 +231,7 @@ pub struct PaginationConfig {
     pub default_page_limit: usize,
     pub max_page_limit: usize,
     pub max_transitive_depth: i32,
+    pub max_traversal_work_rows: i32,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -406,6 +408,7 @@ impl RunningConfig {
                 max_upload_bytes: config.restore_max_upload_bytes,
             },
             remote_calls: RemoteCallConfig {
+                credential_policy_count: config.remote_credential_policies.len(),
                 timeout_ms: config.remote_call_timeout_ms,
                 max_response_bytes: config.remote_call_max_response_bytes,
                 allow_private_targets: config.remote_call_allow_private_targets,
@@ -480,6 +483,7 @@ impl RunningConfig {
                 default_page_limit: config.default_page_limit,
                 max_page_limit: config.max_page_limit,
                 max_transitive_depth: config.max_transitive_depth,
+                max_traversal_work_rows: hubuum_query::MAX_TRAVERSAL_WORK_ROWS,
             },
             network: NetworkConfig {
                 trust_ip_headers: config.trust_ip_headers,

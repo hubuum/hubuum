@@ -104,8 +104,8 @@ pub trait PermissionBackend: Send + Sync {
         principal: &PrincipalRef,
         task: &ResourceRef,
     ) -> Result<PermissionDecision, ApiError> {
-        let allowed =
-            self.is_admin(principal).await? || task.attrs.submitted_by == Some(principal.user_id);
+        let allowed = self.is_admin(principal).await?
+            || task.fields().submitted_by == Some(principal.user_id);
         Ok(if allowed {
             PermissionDecision::Allow
         } else {
@@ -122,7 +122,7 @@ pub trait PermissionBackend: Send + Sync {
         Ok(tasks
             .iter()
             .map(|task| {
-                if is_admin || task.attrs.submitted_by == Some(principal.user_id) {
+                if is_admin || task.fields().submitted_by == Some(principal.user_id) {
                     PermissionDecision::Allow
                 } else {
                     PermissionDecision::Deny

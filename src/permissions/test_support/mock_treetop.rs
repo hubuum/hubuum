@@ -3,7 +3,6 @@ use std::pin::Pin;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 
 use crate::errors::ApiError;
 use crate::models::search::{QueryOptions, QueryParamsExt};
@@ -15,155 +14,12 @@ use crate::pagination::{known_count_or_skipped, paginate_in_memory, prepare_db_p
 
 use super::super::backend::{CompleteCollectionCandidateLimit, PermissionBackend};
 use super::super::types::{
-    PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    PermissionDecision, PermissionRequest, PrincipalRef, ResourceFields, ResourceKind, ResourceRef,
 };
 
-/// Build a synthetic Permission row from a per-variant decision list.
-/// Used by both MockTreetopBackend and TreetopPermissionBackend for
-/// synthesizing Permission rows from per-variant authorize results.
-pub(crate) fn synthesize_permission(
-    collection_id: i32,
-    group_id: i32,
-    decisions: &[bool],
-) -> Permission {
-    use Permissions::*;
-    let synthetic_timestamp = DateTime::UNIX_EPOCH.naive_utc();
-
-    let perms = Permissions::all();
-    debug_assert_eq!(
-        perms.len(),
-        decisions.len(),
-        "synthesize_permission: decisions length must match Permissions::all() length"
-    );
-
-    let mut row = Permission {
-        // Synthetic rows have no database identity. Reusing the group id gives
-        // cursor pagination a stable, unique key across requests.
-        id: group_id,
-        collection_id,
-        group_id,
-        has_read_collection: false,
-        has_update_collection: false,
-        has_delete_collection: false,
-        has_delegate_collection: false,
-        has_create_class: false,
-        has_read_class: false,
-        has_update_class: false,
-        has_delete_class: false,
-        has_create_object: false,
-        has_read_object: false,
-        has_update_object: false,
-        has_delete_object: false,
-        has_create_class_relation: false,
-        has_read_class_relation: false,
-        has_update_class_relation: false,
-        has_delete_class_relation: false,
-        has_create_object_relation: false,
-        has_read_object_relation: false,
-        has_update_object_relation: false,
-        has_delete_object_relation: false,
-        has_read_template: false,
-        has_create_template: false,
-        has_update_template: false,
-        has_delete_template: false,
-        has_read_remote_target: false,
-        has_create_remote_target: false,
-        has_update_remote_target: false,
-        has_delete_remote_target: false,
-        has_execute_remote_target: false,
-        has_read_audit: false,
-        has_manage_event_subscription: false,
-        created_at: synthetic_timestamp,
-        updated_at: synthetic_timestamp,
-    };
-
-    for (perm, decision) in perms.iter().zip(decisions) {
-        if !decision {
-            continue;
-        }
-        match perm {
-            ReadCollection => row.has_read_collection = true,
-            UpdateCollection => row.has_update_collection = true,
-            DeleteCollection => row.has_delete_collection = true,
-            DelegateCollection => row.has_delegate_collection = true,
-            CreateClass => row.has_create_class = true,
-            ReadClass => row.has_read_class = true,
-            UpdateClass => row.has_update_class = true,
-            DeleteClass => row.has_delete_class = true,
-            CreateObject => row.has_create_object = true,
-            ReadObject => row.has_read_object = true,
-            UpdateObject => row.has_update_object = true,
-            DeleteObject => row.has_delete_object = true,
-            CreateClassRelation => row.has_create_class_relation = true,
-            ReadClassRelation => row.has_read_class_relation = true,
-            UpdateClassRelation => row.has_update_class_relation = true,
-            DeleteClassRelation => row.has_delete_class_relation = true,
-            CreateObjectRelation => row.has_create_object_relation = true,
-            ReadObjectRelation => row.has_read_object_relation = true,
-            UpdateObjectRelation => row.has_update_object_relation = true,
-            DeleteObjectRelation => row.has_delete_object_relation = true,
-            ReadTemplate => row.has_read_template = true,
-            CreateTemplate => row.has_create_template = true,
-            UpdateTemplate => row.has_update_template = true,
-            DeleteTemplate => row.has_delete_template = true,
-            ReadRemoteTarget => row.has_read_remote_target = true,
-            CreateRemoteTarget => row.has_create_remote_target = true,
-            UpdateRemoteTarget => row.has_update_remote_target = true,
-            DeleteRemoteTarget => row.has_delete_remote_target = true,
-            ExecuteRemoteTarget => row.has_execute_remote_target = true,
-            ReadAudit => row.has_read_audit = true,
-            ManageEventSubscription => row.has_manage_event_subscription = true,
-        }
-    }
-
-    row
-}
-
-pub(crate) fn synthesize_permission_for_group(
-    collection_id: i32,
-    group: &Group,
-    decisions: &[bool],
-) -> Permission {
-    let mut permission = synthesize_permission(collection_id, group.id, decisions);
-    permission.created_at = group.created_at;
-    permission.updated_at = group.updated_at;
-    permission
-}
-
-/// Whether a synthesized Permission has at least one true field.
-pub(crate) fn permission_has_any_grant(p: &Permission) -> bool {
-    p.has_read_collection
-        || p.has_update_collection
-        || p.has_delete_collection
-        || p.has_delegate_collection
-        || p.has_create_class
-        || p.has_read_class
-        || p.has_update_class
-        || p.has_delete_class
-        || p.has_create_object
-        || p.has_read_object
-        || p.has_update_object
-        || p.has_delete_object
-        || p.has_create_class_relation
-        || p.has_read_class_relation
-        || p.has_update_class_relation
-        || p.has_delete_class_relation
-        || p.has_create_object_relation
-        || p.has_read_object_relation
-        || p.has_update_object_relation
-        || p.has_delete_object_relation
-        || p.has_read_template
-        || p.has_create_template
-        || p.has_update_template
-        || p.has_delete_template
-        || p.has_read_remote_target
-        || p.has_create_remote_target
-        || p.has_update_remote_target
-        || p.has_delete_remote_target
-        || p.has_execute_remote_target
-        || p.has_read_audit
-        || p.has_manage_event_subscription
-}
+use crate::permissions::synthesis::{
+    permission_has_any_grant, synthesize_permission, synthesize_permission_for_group,
+};
 
 /// A single Allow rule. The mock evaluates a request as Allow iff there
 /// exists a rule whose group_id is in the principal's group set, whose
@@ -179,7 +35,7 @@ pub struct MockAllowRule {
     pub resource_id: Option<i32>,
     /// Optional attrs filter. Only the fields set here are matched; an
     /// attr that's None on the rule means "don't care".
-    pub attrs: ResourceAttrs,
+    pub attrs: ResourceFields,
 }
 
 /// Marker for "is admin" decision. The mock matches admin via a rule
@@ -196,9 +52,14 @@ struct DeferredAuthorizationHook {
     hook: AuthorizationHook,
 }
 
+struct StoredMockRule {
+    rule: MockAllowRule,
+    prospective_only: bool,
+}
+
 #[derive(Default)]
 pub struct MockTreetopBackend {
-    rules: Mutex<Vec<MockAllowRule>>,
+    rules: Mutex<Vec<StoredMockRule>>,
     task_read_rules: Mutex<Vec<(i32, Option<i32>)>>,
     /// Optional override of the candidate group set used by
     /// groups_with_permissions_on. When None, the method returns
@@ -221,7 +82,23 @@ impl MockTreetopBackend {
     }
 
     pub fn add_rule(&self, rule: MockAllowRule) {
-        self.rules.lock().unwrap().push(rule);
+        self.rules.lock().unwrap().push(StoredMockRule {
+            rule,
+            prospective_only: false,
+        });
+    }
+
+    /// Match prospective resources and collection probes, which have no stored
+    /// ID. This keeps tests from granting existing objects through a wildcard.
+    pub fn add_prospective_rule(&self, rule: MockAllowRule) {
+        assert!(
+            rule.resource_id.is_none(),
+            "prospective rules cannot name stored IDs"
+        );
+        self.rules.lock().unwrap().push(StoredMockRule {
+            rule,
+            prospective_only: true,
+        });
     }
 
     /// Add an admin rule — the principal's group_id grants admin status.
@@ -231,7 +108,7 @@ impl MockTreetopBackend {
             action: ADMIN_ACTION_MARKER,
             resource_kind: ResourceKind::System,
             resource_id: None,
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 
@@ -276,65 +153,67 @@ impl MockTreetopBackend {
         if rule.action != perm {
             return false;
         }
-        if rule.resource_kind != request.resource.kind {
+        if rule.resource_kind != request.resource.kind() {
             return false;
         }
         if let Some(id) = rule.resource_id
-            && id != request.resource.id
+            && Some(id) != request.resource.id()
         {
             return false;
         }
         // attrs match: every Some field on the rule must equal the
         // corresponding field on the request resource. None on rule = wildcard.
         if rule.attrs.collection_id.is_some()
-            && rule.attrs.collection_id != request.resource.attrs.collection_id
+            && rule.attrs.collection_id != request.resource.fields().collection_id
         {
             return false;
         }
         if rule.attrs.from_collection_id.is_some()
-            && rule.attrs.from_collection_id != request.resource.attrs.from_collection_id
+            && rule.attrs.from_collection_id != request.resource.fields().from_collection_id
         {
             return false;
         }
         if rule.attrs.to_collection_id.is_some()
-            && rule.attrs.to_collection_id != request.resource.attrs.to_collection_id
+            && rule.attrs.to_collection_id != request.resource.fields().to_collection_id
         {
             return false;
         }
-        if rule.attrs.class_id.is_some() && rule.attrs.class_id != request.resource.attrs.class_id {
+        if rule.attrs.class_id.is_some()
+            && rule.attrs.class_id != request.resource.fields().class_id
+        {
             return false;
         }
         if rule.attrs.from_class_id.is_some()
-            && rule.attrs.from_class_id != request.resource.attrs.from_class_id
+            && rule.attrs.from_class_id != request.resource.fields().from_class_id
         {
             return false;
         }
         if rule.attrs.to_class_id.is_some()
-            && rule.attrs.to_class_id != request.resource.attrs.to_class_id
+            && rule.attrs.to_class_id != request.resource.fields().to_class_id
         {
             return false;
         }
         if rule.attrs.from_object_id.is_some()
-            && rule.attrs.from_object_id != request.resource.attrs.from_object_id
+            && rule.attrs.from_object_id != request.resource.fields().from_object_id
         {
             return false;
         }
         if rule.attrs.to_object_id.is_some()
-            && rule.attrs.to_object_id != request.resource.attrs.to_object_id
+            && rule.attrs.to_object_id != request.resource.fields().to_object_id
         {
             return false;
         }
         if rule.attrs.class_relation_id.is_some()
-            && rule.attrs.class_relation_id != request.resource.attrs.class_relation_id
+            && rule.attrs.class_relation_id != request.resource.fields().class_relation_id
         {
             return false;
         }
         if rule.attrs.submitted_by.is_some()
-            && rule.attrs.submitted_by != request.resource.attrs.submitted_by
+            && rule.attrs.submitted_by != request.resource.fields().submitted_by
         {
             return false;
         }
-        if rule.attrs.name.is_some() && rule.attrs.name != request.resource.attrs.name {
+        if rule.attrs.name.is_some() && rule.attrs.name != request.resource.fields().name {
             return false;
         }
         true
@@ -349,7 +228,9 @@ impl MockTreetopBackend {
         // Conjunctive: all requested permissions must be satisfied.
         let all_allowed = request.permissions.iter().all(|perm| {
             rules.iter().any(|r| {
-                principal.group_ids.contains(&r.group_id) && Self::rule_matches(r, request, *perm)
+                (!r.prospective_only || request.resource.id().is_none())
+                    && principal.group_ids.contains(&r.rule.group_id)
+                    && Self::rule_matches(&r.rule, request, *perm)
             })
         });
         if all_allowed {
@@ -407,7 +288,7 @@ impl PermissionBackend for MockTreetopBackend {
             .iter()
             .any(|(group_id, task_id)| {
                 principal.group_ids.contains(group_id)
-                    && task_id.is_none_or(|task_id| task_id == task.id)
+                    && task_id.is_none_or(|task_id| Some(task_id) == task.id())
             });
         Ok(if allowed {
             PermissionDecision::Allow
@@ -427,7 +308,7 @@ impl PermissionBackend for MockTreetopBackend {
             .map(|task| {
                 if rules.iter().any(|(group_id, task_id)| {
                     principal.group_ids.contains(group_id)
-                        && task_id.is_none_or(|task_id| task_id == task.id)
+                        && task_id.is_none_or(|task_id| Some(task_id) == task.id())
                 }) {
                     PermissionDecision::Allow
                 } else {
@@ -591,9 +472,9 @@ impl PermissionBackend for MockTreetopBackend {
         // Admin decision is a backend rule lookup, not SQL group membership.
         let rules = self.rules.lock().unwrap();
         let is_admin = rules.iter().any(|r| {
-            r.action == ADMIN_ACTION_MARKER
-                && r.resource_kind == ResourceKind::System
-                && principal.group_ids.contains(&r.group_id)
+            r.rule.action == ADMIN_ACTION_MARKER
+                && r.rule.resource_kind == ResourceKind::System
+                && principal.group_ids.contains(&r.rule.group_id)
         });
         Ok(is_admin)
     }

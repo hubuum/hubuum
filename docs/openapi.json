@@ -26751,7 +26751,8 @@
         "required": [
           "default_page_limit",
           "max_page_limit",
-          "max_transitive_depth"
+          "max_transitive_depth",
+          "max_traversal_work_rows"
         ],
         "properties": {
           "default_page_limit": {
@@ -26763,6 +26764,10 @@
             "minimum": 0
           },
           "max_transitive_depth": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "max_traversal_work_rows": {
             "type": "integer",
             "format": "int32"
           }
@@ -27794,6 +27799,7 @@
       "RemoteCallConfig": {
         "type": "object",
         "required": [
+          "credential_policy_count",
           "timeout_ms",
           "max_response_bytes",
           "allow_private_targets"
@@ -27801,6 +27807,10 @@
         "properties": {
           "allow_private_targets": {
             "type": "boolean"
+          },
+          "credential_policy_count": {
+            "type": "integer",
+            "minimum": 0
           },
           "max_response_bytes": {
             "type": "integer",

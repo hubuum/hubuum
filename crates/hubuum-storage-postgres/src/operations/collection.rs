@@ -89,7 +89,7 @@ pub async fn get_collection(
 ) -> Result<StorageCollection, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     runtime
-        .with_connection(async |connection| get_collection_on(connection, collection_id).await)
+        .with_read_connection(async |connection| get_collection_on(connection, collection_id).await)
         .await
 }
 
@@ -258,7 +258,9 @@ pub async fn list_collection_children(
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     runtime
-        .with_connection(async |connection| collection_children_on(connection, collection_id).await)
+        .with_read_connection(async |connection| {
+            collection_children_on(connection, collection_id).await
+        })
         .await
 }
 
@@ -281,7 +283,7 @@ pub async fn list_collection_ancestors(
 ) -> Result<Vec<StorageCollection>, PostgresStorageError> {
     validate_positive_id(collection_id, "collection id")?;
     runtime
-        .with_connection(async |connection| {
+        .with_read_connection(async |connection| {
             collection_ancestors_on(connection, collection_id).await
         })
         .await

@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::{
     StorageAuthorizationPermission, StorageClass, StorageClassSchemaPolicy, StorageCollection,
-    StorageError, StorageObject, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
+    StorageError, StorageErrorKind, StorageObject, StorageRemoteTargetHttpMethod,
+    StorageRemoteTargetSubjectType,
 };
 
 macro_rules! import_dto {
@@ -710,6 +711,99 @@ impl StorageImportPlanItem {
     }
 }
 
+/// One planned task result, with an optional domain mutation. No-op decisions
+/// also receive durable receipts so recovery can account for every item.
+#[derive(Clone, Debug)]
+pub struct FencedImportItem {
+    index: usize,
+    operation: Option<StorageImportOperation>,
+    result: StorageImportResult,
+}
+impl FencedImportItem {
+    #[must_use]
+    pub const fn new(
+        index: usize,
+        operation: Option<StorageImportOperation>,
+        result: StorageImportResult,
+    ) -> Self {
+        Self {
+            index,
+            operation,
+            result,
+        }
+    }
+    #[must_use]
+    pub fn into_parts(self) -> (usize, Option<StorageImportOperation>, StorageImportResult) {
+        (self.index, self.operation, self.result)
+    }
+}
+
+/// An import execution tied to one task claim. The adapter must atomically
+/// persist each successful mutation and its result, and fence the commit
+/// against this lease. It must not silently execute without a live claim.
+#[derive(Clone, Debug)]
+pub struct FencedImportPlan {
+    lease: crate::StorageTaskLease,
+    items: Vec<FencedImportItem>,
+}
+impl FencedImportPlan {
+    pub fn try_new(
+        lease: crate::StorageTaskLease,
+        items: Vec<FencedImportItem>,
+    ) -> Result<Self, StorageError> {
+        let mut previous = None;
+        for item in &items {
+            if previous.is_some_and(|previous| item.index <= previous)
+                || i64::try_from(item.index).is_err()
+                || item.result.task_id != lease.task_id()
+                || item.result.outcome != "succeeded"
+                || item.result.error.is_some()
+            {
+                return Err(StorageError::invalid_input(
+                    "fenced import results must be ordered successes for the claimed task",
+                ));
+            }
+            if let Some(operation) = &item.operation {
+                operation.validate()?;
+            }
+            previous = Some(item.index);
+        }
+        Ok(Self { lease, items })
+    }
+    #[must_use]
+    pub fn into_parts(self) -> (crate::StorageTaskLease, Vec<FencedImportItem>) {
+        (self.lease, self.items)
+    }
+}
+
+/// Planning and dry-run results belonging to one current worker claim.
+pub struct FencedImportResults {
+    lease: crate::StorageTaskLease,
+    results: Vec<StorageImportResult>,
+}
+
+impl FencedImportResults {
+    pub fn try_new(
+        lease: crate::StorageTaskLease,
+        results: Vec<StorageImportResult>,
+    ) -> Result<Self, StorageError> {
+        if results
+            .iter()
+            .any(|result| result.task_id != lease.task_id())
+        {
+            return Err(StorageError::invalid_input(
+                "import results must belong to the claimed task",
+            ));
+        }
+        Ok(Self { lease, results })
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (crate::StorageTaskLease, Vec<StorageImportResult>) {
+        (self.lease, self.results)
+    }
+}
+
 /// Structurally validated import operations ready for backend execution.
 ///
 /// The application may leave gaps in item indexes when planning rejected an
@@ -1333,6 +1427,26 @@ impl StorageImportResult {
         }
     }
 
+    /// Convert the planned success into a safe durable failure description.
+    #[must_use]
+    pub fn failed(mut self, error: &StorageError) -> Self {
+        self.outcome = if matches!(
+            error.kind(),
+            StorageErrorKind::RevisionConflict | StorageErrorKind::PreconditionFailed
+        ) {
+            "stale_revision"
+        } else {
+            "failed"
+        }
+        .to_string();
+        self.error = Some(if error.kind().is_backend_failure() {
+            "Import persistence operation failed".to_string()
+        } else {
+            error.message().to_string()
+        });
+        self
+    }
+
     #[must_use]
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
@@ -1498,6 +1612,17 @@ pub trait ImportStorage: Send + Sync {
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError>;
 
+    /// Commit strict task effects and durable results together under the claim.
+    async fn apply_claimed_import_strict(&self, plan: FencedImportPlan)
+    -> Result<(), StorageError>;
+
+    /// Commit each item's effects and durable result together under the claim.
+    async fn apply_claimed_import_best_effort(
+        &self,
+        plan: FencedImportPlan,
+        mode: StorageImportMode,
+    ) -> Result<StorageImportApply, StorageError>;
+
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError>;
 
     async fn apply_import_best_effort(
@@ -1509,6 +1634,12 @@ pub trait ImportStorage: Send + Sync {
     async fn record_import_results(
         &self,
         results: Vec<StorageImportResult>,
+    ) -> Result<(), StorageError>;
+
+    /// Record worker-owned planning or dry-run results under the commit fence.
+    async fn record_claimed_import_results(
+        &self,
+        results: FencedImportResults,
     ) -> Result<(), StorageError>;
 }
 

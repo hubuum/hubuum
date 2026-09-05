@@ -261,6 +261,12 @@ pub(crate) fn validate_sink_parts(
             "secret_ref must not be empty".to_string(),
         ));
     }
+    if kind == EventSinkKind::Webhook {
+        crate::models::credential::validate_webhook_credential_policy(
+            config,
+            secret_ref.is_some(),
+        )?;
+    }
     Ok(())
 }
 

@@ -100,6 +100,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     .unwrap();
     let _ = StorageEventDeliverySubscription::try_new(
         EventSubscriptionId::new(1).unwrap(),
+        hubuum_domain::CollectionId::new(1).unwrap(),
         "subscription",
         serde_json::json!({}),
     )

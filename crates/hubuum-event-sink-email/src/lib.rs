@@ -152,7 +152,7 @@ fn render_email(
             .max_payload_bytes
             .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
     )?;
-    let subject = render_template("subject_template", &config.subject_template, &context)?;
+    let subject = render_template("subject_template", &config.subject_template, &context, 4096)?;
     if subject.trim().is_empty() {
         return Err(SinkError::new(
             "Invalid email config: rendered subject is empty",
@@ -163,7 +163,12 @@ fn render_email(
             "Invalid email config: rendered subject must not contain line breaks",
         ));
     }
-    let body = render_template("body_template", &config.body_template, &context)?;
+    let body = render_template(
+        "body_template",
+        &config.body_template,
+        &context,
+        1024 * 1024,
+    )?;
     if body.trim().is_empty() {
         return Err(SinkError::new(
             "Invalid email config: rendered body is empty",
@@ -231,9 +236,14 @@ fn validate_template(name: &str, source: &str) -> Result<(), SinkError> {
         .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))
 }
 
-fn render_template(name: &str, source: &str, context: &Value) -> Result<String, SinkError> {
+fn render_template(
+    name: &str,
+    source: &str,
+    context: &Value,
+    max_bytes: usize,
+) -> Result<String, SinkError> {
     prepare_template(source)
-        .limits(template_limits())
+        .limits(template_limits().with_max_output_bytes(max_bytes))
         .context(context)
         .render()
         .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))

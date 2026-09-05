@@ -1083,7 +1083,7 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
-        let (root_id, options, _) = query.into_parts();
+        let (root_id, traversal, options, _) = query.into_parts();
         let root_id = ClassId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1103,6 +1103,11 @@ impl RelationQueryStorage for MemoryStorage {
                 .classes
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related class is missing"))?;
+            if rows.len() >= traversal.max_work_rows() as usize {
+                return Err(StorageError::invalid_input(
+                    "Graph traversal exceeded the work budget",
+                ));
+            }
             rows.push(
                 StorageClassGraphRow::try_new(
                     graph_class(root)?,
@@ -1120,7 +1125,7 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
-        let (root_id, options, _) = query.into_parts();
+        let (root_id, traversal, options, _) = query.into_parts();
         let root_id = ObjectId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1140,6 +1145,11 @@ impl RelationQueryStorage for MemoryStorage {
                 .objects
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related object is missing"))?;
+            if rows.len() >= traversal.max_work_rows() as usize {
+                return Err(StorageError::invalid_input(
+                    "Graph traversal exceeded the work budget",
+                ));
+            }
             rows.push(
                 StorageObjectGraphRow::try_new(
                     graph_object(root)?,
@@ -1157,9 +1167,9 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelatedObjectsForRootsQuery,
     ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
-        let (root_ids, class_id, class_relation_id, direction, _, max_depth, limit, _, _) =
+        let (root_ids, class_id, class_relation_id, direction, _, traversal, limit, _, _) =
             query.into_parts();
-        if max_depth < 1 || limit <= 0 {
+        if limit <= 0 {
             return Ok(Vec::new());
         }
         let state = self.state.read().await;
@@ -1197,6 +1207,11 @@ impl RelationQueryStorage for MemoryStorage {
                     vec![root_id, descendant_id],
                 )
                 .map_err(invalid_contract_value)?;
+                if rows.len() >= traversal.max_work_rows() as usize {
+                    return Err(StorageError::invalid_input(
+                        "Graph traversal exceeded the work budget",
+                    ));
+                }
                 rows.push(
                     StorageRelatedObjectIncludeRow::try_new(root_id, graph_row)
                         .map_err(invalid_contract_value)?,
@@ -1213,8 +1228,8 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageBidirectionalRelatedObjectsQuery,
     ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
-        let (root_ids, max_depth, per_root_cap, _, _) = query.into_parts();
-        if max_depth < 1 || per_root_cap <= 0 {
+        let (root_ids, traversal, per_root_cap, _, _) = query.into_parts();
+        if per_root_cap <= 0 {
             return Ok(Vec::new());
         }
         let state = self.state.read().await;
@@ -1235,6 +1250,11 @@ impl RelationQueryStorage for MemoryStorage {
                 let Some(descendant) = state.objects.get(&descendant_id.id()) else {
                     continue;
                 };
+                if rows.len() >= traversal.max_work_rows() as usize {
+                    return Err(StorageError::invalid_input(
+                        "Graph traversal exceeded the work budget",
+                    ));
+                }
                 rows.push(
                     StorageRelatedObjectForRootRow::try_new(
                         root_id,

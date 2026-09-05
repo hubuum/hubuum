@@ -108,6 +108,13 @@ For `get` and `delete`, Hubuum omits the outbound request body unless `body_temp
 
 Secrets are never stored in target rows. Targets store a validated alias, and
 the worker resolves it through the selected [secret source](secret_sources.md).
+The server administrator must first bind each alias to permitted collection IDs
+and HTTPS origins using `HUBUUM_REMOTE_CREDENTIAL_POLICIES`. For the target above,
+`servicenow_token` needs collection `12` and origin `https://service.example.com`.
+The final rendered URL is checked before the secret is resolved; an absent
+binding or a different host or port denies execution. See the executable
+[credential configuration example](runtime_hardening.md).
+
 The default environment source maps aliases as follows:
 
 ```text

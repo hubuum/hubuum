@@ -364,12 +364,19 @@ async fn build_authenticated_from_meta(
     })
 }
 
-fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<StorageAuthenticatedToken> {
+fn resolved_auth(
+    req: &HttpRequest,
+    token: &Token,
+) -> Option<Result<StorageAuthenticatedToken, ApiError>> {
     match req.extensions().get::<ResolvedAuth>() {
         Some(ResolvedAuth::Authenticated {
             token: resolved_token,
             token_meta,
-        }) if resolved_token.0 == token.0 => Some(token_meta.clone()),
+        }) if resolved_token.0 == token.0 => Some(Ok(token_meta.clone())),
+        Some(ResolvedAuth::Invalid {
+            token: resolved_token,
+            error,
+        }) if resolved_token.0 == token.0 => Some(Err(error.clone())),
         _ => None,
     }
 }
@@ -498,7 +505,7 @@ impl FromRequest for Authenticated {
         async move {
             let backend = backend?;
             let token = token_result?;
-            match token_meta {
+            match token_meta.transpose()? {
                 Some(token_meta) => {
                     build_authenticated_from_meta(&backend, token, token_meta).await
                 }
@@ -523,7 +530,7 @@ impl FromRequest for UserAccess {
         async move {
             let backend = backend?;
             let token = token_result?;
-            let user = match token_meta {
+            let user = match token_meta.transpose()? {
                 Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
                 None => human_unscoped_user(&backend, &token).await?,
             };
@@ -547,7 +554,7 @@ impl FromRequest for ManagementAccess {
         async move {
             let backend = backend?;
             let token = token_result?;
-            let user = match token_meta {
+            let user = match token_meta.transpose()? {
                 Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
                 None => human_unscoped_user(&backend, &token).await?,
             };
@@ -571,7 +578,7 @@ impl FromRequest for AdminAccess {
         async move {
             let backend = backend?;
             let token = token_result?;
-            let user = match token_meta {
+            let user = match token_meta.transpose()? {
                 Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
                 None => human_unscoped_user(&backend, &token).await?,
             };
@@ -602,7 +609,7 @@ impl FromRequest for AdminOrSelfAccess {
         async move {
             let backend = backend?;
             let token = token_result?;
-            let user = match token_meta {
+            let user = match token_meta.transpose()? {
                 Some(token_meta) => human_unscoped_user_from_meta(&backend, token_meta).await?,
                 None => human_unscoped_user(&backend, &token).await?,
             };

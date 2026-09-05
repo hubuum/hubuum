@@ -87,6 +87,7 @@ impl MemoryState {
             next_task_id: 1,
             next_task_event_sequence: 1,
             next_import_result_id: 1,
+            import_execution_receipts: BTreeSet::new(),
             next_computed_field_id: 1,
             next_export_template_id: 1,
             next_remote_target_id: 1,

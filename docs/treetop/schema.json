@@ -53,7 +53,7 @@
           "attributes": {
             "id": { "type": "String", "required": true },
             "collection_id": { "type": "Long", "required": true },
-            "class_id": { "type": "Long", "required": true },
+            "class_id": { "type": "Long", "required": false },
             "name": { "type": "String", "required": false }
           },
           "additionalAttributes": false
@@ -77,8 +77,8 @@
             "id": { "type": "String", "required": true },
             "from_collection_id": { "type": "Long", "required": true },
             "to_collection_id": { "type": "Long", "required": true },
-            "from_class_id": { "type": "Long", "required": true },
-            "to_class_id": { "type": "Long", "required": true },
+            "from_class_id": { "type": "Long", "required": false },
+            "to_class_id": { "type": "Long", "required": false },
             "collection_id": { "type": "Long", "required": false }
           },
           "additionalAttributes": false
@@ -91,11 +91,11 @@
             "id": { "type": "String", "required": true },
             "from_collection_id": { "type": "Long", "required": true },
             "to_collection_id": { "type": "Long", "required": true },
-            "from_class_id": { "type": "Long", "required": true },
-            "to_class_id": { "type": "Long", "required": true },
-            "from_object_id": { "type": "Long", "required": true },
-            "to_object_id": { "type": "Long", "required": true },
-            "class_relation_id": { "type": "Long", "required": true },
+            "from_class_id": { "type": "Long", "required": false },
+            "to_class_id": { "type": "Long", "required": false },
+            "from_object_id": { "type": "Long", "required": false },
+            "to_object_id": { "type": "Long", "required": false },
+            "class_relation_id": { "type": "Long", "required": false },
             "collection_id": { "type": "Long", "required": false }
           },
           "additionalAttributes": false

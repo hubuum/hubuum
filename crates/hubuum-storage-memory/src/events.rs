@@ -627,6 +627,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 .map_err(invalid_contract_value)?;
             let delivery_subscription = StorageEventDeliverySubscription::try_new(
                 subscription.id(),
+                subscription.collection_id(),
                 subscription.name(),
                 subscription.routing().clone(),
             )
