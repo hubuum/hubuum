@@ -1,7 +1,6 @@
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use hubuum_event_sink_webhook::WebhookSinkSettings;
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey", test))]
 use hubuum_event_sinks_common::SinkDelivery;
 
 use crate::config::{
@@ -74,7 +73,6 @@ impl SinkResolver for DefaultSinkResolver {
     }
 }
 
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
 async fn sink_secret(
     sink: &StorageEventDeliverySink,
 ) -> Result<Option<hubuum_secrets::ResolvedSecret>, SinkError> {
@@ -87,7 +85,6 @@ async fn sink_secret(
     }
 }
 
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
 fn sink_delivery<'a>(
     subscription: &'a StorageEventDeliverySubscription,
     sink: &'a StorageEventDeliverySink,
@@ -125,14 +122,15 @@ impl Sink for hubuum_event_sink_webhook::WebhookSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            crate::models::credential::AuthorizedWebhookDelivery::authorize(
-                sink.configuration(),
-                subscription.routing(),
-                sink.secret_ref(),
-                subscription.collection_id(),
+            let secret = sink_secret(sink).await?;
+            self.deliver(
+                envelope,
+                sink_delivery(
+                    subscription,
+                    sink,
+                    secret.as_ref().map(|value| value.value()),
+                ),
             )
-            .map_err(|error| SinkError::new(error.to_string()))?
-            .deliver(self, envelope)
             .await
         }
         .boxed()
@@ -268,7 +266,6 @@ mod tests {
             .unwrap();
         let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
-            hubuum_domain::CollectionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )

@@ -83,4 +83,4 @@ The benchmark workflow retains its JSON-lines output as the
 entrypoint keeps this custom harness separate from Criterion/Callgrind discovery.
 
 For the enforced limits and deployment changes, see
-[runtime and credential boundaries](../runtime_hardening.md).
+[runtime boundaries](../runtime_hardening.md).

@@ -1,4 +1,3 @@
-use hubuum_outbound_http::{AuthorizedDestination, CredentialOrigin, validate_outbound_url};
 use std::{fmt, time::Duration};
 
 use hubuum_event_sinks_common::{
@@ -24,17 +23,7 @@ impl WebhookSink {
         envelope: &EventEnvelope,
         delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
-        let prepared = PreparedWebhookDelivery::new(&delivery, delivery.secret().is_some())?;
-        self.deliver_prepared(envelope, prepared, delivery.secret())
-            .await
-    }
-    pub async fn deliver_prepared(
-        &self,
-        envelope: &EventEnvelope,
-        prepared: PreparedWebhookDelivery,
-        secret: Option<&hubuum_secrets::SecretValue>,
-    ) -> Result<(), SinkError> {
-        deliver_webhook(envelope, prepared, secret, &self.settings).await
+        deliver_webhook(envelope, delivery, &self.settings).await
     }
 }
 
@@ -120,8 +109,6 @@ struct WebhookConfig {
     max_request_bytes: Option<usize>,
     #[serde(default)]
     headers: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default)]
-    allowed_origins: Vec<String>,
 }
 
 impl fmt::Debug for WebhookConfig {
@@ -132,63 +119,18 @@ impl fmt::Debug for WebhookConfig {
     }
 }
 
-/// Parsed transport configuration and the exact destination authorized before
-/// resolving credentials. The configuration cannot change after preparation.
-pub struct PreparedWebhookDelivery {
-    config: WebhookConfig,
-    url: String,
-    credential_destination: Option<AuthorizedDestination>,
-}
-
-impl PreparedWebhookDelivery {
-    pub fn new(delivery: &SinkDelivery<'_>, has_secret: bool) -> Result<Self, SinkError> {
-        let routing: WebhookRouting = parse_sink_routing(delivery, "webhook")?;
-        require_non_empty(&routing.url, "webhook routing", "url")?;
-        reject_literal_uri_credentials(&routing.url, "webhook routing")?;
-        let config: WebhookConfig = parse_sink_config(delivery, "webhook")?;
-        let uses_credentials = has_secret
-            || config
-                .headers
-                .as_ref()
-                .is_some_and(|headers| !headers.is_empty());
-        let credential_destination = if uses_credentials {
-            let origins = config
-                .allowed_origins
-                .iter()
-                .map(|origin| CredentialOrigin::new(origin).map_err(sink_error))
-                .collect::<Result<Vec<_>, _>>()?;
-            Some(AuthorizedDestination::authorize(&routing.url, &origins).map_err(sink_error)?)
-        } else {
-            None
-        };
-        let url = match &credential_destination {
-            Some(destination) => destination.url().to_string(),
-            None => validate_outbound_url(&routing.url)
-                .map_err(sink_error)?
-                .url()
-                .to_string(),
-        };
-        Ok(Self {
-            config,
-            url,
-            credential_destination,
-        })
-    }
-}
-
 async fn deliver_webhook(
     envelope: &EventEnvelope,
-    prepared: PreparedWebhookDelivery,
-    secret: Option<&hubuum_secrets::SecretValue>,
+    delivery: SinkDelivery<'_>,
     settings: &WebhookSinkSettings,
 ) -> Result<(), SinkError> {
-    if secret.is_some() && prepared.credential_destination.is_none() {
-        return Err(SinkError::new(
-            "webhook credential destination was not authorized",
-        ));
-    }
-    let config = prepared.config;
-    let mut headers = webhook_headers(&config, secret)?;
+    let routing: WebhookRouting = parse_sink_routing(&delivery, "webhook")?;
+    require_non_empty(&routing.url, "webhook routing", "url")?;
+    reject_literal_uri_credentials(&routing.url, "webhook routing")?;
+
+    let config: WebhookConfig = parse_sink_config(&delivery, "webhook")?;
+
+    let mut headers = webhook_headers(&config, delivery.secret())?;
     headers
         .insert("content-type", "application/json")
         .map_err(sink_error)?;
@@ -209,7 +151,7 @@ async fn deliver_webhook(
 
     let response = OutboundRequest::new(
         OutboundMethod::Post,
-        prepared.url,
+        routing.url,
         Duration::from_millis(bounded_timeout_ms(config.timeout_ms, settings)),
     )
     .headers(headers)
@@ -281,7 +223,7 @@ fn bounded_request_bytes(requested: Option<usize>, settings: &WebhookSinkSetting
     requested.unwrap_or(cap).min(cap)
 }
 
-fn sink_error(error: impl std::fmt::Display) -> SinkError {
+fn sink_error(error: hubuum_outbound_http::OutboundHttpError) -> SinkError {
     SinkError::new(error.to_string())
 }
 
@@ -403,13 +345,8 @@ mod tests {
     }
 
     fn delivery(url: String) -> (serde_json::Value, serde_json::Value) {
-        let origin = url
-            .rsplit_once('/')
-            .map(|(origin, _)| origin)
-            .unwrap_or(&url);
         (
             serde_json::json!({
-                "allowed_origins": [origin],
                 "headers": {
                     "x-custom": "custom"
                 }

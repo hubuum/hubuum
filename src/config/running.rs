@@ -182,7 +182,6 @@ pub struct RestoreConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RemoteCallConfig {
-    pub credential_policy_count: usize,
     pub timeout_ms: u64,
     pub max_response_bytes: usize,
     pub allow_private_targets: bool,
@@ -408,7 +407,6 @@ impl RunningConfig {
                 max_upload_bytes: config.restore_max_upload_bytes,
             },
             remote_calls: RemoteCallConfig {
-                credential_policy_count: config.remote_credential_policies.len(),
                 timeout_ms: config.remote_call_timeout_ms,
                 max_response_bytes: config.remote_call_max_response_bytes,
                 allow_private_targets: config.remote_call_allow_private_targets,

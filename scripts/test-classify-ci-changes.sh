@@ -340,8 +340,10 @@ echo "CI change classifier tests passed."
 
 # Runtime hardening adds compiled documentation inputs, an isolated executable,
 # and a process benchmark. Each must retain its required validation targets.
-hardening_docs="$(bash "$classifier" docs/runtime_hardening.md docs/generated/project_inventory.json)"
-assert_flag "$hardening_docs" code true
+hardening_docs="$(bash "$classifier" docs/runtime_hardening.md)"
+assert_flag "$hardening_docs" code false
+inventory_output="$(bash "$classifier" docs/generated/project_inventory.json)"
+assert_flag "$inventory_output" code true
 worker_output="$(bash "$classifier" crates/hubuum-templates/src/bin/hubuum-template-worker.rs)"
 assert_flag "$worker_output" container true
 assert_flag "$worker_output" artifacts true

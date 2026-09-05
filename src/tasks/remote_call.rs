@@ -1,8 +1,6 @@
-use crate::models::credential::{AuthorizedRemoteAuth, AuthorizedRemoteCredential};
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use base64::Engine;
-use hubuum_domain::CollectionId;
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
 };
@@ -181,14 +179,7 @@ where
         .transpose()?;
 
     let mut headers = rendered_headers;
-    let policies = crate::models::credential::RemoteCredentialPolicies::for_execution();
-    let authorization = AuthorizedRemoteAuth::authorize(
-        &policies,
-        &target.auth_config,
-        CollectionId::new(target.collection_id)?,
-        &normalized_rendered_url,
-    )?;
-    apply_auth(&mut headers, &authorization).await?;
+    apply_auth(&mut headers, &target.auth_config).await?;
 
     let timeout_ms = bounded_timeout_ms(target.timeout_ms);
     let preview_limit = get_config()
@@ -202,7 +193,7 @@ where
 
     let response_result = OutboundRequest::new(
         outbound_method(target.method),
-        authorization.url(),
+        normalized_rendered_url.clone(),
         std::time::Duration::from_millis(timeout_ms),
     )
     .headers(headers)
@@ -504,12 +495,12 @@ fn render_headers(
 
 async fn apply_auth(
     headers: &mut OutboundHeaders,
-    authorization: &AuthorizedRemoteAuth,
+    auth_config: &RemoteAuthConfig,
 ) -> Result<(), ApiError> {
-    match authorization.config() {
+    match auth_config {
         RemoteAuthConfig::None => Ok(()),
-        RemoteAuthConfig::BearerSecret { .. } => {
-            let secret = resolve_secret(authorization.credential()?).await?;
+        RemoteAuthConfig::BearerSecret { secret } => {
+            let secret = resolve_secret(secret).await?;
             let value = format!(
                 "Bearer {}",
                 secret.value().expose_utf8().map_err(secret_error)?
@@ -519,8 +510,8 @@ async fn apply_auth(
             })?;
             Ok(())
         }
-        RemoteAuthConfig::BasicSecret { username, .. } => {
-            let secret = resolve_secret(authorization.credential()?).await?;
+        RemoteAuthConfig::BasicSecret { username, secret } => {
+            let secret = resolve_secret(secret).await?;
             let raw = format!(
                 "{}:{}",
                 username,
@@ -534,8 +525,8 @@ async fn apply_auth(
                 })?;
             Ok(())
         }
-        RemoteAuthConfig::ApiKeySecret { header, .. } => {
-            let secret = resolve_secret(authorization.credential()?).await?;
+        RemoteAuthConfig::ApiKeySecret { header, secret } => {
+            let secret = resolve_secret(secret).await?;
             let value = secret.value().expose_utf8().map_err(secret_error)?;
             headers.insert(header, value).map_err(|error| match error {
                 OutboundHttpError::InvalidHeaderName { .. } => {
@@ -554,9 +545,7 @@ async fn apply_auth(
     }
 }
 
-async fn resolve_secret(
-    secret: &AuthorizedRemoteCredential,
-) -> Result<hubuum_secrets::ResolvedSecret, ApiError> {
+async fn resolve_secret(secret: &str) -> Result<hubuum_secrets::ResolvedSecret, ApiError> {
     crate::secrets::resolve_remote_secret(secret)
         .await
         .map_err(secret_error)

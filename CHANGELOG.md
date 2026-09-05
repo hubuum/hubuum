@@ -80,10 +80,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking:** remote secret aliases now require administrator-owned collection
-  and HTTPS-origin bindings in `HUBUUM_REMOTE_CREDENTIAL_POLICIES`. Webhook sinks
-  with secrets or static headers require `allowed_collection_ids` and
-  `allowed_origins`; configure these before upgrading or delivery is denied.
 - **Breaking:** template execution requires `hubuum-template-worker` beside the
   server and administrator binaries. Containers and release archives include
   it. Rendering and validation now enforce worker heap, deadline, admission,
@@ -93,8 +89,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   identities and omit unknown endpoint IDs. Upload the updated Treetop schema
   and guard optional ID attributes with Cedar `has` checks before deployment.
 - **Breaking (experimental storage SDK 0.2):** update all seven packages together,
-  supply traversal budgets, implement fenced import execution with atomic item
-  receipts, and preserve collection IDs on delivery subscription projections.
+  supply traversal budgets, and implement fenced import execution with atomic
+  item receipts.
   Apply the new database migrations before starting workers.
 - **Breaking (resource limits):** graph depth is now bounded by
   `HUBUUM_MAX_TRANSITIVE_DEPTH` even when requests

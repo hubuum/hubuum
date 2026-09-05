@@ -176,8 +176,6 @@ Example sink:
   "name": "inventory-webhook",
   "kind": "webhook",
   "config": {
-    "allowed_collection_ids": [42],
-    "allowed_origins": ["https://inventory.example"],
     "headers": {
       "X-Integration": "inventory"
     }
@@ -187,7 +185,7 @@ Example sink:
 }
 ```
 
-Example subscription for collection `42`:
+Example collection subscription:
 
 ```json
 {
@@ -239,7 +237,7 @@ the event envelope as JSON to the URL in the subscription `routing` object:
 ```json
 {
   "routing": {
-    "url": "https://inventory.example/hubuum/events"
+    "url": "https://example.com/hubuum/events"
   }
 }
 ```
@@ -259,8 +257,6 @@ delivery limits:
 ```json
 {
   "config": {
-    "allowed_collection_ids": [42],
-    "allowed_origins": ["https://inventory.example"],
     "headers": {
       "X-Integration": "inventory-sync"
     },
@@ -276,12 +272,6 @@ When `secret_ref` is set, Hubuum resolves the alias through the selected
 [secret source](secret_sources.md) and sends it as a bearer token. With the
 default environment source, the example maps to
 `HUBUUM_EVENT_SINK_SECRET_INVENTORY_WEBHOOK`.
-
-Sinks with a secret or static headers require administrator-owned
-`allowed_collection_ids` and `allowed_origins`. Subscription changes and delivery
-execution enforce both lists, including the final destination's HTTPS port.
-Existing deployments must add these bindings before upgrading; an absent binding
-denies credential use. See [runtime and credential boundaries](runtime_hardening.md).
 
 Webhook HTTP execution uses the shared hardened outbound HTTP layer: HTTPS-only
 URLs, embedded credential rejection, DNS resolution and address screening, IP

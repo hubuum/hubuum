@@ -6,7 +6,7 @@ cannot select an environment variable, provider, or filesystem path.
 
 ## Environment Source
 
-The default source is `environment`. Secret lookup names remain compatible:
+The default source is `environment`. Existing deployments remain compatible:
 
 | Consumer | Environment mapping |
 | --- | --- |
@@ -16,11 +16,6 @@ The default source is `environment`. Secret lookup names remain compatible:
 | Event sink alias `NAME` | `HUBUUM_EVENT_SINK_SECRET_NAME` |
 | Remote-target alias `NAME` | `HUBUUM_REMOTE_SECRET_NAME` |
 | LDAP alias `NAME` | `HUBUUM_LDAP_SECRET_NAME` |
-
-Remote targets and credential-bearing webhooks also require administrator-owned
-collection and destination bindings before their secrets can be used. Configure
-the [credential policies](runtime_hardening.md) before upgrading existing targets
-or subscriptions.
 
 Alias letters are uppercased and hyphens become underscores for environment
 lookup. Missing `HUBUUM_SECRET_SOURCE` is equivalent to:

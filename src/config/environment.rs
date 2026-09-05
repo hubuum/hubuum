@@ -133,7 +133,6 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", RemoteCalls),
-    option!("HUBUUM_REMOTE_CREDENTIAL_POLICIES", RemoteCalls),
     option!("HUBUUM_TOKEN_LIFETIME_HOURS", Authentication),
     option!("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", Authentication),
     option!("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", Authentication),

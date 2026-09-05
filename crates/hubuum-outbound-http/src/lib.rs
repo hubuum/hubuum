@@ -14,9 +14,6 @@
 //! The `dangerous_*` request toggles exist for tightly scoped test/internal
 //! callers and should not be enabled from production paths.
 
-mod credentials;
-pub use credentials::{AuthorizedDestination, CredentialDestinationError, CredentialOrigin};
-
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};

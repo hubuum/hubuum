@@ -468,7 +468,6 @@ mod tests {
         let envelope = envelope();
         let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
-            hubuum_domain::CollectionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )
@@ -493,7 +492,6 @@ mod tests {
         let envelope = envelope();
         let subscription = StorageEventDeliverySubscription::try_new(
             hubuum_domain::EventSubscriptionId::new(1).unwrap(),
-            hubuum_domain::CollectionId::new(1).unwrap(),
             "subscription",
             serde_json::json!({}),
         )

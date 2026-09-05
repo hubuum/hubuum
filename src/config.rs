@@ -779,11 +779,6 @@ pub struct AppConfig {
     )]
     pub remote_call_allow_private_targets: bool,
 
-    /// Server-owned alias bindings to collection IDs and HTTPS destination origins.
-    #[clap(long, env = "HUBUUM_REMOTE_CREDENTIAL_POLICIES", default_value = "{}")]
-    #[serde(default)]
-    pub remote_credential_policies: crate::models::credential::RemoteCredentialPolicies,
-
     /// Maximum queued/validating/running remote call tasks one user may have at once.
     #[clap(
         long,
@@ -1985,13 +1980,6 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES),
-        remote_credential_policies: env_or_default("HUBUUM_REMOTE_CREDENTIAL_POLICIES", "{}")
-            .parse()
-            .map_err(|message: String| {
-                ApiError::BadRequest(format!(
-                    "Invalid HUBUUM_REMOTE_CREDENTIAL_POLICIES: {message}"
-                ))
-            })?,
         remote_call_allow_private_targets: env::var("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS")
             .ok()
             .and_then(|value| value.parse().ok())

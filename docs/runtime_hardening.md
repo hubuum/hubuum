@@ -1,42 +1,4 @@
-# Runtime and credential boundaries
-
-Remote credentials are administrator-owned bindings. A target's final rendered
-URL must match a configured HTTPS origin, including its effective port, and the
-target must belong to an allowed collection. Redirects remain disabled. Matching
-an alias alone no longer authorizes use of its secret.
-
-Set `HUBUUM_REMOTE_CREDENTIAL_POLICIES` to a JSON object such as this one:
-
-<!-- doc-example: hardening/remote-credential-policy -->
-```json
-{
-  "inventory_api": {
-    "collection_ids": [42],
-    "origins": ["https://inventory.example"]
-  }
-}
-```
-
-Bindings grant access to the whole origin. Use separate origins and credentials
-where applications require different trust boundaries. URL templates may choose
-paths and queries within that origin. Origins cannot contain paths, userinfo,
-queries or fragments. Missing bindings deny credential use.
-
-Webhook sinks with a secret reference or static headers require both
-`allowed_collection_ids` and `allowed_origins` in their administrator-managed
-configuration. Subscription editors cannot expand that authority. For example:
-
-<!-- doc-example: hardening/webhook-credential-policy -->
-```json
-{
-  "allowed_collection_ids": [42],
-  "allowed_origins": ["https://events.example"],
-  "headers": {"X-Integration": "hubuum"}
-}
-```
-
-These examples are exercised by the credential-policy tests with the same
-constructors used in production.
+# Runtime boundaries
 
 ## Template execution
 
@@ -104,6 +66,6 @@ migration phases. If a concurrent index build is interrupted, remove its invalid
 index before retrying the migration; startup requires the completed migration.
 
 The storage SDK advances as a coordinated 0.2 release. Adapter implementations
-must accept traversal budgets, implement claimed import execution, and preserve
-subscription collection IDs. See the [generated inventory](generated/project_inventory.md)
+must accept traversal budgets and implement claimed import execution. See the
+[generated inventory](generated/project_inventory.md)
 for package versions, task kinds, and executables.

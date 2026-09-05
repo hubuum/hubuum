@@ -206,8 +206,7 @@ Update all seven SDK dependencies together. Relation query constructors now
 require `TraversalBudget`; adapters must enforce its depth and generated-work
 limits before final sorting and pagination. Implement the claimed import methods
 with atomic domain changes and item receipts, and reject an expired or replaced
-claim at commit. Delivery subscription projections now require their originating
-collection ID so credential authorization survives persistence boundaries.
+claim at commit.
 
 The [generated inventory](generated/project_inventory.md) records current package
 versions and minimum Rust versions. The server's configuration and deployment
