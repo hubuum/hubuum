@@ -498,8 +498,8 @@ impl ImportExportTemplateInput {
         }
     }
 
-    fn validate(&self) -> Result<(), ApiError> {
-        validate_import_export_template(self.template_ref())
+    async fn validate(&self) -> Result<(), ApiError> {
+        validate_import_export_template(self.template_ref()).await
     }
 }
 
@@ -866,7 +866,7 @@ impl ImportGraph {
 }
 
 impl ImportRequest {
-    pub fn validate(&self) -> Result<(), ApiError> {
+    pub async fn validate(&self) -> Result<(), ApiError> {
         if self.version != CURRENT_IMPORT_VERSION {
             return Err(ApiError::BadRequest(format!(
                 "Unsupported import version '{}'; expected {}",
@@ -889,7 +889,7 @@ impl ImportRequest {
             .validate()?;
         }
         for template in &self.graph.export_templates {
-            template.validate()?;
+            template.validate().await?;
         }
         for target in &self.graph.remote_targets {
             validate_target_parts(
@@ -900,7 +900,8 @@ impl ImportRequest {
                 &target.auth_config,
                 &target.allowed_subject_types,
                 target.timeout_ms,
-            )?;
+            )
+            .await?;
         }
         for sink in &self.graph.event_sinks {
             validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
@@ -997,15 +998,15 @@ mod tests {
         assert_eq!(mode.permission_policy, Some(ImportPermissionPolicy::Abort));
     }
 
-    #[test]
-    fn import_v2_rejects_v1_and_parses_revision_conditions() {
+    #[tokio::test]
+    async fn import_v2_rejects_v1_and_parses_revision_conditions() {
         let legacy = ImportRequest {
             version: 1,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph::default(),
         };
-        assert!(legacy.validate().is_err());
+        assert!(legacy.validate().await.is_err());
 
         let condition: ImportWriteCondition = serde_json::from_value(serde_json::json!({
             "mode": "if_revision",
@@ -1212,8 +1213,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn import_rejects_malformed_export_templates() {
+    #[tokio::test]
+    async fn import_rejects_malformed_export_templates() {
         let request = request_with_graph(ImportGraph {
             export_templates: vec![ImportExportTemplateInput {
                 ref_: None,
@@ -1238,11 +1239,11 @@ mod tests {
             ..ImportGraph::default()
         });
 
-        assert!(request.validate().is_err());
+        assert!(request.validate().await.is_err());
     }
 
-    #[test]
-    fn import_rejects_ambiguous_extended_selectors() {
+    #[tokio::test]
+    async fn import_rejects_ambiguous_extended_selectors() {
         let request = request_with_graph(ImportGraph {
             export_templates: vec![ImportExportTemplateInput {
                 ref_: None,
@@ -1270,11 +1271,11 @@ mod tests {
             ..ImportGraph::default()
         });
 
-        assert!(request.validate().is_err());
+        assert!(request.validate().await.is_err());
     }
 
-    #[test]
-    fn import_rejects_invalid_remote_target_auth() {
+    #[tokio::test]
+    async fn import_rejects_invalid_remote_target_auth() {
         let request = request_with_graph(ImportGraph {
             remote_targets: vec![ImportRemoteTargetInput {
                 ref_: None,
@@ -1300,11 +1301,11 @@ mod tests {
             ..ImportGraph::default()
         });
 
-        assert!(request.validate().is_err());
+        assert!(request.validate().await.is_err());
     }
 
-    #[test]
-    fn import_rejects_invalid_event_sink_configuration() {
+    #[tokio::test]
+    async fn import_rejects_invalid_event_sink_configuration() {
         let request = request_with_graph(ImportGraph {
             event_sinks: vec![ImportEventSinkInput {
                 ref_: None,
@@ -1319,7 +1320,7 @@ mod tests {
             ..ImportGraph::default()
         });
 
-        assert!(request.validate().is_err());
+        assert!(request.validate().await.is_err());
     }
 
     #[test]

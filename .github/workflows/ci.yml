@@ -914,7 +914,7 @@ jobs:
           cache-from: type=gha
       - name: Verify exported release binaries
         run: |
-          for binary in dist/release-smoke/hubuum-server dist/release-smoke/hubuum-admin; do
+          for binary in dist/release-smoke/hubuum-server dist/release-smoke/hubuum-admin dist/release-smoke/hubuum-template-worker; do
             if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
               echo "$binary unexpectedly has dynamic runtime dependencies" >&2
               readelf --dynamic "$binary" >&2
@@ -1212,7 +1212,7 @@ jobs:
       - name: Verify static linkage and package release archive
         shell: bash
         run: |
-          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin; do
+          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin dist/bin/hubuum-template-worker; do
             if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
               echo "$binary unexpectedly has dynamic runtime dependencies" >&2
               readelf --dynamic "$binary" >&2
@@ -1221,7 +1221,7 @@ jobs:
             "$binary" --version
           done
           archive_name="hubuum-${{ matrix.platform.os_name }}-all-features-${GITHUB_REF_NAME}.tar.gz"
-          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
+          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin hubuum-template-worker
           cd dist
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
           shasum -a 256 -c "${archive_name}.sha256"
@@ -1284,7 +1284,7 @@ jobs:
         if: contains(matrix.platform.os_name, 'macos')
         shell: bash
         run: |
-          for binary in hubuum-server hubuum-admin; do
+          for binary in hubuum-server hubuum-admin hubuum-template-worker; do
             binary_path="target/${{ matrix.platform.target }}/release/${binary}"
             "$binary_path" --version
             if xcrun otool -L "$binary_path" | grep --extended-regexp --quiet '(/opt/homebrew|/usr/local/opt|libpq|libssl|libcrypto)'; then
@@ -1307,7 +1307,7 @@ jobs:
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-all-features-${GITHUB_REF_NAME}.tar.gz"
-          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin hubuum-template-worker
           cd dist
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
       
@@ -1317,7 +1317,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist
           $archive_name = "hubuum-${{ matrix.platform.os_name }}-full-release-${env:GITHUB_REF_NAME}.zip"
-          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe", "target/${{ matrix.platform.target }}/release/hubuum-template-worker.exe" -DestinationPath "dist/$archive_name"
           $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
           # Keep checksum files portable: UTF-8 without a BOM and an explicit LF.
           $checksum = "$hash  $archive_name`n"
@@ -1555,7 +1555,7 @@ jobs:
       - name: Verify static linkage and package main archive
         shell: bash
         run: |
-          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin; do
+          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin dist/bin/hubuum-template-worker; do
             if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
               echo "$binary unexpectedly has dynamic runtime dependencies" >&2
               readelf --dynamic "$binary" >&2
@@ -1564,7 +1564,7 @@ jobs:
             "$binary" --version
           done
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
-          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
+          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin hubuum-template-worker
           cd dist
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
           shasum -a 256 -c "${archive_name}.sha256"
@@ -1631,7 +1631,7 @@ jobs:
         if: contains(matrix.platform.os_name, 'macos')
         shell: bash
         run: |
-          for binary in hubuum-server hubuum-admin; do
+          for binary in hubuum-server hubuum-admin hubuum-template-worker; do
             binary_path="target/${{ matrix.platform.target }}/release/${binary}"
             "$binary_path" --version
             if xcrun otool -L "$binary_path" | grep --extended-regexp --quiet '(/opt/homebrew|/usr/local/opt|libpq|libssl|libcrypto)'; then
@@ -1652,7 +1652,7 @@ jobs:
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
-          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin hubuum-template-worker
           cd dist
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
           shasum -a 256 -c "${archive_name}.sha256"
@@ -1662,7 +1662,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist
           $archive_name = "hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.zip"
-          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe", "target/${{ matrix.platform.target }}/release/hubuum-template-worker.exe" -DestinationPath "dist/$archive_name"
           $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
           # Keep checksum files portable: UTF-8 without a BOM and an explicit LF.
           $checksum = "$hash  $archive_name`n"

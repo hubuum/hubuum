@@ -44,7 +44,7 @@ pub async fn create_import(
     ensure_task_worker_running(context.clone());
 
     let import_request = import_request.into_inner();
-    import_request.validate()?;
+    import_request.validate().await?;
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;

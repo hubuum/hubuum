@@ -57,8 +57,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     echo "pub fn dummy() {}" > src/lib.rs && \
     echo "fn main() {}" > src/bin/admin.rs && \
     echo "fn main() {}" > src/bin/openapi.rs && \
+    mkdir -p crates/hubuum-templates/src/bin && \
+    echo "fn main() {}" > crates/hubuum-templates/src/bin/hubuum-template-worker.rs && \
     cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
-        --bin hubuum-server --bin hubuum-admin && \
+        --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker && \
     rm -rf src && \
     find crates -mindepth 2 -maxdepth 2 -type d -name src -exec rm -rf {} +
 
@@ -82,16 +84,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     HUBUUM_BUILD_GIT_SHA="${HUBUUM_BUILD_GIT_SHA}" \
     find ./src ./crates -path '*/src/*' -type f -exec touch {} + && \
     cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
-        --bin hubuum-server --bin hubuum-admin && \
+        --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker && \
     cp target/release/hubuum-server /tmp/ && \
-    cp target/release/hubuum-admin /tmp/
+    cp target/release/hubuum-admin /tmp/ && \
+    cp target/release/hubuum-template-worker /tmp/
 
-RUN strip /tmp/hubuum-server /tmp/hubuum-admin
+RUN strip /tmp/hubuum-server /tmp/hubuum-admin /tmp/hubuum-template-worker
 
 FROM scratch AS release-artifacts
 
 COPY --from=builder /tmp/hubuum-server /hubuum-server
 COPY --from=builder /tmp/hubuum-admin /hubuum-admin
+COPY --from=builder /tmp/hubuum-template-worker /hubuum-template-worker
 
 FROM docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
@@ -105,6 +109,7 @@ RUN apk upgrade --no-cache && \
 
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
+COPY --from=builder /tmp/hubuum-template-worker /usr/local/bin/hubuum-template-worker
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 

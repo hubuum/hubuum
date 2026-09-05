@@ -500,7 +500,8 @@ impl NewExportTemplate {
             self.collection_id,
             &collection_templates,
             self.content_type,
-        )?;
+        )
+        .await?;
         let stored = storage_handle(pool)
             .create_export_template(StorageExportTemplateCreate::new(
                 collection_id_to_storage(self.collection_id),
@@ -613,7 +614,8 @@ async fn apply_export_template_update(
         target_collection_id,
         &collection_templates,
         current.content_type,
-    )?;
+    )
+    .await?;
 
     let replacement = ExportTemplate {
         id: template_id,
@@ -781,7 +783,7 @@ pub(crate) struct ExportTemplateImportRef<'a> {
     pub default_limits: Option<&'a ExportLimits>,
 }
 
-pub(crate) fn validate_import_export_template(
+pub(crate) async fn validate_import_export_template(
     input: ExportTemplateImportRef<'_>,
 ) -> Result<(), ApiError> {
     input.content_type.ensure_template_output()?;
@@ -803,7 +805,7 @@ pub(crate) fn validate_import_export_template(
             .map(ExportMissingDataPolicy::as_str),
         default_limits: default_limits.as_ref(),
     })?;
-    validate_template_syntax(input.name, input.template)
+    validate_template_syntax(input.name, input.template).await
 }
 
 async fn validate_export_profile(
