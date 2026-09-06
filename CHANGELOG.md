@@ -181,6 +181,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Authenticated reads avoid unnecessary audit transactions, and failed bearer
   authentication is reused by handler extractors instead of repeated.
 - Outbound HTTP timeouts and duration measurements now include DNS screening.
+- Computed-field backfills lock classes before objects, matching object updates
+  and preventing concurrent rebuilds from causing deadlocks and HTTP 500 errors.
 - Restored `hubuum-admin --restore` support for FIFOs and shell process
   substitution after backup-verifier file restrictions inadvertently rejected
   those inputs. Restore still reads the complete document before validation;
