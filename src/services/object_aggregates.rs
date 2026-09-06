@@ -1,3 +1,4 @@
+use crate::permissions::ClassResourceEndpoint;
 use async_trait::async_trait;
 
 use crate::errors::ApiError;
@@ -11,8 +12,7 @@ use crate::models::{ObjectAggregatePage, Permissions};
 use crate::pagination::{SKIPPED_TOTAL_COUNT, effective_page_limit};
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PermissionBackend, PermissionDecision,
-    PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
-    permission_from_storage, permission_to_storage,
+    PermissionRequest, PrincipalRef, ResourceRef, permission_from_storage, permission_to_storage,
 };
 use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
@@ -198,24 +198,8 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
             ));
         }
         let (class_id, class_name, collection_id, collection_name) = target.into_parts();
-        let class = ResourceRef {
-            kind: ResourceKind::Class,
-            id: class_id.id(),
-            attrs: ResourceAttrs {
-                collection_id: Some(collection_id.id()),
-                name: Some(class_name),
-                ..Default::default()
-            },
-        };
-        let collection = ResourceRef {
-            kind: ResourceKind::Collection,
-            id: collection_id.id(),
-            attrs: ResourceAttrs {
-                collection_id: Some(collection_id.id()),
-                name: Some(collection_name),
-                ..Default::default()
-            },
-        };
+        let class = ResourceRef::class(class_id.id(), collection_id.id(), Some(class_name));
+        let collection = ResourceRef::named_collection(collection_id.id(), Some(collection_name));
         let requests = invariant_permissions
             .into_iter()
             .map(|permission| {
@@ -264,16 +248,11 @@ impl ObjectAggregateAuthorizer for DelegatedObjectAggregateAuthorizer<'_> {
             .map(|candidate| {
                 let (id, name, collection_id, class_id) = candidate.into_parts();
                 PermissionRequest {
-                    resource: ResourceRef {
-                        kind: ResourceKind::Object,
-                        id: id.id(),
-                        attrs: ResourceAttrs {
-                            collection_id: Some(collection_id.id()),
-                            class_id: Some(class_id.id()),
-                            name: Some(name),
-                            ..Default::default()
-                        },
-                    },
+                    resource: ResourceRef::object(
+                        id.id(),
+                        ClassResourceEndpoint::new(collection_id.id(), class_id.id()),
+                        Some(name),
+                    ),
                     permissions: object_permissions.clone(),
                 }
             })
@@ -302,11 +281,7 @@ fn invariant_resource(
                 "Object-specific permission cannot be preauthorized",
             ));
         }
-        Permissions::CreateObject => {
-            let mut resource = ResourceRef::for_permission_on_collection(permission, collection.id);
-            resource.attrs.class_id = Some(class.id);
-            resource
-        }
+        Permissions::CreateObject => class.normalized_for_permission(permission),
         Permissions::ReadClass | Permissions::UpdateClass | Permissions::DeleteClass => {
             class.clone()
         }
@@ -333,9 +308,12 @@ fn invariant_resource(
         | Permissions::ReadTemplate
         | Permissions::CreateTemplate
         | Permissions::UpdateTemplate
-        | Permissions::DeleteTemplate => {
-            ResourceRef::for_permission_on_collection(permission, collection.id)
-        }
+        | Permissions::DeleteTemplate => ResourceRef::for_permission_on_collection(
+            permission,
+            collection
+                .collection_id()
+                .ok_or_else(|| StorageError::internal("Missing collection identity"))?,
+        ),
     })
 }
 

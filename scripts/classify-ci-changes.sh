@@ -62,7 +62,7 @@ for path in "$@"; do
       docs/treetop/test-fixture.cedar)
       code=true
       ;;
-    docs/querying.md)
+    docs/generated/project_inventory.json | docs/querying.md)
       code=true
       ;;
     docs/storage_boundary.md | docs/storage_boundary/*)

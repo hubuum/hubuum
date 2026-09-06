@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::{FencedImportPlan, FencedImportResults};
 
 #[async_trait]
 impl ExportTemplateStorage for StorageHandle {
@@ -448,6 +449,40 @@ impl ImportStorage for StorageHandle {
         .await
     }
 
+    async fn apply_claimed_import_strict(
+        &self,
+        plan: FencedImportPlan,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Import,
+            "apply_claimed_import_strict",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.apply_claimed_import_strict(plan).await
+                })
+            },
+        )
+        .await
+    }
+    async fn apply_claimed_import_best_effort(
+        &self,
+        plan: FencedImportPlan,
+        mode: StorageImportMode,
+    ) -> Result<StorageImportApply, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Import,
+            "apply_claimed_import_best_effort",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.apply_claimed_import_best_effort(plan, mode).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -489,6 +524,23 @@ impl ImportStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend.record_import_results(results).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn record_claimed_import_results(
+        &self,
+        results: FencedImportResults,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Import,
+            "record_claimed_import_results",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.record_claimed_import_results(results).await
                 })
             },
         )

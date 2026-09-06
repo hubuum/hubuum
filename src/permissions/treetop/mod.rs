@@ -243,10 +243,7 @@ fn extract_decisions(
         .collect()
 }
 
-// Re-export the synthesize helpers from test_support so they're available
-// within this module. The actual implementations live in test_support to
-// avoid circular dependencies when building without the treetop feature.
-use crate::permissions::test_support::mock_treetop::{
+use crate::permissions::synthesis::{
     permission_has_any_grant, synthesize_permission, synthesize_permission_for_group,
 };
 

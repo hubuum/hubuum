@@ -337,3 +337,9 @@ if ((literal_include_count == 0)); then
 fi
 
 echo "CI change classifier tests passed."
+
+# Runtime hardening adds a compiled documentation input. Keep its validation.
+hardening_docs="$(bash "$classifier" docs/runtime_hardening.md)"
+assert_flag "$hardening_docs" code false
+inventory_output="$(bash "$classifier" docs/generated/project_inventory.json)"
+assert_flag "$inventory_output" code true

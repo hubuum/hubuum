@@ -220,7 +220,7 @@ hubuum application
   fixtures are typed, feature-gated APIs owned by `hubuum-storage-postgres`.
 
 The backend-neutral contracts needed by an out-of-tree adapter form the
-experimental public six-crate
+experimental public seven-crate
 [storage adapter SDK](storage_adapter_sdk.md).
 External-crate integration tests nevertheless implement all 44
 complete-backend traits and their 250 methods, compile every transaction port,

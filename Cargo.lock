@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2276,7 +2276,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2302,13 +2302,14 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
  "chrono",
  "gungraun",
  "percent-encoding",
+ "rstest",
  "serde",
  "serde_json",
 ]
@@ -2352,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
@@ -2362,7 +2363,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2434,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "hubuum-templates"

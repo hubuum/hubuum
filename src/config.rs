@@ -1460,10 +1460,11 @@ impl AppConfig {
             }
         }
 
-        if self.max_transitive_depth <= 0 {
-            return Err(ApiError::BadRequest(
-                "max_transitive_depth must be greater than 0".to_string(),
-            ));
+        if !(1..=hubuum_query::MAX_TRAVERSAL_DEPTH).contains(&self.max_transitive_depth) {
+            return Err(ApiError::BadRequest(format!(
+                "max_transitive_depth must be between 1 and {}",
+                hubuum_query::MAX_TRAVERSAL_DEPTH
+            )));
         }
 
         if self

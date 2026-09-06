@@ -1,8 +1,10 @@
+use crate::permissions::ClassResourceEndpoint;
+use crate::permissions::ObjectResourceEndpoint;
 use std::collections::HashMap;
 
 use crate::errors::ApiError;
 use crate::models::{HubuumClassRelation, HubuumObjectRelation};
-use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::ResourceRef;
 use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
@@ -64,19 +66,11 @@ pub(crate) async fn class_relation_authorization_resources(
                     relation.id, relation.to_hubuum_class_id
                 ))
             })?;
-            Ok(ResourceRef {
-                kind: ResourceKind::ClassRelation,
-                id: relation.id,
-                attrs: ResourceAttrs {
-                    collection_id: (from.collection_id() == to.collection_id())
-                        .then_some(from.collection_id().id()),
-                    from_collection_id: Some(from.collection_id().id()),
-                    to_collection_id: Some(to.collection_id().id()),
-                    from_class_id: Some(from.id().id()),
-                    to_class_id: Some(to.id().id()),
-                    ..Default::default()
-                },
-            })
+            Ok(ResourceRef::class_relation(
+                Some(relation.id),
+                ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
+                ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
+            ))
         })
         .collect()
 }
@@ -94,16 +88,11 @@ pub(crate) async fn object_authorization_resources(
                     "authorization candidate references missing object {object_id}"
                 ))
             })?;
-            Ok(ResourceRef {
-                kind: ResourceKind::Object,
-                id: object.id().id(),
-                attrs: ResourceAttrs {
-                    collection_id: Some(object.collection_id().id()),
-                    class_id: Some(object.class_id().id()),
-                    name: Some(object.name().to_string()),
-                    ..Default::default()
-                },
-            })
+            Ok(ResourceRef::object(
+                object.id().id(),
+                ClassResourceEndpoint::new(object.collection_id().id(), object.class_id().id()),
+                Some(object.name().to_string()),
+            ))
         })
         .collect()
 }
@@ -137,22 +126,20 @@ pub(crate) async fn object_relation_authorization_resources(
                     relation.id, relation.to_hubuum_object_id
                 ))
             })?;
-            Ok(ResourceRef {
-                kind: ResourceKind::ObjectRelation,
-                id: relation.id,
-                attrs: ResourceAttrs {
-                    collection_id: (from.collection_id() == to.collection_id())
-                        .then_some(from.collection_id().id()),
-                    from_collection_id: Some(from.collection_id().id()),
-                    to_collection_id: Some(to.collection_id().id()),
-                    from_class_id: Some(from.class_id().id()),
-                    to_class_id: Some(to.class_id().id()),
-                    from_object_id: Some(from.id().id()),
-                    to_object_id: Some(to.id().id()),
-                    class_relation_id: Some(relation.class_relation_id),
-                    ..Default::default()
-                },
-            })
+            Ok(ResourceRef::object_relation(
+                Some(relation.id),
+                ObjectResourceEndpoint::new(
+                    from.collection_id().id(),
+                    from.class_id().id(),
+                    from.id().id(),
+                ),
+                ObjectResourceEndpoint::new(
+                    to.collection_id().id(),
+                    to.class_id().id(),
+                    to.id().id(),
+                ),
+                relation.class_relation_id,
+            ))
         })
         .collect()
 }

@@ -84,4 +84,42 @@ if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 
   exit 1
 fi
 
+for scenario in bounded unmarked missing-lock missing-statement zero-timeout late-limits nontransactional; do
+  candidate="$adapter_migrations/0002_candidate"
+  rm -f "$candidate/metadata.toml"
+  {
+    if [[ "$scenario" != missing-lock && "$scenario" != late-limits ]]; then
+      printf '%s\n' "SET LOCAL lock_timeout = '5s';"
+    fi
+    if [[ "$scenario" != missing-statement && "$scenario" != late-limits ]]; then
+      printf '%s\n' "SET LOCAL statement_timeout = '60s';"
+    fi
+    if [[ "$scenario" == zero-timeout ]]; then
+      printf '%s\n' "SET LOCAL statement_timeout = '0s';"
+    fi
+    if [[ "$scenario" == unmarked ]]; then
+      printf '%s\n' 'CREATE INDEX widgets_revision_idx ON widgets (revision);'
+    else
+      printf '%s\n' 'CREATE INDEX widgets_revision_idx ON widgets (revision); -- hubuum-compat: bounded-transactional-index'
+    fi
+    if [[ "$scenario" == late-limits ]]; then
+      printf '%s\n' "SET LOCAL lock_timeout = '5s';" "SET LOCAL statement_timeout = '60s';"
+    fi
+  } > "$candidate/up.sql"
+  if [[ "$scenario" == nontransactional ]]; then
+    printf '%s\n' 'run_in_transaction = false' > "$candidate/metadata.toml"
+  fi
+  git -C "$test_root" add .
+  git -C "$test_root" commit --quiet -m "index-$scenario"
+  if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 2>&1; then
+    if [[ "$scenario" != bounded ]]; then
+      echo "$scenario index unexpectedly passed compatibility review" >&2
+      exit 1
+    fi
+  elif [[ "$scenario" == bounded ]]; then
+    echo "bounded transactional index unexpectedly failed compatibility review" >&2
+    exit 1
+  fi
+done
+
 echo "Migration compatibility checker tests passed."

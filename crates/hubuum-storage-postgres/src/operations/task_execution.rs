@@ -282,6 +282,16 @@ pub async fn recover_expired_task_leases(
             for stale_task in stale {
                 let kind = stored_task_kind(&stale_task)?;
                 let counts = recovered_counts(connection, &stale_task, kind).await?;
+                // Atomic import receipts prove all effects/results committed even
+                // if the worker died before updating the task's terminal state.
+                let completed_import = kind == StorageTaskKind::Import
+                    && counts.processed() > 0 && counts.processed() == stale_task.total_items;
+                let recovered_status = if completed_import && counts.failed() == 0 {
+                    StorageTaskStatus::Succeeded
+                } else if completed_import && counts.succeeded() > 0 {
+                    StorageTaskStatus::PartiallySucceeded
+                } else { StorageTaskStatus::Failed };
+                let summary = if completed_import { "Recovered completed import from durable item results" } else { LEASE_EXPIRED_MESSAGE };
                 if kind == StorageTaskKind::Reindex {
                     mark_recovered_reindex_failed_on_connection(
                         connection,
@@ -293,7 +303,7 @@ pub async fn recover_expired_task_leases(
                 append_task_lifecycle_event(
                     connection,
                     &stale_task,
-                    StorageTaskEventInput::new(StorageTaskStatus::Failed.as_str(), LEASE_EXPIRED_MESSAGE)
+                    StorageTaskEventInput::new(recovered_status.as_str(), summary)
                         .with_data(Some(json!({
                             "previous_status": stale_task.status,
                             "lease_expires_at": stale_task.lease_expires_at,
@@ -305,8 +315,8 @@ pub async fn recover_expired_task_leases(
                 .await?;
                 let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id)))
                     .set((
-                        tasks::status.eq(StorageTaskStatus::Failed.as_str()),
-                        tasks::summary.eq(Some(LEASE_EXPIRED_MESSAGE.to_string())),
+                        tasks::status.eq(recovered_status.as_str()),
+                        tasks::summary.eq(Some(summary.to_string())),
                         tasks::processed_items.eq(counts.processed()),
                         tasks::success_items.eq(counts.succeeded()),
                         tasks::failed_items.eq(counts.failed()),
@@ -839,7 +849,7 @@ async fn import_result_counts_connection(
         .await?;
     let failed = results::import_task_results
         .filter(results::task_id.eq(task_id))
-        .filter(results::outcome.eq("failed"))
+        .filter(results::outcome.eq_any(["failed", "stale_revision"]))
         .count()
         .get_result::<i64>(connection)
         .await?;

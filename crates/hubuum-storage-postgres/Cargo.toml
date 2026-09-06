@@ -26,11 +26,11 @@ diesel-async = { version = "0.9.2", features = ["postgres", "bb8"] }
 diesel_migrations = { version = "2.3.2", optional = true }
 futures-util = "0.3"
 hubuum-computed-fields = { path = "../hubuum-computed-fields" }
-hubuum-domain = { version = "0.1.0", path = "../hubuum-domain" }
-hubuum-events-core = { version = "0.1.0", path = "../hubuum-events-core" }
-hubuum-query = { version = "0.1.0", path = "../hubuum-query" }
+hubuum-domain = { version = "0.2.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "0.2.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.2.0", path = "../hubuum-query" }
 hubuum-scale-core = { path = "../hubuum-scale-core", optional = true }
-hubuum-storage-core = { version = "0.1.0", path = "../hubuum-storage-core" }
+hubuum-storage-core = { version = "0.2.0", path = "../hubuum-storage-core" }
 hubuum-templates = { version = "0.0.1", path = "../hubuum-templates" }
 ipnet = "2.12"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }

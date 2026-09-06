@@ -283,6 +283,14 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if message == "hubuum_import_claim_expired" {
+                    return Self::conflict("Import task claim expired before commit");
+                }
+                if message == "hubuum_graph_budget_exceeded" {
+                    return Self::invalid_input(
+                        "Graph traversal exceeded the server work budget; reduce depth or narrow the graph",
+                    );
+                }
                 if message == "hubuum_stale_resource" {
                     return Self::precondition_failed(
                         "The resource changed since the supplied validator was issued",

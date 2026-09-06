@@ -66,6 +66,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Verify generated project inventory
+        run: python3 scripts/generate-project-inventory.py --check
       - name: Test change classifier
         run: bash scripts/test-classify-ci-changes.sh
       - name: Classify changed paths
@@ -236,6 +238,19 @@ jobs:
       - name: Install semantic compatibility checker
         if: steps.supported.outputs.packages != ''
         run: bash scripts/install-cargo-semver-checks.sh
+      - name: Test supported packages on their minimum Rust version
+        if: steps.supported.outputs.packages != ''
+        env:
+          SUPPORTED_PACKAGES: ${{ steps.supported.outputs.packages }}
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          package_args=()
+          while IFS= read -r package; do
+            [[ -n "$package" ]] || continue
+            package_args+=(--package "$package")
+          done <<< "$SUPPORTED_PACKAGES"
+          cargo +1.88.0 test --locked "${package_args[@]}"
+          cargo +1.88.0 test --locked --all-features "${package_args[@]}"
       - name: Verify supported Rust packages
         if: steps.supported.outputs.packages != ''
         env:
@@ -527,6 +542,9 @@ jobs:
         run: >-
           cargo test -p hubuum-storage-postgres
           -F integration-test-support,scale-benchmark-support --locked --release
+      - name: Test workspace package contracts
+        if: matrix.feature.name == 'default'
+        run: cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres --all-features --locked --release
       - name: Test (${{ matrix.feature.name }})
         run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 

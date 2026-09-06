@@ -102,7 +102,7 @@ pub async fn get_external_principal_state(
 ) -> Result<Option<StorageExternalPrincipalState>, PostgresStorageError> {
     validate_positive_id(principal_id, "principal id")?;
     let row = runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             crate::schema::users::table
                 .inner_join(
                     crate::schema::principals::table
