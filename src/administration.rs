@@ -1059,7 +1059,14 @@ async fn restore_database(
     if confirmation != Some(RESTORE_CONFIRMATION_PHRASE) {
         return Err(destructive_confirmation_error());
     }
-    let bytes = read_backup_file(path, usize::MAX)?;
+    // Restore also accepts finite streams (FIFOs and shell process substitution).
+    // The verifier's regular-file restriction must not apply to this path.
+    let bytes = std::fs::read(path).map_err(|error| {
+        ApiError::BadRequest(format!(
+            "Failed to read restore document '{}': {error}",
+            path.display()
+        ))
+    })?;
     let restored = restore_database_bytes(storage, bytes).await?;
     println!(
         "Restore {} completed with status '{}'.",

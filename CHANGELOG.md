@@ -181,6 +181,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Authenticated reads avoid unnecessary audit transactions, and failed bearer
   authentication is reused by handler extractors instead of repeated.
 - Outbound HTTP timeouts and duration measurements now include DNS screening.
+- Restored `hubuum-admin --restore` support for FIFOs and shell process
+  substitution after backup-verifier file restrictions inadvertently rejected
+  those inputs. Restore still reads the complete document before validation;
+  the verifier's regular-file requirement and size limit are unchanged.
 - The memory storage backend now returns HTTP 400 with an actionable message
   when a class update enables schema validation without a schema.
 - Recursive object-relation graph queries now expand through indexed adjacency
