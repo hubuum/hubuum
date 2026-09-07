@@ -42,6 +42,7 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use crate::secrets::DatabaseCredential;
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
@@ -98,7 +99,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 
-    if let Err(error) = crate::secrets::validate_configuration() {
+    if let Err(error) = crate::secrets::initialize(&config.secrets) {
         fatal_error(
             &format!("Failed to configure secret sources: {error}"),
             EXIT_CODE_CONFIG_ERROR,
@@ -148,14 +149,22 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
     if config.storage_backend == StorageBackendKind::Postgres {
-        config.database_url = crate::secrets::resolve_database_url(&config.database_url)
+        config.database_url = crate::secrets::resolve_database_url(
+            DatabaseCredential::Runtime,
+            Some(&config.database_url),
+            config.database_url_override.as_ref(),
+        )
             .await
             .unwrap_or_else(|error| {
                 fatal_error(
                     &format!("Failed to resolve the database connection secret: {error}"),
                     EXIT_CODE_CONFIG_ERROR,
                 )
-            });
+            })
+            .unwrap_or_else(|| fatal_error(
+                "Database URL is missing from the selected secret source; configure HUBUUM_DATABASE_URL or database/url, or pass --database-url",
+                EXIT_CODE_CONFIG_ERROR,
+            ));
     }
     utilities::auth::initialize_dummy_password_hash();
     let storage_settings = match config.storage_backend {

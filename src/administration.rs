@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -9,10 +9,10 @@ use uuid::Uuid;
 
 use crate::backups::create_backup_document;
 use crate::config::{
-    DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    CommandLineDatabaseUrl, DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
-    DEFAULT_TOKEN_LIFETIME_HOURS, DatabaseRoleMode, token_hash_key_ring,
+    DEFAULT_TOKEN_LIFETIME_HOURS, DatabaseRoleMode, SecretSourceOptions, token_hash_key_ring,
 };
 #[cfg(feature = "embedded-migrations")]
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
@@ -30,6 +30,7 @@ use crate::restores::{
     BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
     restore_status, stage_restore, verify_backup_document,
 };
+use crate::secrets::{self, DatabaseCredential};
 use crate::services::identity as identity_service;
 use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
@@ -59,6 +60,9 @@ const DEFAULT_DATABASE_RUNTIME_ROLE: &str = "hubuum_runtime";
     long_about = None
 )]
 struct AdminCli {
+    #[command(flatten)]
+    secrets: SecretSourceOptions,
+
     /// Write a consistent full-system backup document to this path
     #[arg(long, value_name = "PATH")]
     backup: Option<PathBuf>,
@@ -263,7 +267,11 @@ enum DatabasePrivilegeRole {
 /// This is the workspace-internal boundary used by `hubuum-admin`; callers
 /// should use the CLI rather than depending on server persistence types.
 pub async fn run_admin_from_environment() -> Result<(), ApiError> {
-    let admin_cli = AdminCli::parse();
+    let matches = AdminCli::command().get_matches();
+    let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
+    let migration_url_override =
+        CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
     init_logging(&admin_cli.log_level);
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
@@ -272,6 +280,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             restore_test_database_url: admin_cli.restore_test_database_url.as_deref(),
             configured_database_url: admin_cli.database_url.as_deref(),
             configured_migration_database_url: admin_cli.migration_database_url.as_deref(),
+            secret_source: &admin_cli.secrets,
             storage_backend: admin_cli.storage_backend,
             statement_timeout_ms: admin_cli.db_statement_timeout_ms,
             keep_restore_test_database: admin_cli.keep_restore_test_database,
@@ -311,22 +320,35 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_role_mode = admin_cli.database_role_mode;
     let privileged_database_operation =
         migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
-    let configured_database_url = admin_cli
-        .database_url
-        .as_deref()
-        .filter(|url| !url.trim().is_empty());
-    let configured_migration_database_url = admin_cli
-        .migration_database_url
-        .as_deref()
-        .filter(|url| !url.trim().is_empty());
-    let database_url = if privileged_database_operation && database_role_mode.uses_split_roles() {
-        configured_migration_database_url.map(str::to_owned)
-    } else if privileged_database_operation {
-        configured_migration_database_url
-            .or(configured_database_url)
-            .map(str::to_owned)
+    secrets::initialize(&admin_cli.secrets)
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let database_url = if admin_cli.storage_backend == StorageBackendKind::Postgres {
+        let migration_url = if privileged_database_operation {
+            secrets::resolve_database_url(
+                DatabaseCredential::Migration,
+                admin_cli.migration_database_url.as_deref(),
+                migration_url_override.as_ref(),
+            )
+            .await
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR))
+        } else {
+            None
+        };
+        if privileged_database_operation
+            && (database_role_mode.uses_split_roles() || migration_url.is_some())
+        {
+            migration_url
+        } else {
+            secrets::resolve_database_url(
+                DatabaseCredential::Runtime,
+                admin_cli.database_url.as_deref(),
+                database_url_override.as_ref(),
+            )
+            .await
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR))
+        }
     } else {
-        configured_database_url.map(str::to_owned)
+        None
     };
     let storage_settings = match admin_cli.storage_backend {
         StorageBackendKind::Postgres => {
@@ -341,7 +363,12 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                     "HUBUUM_DATABASE_URL"
                 };
                 fatal_error(
-                    &format!("{variable} must be set if not provided as an argument"),
+                    &format!("{variable} must be set in environment mode; in file mode provide {} under the secret root, or pass the corresponding URL argument",
+                        if privileged_database_operation && database_role_mode.uses_split_roles() {
+                            "database/migration-url"
+                        } else {
+                            "database/url"
+                        }),
                     EXIT_CODE_CONFIG_ERROR,
                 )
             });
@@ -727,6 +754,7 @@ struct BackupVerificationOptions<'a> {
     restore_test_database_url: Option<&'a str>,
     configured_database_url: Option<&'a str>,
     configured_migration_database_url: Option<&'a str>,
+    secret_source: &'a SecretSourceOptions,
     storage_backend: StorageBackendKind,
     statement_timeout_ms: u64,
     keep_restore_test_database: bool,
@@ -756,6 +784,20 @@ async fn verify_backup_file(
             options.configured_migration_database_url,
             options.statement_timeout_ms,
         )?;
+        // Resolve mounted credentials too: a file-backed production endpoint must
+        // retain the same protection as URLs supplied through the CLI/environment.
+        secrets::initialize(options.secret_source)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        for credential in [DatabaseCredential::Runtime, DatabaseCredential::Migration] {
+            let configured = secrets::resolve_database_url(credential, None, None)
+                .await
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            reject_configured_database_target(
+                &target,
+                configured.as_deref(),
+                options.statement_timeout_ms,
+            )?;
+        }
         verify_backup_restore(report, bytes, target, options.keep_restore_test_database).await?
     } else {
         report

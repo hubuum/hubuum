@@ -226,6 +226,14 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 
 ### Configuration Reference
 
+Both binaries support CLI options and environment configuration. Credentials
+can also come from mounted files using `--secret-source file` and
+`--secret-file-root DIRECTORY` (or `HUBUUM_SECRET_SOURCE` and
+`HUBUUM_SECRET_FILE_ROOT`). Environment-backed secrets remain the default.
+[Secret Sources](docs/secret_sources.md) documents precedence, supported
+credentials, rotation, and server/admin deployment examples for both database
+role modes.
+
 - The canonical environment-variable reference lives in [docs/quick_start.md](docs/quick_start.md).
 - Task-worker and async export-template tuning settings are documented there alongside the core server, DB, auth, and TLS settings.
 

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -47,6 +48,160 @@ fn assert_command_succeeded(output: &Output) {
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+struct SecretDirectory(PathBuf);
+
+impl SecretDirectory {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(unique_name("admin_secrets"));
+        std::fs::create_dir_all(root.join("database")).unwrap();
+        Self(root)
+    }
+
+    fn write(&self, name: &str, value: &str) {
+        std::fs::write(self.0.join("database").join(name), value).unwrap();
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(admin_binary());
+        command
+            .env("HUBUUM_SECRET_SOURCE", "file")
+            .env("HUBUUM_SECRET_FILE_ROOT", &self.0)
+            .env_remove("HUBUUM_DATABASE_URL")
+            .env_remove("HUBUUM_MIGRATION_DATABASE_URL");
+        command
+    }
+}
+
+impl Drop for SecretDirectory {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[rstest::rstest]
+#[case::environment(false)]
+#[case::command_line(true)]
+fn database_readiness_uses_file_credentials(#[case] use_cli: bool) {
+    let secrets = SecretDirectory::new();
+    secrets.write("url", &database_url());
+    let mut command = secrets.command();
+    command.env(
+        "HUBUUM_DATABASE_URL",
+        "unsupported://ignored-environment/db",
+    );
+    if use_cli {
+        command
+            .env("HUBUUM_SECRET_SOURCE", "environment")
+            .env("HUBUUM_SECRET_FILE_ROOT", "/missing-environment-root")
+            .args(["--secret-source", "file", "--secret-file-root"])
+            .arg(&secrets.0);
+    }
+    let output = command.arg("--database-ready").output().unwrap();
+    assert_command_succeeded(&output);
+}
+
+#[test]
+fn explicit_database_url_overrides_file_credentials() {
+    let secrets = SecretDirectory::new();
+    secrets.write("url", "unsupported://ignored-file/db");
+    let output = secrets
+        .command()
+        .args(["--database-ready", "--database-url", &database_url()])
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+}
+
+#[test]
+fn explicit_environment_source_overrides_file_environment() {
+    let secrets = SecretDirectory::new();
+    secrets.write("url", "unsupported://ignored-file/db");
+    let output = secrets
+        .command()
+        .env("HUBUUM_DATABASE_URL", database_url())
+        .args(["--database-ready", "--secret-source", "environment"])
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+}
+
+#[test]
+fn missing_database_file_does_not_use_environment_credentials() {
+    let secrets = SecretDirectory::new();
+    let output = secrets
+        .command()
+        .env("HUBUUM_DATABASE_URL", database_url())
+        .arg("--database-ready")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("database/url"));
+}
+
+#[rstest::rstest]
+#[case::single("single", "url")]
+#[case::single_override("single", "migration-url")]
+#[case::split("split", "migration-url")]
+fn restore_executor_resolves_the_topology_specific_file(
+    #[case] mode: &str,
+    #[case] filename: &str,
+) {
+    let secrets = SecretDirectory::new();
+    // A deliberately unsupported scheme proves the chosen file reaches storage
+    // configuration without ever starting an executor or touching the database.
+    secrets.write(filename, "unsupported://file-credential-canary/db");
+    let output = secrets
+        .command()
+        .args(["--restore-executor", "--database-role-mode", mode])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Unsupported database type"));
+    assert!(!stderr.contains("file-credential-canary"));
+}
+
+#[test]
+fn split_restore_executor_requires_a_migration_file() {
+    let secrets = SecretDirectory::new();
+    secrets.write("url", &database_url());
+    let output = secrets
+        .command()
+        .env("HUBUUM_MIGRATION_DATABASE_URL", database_url())
+        .args(["--restore-executor", "--database-role-mode", "split"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("database/migration-url"));
+}
+
+#[rstest::rstest]
+#[case::runtime("url")]
+#[case::migration("migration-url")]
+fn backup_restore_verification_rejects_file_backed_production_targets(#[case] filename: &str) {
+    let secrets = SecretDirectory::new();
+    let url = database_url();
+    let backup = secrets.0.join("backup.json");
+    let output = admin_command(&url)
+        .arg("--backup")
+        .arg(&backup)
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+    secrets.write(filename, &url);
+    let output = secrets
+        .command()
+        .arg("--verify-backup")
+        .arg(&backup)
+        .args(["--restore-test-database-url", &url])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("target matches a configured Hubuum database")
     );
 }
 

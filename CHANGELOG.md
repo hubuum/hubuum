@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Both server and administrator commands now accept `--secret-source` and
+  `--secret-file-root`, with CLI options taking precedence over their environment
+  counterparts. Mounted database credentials now cover administrator readiness,
+  migrations, backups, and restores as well as the server: `database/url` is
+  the runtime/shared URL, and `database/migration-url` is the privileged URL.
+  `single` remains the default role mode; `split` requires the privileged URL
+  for migrations and restores. The configuration guides now explain supported
+  secrets, precedence, and complete single/split deployment examples.
+
 - Added opt-in OpenTelemetry distributed tracing through OTLP/HTTP protobuf
   over verified HTTPS, with bounded batch export, root sampling controls, W3C
   request and outbound propagation, an export-time span and attribute
@@ -67,17 +76,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Existing installations on v0.0.9 or older must first upgrade to v0.0.10 or
   v0.0.11 and create a version 5 backup; version 4-or-older artifacts are not
   converted in place.
-- Added an opt-in split PostgreSQL role topology with a generated privilege
-  manifest, distinct non-login owner, dedicated migrator, and non-owning
-  runtime roles; catalog-backed warn/strict startup diagnostics;
-  administrator SQL and JSON reporting; and Compose, single-host, and
-  distributed deployment workflows that keep the migration credential out of
-  long-lived application containers. The default `single` topology retains one
-  database login for runtime, migrations, and restore execution; set
-  `HUBUUM_DATABASE_ROLE_MODE=split` to enable the least-privilege boundary. Web
-  restore is preserved in either topology through a separate, non-listening
-  restore-executor workload, with document-free terminal receipts for
-  capability-authenticated status polling.
+- Added an opt-in split PostgreSQL role topology. **`single` remains the
+  default**, including when `HUBUUM_DATABASE_ROLE_MODE` is unset: one shared
+  database login through `HUBUUM_DATABASE_URL` can serve runtime, migrations,
+  and restore execution. Set `HUBUUM_DATABASE_ROLE_MODE=split` to opt into
+  distinct non-login owner, dedicated migrator, and non-owning runtime roles,
+  with a generated privilege manifest, catalog-backed warn/strict startup
+  diagnostics, administrator SQL and JSON reporting, and Compose, single-host,
+  and distributed deployment workflows that keep the migration credential out
+  of API and worker containers. Both modes use a separate, non-listening
+  executor process for web restores, with document-free terminal receipts for
+  capability-authenticated status polling. See
+  [PostgreSQL Database Roles](docs/database_roles.md) for both deployment modes.
 - Added bounded online token hash key-ring rotation with versioned bearer
   tokens, active and previous verification keys, race-safe migration of legacy
   digests, strict stable-key startup enforcement, per-key retirement
@@ -142,29 +152,39 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   processed count plus the source events' trace links and persist/project the
   nullable task trace-link fields. Apply the included task and event trace-link
   migration before starting upgraded API or worker processes.
-- **Breaking (database deployment):** server container entrypoints no longer
-  apply migrations. Run `hubuum-admin --migrate` as a one-shot workload before
-  rolling the server and deploy the isolated restore executor. Existing
-  installations may keep one database login: `single` is the default and
-  privileged admin commands fall back to `HUBUUM_DATABASE_URL`.
+- **Breaking (database deployment, both `single` and `split` modes):** server
+  container entrypoints no longer apply migrations. Run
+  `hubuum-admin --migrate` as a one-shot workload before rolling the server.
+  In the default `single` mode, keep the existing `HUBUUM_DATABASE_URL`; no new
+  database roles or separate migration credential are required. Migration and
+  restore commands use that URL unless an optional
+  `HUBUUM_MIGRATION_DATABASE_URL` override is configured.
   `--legacy-single-role-migration` remains as a deprecated compatibility alias.
-  Deployments choosing `HUBUUM_DATABASE_ROLE_MODE=split` must provision the
-  documented owner, migrator, and runtime roles, set the runtime and migration
-  URLs separately, and complete the adoption sequence before enabling strict
-  checks or web restore confirmation. Existing users of the split-only local
-  Compose example must also retain `POSTGRES_USER=hubuum_bootstrap` when reusing
-  its database volume. Split-role migration serializes with
+- Deployments opting into `HUBUUM_DATABASE_ROLE_MODE=split` must provision the
+  documented owner, migrator, and runtime roles, use `HUBUUM_DATABASE_URL` for
+  the runtime login and `HUBUUM_MIGRATION_DATABASE_URL` for the migrator login,
+  and complete the [split-role adoption sequence](docs/database_roles.md#adopting-an-existing-single-role-database)
+  before enabling strict checks or web restore confirmation. These role and
+  credential changes are optional for installations remaining in `single`
+  mode. Existing users of the split-only local Compose example must also retain
+  `POSTGRES_USER=hubuum_bootstrap` when reusing its database volume.
+  Split-role migration serializes with
   confirmation, refuses an in-flight confirmed restore, preserves validated
   stages, and transfers table ownership before attached sequences. Rollback
   must leave old synchronous web confirmation blocked; use the new one-shot
   administrator restore path until the executor-based release is restored.
-- **Breaking (full restore):** `POST /api/v1/restores/{restore_id}/confirm` now
-  returns `202 Accepted` after queuing the validated operation instead of
-  completing the replacement synchronously. Deploy
-  `hubuum-admin --restore-executor` with the migration database credential
-  before allowing confirmations, and update clients to poll the existing
-  capability-authenticated status endpoint until `succeeded` or `failed`.
-  One-shot `hubuum-admin --restore` remains available.
+- **Breaking (full restore, both `single` and `split` modes):**
+  `POST /api/v1/restores/{restore_id}/confirm` now returns `202 Accepted` after
+  queuing the validated operation instead of completing the replacement
+  synchronously. Deploy a separate `hubuum-admin --restore-executor` process
+  before allowing web restore confirmations in either mode. In the default
+  `single` mode, it uses the existing `HUBUUM_DATABASE_URL` unless the optional
+  migration URL override is configured; in `split` mode, it requires
+  `HUBUUM_MIGRATION_DATABASE_URL` with the migrator credential. Update clients
+  in both modes to poll `GET /api/v1/restores/{restore_id}/status` with the
+  restore capability until `succeeded` or `failed`. One-shot
+  `hubuum-admin --restore` remains available in both modes and executes the
+  restore in its own process, without requiring a separately running executor.
 - Temporal history and append-only audit-event triggers now reject forged
   restore and purge session flags from the runtime role. Event retention uses
   a bounded, allowlisted security-definer function tied to an existing durable
@@ -190,7 +210,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `HUBUUM_SECRET_FILE_ROOT` to use bounded regular files, including confined
   Kubernetes projected-secret symlinks. LDAP, event, and remote integrations
   observe rotation after cache refresh; PostgreSQL pools and token hashing
-  explicitly require restart rather than claiming unsafe live rotation.
+  load their values at startup and require process restarts after changes;
+  token-key changes follow the staged key-ring rollout.
 
 - **Breaking:** template execution requires `hubuum-template-worker` beside the
   server and administrator binaries. Containers and release archives include
@@ -202,6 +223,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   behavior is preserved. See `docs/template_worker.md` for limits and deployment.
 
 ### Fixed
+
+- Explicit `--database-url` arguments are no longer overwritten by an inherited
+  environment value during server startup. Explicit runtime and migration URL
+  arguments override the selected secret source; missing required files never
+  fall back to environment credentials. Container startup forwards the server's
+  secret-source and database overrides to its administrator readiness probe.
+  Restore verification also checks mounted database URLs before allowing a
+  disposable restore target, preserving production-database safeguards.
 
 - Best-effort imports now publish only the current item's references after
   commit, avoiding repeated copies of earlier

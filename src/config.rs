@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -22,10 +22,13 @@ use environment::{constraints, validate_configuration_bounds};
 
 mod client_network;
 mod defaults;
+mod secret_source;
 mod tls_backend;
 mod token_hash;
 pub use client_network::{ClientAllowlist, ClientNetworkParseError, TrustedProxies};
 pub use defaults::*;
+pub use secret_source::SecretSourceOptions;
+pub(crate) use secret_source::{CommandLineDatabaseUrl, SecretSourceSettings};
 pub use tls_backend::TlsBackend;
 pub use token_hash::{
     TokenHashKeyConfigError, TokenHashKeyRing, token_hash_key_bytes, token_hash_key_is_ephemeral,
@@ -229,6 +232,14 @@ impl LoginRateLimitBackendKind {
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    #[command(flatten)]
+    #[serde(default)]
+    pub secrets: SecretSourceOptions,
+
+    #[clap(skip)]
+    #[serde(skip)]
+    pub(crate) database_url_override: Option<CommandLineDatabaseUrl>,
+
     /// Runtime role: combined API/workers, API-only, or worker-only.
     #[clap(long, env = "HUBUUM_RUNTIME_ROLE", default_value = "all")]
     pub runtime_role: RuntimeRole,
@@ -1136,6 +1147,13 @@ pub(crate) fn app_command() -> clap::Command {
 }
 
 impl AppConfig {
+    pub(crate) fn from_cli_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
+        let mut config = Self::from_arg_matches(matches)?;
+        config.database_url_override =
+            CommandLineDatabaseUrl::from_matches(matches, "database_url");
+        Ok(config)
+    }
+
     /// Backend-neutral export read budget used by the application boundary.
     ///
     /// The legacy PostgreSQL-named configuration field remains the operator
@@ -1619,7 +1637,10 @@ pub fn login_rate_limit_config() -> LoginRateLimitConfig {
 #[cfg(not(test))]
 fn load_config() -> Result<AppConfig, ApiError> {
     environment::validate_registry().map_err(ApiError::BadRequest)?;
-    match AppConfig::try_parse() {
+    match AppConfig::command()
+        .try_get_matches()
+        .and_then(|matches| AppConfig::from_cli_matches(&matches))
+    {
         Ok(config) => config.validate(),
         Err(error) => match error.kind() {
             clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
@@ -1752,6 +1773,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        secrets: SecretSourceOptions::from_environment()
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        database_url_override: None,
         runtime_role: env_or_default_runtime_role("HUBUUM_RUNTIME_ROLE", RuntimeRole::All),
         storage_backend: env_or_default_storage_backend(
             "HUBUUM_STORAGE_BACKEND",
@@ -2205,6 +2229,19 @@ mod tests {
         default_task_workers, get_config_from_env, token_hash_key_bytes,
         token_hash_key_is_ephemeral,
     };
+
+    #[test]
+    fn server_preserves_explicit_database_url_provenance() {
+        use clap::CommandFactory;
+        let matches = AppConfig::command()
+            .try_get_matches_from(["hubuum-server", "--database-url", "postgres://cli/db"])
+            .unwrap();
+        let parsed = AppConfig::from_cli_matches(&matches).unwrap();
+        assert_eq!(
+            parsed.database_url_override.unwrap().as_str(),
+            "postgres://cli/db"
+        );
+    }
 
     struct EnvVarGuard {
         key: &'static str,

@@ -310,8 +310,6 @@ impl RunningConfig {
                 network_count: networks.len(),
             },
         };
-        let (secret_provider, secret_file_root_configured) =
-            crate::secrets::running_source_configuration();
         let secret_cache_policy = hubuum_secrets::CachePolicy::default();
         let token_hash_keys = token_hash_key_ring()
             .expect("token hash key-ring configuration must be validated before serving config");
@@ -412,8 +410,8 @@ impl RunningConfig {
                 allow_private_targets: config.remote_call_allow_private_targets,
             },
             secrets: SecretSourceConfig {
-                provider: secret_provider.to_string(),
-                file_root_configured: secret_file_root_configured,
+                provider: config.secrets.provider_label().to_string(),
+                file_root_configured: config.secrets.file_root_configured(),
                 cache_capacity_per_consumer: secret_cache_policy.capacity().get(),
                 cache_total_bytes_per_consumer: secret_cache_policy.total_byte_limit().get(),
                 cache_ttl_seconds: secret_cache_policy.ttl().as_secs(),
@@ -534,6 +532,27 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn running_config_reports_cli_secret_source_without_exposing_the_root() {
+        use clap::Parser;
+        let config = AppConfig::try_parse_from([
+            "hubuum-server",
+            "--secret-source",
+            "file",
+            "--secret-file-root",
+            "/private/secret-canary",
+        ])
+        .unwrap();
+        let running = RunningConfig::from(&config);
+        assert_eq!(running.secrets.provider, "file");
+        assert!(running.secrets.file_root_configured);
+        assert!(
+            !serde_json::to_string(&running)
+                .unwrap()
+                .contains("secret-canary")
+        );
+    }
 
     #[test]
     fn running_config_is_an_explicit_redacted_projection() {

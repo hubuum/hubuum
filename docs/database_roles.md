@@ -22,6 +22,21 @@ The default names are `hubuum_owner`, `hubuum_migrator`, and
 `HUBUUM_DATABASE_RUNTIME_ROLE`. These names and the generated privilege
 manifest are ignored by normal server startup in `single` mode.
 
+## Credential Sources
+
+Both `hubuum-server` and `hubuum-admin` default to environment-backed secrets.
+Set `HUBUUM_SECRET_SOURCE=file` and `HUBUUM_SECRET_FILE_ROOT`, or use
+`--secret-source file --secret-file-root DIRECTORY`, for mounted credentials.
+References to `HUBUUM_DATABASE_URL` below then map to `database/url`; references
+to `HUBUUM_MIGRATION_DATABASE_URL` map to `database/migration-url`. Explicit URL
+arguments override the selected source.
+
+Single mode can share `database/url` across runtime, migration, and restore
+workloads. Split mode requires the migrator file for privileged workloads and
+must not mount it into API or ordinary worker containers. The role mode remains
+`single` by default regardless of the secret source. See
+[Secret Sources](secret_sources.md) for precedence and complete examples.
+
 ## Choosing A Topology
 
 Use `single` when the database provider supplies one application identity or

@@ -498,6 +498,22 @@ Common optional parameters:
 - `--recreate`: regenerate generated secrets. The managed Postgres password is preserved, because the existing database volume was initialized with it and rotating it would break authentication. To reset the database, uninstall with `--purge` first, then reinstall.
 - `--no-pull`: skip pulling images before starting.
 
+## Mounted Secret Files
+
+The installer generates environment-backed configuration by default. Native
+binaries and custom container deployments can instead select file-backed
+credentials through `--secret-source file --secret-file-root DIRECTORY` or
+the corresponding `HUBUUM_SECRET_SOURCE` and `HUBUUM_SECRET_FILE_ROOT` variables.
+Both the server and administrator support the same file layout and explicit
+URL overrides. See the complete [mounted-secret deployment example](secret_sources.md#single-role-deployment-example)
+and [split-role mounts](secret_sources.md#split-role-mounts).
+
+The installer does not provision secret files or mounts. Merely adding these
+variables to a host `.env` file does not mount files or pass new variables into
+an existing Compose service; configure each workload's container environment
+and read-only mounts explicitly. Keep the migrator file isolated from API and
+worker containers in split mode.
+
 ## Generated Environment
 
 Backend:

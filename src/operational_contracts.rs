@@ -1750,8 +1750,7 @@ fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }
-        "HUBUUM_SECRET_SOURCE" => ("enum", &["environment"], &["environment", "file"]),
-        "HUBUUM_SECRET_FILE_ROOT" | "HUBUUM_AUTH_CONFIG_HOST_PATH" => ("path", &[], &[]),
+        "HUBUUM_AUTH_CONFIG_HOST_PATH" => ("path", &[], &[]),
         _ => return None,
     };
     Some(CliArgumentMetadata {
@@ -2122,8 +2121,6 @@ fn admin_process_environment(name: &str) -> bool {
             | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
             | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
             | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
-            | "HUBUUM_SECRET_SOURCE"
-            | "HUBUUM_SECRET_FILE_ROOT"
     )
 }
 
@@ -2162,8 +2159,6 @@ fn appears_in_running_configuration(name: &str) -> bool {
                 | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
                 | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
                 | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
-                | "HUBUUM_SECRET_SOURCE"
-                | "HUBUUM_SECRET_FILE_ROOT"
         )
 }
 

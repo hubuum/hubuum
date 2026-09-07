@@ -4980,7 +4980,7 @@
         "admin"
       ],
       "appears_in_running_configuration": true,
-      "source": "process",
+      "source": "server",
       "dynamic_prefix": false
     },
     {
@@ -5006,7 +5006,7 @@
         "admin"
       ],
       "appears_in_running_configuration": true,
-      "source": "process",
+      "source": "server",
       "dynamic_prefix": false
     },
     {
@@ -6630,6 +6630,45 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "secret_source",
+          "long": "secret-source",
+          "short": null,
+          "environment": "HUBUUM_SECRET_SOURCE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "environment"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "environment",
+            "file"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "secret_file_root",
+          "long": "secret-file-root",
+          "short": null,
+          "environment": "HUBUUM_SECRET_FILE_ROOT",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "runtime_role",
           "long": "runtime-role",
@@ -8891,6 +8930,45 @@
     {
       "command": "hubuum-admin",
       "options": [
+        {
+          "id": "secret_source",
+          "long": "secret-source",
+          "short": null,
+          "environment": "HUBUUM_SECRET_SOURCE",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "environment"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "environment",
+            "file"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "secret_file_root",
+          "long": "secret-file-root",
+          "short": null,
+          "environment": "HUBUUM_SECRET_FILE_ROOT",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "backup",
           "long": "backup",
