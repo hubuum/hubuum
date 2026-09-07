@@ -1,6 +1,7 @@
 use crate::operations::import_workflow;
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_storage_core::{FencedImportPlan, FencedImportResults};
 
 use hubuum_storage_core::{
     ImportStorage, StorageClass, StorageCollection, StorageError, StorageImportApply,
@@ -143,6 +144,28 @@ impl ImportStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
+    async fn apply_claimed_import_strict(
+        &self,
+        plan: FencedImportPlan,
+    ) -> Result<(), StorageError> {
+        crate::operations::import_execution::apply_claimed_import_strict(self.runtime(), plan)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn apply_claimed_import_best_effort(
+        &self,
+        plan: FencedImportPlan,
+        mode: StorageImportMode,
+    ) -> Result<StorageImportApply, StorageError> {
+        crate::operations::import_execution::apply_claimed_import_best_effort(
+            self.runtime(),
+            plan,
+            mode,
+        )
+        .await
+        .map_err(StorageError::from)
+    }
+
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         import_workflow::apply_import_strict(self.runtime(), plan)
             .await
@@ -164,6 +187,15 @@ impl ImportStorage for PostgresStorage {
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
         import_workflow::record_results(self.runtime(), results)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn record_claimed_import_results(
+        &self,
+        results: FencedImportResults,
+    ) -> Result<(), StorageError> {
+        crate::operations::import_execution::record_claimed_import_results(self.runtime(), results)
             .await
             .map_err(StorageError::from)
     }

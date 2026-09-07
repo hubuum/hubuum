@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-storage-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Backend-neutral storage contracts and diagnostics for Hubuum."
@@ -18,11 +18,11 @@ release-train = "storage-sdk"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
-hubuum-computed-fields = { version = "=0.1.0", path = "../hubuum-computed-fields" }
-hubuum-domain = { version = "=0.1.0", path = "../hubuum-domain" }
-hubuum-events-core = { version = "=0.1.0", path = "../hubuum-events-core" }
-hubuum-query = { version = "=0.1.0", path = "../hubuum-query" }
-hubuum-task-core = { version = "=0.1.0", path = "../hubuum-task-core" }
+hubuum-computed-fields = { version = "=0.2.0", path = "../hubuum-computed-fields" }
+hubuum-domain = { version = "=0.2.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "=0.2.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "=0.2.0", path = "../hubuum-query" }
+hubuum-task-core = { version = "=0.2.0", path = "../hubuum-task-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

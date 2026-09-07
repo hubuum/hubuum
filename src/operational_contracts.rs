@@ -2895,7 +2895,12 @@ mod tests {
         1,
         crate::config::MAX_COMPUTED_REINDEX_BATCH_SIZE
     )]
-    fn batch_settings_publish_the_authoritative_runtime_bounds(
+    #[case(
+        "HUBUUM_MAX_TRANSITIVE_DEPTH",
+        1,
+        hubuum_query::MAX_TRAVERSAL_DEPTH as usize
+    )]
+    fn numeric_settings_publish_the_authoritative_runtime_bounds(
         #[case] name: &str,
         #[case] minimum: usize,
         #[case] maximum: usize,

@@ -348,6 +348,7 @@ fn history_private_fields(section: StorageBackupHistorySection) -> &'static [&'s
             "lease_expires_at",
         ],
         StorageBackupHistorySection::AuditEvents => &["fanout_locked_until", "fanout_claim_token"],
+        StorageBackupHistorySection::ImportResults => &["execution_index", "execution_claim_token"],
         StorageBackupHistorySection::TerminalEventDeliveries => &["locked_until", "claim_token"],
         _ => &[],
     }
@@ -849,6 +850,25 @@ mod tests {
         state_row_to_logical(StorageBackupStateSection::Users, &mut row).unwrap();
 
         assert!(row.get("password").is_none());
+    }
+
+    #[test]
+    fn import_history_omits_execution_capabilities() {
+        let mut row = json!({"task_id": 4, "outcome": "succeeded", "execution_index": 0,
+            "execution_claim_token": "00000000-0000-0000-0000-000000000001"});
+        history_row_to_logical(StorageBackupHistorySection::ImportResults, &mut row).unwrap();
+        assert_eq!(row, json!({"task_id": 4, "outcome": "succeeded"}));
+    }
+
+    #[rstest]
+    #[case("execution_claim_token")]
+    #[case("execution_index")]
+    fn restore_rejects_import_execution_capabilities(#[case] field: &str) {
+        let result = history_row_to_postgres(
+            StorageBackupHistorySection::ImportResults,
+            json!({"task_id": 4, field: "injected"}),
+        );
+        assert!(result.is_err(), "backups cannot recreate worker authority");
     }
 
     #[test]

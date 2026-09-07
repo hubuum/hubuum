@@ -237,6 +237,158 @@ fn restore_requires_destructive_confirmation_before_database_access() {
     assert!(!stderr.contains("Unsupported database type"));
 }
 
+#[cfg(unix)]
+mod restore_streams {
+    use std::fs::{OpenOptions, remove_file};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::PathBuf;
+    use std::process::{Command, Output, Stdio};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread::{self, JoinHandle};
+    use std::time::{Duration, Instant};
+
+    use hubuum::models::RESTORE_CONFIRMATION_PHRASE;
+    use rstest::rstest;
+
+    use super::{admin_binary, unique_name};
+
+    fn run_command(mut command: Command) -> Output {
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("administrator command should start");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while child
+            .try_wait()
+            .expect("command status should be available")
+            .is_none()
+        {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .expect("timed-out command should exit");
+                panic!("stream-input command timed out: {output:?}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        child
+            .wait_with_output()
+            .expect("command output should be available")
+    }
+
+    struct FifoInput {
+        path: PathBuf,
+        cancelled: Arc<AtomicBool>,
+        producer: Option<JoinHandle<()>>,
+    }
+
+    impl FifoInput {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(unique_name("restore_fifo"));
+            assert!(
+                Command::new("mkfifo")
+                    .args(["-m", "600"])
+                    .arg(&path)
+                    .status()
+                    .expect("mkfifo should run")
+                    .success()
+            );
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let producer_path = path.clone();
+            let producer_cancelled = cancelled.clone();
+            let producer = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(30);
+                // Do not leave a producer blocked in open if CLI validation
+                // fails before the consumer opens the FIFO.
+                while !producer_cancelled.load(Ordering::Relaxed) && Instant::now() < deadline {
+                    match OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&producer_path)
+                    {
+                        Ok(mut file) => {
+                            // The verifier may close the pipe without reading.
+                            let _ = file.write_all(br#"{"backup_version":5}"#);
+                            return;
+                        }
+                        Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("failed to open FIFO producer: {error}"),
+                    }
+                }
+            });
+            Self {
+                path,
+                cancelled,
+                producer: Some(producer),
+            }
+        }
+    }
+
+    impl Drop for FifoInput {
+        fn drop(&mut self) {
+            self.cancelled.store(true, Ordering::Relaxed);
+            if let Some(producer) = self.producer.take() {
+                let _ = producer.join();
+            }
+            let _ = remove_file(&self.path);
+        }
+    }
+
+    #[rstest]
+    #[case::restore("--restore", "Restore document is not valid backup JSON")]
+    #[case::verify("--verify-backup", "must be an ordinary file")]
+    fn fifo_input_preserves_each_commands_read_policy(
+        #[case] operation: &str,
+        #[case] expected_error: &str,
+    ) {
+        let input = FifoInput::new();
+        let mut command = Command::new(admin_binary());
+        command.args(["--storage-backend", "memory"]);
+        command.arg(operation).arg(&input.path);
+        if operation == "--restore" {
+            command.args(["--restore-confirmation", RESTORE_CONFIRMATION_PHRASE]);
+        }
+
+        let output = run_command(command);
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_error),
+            "unexpected error: {stderr}"
+        );
+    }
+
+    #[test]
+    fn restore_reads_process_substitution_before_backup_validation() {
+        let mut command = Command::new("bash");
+        command.env_remove("BASH_ENV").args([
+            "-c",
+            r#"exec "$1" --restore <(printf '%s' '{"backup_version":5}') "${@:2}""#,
+            "restore-process-substitution-test",
+            admin_binary(),
+            "--storage-backend",
+            "memory",
+            "--restore-confirmation",
+            RESTORE_CONFIRMATION_PHRASE,
+        ]);
+        let output = run_command(command);
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Restore document is not valid backup JSON"),
+            "unexpected error: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn invalid_log_level_is_reported_before_logging_is_initialized() {
     let output = Command::new(admin_binary())

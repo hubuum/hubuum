@@ -85,7 +85,7 @@ async fn get_class_relations(
         let resources = class_relation_authorization_resources(&context, &candidates).await?;
         let resources = resources
             .into_iter()
-            .map(|resource| (resource.id, resource))
+            .map(|resource| (resource.id(), resource))
             .collect::<HashMap<_, _>>();
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
@@ -98,7 +98,7 @@ async fn get_class_relations(
             &search_params,
             |relation| {
                 resources
-                    .get(&relation.id)
+                    .get(&Some(relation.id))
                     .expect("every relation candidate has an authorization resource")
                     .clone()
             },
@@ -331,7 +331,7 @@ async fn get_object_relations(
         let resources = object_relation_authorization_resources(&context, &candidates).await?;
         let resources = resources
             .into_iter()
-            .map(|resource| (resource.id, resource))
+            .map(|resource| (resource.id(), resource))
             .collect::<HashMap<_, _>>();
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
@@ -344,7 +344,7 @@ async fn get_object_relations(
             &search_params,
             |relation| {
                 resources
-                    .get(&relation.id)
+                    .get(&Some(relation.id))
                     .expect("every relation candidate has an authorization resource")
                     .clone()
             },

@@ -11,7 +11,7 @@
 //! pulling in unrelated debug spam.
 //!
 //! Field discipline: we deliberately do NOT log policy payloads, full
-//! `ResourceAttrs`, or principal group lists. Counts and durations only.
+//! `ResourceFields`, or principal group lists. Counts and durations only.
 //! If you need to debug a specific request, raise the level on the SQL
 //! crate or the underlying treetop-client — not on this module.
 //!

@@ -117,6 +117,19 @@ pub(super) struct PlannedTaskResult {
 }
 
 impl PlannedTaskResult {
+    pub(super) fn success_result(&self, task_id: hubuum_domain::TaskId) -> StorageImportResult {
+        StorageImportResult::builder(
+            task_id,
+            self.entity_kind.clone(),
+            self.action.clone(),
+            "succeeded",
+        )
+        .item_ref(self.item_ref.clone())
+        .identifier(self.identifier.clone())
+        .details(self.details.clone())
+        .build()
+    }
+
     pub(super) fn set_observed_revision(
         &mut self,
         revision: Option<crate::models::ResourceRevision>,

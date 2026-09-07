@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use crate::services::authentication::ExecutionPrincipal;
 use base64::Engine;
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
@@ -58,7 +59,7 @@ fn local_remote_targets_enabled_for_tests() -> bool {
 pub(super) async fn execute_remote_call_task<C>(
     backend: &C,
     task: &ClaimedTask,
-    user: &impl AuthzSubject,
+    user: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
 ) -> Result<TaskStatus, ApiError>
 where

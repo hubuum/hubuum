@@ -59,9 +59,12 @@ maintenance = [
     "RestoreStorage::resume_terminal_restore",
     "RestoreStorage::tick_restore_coordinator",
     "RestoreStorage::remove_restore_instance",
+    "ImportStorage::apply_claimed_import_strict",
+    "ImportStorage::apply_claimed_import_best_effort",
     "ImportStorage::apply_import_strict",
     "ImportStorage::apply_import_best_effort",
     "ImportStorage::record_import_results",
+    "ImportStorage::record_claimed_import_results",
 ]
 
 [traits.CollectionStorage]
@@ -311,9 +314,9 @@ native_scenarios = ["tests/restore_roundtrip.rs::interrupted_restore_is_reconcil
 
 [traits.ImportStorage]
 source = "crates/hubuum-storage-core/src/import_workflow.rs"
-methods = ["get_import_root_collection", "get_import_collection_by_id", "get_import_collection_by_key", "list_import_collections_by_name", "get_import_collection_child_by_name", "get_import_class_by_name", "list_import_classes_by_names", "get_import_object_by_name", "list_import_objects_by_names", "has_import_class_relation", "has_import_object_relation", "has_import_group", "preflight_import", "apply_import_strict", "apply_import_best_effort", "record_import_results"]
-effects = { point_read = ["get_import_root_collection", "get_import_collection_by_id", "get_import_collection_by_key", "get_import_collection_child_by_name", "get_import_class_by_name", "get_import_object_by_name", "has_import_class_relation", "has_import_object_relation", "has_import_group"], batch_read = ["list_import_classes_by_names", "list_import_objects_by_names"], complete_read = ["list_import_collections_by_name"], validation = ["preflight_import"], workflow_mutation = ["apply_import_strict", "apply_import_best_effort", "record_import_results"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue"]
+methods = ["get_import_root_collection", "get_import_collection_by_id", "get_import_collection_by_key", "list_import_collections_by_name", "get_import_collection_child_by_name", "get_import_class_by_name", "list_import_classes_by_names", "get_import_object_by_name", "list_import_objects_by_names", "has_import_class_relation", "has_import_object_relation", "has_import_group", "preflight_import", "apply_claimed_import_strict", "apply_claimed_import_best_effort", "apply_import_strict", "apply_import_best_effort", "record_import_results", "record_claimed_import_results"]
+effects = { point_read = ["get_import_root_collection", "get_import_collection_by_id", "get_import_collection_by_key", "get_import_collection_child_by_name", "get_import_class_by_name", "get_import_object_by_name", "has_import_class_relation", "has_import_object_relation", "has_import_group"], batch_read = ["list_import_classes_by_names", "list_import_objects_by_names"], complete_read = ["list_import_collections_by_name"], validation = ["preflight_import"], workflow_mutation = ["apply_claimed_import_strict", "apply_claimed_import_best_effort", "apply_import_strict", "apply_import_best_effort", "record_import_results", "record_claimed_import_results"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_fences_planning_result_writes", "src/tests/storage_contract.rs::every_available_storage_backend_commits_claimed_import_effects_and_receipts", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_import_contract", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue"]
 
 [traits.ExportTemplateStorage]
 source = "crates/hubuum-storage-core/src/export_template_lifecycle.rs"

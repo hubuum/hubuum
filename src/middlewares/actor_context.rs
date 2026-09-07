@@ -1,3 +1,4 @@
+use crate::errors::ApiError;
 use crate::events::{MutationProvenance, RequestProvenance};
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::Token;
@@ -17,7 +18,10 @@ pub(crate) enum ResolvedAuth {
         token_meta: StorageAuthenticatedToken,
     },
     Missing,
-    Invalid,
+    Invalid {
+        token: Token,
+        error: ApiError,
+    },
 }
 
 fn bearer_token(req: &ServiceRequest) -> Option<Token> {
@@ -40,7 +44,7 @@ async fn resolve_auth(req: &ServiceRequest, backend: &AppContext) -> ResolvedAut
     };
     match crate::services::authentication::authenticate_bearer_token(backend, &token).await {
         Ok(token_meta) => ResolvedAuth::Authenticated { token, token_meta },
-        Err(_) => ResolvedAuth::Invalid,
+        Err(error) => ResolvedAuth::Invalid { token, error },
     }
 }
 

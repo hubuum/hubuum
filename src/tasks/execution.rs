@@ -1,3 +1,4 @@
+use crate::services::authentication::ExecutionPrincipal;
 use tracing::{Instrument, info, info_span, warn};
 
 use crate::errors::ApiError;
@@ -10,18 +11,19 @@ use crate::permissions::AuthorizationContext;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
 };
-use crate::storage::{ImportStorage, StorageTaskCompletionPayload};
-
-use super::helpers::{
-    flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
+use crate::storage::{
+    FencedImportItem, FencedImportPlan, ImportStorage, StorageTaskCompletionPayload,
 };
+use crate::traits::PrincipalIdAccessor;
+
+use super::helpers::flush_import_result_batches;
 use super::planning::plan_import;
 use super::types::{ExecutionAccumulator, PlannedItem, TerminalTaskUpdate};
 
 pub(super) async fn execute_import_task<C>(
     backend: &C,
     task: &ClaimedTask,
-    user: &impl crate::traits::AuthzSubject,
+    user: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
 ) -> Result<TaskStatus, ApiError>
 where
@@ -168,11 +170,11 @@ where
                     failure.message_for_storage(),
                     outcome,
                 );
-                flush_import_result_batches(pool, &mut accumulator, false).await?;
+                flush_import_result_batches(pool, task, &mut accumulator, false).await?;
             }
             for item in &planned_items {
                 accumulator.push_success(task.id, &item.result, "planned");
-                flush_import_result_batches(pool, &mut accumulator, false).await?;
+                flush_import_result_batches(pool, task, &mut accumulator, false).await?;
             }
         } else {
             for failure in failures {
@@ -183,29 +185,24 @@ where
                     failure.message_for_storage(),
                     outcome,
                 );
-                flush_import_result_batches(pool, &mut accumulator, false).await?;
+                flush_import_result_batches(pool, task, &mut accumulator, false).await?;
             }
+            flush_import_result_batches(pool, task, &mut accumulator, true).await?;
             match atomicity {
                 ImportAtomicity::Strict => {
-                    execute_import_strict(pool, task.id, &planned_items, &mut accumulator)
+                    execute_import_strict(pool, task, &planned_items, &mut accumulator)
                         .instrument(info_span!("import_apply", mode = "strict"))
                         .await?;
                 }
                 ImportAtomicity::BestEffort => {
-                    execute_import_best_effort(
-                        pool,
-                        task.id,
-                        &planned_items,
-                        &mode,
-                        &mut accumulator,
-                    )
-                    .instrument(info_span!("import_apply", mode = "best_effort"))
-                    .await?;
+                    execute_import_best_effort(pool, task, &planned_items, &mode, &mut accumulator)
+                        .instrument(info_span!("import_apply", mode = "best_effort"))
+                        .await?;
                 }
             }
         }
 
-        flush_import_result_batches(pool, &mut accumulator, true).await?;
+        flush_import_result_batches(pool, task, &mut accumulator, true).await?;
 
         let status = if accumulator.failed == 0 {
             TaskStatus::Succeeded
@@ -288,89 +285,73 @@ async fn finalize_task(
     Ok(status)
 }
 
-fn import_storage_plan(
+fn fenced_import_plan(
+    task: &ClaimedTask,
     planned_items: &[PlannedItem],
-) -> Result<crate::storage::StorageImportPlan, ApiError> {
+) -> Result<FencedImportPlan, ApiError> {
     let items = planned_items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| item.execution.clone().map(|execution| (index, execution)))
-        .map(|(index, execution)| {
-            crate::services::import_boundary::import_operation_to_storage(execution)
-                .map(|execution| crate::storage::StorageImportPlanItem::new(index, execution))
+        .map(|(index, item)| {
+            let operation = item
+                .execution
+                .clone()
+                .map(crate::services::import_boundary::import_operation_to_storage)
+                .transpose()?;
+            Ok(FencedImportItem::new(
+                index,
+                operation,
+                item.result.success_result(task.lease().task_id()),
+            ))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    crate::storage::StorageImportPlan::try_new(items).map_err(ApiError::from)
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    FencedImportPlan::try_new(task.lease().clone(), items).map_err(ApiError::from)
 }
 
 pub(super) async fn execute_import_strict(
     pool: &impl crate::storage::StorageContext,
-    task_id: i32,
+    task: &ClaimedTask,
     planned_items: &[PlannedItem],
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
     crate::storage::storage_handle(pool)
-        .apply_import_strict(import_storage_plan(planned_items)?)
+        .apply_claimed_import_strict(fenced_import_plan(task, planned_items)?)
         .await?;
 
-    for item in planned_items {
-        accumulator.push_success(task_id, &item.result, "succeeded");
-        flush_import_result_batches(pool, accumulator, false).await?;
+    for _ in planned_items {
+        accumulator.processed += 1;
+        accumulator.success += 1;
     }
     Ok(())
 }
 
 pub(super) async fn execute_import_best_effort(
     pool: &impl crate::storage::StorageContext,
-    task_id: i32,
+    task: &ClaimedTask,
     planned_items: &[PlannedItem],
     mode: &ImportMode,
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
     let (outcomes, aborted) = crate::storage::storage_handle(pool)
-        .apply_import_best_effort(
-            import_storage_plan(planned_items)?,
+        .apply_claimed_import_best_effort(
+            fenced_import_plan(task, planned_items)?,
             crate::services::import_boundary::import_mode_to_storage(mode.clone()),
         )
         .await?
         .into_parts();
-    let cutoff = aborted
-        .then(|| outcomes.last().map(|item| item.index()))
-        .flatten();
-    let mut outcomes = outcomes
-        .into_iter()
-        .map(|item| {
-            let (index, error) = item.into_parts();
-            (index, error)
-        })
-        .collect::<std::collections::HashMap<_, _>>();
-
-    for (index, item) in planned_items.iter().enumerate() {
-        if cutoff.is_some_and(|cutoff| index > cutoff) {
-            break;
+    for outcome in outcomes {
+        accumulator.processed += 1;
+        if outcome.into_parts().1.is_some() {
+            accumulator.failed += 1;
+        } else {
+            accumulator.success += 1;
         }
-        match outcomes.remove(&index) {
-            Some(Some(error)) => {
-                let error = ApiError::from(error);
-                let outcome = import_failure_outcome(&error);
-                let sanitized_error = sanitize_error_for_storage(&error);
-                accumulator.push_failure(task_id, &item.result, sanitized_error, outcome);
-            }
-            Some(None) | None if item.execution.is_none() => {
-                accumulator.push_success(task_id, &item.result, "succeeded");
-            }
-            Some(None) => {
-                accumulator.push_success(task_id, &item.result, "succeeded");
-            }
-            None => continue,
-        }
-        flush_import_result_batches(pool, accumulator, false).await?;
     }
 
     if aborted {
         warn!(
             message = "Import best-effort execution aborted early",
-            task_id = task_id,
+            task_id = task.id,
             processed_items = accumulator.processed,
             success_items = accumulator.success,
             failed_items = accumulator.failed

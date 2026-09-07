@@ -39,7 +39,7 @@ use crate::models::{
 };
 use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::types::{ResourceAttrs, ResourceKind};
+use crate::permissions::types::{ResourceFields, ResourceKind};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::services::tasks::{
@@ -373,16 +373,16 @@ async fn relation_timestamp_overwrite_requires_update_permission(
         TimestampRelationKind::Object => ResourceKind::ObjectRelation,
     };
     for fixture in &fixtures {
-        permission_backend.add_rule(MockAllowRule {
+        permission_backend.add_prospective_rule(MockAllowRule {
             group_id: policy_group.id,
             action: granted_permission,
             resource_kind: resource_kind.clone(),
-            resource_id: Some(0),
-            attrs: ResourceAttrs {
+            resource_id: None,
+            attrs: ResourceFields {
                 collection_id: Some(fixture.collection.id),
                 from_collection_id: Some(fixture.collection.id),
                 to_collection_id: Some(fixture.collection.id),
-                ..ResourceAttrs::default()
+                ..ResourceFields::default()
             },
         });
     }
@@ -1622,8 +1622,18 @@ async fn test_execute_import_strict_rolls_back_on_runtime_failure() {
         },
     ];
 
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        planned_items.len() as i32,
+        "fenced_execution",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
     let mut accumulator = ExecutionAccumulator::default();
-    let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
+    let result =
+        (execute_import_strict(&context.pool, &claimed, &planned_items, &mut accumulator)).await;
     assert!(result.is_err());
 
     let collection_exists = with_connection(&context.pool, async |conn| {
@@ -1712,10 +1722,19 @@ async fn test_execute_import_best_effort_keeps_successful_items() {
         },
     ];
 
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        planned_items.len() as i32,
+        "fenced_execution",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
     let mut accumulator = ExecutionAccumulator::default();
     (execute_import_best_effort(
         &context.pool,
-        1,
+        &claimed,
         &planned_items,
         &ImportMode {
             atomicity: Some(ImportAtomicity::BestEffort),
@@ -1804,10 +1823,19 @@ async fn test_execute_import_best_effort_continues_after_non_policy_runtime_erro
         },
     ];
 
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        planned_items.len() as i32,
+        "fenced_execution",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
     let mut accumulator = ExecutionAccumulator::default();
     (execute_import_best_effort(
         &context.pool,
-        1,
+        &claimed,
         &planned_items,
         &ImportMode {
             atomicity: Some(ImportAtomicity::BestEffort),
@@ -1859,8 +1887,18 @@ async fn test_execute_import_strict_preserves_underlying_error_variant() {
         }),
     }];
 
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        planned_items.len() as i32,
+        "fenced_execution",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
     let mut accumulator = ExecutionAccumulator::default();
-    let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
+    let result =
+        (execute_import_strict(&context.pool, &claimed, &planned_items, &mut accumulator)).await;
 
     assert!(matches!(result, Err(ApiError::NotFound(_))));
 }
@@ -3271,3 +3309,5 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     assert_eq!(stored.success_items, 3);
     assert_eq!(stored.failed_items, 1);
 }
+
+mod fencing;

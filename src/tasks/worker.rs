@@ -17,14 +17,13 @@ use crate::config::{
 use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::principal::load_principal_by_id;
 use crate::models::{NewTaskEventRecord, TaskKind, TaskStatus};
 use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
-use crate::services::identity::is_service_account_disabled;
+use crate::services::authentication::ExecutionPrincipal;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
@@ -717,15 +716,7 @@ async fn process_claimed_task(
             "Submitting principal is no longer available for this task".to_string(),
         )
     })?;
-    let principal = load_principal_by_id(context, submitted_by).await?;
-
-    // Disabled-SA gate: queued service-account tasks must not run once the SA is
-    // disabled (mirrors the immediate token-validation rejection).
-    if is_service_account_disabled(context, principal.id).await? {
-        return Err(ApiError::BadRequest(
-            "Submitting service account is disabled; task will not run".to_string(),
-        ));
-    }
+    let principal = ExecutionPrincipal::resolve(context, submitted_by).await?;
 
     if task_kind == TaskKind::Backup {
         require_unscoped_runtime_admin(context, &principal, task.submitted_token_scoped).await?;
@@ -748,7 +739,7 @@ async fn process_claimed_task(
         task_id = task.id,
         task_kind = task.kind.as_str(),
         status = task.status.as_str(),
-        submitted_by = principal.id,
+        submitted_by = principal.id(),
         scoped = task.submitted_token_scoped
     );
 

@@ -1,3 +1,5 @@
+use crate::permissions::ClassResourceEndpoint;
+use crate::permissions::ObjectResourceEndpoint;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use futures_util::{FutureExt, future::BoxFuture};
@@ -16,9 +18,7 @@ use crate::models::{
 use crate::permissions::visibility::{
     AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
 };
-use crate::permissions::{
-    PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
-};
+use crate::permissions::{PermissionBackend, PrincipalRef, ResourceRef};
 use crate::services::catalog;
 use crate::services::relation_queries::{self, RelationAccess};
 use crate::storage::StorageContext;
@@ -708,28 +708,15 @@ fn sorted_ids(ids: &HashSet<i32>) -> Vec<i32> {
 }
 
 fn class_resource(class: &HubuumClassExpanded) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::Class,
-        id: class.id,
-        attrs: ResourceAttrs {
-            collection_id: Some(class.collection.id),
-            name: Some(class.name.clone()),
-            ..Default::default()
-        },
-    }
+    ResourceRef::class(class.id, class.collection.id, Some(class.name.clone()))
 }
 
 fn object_resource(object: &HubuumObject) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::Object,
-        id: object.id,
-        attrs: ResourceAttrs {
-            collection_id: Some(object.collection_id),
-            class_id: Some(object.hubuum_class_id),
-            name: Some(object.name.clone()),
-            ..Default::default()
-        },
-    }
+    ResourceRef::object(
+        object.id,
+        ClassResourceEndpoint::new(object.collection_id, object.hubuum_class_id),
+        Some(object.name.clone()),
+    )
 }
 
 fn relation_resource(
@@ -742,21 +729,12 @@ fn relation_resource(
     let to = objects
         .get(&relation.to_hubuum_object_id)
         .ok_or_else(|| missing_object(relation.to_hubuum_object_id))?;
-    Ok(ResourceRef {
-        kind: ResourceKind::ObjectRelation,
-        id: relation.id,
-        attrs: ResourceAttrs {
-            collection_id: (from.collection_id == to.collection_id).then_some(from.collection_id),
-            from_collection_id: Some(from.collection_id),
-            to_collection_id: Some(to.collection_id),
-            from_class_id: Some(from.hubuum_class_id),
-            to_class_id: Some(to.hubuum_class_id),
-            from_object_id: Some(from.id),
-            to_object_id: Some(to.id),
-            class_relation_id: Some(relation.class_relation_id),
-            ..Default::default()
-        },
-    })
+    Ok(ResourceRef::object_relation(
+        Some(relation.id),
+        ObjectResourceEndpoint::new(from.collection_id, from.hubuum_class_id, from.id),
+        ObjectResourceEndpoint::new(to.collection_id, to.hubuum_class_id, to.id),
+        relation.class_relation_id,
+    ))
 }
 
 fn missing_object(object_id: i32) -> ApiError {

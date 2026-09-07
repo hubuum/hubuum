@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use crate::services::authentication::ExecutionPrincipal;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
@@ -88,7 +89,7 @@ pub async fn create_backup_document(
 pub(crate) async fn execute_backup_task(
     context: &AppContext,
     task: &ClaimedTask,
-    user: &impl AuthzSubject,
+    user: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
     settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {

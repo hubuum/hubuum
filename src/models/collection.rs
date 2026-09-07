@@ -12,7 +12,7 @@ use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
-    AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef, authorization_collection_from_storage,
+    AuthzTarget, ResourceRef, authorization_collection_from_storage,
     authorization_effective_group_grant_from_storage, authorization_group_from_storage,
     authorization_group_grant_from_storage, grant_from_storage, permission_to_storage,
 };
@@ -652,15 +652,10 @@ impl AuthzTarget for Collection {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
-        Ok(ResourceRef {
-            kind: ResourceKind::Collection,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::named_collection(
+            self.id,
+            Some(self.name.clone()),
+        ))
     }
 }
 

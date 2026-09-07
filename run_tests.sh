@@ -131,6 +131,7 @@ PGPASSWORD=$DB_PASSWORD psql "$ADMIN_TEST_URL" \
 
 # Run adapter-native tests before the application suite while the isolated,
 # migrated database is available.
+cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
 if [ "$#" -eq 0 ]; then
     cargo test -p hubuum-storage-postgres \
         --features integration-test-support \

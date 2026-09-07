@@ -533,7 +533,8 @@ The design does not require an external queue for correctness.
 - API and worker duties use the same binary with `HUBUUM_RUNTIME_ROLE`; they can
   run in separate processes or together
 - progress counters are currently updated at finalize time, not streamed continuously per item
-- only imports have a concrete executor and a typed result table today
+- executors handle imports, exports, backups, computed-field reindexing, and
+  remote calls; each kind persists its appropriate results or artifacts
 - task retention is summary/results after payload redaction, not full payload retention
 
 ## Tests
@@ -577,3 +578,7 @@ The simplest accurate mental model is:
 - each task kind supplies its own planner and executor
 - strict imports make domain mutations atomically
 - best-effort imports trade atomicity for progress
+
+The [generated project inventory](generated/project_inventory.md) lists all current
+task kinds. The [runtime hardening guide](runtime_hardening.md) describes claim
+fencing and recovery.

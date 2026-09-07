@@ -26751,7 +26751,8 @@
         "required": [
           "default_page_limit",
           "max_page_limit",
-          "max_transitive_depth"
+          "max_transitive_depth",
+          "max_traversal_work_rows"
         ],
         "properties": {
           "default_page_limit": {
@@ -26763,6 +26764,10 @@
             "minimum": 0
           },
           "max_transitive_depth": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "max_traversal_work_rows": {
             "type": "integer",
             "format": "int32"
           }

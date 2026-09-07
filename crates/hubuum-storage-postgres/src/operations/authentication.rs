@@ -125,7 +125,7 @@ pub async fn authenticate_bearer_token(
         .map(|credential| credential.lookup_value().to_string())
         .collect::<Vec<_>>();
     let rows = runtime
-        .with_connection(async move |conn| {
+        .with_read_connection(async move |conn| {
             tokens
                 .filter(token.eq_any(lookup_values))
                 .filter(active_token_predicate(observed_at, legacy_valid_after))
@@ -267,7 +267,7 @@ pub async fn get_authentication_identity(
     use crate::schema::{principals, users};
 
     let row = runtime
-        .with_connection(async |conn| {
+        .with_read_connection(async |conn| {
             principals::table
                 .left_join(users::table.on(users::id.eq(principals::id)))
                 .filter(principals::id.eq(principal_id))
@@ -357,7 +357,7 @@ pub async fn get_authentication_token_scope(
     query: StorageAuthenticationTokenScopeQuery,
 ) -> Result<Option<StorageAuthenticationTokenScope>, PostgresStorageError> {
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             super::token::load_token_scope(connection, query).await
         })
         .await

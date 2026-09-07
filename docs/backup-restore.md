@@ -247,6 +247,13 @@ In the default single-role mode, omit `--migration-database-url`; the command
 uses `HUBUUM_DATABASE_URL`. Split-role deployments use the privileged URL shown
 above.
 
+On Unix, `--restore` also accepts FIFOs and shell process substitution. The
+producer must close the stream: restore reads the complete document into
+memory until EOF before validating or staging it. This preserves the CLI's
+existing artifact-size behavior; it is not an incremental streaming restore.
+`--verify-backup` continues to require a regular file and enforce its configured
+size limit, so save streamed input to a file before using the verifier.
+
 The CLI stages and confirms the document, then runs one executor iteration in
 the same process. It appends the `restore.succeeded` provenance event on
 success and rolls back to the old application data if validation, insertion,

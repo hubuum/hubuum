@@ -35,10 +35,10 @@ pub fn cedar_action(perm: Permissions) -> Result<Action, ValidationError> {
 /// - Template → HubuumTemplate (with collection_id attr)
 /// - Task → HubuumTask (with submitted_by attr)
 ///
-/// Attributes are added only when present in ResourceAttrs (no null/zero placeholders).
+/// Attributes are added only when present in ResourceFields (no null/zero placeholders).
 pub fn cedar_resource(resource: &ResourceRef) -> Result<Resource, ValidationError> {
-    let id_str = resource.id.to_string();
-    let mut r = match resource.kind {
+    let id_str = resource.policy_identity();
+    let mut r = match resource.kind() {
         ResourceKind::System => Resource::new("HubuumSystem", "global"),
         ResourceKind::Collection => Resource::new("HubuumCollection", &id_str),
         ResourceKind::Class => Resource::new("HubuumClass", &id_str),
@@ -52,7 +52,7 @@ pub fn cedar_resource(resource: &ResourceRef) -> Result<Resource, ValidationErro
         ResourceKind::EventSubscription => Resource::new("HubuumEventSubscription", &id_str),
     }?;
 
-    let attrs = &resource.attrs;
+    let attrs = &resource.fields();
     if let Some(ns) = attrs.collection_id {
         r = r.with_attr("collection_id", AttrValue::Long(ns as i64))?;
     }
@@ -94,7 +94,7 @@ mod tests {
     use serde_json::to_value;
 
     use super::*;
-    use crate::permissions::types::ResourceAttrs;
+    use crate::permissions::{ClassResourceEndpoint, ObjectResourceEndpoint};
 
     #[test]
     fn collection_resource_carries_collection_id_attr() {
@@ -122,17 +122,11 @@ mod tests {
 
     #[test]
     fn class_relation_resource_carries_from_to_collection_attrs() {
-        let r = ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: 42,
-            attrs: ResourceAttrs {
-                from_collection_id: Some(5),
-                to_collection_id: Some(6),
-                from_class_id: Some(10),
-                to_class_id: Some(11),
-                ..Default::default()
-            },
-        };
+        let r = ResourceRef::class_relation(
+            Some(42),
+            ClassResourceEndpoint::new(5, 10),
+            ClassResourceEndpoint::new(6, 11),
+        );
         let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumClassRelation");
@@ -144,20 +138,12 @@ mod tests {
 
     #[test]
     fn object_relation_carries_all_context_attrs() {
-        let r = ResourceRef {
-            kind: ResourceKind::ObjectRelation,
-            id: 99,
-            attrs: ResourceAttrs {
-                from_collection_id: Some(1),
-                to_collection_id: Some(2),
-                from_class_id: Some(10),
-                to_class_id: Some(20),
-                from_object_id: Some(100),
-                to_object_id: Some(200),
-                class_relation_id: Some(5),
-                ..Default::default()
-            },
-        };
+        let r = ResourceRef::object_relation(
+            Some(99),
+            ObjectResourceEndpoint::new(1, 10, 100),
+            ObjectResourceEndpoint::new(2, 20, 200),
+            5,
+        );
         let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumObjectRelation");
@@ -238,14 +224,7 @@ mod tests {
 
     #[test]
     fn task_resource_carries_submitted_by_attr() {
-        let r = ResourceRef {
-            kind: ResourceKind::Task,
-            id: 123,
-            attrs: ResourceAttrs {
-                submitted_by: Some(999),
-                ..Default::default()
-            },
-        };
+        let r = ResourceRef::task(123, Some(999));
         let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["kind"], "HubuumTask");
@@ -254,15 +233,7 @@ mod tests {
 
     #[test]
     fn resource_with_name_attr() {
-        let r = ResourceRef {
-            kind: ResourceKind::Class,
-            id: 5,
-            attrs: ResourceAttrs {
-                collection_id: Some(1),
-                name: Some("HostClass".to_string()),
-                ..Default::default()
-            },
-        };
+        let r = ResourceRef::class(5, 1, Some("HostClass".to_string()));
         let cedar = cedar_resource(&r).unwrap();
         let json = to_value(&cedar).unwrap();
         assert_eq!(json["attrs"]["name"]["type"], "String");

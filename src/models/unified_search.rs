@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use crate::permissions::ClassResourceEndpoint;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::str::FromStr;
@@ -12,8 +13,7 @@ use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    AuthorizationContext, AuthorizationMode, PermissionBackend, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef,
+    AuthorizationContext, AuthorizationMode, PermissionBackend, PrincipalRef, ResourceRef,
 };
 use crate::services::unified_search as unified_search_service;
 use crate::storage::StorageContext;
@@ -517,14 +517,12 @@ where
                     page.items,
                     scopes,
                     vec![Permissions::ReadClass],
-                    |candidate| ResourceRef {
-                        kind: ResourceKind::Class,
-                        id: candidate.item.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(candidate.item.collection.id),
-                            name: Some(candidate.item.name.clone()),
-                            ..Default::default()
-                        },
+                    |candidate| {
+                        ResourceRef::class(
+                            candidate.item.id,
+                            candidate.item.collection.id,
+                            Some(candidate.item.name.clone()),
+                        )
                     },
                 )
                 .await?;
@@ -613,15 +611,15 @@ where
                     page.items,
                     scopes,
                     vec![Permissions::ReadObject],
-                    |candidate| ResourceRef {
-                        kind: ResourceKind::Object,
-                        id: candidate.item.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(candidate.item.collection_id),
-                            class_id: Some(candidate.item.hubuum_class_id),
-                            name: Some(candidate.item.name.clone()),
-                            ..Default::default()
-                        },
+                    |candidate| {
+                        ResourceRef::object(
+                            candidate.item.id,
+                            ClassResourceEndpoint::new(
+                                candidate.item.collection_id,
+                                candidate.item.hubuum_class_id,
+                            ),
+                            Some(candidate.item.name.clone()),
+                        )
                     },
                 )
                 .await?;

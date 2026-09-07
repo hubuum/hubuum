@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use crate::permissions::ClassResourceEndpoint;
 use std::sync::Arc;
 
 use actix_web::test as actix_test;
@@ -11,7 +12,7 @@ use crate::pagination::finalize_page;
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{
-    PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
+    PermissionDecision, PermissionRequest, PrincipalRef, ResourceFields, ResourceKind, ResourceRef,
 };
 
 fn ns_request(collection_id: i32, perms: Vec<Permissions>) -> PermissionRequest {
@@ -29,7 +30,7 @@ async fn mock_authorize_many_preserves_request_order() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(7),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
 
     let principal = PrincipalRef::new(1, vec![100]);
@@ -59,7 +60,7 @@ async fn mock_authorizes_relation_via_from_to_collection_attrs() {
         action: Permissions::ReadClassRelation,
         resource_kind: ResourceKind::ClassRelation,
         resource_id: None,
-        attrs: ResourceAttrs {
+        attrs: ResourceFields {
             from_collection_id: Some(5),
             to_collection_id: Some(6),
             ..Default::default()
@@ -70,15 +71,11 @@ async fn mock_authorizes_relation_via_from_to_collection_attrs() {
 
     // Matching relation (from=5, to=6).
     let req_match = PermissionRequest {
-        resource: ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: 42,
-            attrs: ResourceAttrs {
-                from_collection_id: Some(5),
-                to_collection_id: Some(6),
-                ..Default::default()
-            },
-        },
+        resource: ResourceRef::class_relation(
+            Some(42),
+            ClassResourceEndpoint::new(5, 1),
+            ClassResourceEndpoint::new(6, 1),
+        ),
         permissions: vec![Permissions::ReadClassRelation],
     };
     assert_eq!(
@@ -88,15 +85,11 @@ async fn mock_authorizes_relation_via_from_to_collection_attrs() {
 
     // Wrong from-collection.
     let req_wrong = PermissionRequest {
-        resource: ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: 42,
-            attrs: ResourceAttrs {
-                from_collection_id: Some(99),
-                to_collection_id: Some(6),
-                ..Default::default()
-            },
-        },
+        resource: ResourceRef::class_relation(
+            Some(42),
+            ClassResourceEndpoint::new(99, 1),
+            ClassResourceEndpoint::new(6, 1),
+        ),
         permissions: vec![Permissions::ReadClassRelation],
     };
     assert_eq!(
@@ -172,14 +165,7 @@ async fn mock_authorize_via_dyn_trait_works() {
 async fn mock_task_policy_can_deny_the_task_owner() {
     let backend = MockTreetopBackend::new();
     let owner = PrincipalRef::new(42, [100]);
-    let task = ResourceRef {
-        kind: ResourceKind::Task,
-        id: 7,
-        attrs: ResourceAttrs {
-            submitted_by: Some(42),
-            ..Default::default()
-        },
-    };
+    let task = ResourceRef::task(7, Some(42));
 
     assert_eq!(
         backend.authorize_task(&owner, &task).await.unwrap(),
@@ -192,14 +178,7 @@ async fn mock_task_policy_can_allow_a_non_owner() {
     let backend = MockTreetopBackend::new();
     backend.add_task_read_rule(200, Some(7));
     let non_owner = PrincipalRef::new(99, [200]);
-    let task = ResourceRef {
-        kind: ResourceKind::Task,
-        id: 7,
-        attrs: ResourceAttrs {
-            submitted_by: Some(42),
-            ..Default::default()
-        },
-    };
+    let task = ResourceRef::task(7, Some(42));
 
     assert_eq!(
         backend.authorize_task(&non_owner, &task).await.unwrap(),
@@ -215,14 +194,14 @@ async fn mock_group_permission_on_synthesizes_row_from_rules() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(7),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     backend.add_rule(MockAllowRule {
         group_id: 100,
         action: Permissions::CreateClass,
         resource_kind: ResourceKind::Class,
         resource_id: None,
-        attrs: ResourceAttrs {
+        attrs: ResourceFields {
             collection_id: Some(7),
             ..Default::default()
         },
@@ -275,14 +254,14 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(7),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     backend.add_rule(MockAllowRule {
         group_id: 100,
         action: Permissions::CreateClass,
         resource_kind: ResourceKind::Class,
         resource_id: None,
-        attrs: ResourceAttrs {
+        attrs: ResourceFields {
             collection_id: Some(7),
             ..Default::default()
         },
@@ -292,7 +271,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(7),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
 
     // Set up synthetic groups.

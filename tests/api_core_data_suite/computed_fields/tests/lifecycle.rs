@@ -110,6 +110,97 @@ async fn concurrent_definition_and_object_updates_return_current_values(
 
 #[rstest::rstest]
 #[tokio::test]
+async fn backfill_waits_for_the_class_before_locking_objects(
+    #[future(awt)] test_context: TestContext,
+) {
+    use std::time::Duration;
+
+    use diesel::sql_types::{Bool, Integer};
+    use hubuum_storage_postgres::with_transaction;
+    use tokio::sync::oneshot;
+    use tokio::time::{sleep, timeout};
+
+    use crate::schema::{hubuumclass, hubuumobject};
+
+    #[derive(QueryableByName)]
+    struct BlockedTransaction {
+        #[diesel(sql_type = Bool)]
+        blocked: bool,
+    }
+
+    let fixture = fixture(&test_context, "computed backfill lock order").await;
+    let response = post_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+        definition("display_name"),
+    )
+    .await;
+    assert_response_status(response, StatusCode::CREATED).await;
+    let task = active_rebuild_task(&test_context, fixture.class.id).await;
+    let (class_locked, start_rebuild) = oneshot::channel();
+
+    // Object updates lock their class before their object. Hold that first
+    // lock until the backfill is waiting, then prove it has not taken the
+    // object lock in the opposite order. NOWAIT makes a regression fail
+    // deterministically without depending on PostgreSQL's deadlock victim.
+    let update = with_transaction(&test_context.pool, async |connection| {
+        hubuumclass::table
+            .filter(hubuumclass::id.eq(fixture.class.id))
+            .for_update()
+            .select(hubuumclass::id)
+            .first::<i32>(connection)
+            .await?;
+        let blocker_pid = diesel::select(diesel::dsl::sql::<Integer>("pg_backend_pid()"))
+            .get_result::<i32>(connection)
+            .await?;
+        class_locked.send(()).expect("rebuild should be waiting");
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let blocked = with_connection(&test_context.pool, async |observer| {
+                    diesel::sql_query(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                         WHERE $1 = ANY(pg_blocking_pids(pid))) AS blocked",
+                    )
+                    .bind::<Integer, _>(blocker_pid)
+                    .get_result::<BlockedTransaction>(observer)
+                    .await
+                })
+                .await
+                .unwrap();
+                if blocked.blocked {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("backfill should wait for the class lock");
+
+        hubuumobject::table
+            .filter(hubuumobject::id.eq(fixture.objects[0].id))
+            .for_update()
+            .no_wait()
+            .select(hubuumobject::id)
+            .first::<i32>(connection)
+            .await
+    });
+    let rebuild = async {
+        start_rebuild.await.expect("class should be locked first");
+        execute_computed_field_rebuild(&test_context.pool, &task).await
+    };
+    let (update_result, rebuild_result) = timeout(Duration::from_secs(20), async {
+        tokio::join!(update, rebuild)
+    })
+    .await
+    .expect("object locking and backfill should finish");
+    fixture.cleanup().await.unwrap();
+    update_result.expect("backfill must not lock objects while waiting for their class");
+    rebuild_result.expect("backfill should finish after the class lock is released");
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn concurrent_backfill_and_object_update_cannot_restore_old_source_data(
     #[future(awt)] test_context: TestContext,
 ) {
@@ -137,7 +228,7 @@ async fn concurrent_backfill_and_object_update_cannot_restore_old_source_data(
         }),
     );
     let (rebuild_result, update_response) = tokio::join!(rebuild, update);
-    let _ = rebuild_result;
+    rebuild_result.expect("backfill should finish alongside an object update");
     assert_response_status(update_response, StatusCode::OK).await;
     finish_active_rebuild(&test_context, fixture.class.id).await;
 

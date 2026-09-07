@@ -195,7 +195,7 @@ mod tests {
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-    use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::permissions::{ResourceFields, ResourceKind};
     use crate::tests::{TestContext, create_test_group};
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
             action: Permissions::ReadClass,
             resource_kind: ResourceKind::Class,
             resource_id: Some(41),
-            attrs: ResourceAttrs {
+            attrs: ResourceFields {
                 collection_id: Some(73),
                 name: Some("visible-version".to_string()),
                 ..Default::default()

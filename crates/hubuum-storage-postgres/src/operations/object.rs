@@ -108,7 +108,7 @@ pub async fn get_object(
 ) -> Result<StorageResolvedObject, PostgresStorageError> {
     validate_positive_id(object_id, "object id")?;
     runtime
-        .with_connection(async move |connection| get_object_on(connection, object_id).await)
+        .with_read_connection(async move |connection| get_object_on(connection, object_id).await)
         .await
 }
 
@@ -137,7 +137,7 @@ pub async fn resolve_object(
 ) -> Result<StorageResolvedObject, PostgresStorageError> {
     validate_object_selector(&selector)?;
     runtime
-        .with_connection(async move |connection| resolve_object_on(connection, selector).await)
+        .with_read_connection(async move |connection| resolve_object_on(connection, selector).await)
         .await
 }
 
@@ -347,7 +347,7 @@ pub async fn validate_object(
     validate_positive_id(object.class_id().id(), "class id")?;
     validate_positive_id(object.collection_id().id(), "collection id")?;
     runtime
-        .with_connection(async move |connection| validate_object_on(connection, object).await)
+        .with_read_connection(async move |connection| validate_object_on(connection, object).await)
         .await
 }
 
@@ -371,7 +371,7 @@ pub async fn validate_object_create_command(
     command: StorageObjectCreate,
 ) -> Result<(), PostgresStorageError> {
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             validate_object_create_command_on(connection, command).await
         })
         .await
@@ -392,7 +392,7 @@ pub async fn validate_object_update_command(
 ) -> Result<(), PostgresStorageError> {
     validate_positive_id(object_id, "object id")?;
     runtime
-        .with_connection(async move |connection| {
+        .with_read_connection(async move |connection| {
             validate_object_update_command_on(connection, object_id, changes).await
         })
         .await

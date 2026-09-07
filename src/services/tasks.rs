@@ -14,8 +14,7 @@ use crate::models::{
 use crate::observability::tracing as telemetry;
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
-    AuthorizationContext, AuthorizationMode, PermissionDecision, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef,
+    AuthorizationContext, AuthorizationMode, PermissionDecision, PrincipalRef, ResourceRef,
 };
 use crate::services::storage_boundary::principal_id_to_storage;
 use crate::storage::{
@@ -649,14 +648,7 @@ pub(crate) async fn backup_output(
 }
 
 pub(crate) fn task_resource(task: &TaskRecord) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::Task,
-        id: task.id,
-        attrs: ResourceAttrs {
-            submitted_by: task.submitted_by,
-            ..Default::default()
-        },
-    }
+    ResourceRef::task(task.id, task.submitted_by)
 }
 
 fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {

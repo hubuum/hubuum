@@ -8,6 +8,7 @@
 use hubuum_domain::{
     MAX_EVENT_WORKER_BATCH_SIZE, OperationalConstraint, TokenLifetime, TokenRetentionBatchSize,
 };
+use hubuum_query::MAX_TRAVERSAL_DEPTH;
 
 use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
 use crate::observability::tracing::{MAX_BATCH_SIZE, MAX_QUEUE_CAPACITY, MAX_TIMEOUT_MS};
@@ -496,7 +497,11 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ),
     configuration_bound!("HUBUUM_DEFAULT_PAGE_LIMIT", default_page_limit),
     configuration_bound!("HUBUUM_MAX_PAGE_LIMIT", max_page_limit),
-    configuration_bound!("HUBUUM_MAX_TRANSITIVE_DEPTH", max_transitive_depth),
+    configuration_bound!(
+        "HUBUUM_MAX_TRANSITIVE_DEPTH",
+        max_transitive_depth,
+        maximum = MAX_TRAVERSAL_DEPTH as i64
+    ),
 ];
 
 pub(crate) fn configuration_bounds(name: &str) -> (Option<i64>, Option<i64>) {

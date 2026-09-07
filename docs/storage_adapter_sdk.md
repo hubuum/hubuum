@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted for the experimental `0.1` release train.
+Status: accepted; current experimental release train is `0.2`.
 
 ## Supported Crate Graph
 
@@ -44,7 +44,7 @@ server embedding API.
 
 ## Versioning and Aggregate Evolution
 
-The SDK begins as `experimental-public` at `0.1.0`. During the `0.x` series:
+The SDK remains `experimental-public` during the `0.x` series:
 
 - a patch release is source compatible with its minor line;
 - a minor release may make a documented breaking change;
@@ -199,3 +199,15 @@ serialization guarantees, and secret-redaction requirements. The
 [query semantics](storage_boundary/query-semantics.md), and
 [testing contract](storage_boundary/testing.md) are normative for adapter
 behavior.
+
+## Upgrading from 0.1 to 0.2
+
+Update all seven SDK dependencies together. Relation query constructors now
+require `TraversalBudget`; adapters must enforce its depth and generated-work
+limits before final sorting and pagination. Implement the claimed import methods
+with atomic domain changes and item receipts, and reject an expired or replaced
+claim at commit.
+
+The [generated inventory](generated/project_inventory.md) records current package
+versions and minimum Rust versions. The server's configuration and deployment
+upgrade actions are in the [runtime hardening guide](runtime_hardening.md).

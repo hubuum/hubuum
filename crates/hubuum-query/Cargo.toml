@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-query"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "App-neutral query parsing and search parameter types for Hubuum."
@@ -23,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [dev-dependencies]
+rstest = "0.26"
 gungraun = "0.19.4"
 
 [[bench]]

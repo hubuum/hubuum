@@ -367,6 +367,7 @@ struct MemoryState {
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
     import_task_results: BTreeMap<i32, Vec<StorageImportTaskResult>>,
+    import_execution_receipts: BTreeSet<(i32, usize)>,
     export_outputs: BTreeMap<i32, StorageExportOutput>,
     backup_outputs: BTreeMap<i32, StorageBackupOutput>,
     export_templates: BTreeMap<i32, StorageExportTemplate>,

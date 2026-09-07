@@ -19,9 +19,7 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
-use crate::permissions::{
-    AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
-};
+use crate::permissions::{AppContext, PrincipalRef, ResourceRef, authorize_resources};
 use crate::services::history::{
     HistoryCollectionFilter, export_template_as_of,
     export_template_history_paginated_with_total_count,
@@ -79,15 +77,11 @@ pub async fn create_template(
             user,
             requestor.scopes(),
             vec![Permissions::CreateTemplate],
-            vec![ResourceRef {
-                kind: ResourceKind::Template,
-                id: 0,
-                attrs: ResourceAttrs {
-                    collection_id: Some(template.collection_id),
-                    name: Some(template.name.clone()),
-                    ..Default::default()
-                },
-            }],
+            vec![ResourceRef::template(
+                0,
+                template.collection_id,
+                Some(template.name.clone()),
+            )],
         )
         .await?;
     }
@@ -162,14 +156,12 @@ pub async fn get_templates(
             requestor.scopes(),
             vec![Permissions::ReadTemplate],
             &search_params,
-            |template| ResourceRef {
-                kind: ResourceKind::Template,
-                id: template.id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(template.collection_id),
-                    name: Some(template.name.clone()),
-                    ..Default::default()
-                },
+            |template| {
+                ResourceRef::template(
+                    template.id,
+                    template.collection_id,
+                    Some(template.name.clone()),
+                )
             },
         )
         .await?;

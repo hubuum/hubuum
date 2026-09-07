@@ -484,6 +484,8 @@ diesel::table! {
         error -> Nullable<Text>,
         details -> Nullable<Jsonb>,
         created_at -> Timestamp,
+        execution_index -> Nullable<Int8>,
+        execution_claim_token -> Nullable<Uuid>,
     }
 }
 

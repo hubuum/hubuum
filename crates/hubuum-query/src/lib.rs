@@ -4,6 +4,9 @@
 //! permissions, pagination config, or Hubuum API errors. The application maps
 //! [`QueryError`] into its public error surface at the boundary.
 
+mod traversal;
+pub use traversal::{MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_WORK_ROWS, TraversalBudget};
+
 use base64::Engine as _;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate};

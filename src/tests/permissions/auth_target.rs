@@ -41,14 +41,14 @@ async fn collection_to_resource_ref_populates_attrs() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::Collection);
-    assert_eq!(resource_ref.id, fixture.collection.id);
+    assert_eq!(resource_ref.kind(), ResourceKind::Collection);
+    assert_eq!(resource_ref.id(), Some(fixture.collection.id));
     assert_eq!(
-        resource_ref.attrs.collection_id,
+        resource_ref.fields().collection_id,
         Some(fixture.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.name,
+        resource_ref.fields().name,
         Some(fixture.collection.name.clone())
     );
 }
@@ -74,10 +74,13 @@ async fn class_to_resource_ref_populates_collection_id() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::Class);
-    assert_eq!(resource_ref.id, class.id);
-    assert_eq!(resource_ref.attrs.collection_id, Some(class.collection_id));
-    assert_eq!(resource_ref.attrs.name, Some(class.name.clone()));
+    assert_eq!(resource_ref.kind(), ResourceKind::Class);
+    assert_eq!(resource_ref.id(), Some(class.id));
+    assert_eq!(
+        resource_ref.fields().collection_id,
+        Some(class.collection_id)
+    );
+    assert_eq!(resource_ref.fields().name, Some(class.name.clone()));
 }
 
 #[actix_test]
@@ -112,11 +115,14 @@ async fn object_to_resource_ref_populates_collection_and_class_ids() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::Object);
-    assert_eq!(resource_ref.id, object.id);
-    assert_eq!(resource_ref.attrs.collection_id, Some(object.collection_id));
-    assert_eq!(resource_ref.attrs.class_id, Some(object.hubuum_class_id));
-    assert_eq!(resource_ref.attrs.name, Some(object.name.clone()));
+    assert_eq!(resource_ref.kind(), ResourceKind::Object);
+    assert_eq!(resource_ref.id(), Some(object.id));
+    assert_eq!(
+        resource_ref.fields().collection_id,
+        Some(object.collection_id)
+    );
+    assert_eq!(resource_ref.fields().class_id, Some(object.hubuum_class_id));
+    assert_eq!(resource_ref.fields().name, Some(object.name.clone()));
 }
 
 #[actix_test]
@@ -164,26 +170,27 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::ClassRelation);
-    assert_eq!(resource_ref.id, relation.id);
+    assert_eq!(resource_ref.kind(), ResourceKind::ClassRelation);
+    assert_eq!(resource_ref.id(), Some(relation.id));
     assert_eq!(
-        resource_ref.attrs.from_collection_id,
+        resource_ref.fields().from_collection_id,
         Some(fixture_a.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.to_collection_id,
+        resource_ref.fields().to_collection_id,
         Some(fixture_b.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.collection_id, None,
+        resource_ref.fields().collection_id,
+        None,
         "cross-collection relation should have collection_id=None"
     );
     assert_eq!(
-        resource_ref.attrs.from_class_id,
+        resource_ref.fields().from_class_id,
         Some(relation.from_hubuum_class_id)
     );
     assert_eq!(
-        resource_ref.attrs.to_class_id,
+        resource_ref.fields().to_class_id,
         Some(relation.to_hubuum_class_id)
     );
 }
@@ -232,17 +239,17 @@ async fn class_relation_same_collection_populates_collection_id() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::ClassRelation);
+    assert_eq!(resource_ref.kind(), ResourceKind::ClassRelation);
     assert_eq!(
-        resource_ref.attrs.from_collection_id,
+        resource_ref.fields().from_collection_id,
         Some(fixture.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.to_collection_id,
+        resource_ref.fields().to_collection_id,
         Some(fixture.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.collection_id,
+        resource_ref.fields().collection_id,
         Some(fixture.collection.id),
         "same-collection relation should populate collection_id"
     );
@@ -324,40 +331,41 @@ async fn object_relation_cross_collection_populates_all_fields() {
         .await
         .expect("to_resource_ref failed");
 
-    assert_eq!(resource_ref.kind, ResourceKind::ObjectRelation);
-    assert_eq!(resource_ref.id, object_relation.id);
+    assert_eq!(resource_ref.kind(), ResourceKind::ObjectRelation);
+    assert_eq!(resource_ref.id(), Some(object_relation.id));
     assert_eq!(
-        resource_ref.attrs.from_collection_id,
+        resource_ref.fields().from_collection_id,
         Some(fixture_a.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.to_collection_id,
+        resource_ref.fields().to_collection_id,
         Some(fixture_b.collection.id)
     );
     assert_eq!(
-        resource_ref.attrs.collection_id, None,
+        resource_ref.fields().collection_id,
+        None,
         "cross-collection relation should have collection_id=None"
     );
     assert_eq!(
-        resource_ref.attrs.from_object_id,
+        resource_ref.fields().from_object_id,
         Some(object_relation.from_hubuum_object_id)
     );
     assert_eq!(
-        resource_ref.attrs.to_object_id,
+        resource_ref.fields().to_object_id,
         Some(object_relation.to_hubuum_object_id)
     );
     assert_eq!(
-        resource_ref.attrs.from_class_id,
+        resource_ref.fields().from_class_id,
         Some(class_a.id),
         "object relation should expose the from-side class id for policy use"
     );
     assert_eq!(
-        resource_ref.attrs.to_class_id,
+        resource_ref.fields().to_class_id,
         Some(class_b.id),
         "object relation should expose the to-side class id for policy use"
     );
     assert_eq!(
-        resource_ref.attrs.class_relation_id,
+        resource_ref.fields().class_relation_id,
         Some(object_relation.class_relation_id)
     );
 }

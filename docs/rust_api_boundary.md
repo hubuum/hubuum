@@ -14,7 +14,7 @@ and its committed OpenAPI document. Rust API consumers should use
 `hubuum-client-rust`, which wraps that HTTP contract. The Python client follows
 the same boundary.
 
-The six-crate storage adapter SDK is classified `experimental-public` and has a
+The storage adapter SDK is classified `experimental-public` and has a
 documented crates.io publication graph. Its exact compatibility rules are in
 the [Storage Adapter SDK Compatibility policy](storage_adapter_sdk.md). All
 other workspace packages remain unpublished. Public Rust visibility in those
@@ -219,3 +219,7 @@ The deterministic JSON inventory is available for review with:
 ```bash
 python3 scripts/check-rust-api-policy.py --json
 ```
+
+The [generated project inventory](generated/project_inventory.md) lists the current
+SDK packages, versions, minimum Rust versions, and task kinds. CI regenerates it
+in check mode.

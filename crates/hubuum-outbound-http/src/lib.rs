@@ -509,51 +509,72 @@ impl OutboundResponse {
 }
 
 async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundHttpError> {
-    let url_parts = validate_outbound_url(&request.url)?;
-    let mut screened_addrs = screen_host(
-        &url_parts.host,
-        url_parts.port,
-        request.allow_private_targets,
-        request.dangerous_allow_localhost,
-    )
-    .await?;
-    screened_addrs.sort_unstable();
-    screened_addrs.dedup();
-
-    let client = cached_client(
-        &url_parts.host,
-        &screened_addrs,
-        request.dangerous_accept_invalid_certs,
-    )?;
-
-    let mut headers = request.headers.into_inner();
-    inject_trace_context(&mut headers);
-    let mut request_builder = client
-        .request(request.method.as_reqwest(), url_parts.url.clone())
-        .timeout(request.timeout)
-        .headers(headers);
-    if let Some(body) = request.body {
-        request_builder = request_builder.body(body);
-    }
-
-    let start = Instant::now();
-    let response = request_builder.send().await.map_err(map_reqwest_error)?;
-    let status = response.status();
-    Span::current().record("http.response.status_code", status.as_u16());
-    let headers = headers_to_json(response.headers());
-    let body_preview = read_capped_body(response, request.max_response_bytes).await?;
-    Span::current().record("http.response.body.size", body_preview.len());
-    let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
-
-    Ok(OutboundResponse {
-        status_code: status.as_u16(),
-        status_display: status.to_string(),
-        success: status.is_success(),
-        headers,
-        body_preview,
-        duration_ms,
-        url: url_parts.url.to_string(),
+    execute_with_screen(request, |host, port, private, localhost| async move {
+        screen_host(&host, port, private, localhost).await
     })
+    .await
+}
+
+async fn execute_with_screen<Screen, Screening>(
+    request: OutboundRequest,
+    screen: Screen,
+) -> Result<OutboundResponse, OutboundHttpError>
+where
+    Screen: FnOnce(String, u16, bool, bool) -> Screening,
+    Screening: std::future::Future<Output = Result<Vec<SocketAddr>, OutboundHttpError>>,
+{
+    let start = Instant::now();
+    let deadline = tokio::time::Instant::now()
+        .checked_add(request.timeout)
+        .ok_or(OutboundHttpError::Timeout)?;
+    tokio::time::timeout_at(deadline, async move {
+        let url_parts = validate_outbound_url(&request.url)?;
+        let mut screened_addrs = screen(
+            url_parts.host.clone(),
+            url_parts.port,
+            request.allow_private_targets,
+            request.dangerous_allow_localhost,
+        )
+        .await?;
+        screened_addrs.sort_unstable();
+        screened_addrs.dedup();
+
+        let client = cached_client(
+            &url_parts.host,
+            &screened_addrs,
+            request.dangerous_accept_invalid_certs,
+        )?;
+
+        let mut headers = request.headers.into_inner();
+        inject_trace_context(&mut headers);
+        let mut request_builder = client
+            .request(request.method.as_reqwest(), url_parts.url.clone())
+            .timeout(request.timeout)
+            .headers(headers);
+        if let Some(body) = request.body {
+            request_builder = request_builder.body(body);
+        }
+
+        let response = request_builder.send().await.map_err(map_reqwest_error)?;
+        let status = response.status();
+        Span::current().record("http.response.status_code", status.as_u16());
+        let headers = headers_to_json(response.headers());
+        let body_preview = read_capped_body(response, request.max_response_bytes).await?;
+        Span::current().record("http.response.body.size", body_preview.len());
+        let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
+
+        Ok(OutboundResponse {
+            status_code: status.as_u16(),
+            status_display: status.to_string(),
+            success: status.is_success(),
+            headers,
+            body_preview,
+            duration_ms,
+            url: url_parts.url.to_string(),
+        })
+    })
+    .await
+    .map_err(|_| OutboundHttpError::Timeout)?
 }
 
 fn outbound_error_category(error: &OutboundHttpError) -> &'static str {
@@ -759,6 +780,19 @@ mod tests {
     use super::*;
 
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test(start_paused = true)]
+    async fn request_deadline_includes_dns_screening() {
+        let timeout = Duration::from_secs(2);
+        let started = tokio::time::Instant::now();
+        let result = execute_with_screen(
+            OutboundRequest::new(OutboundMethod::Get, "https://example.com/", timeout),
+            |_, _, _, _| std::future::pending(),
+        )
+        .await;
+        assert!(matches!(result, Err(OutboundHttpError::Timeout)));
+        assert_eq!(started.elapsed(), timeout);
+    }
 
     #[test]
     fn outbound_urls_must_be_https() {

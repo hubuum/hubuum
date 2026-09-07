@@ -13,7 +13,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
 };
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
@@ -1355,14 +1355,7 @@ impl AuthzTarget for TaskRecord {
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
-        Ok(ResourceRef {
-            kind: ResourceKind::Task,
-            id: self.id,
-            attrs: ResourceAttrs {
-                submitted_by: self.submitted_by,
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::task(self.id, self.submitted_by))
     }
 }
 
@@ -1378,6 +1371,17 @@ impl AuthzTarget for TaskID {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_task_inventory_matches_runtime_kinds() {
+        let inventory: serde_json::Value =
+            serde_json::from_str(include_str!("../../docs/generated/project_inventory.json"))
+                .unwrap();
+        assert_eq!(
+            inventory["task_kinds"],
+            serde_json::to_value(super::TaskKind::ALL).unwrap()
+        );
+    }
+
     use super::*;
 
     fn test_timestamp() -> NaiveDateTime {

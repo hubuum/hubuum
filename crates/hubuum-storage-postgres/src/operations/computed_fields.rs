@@ -943,6 +943,18 @@ async fn process_reindex_batch(
         .with_transaction(
             async move |connection| -> Result<ReindexBatch, PostgresStorageError> {
                 task_execution::live_claimed_task(connection, claimed).await?;
+                acquire_computed_class_shared_lock(connection, payload.class_id).await?;
+                // Object updates lock the class before the object. Take the
+                // materialization's class foreign-key lock in that same order,
+                // otherwise its INSERT can deadlock with a concurrent update
+                // that holds the class lock and is waiting for a batch object.
+                use crate::schema::hubuumclass::dsl as classes;
+                classes::hubuumclass
+                    .filter(classes::id.eq(payload.class_id))
+                    .for_key_share()
+                    .select(classes::id)
+                    .first::<i32>(connection)
+                    .await?;
                 use crate::schema::hubuumobject::dsl as objects;
                 let rows = objects::hubuumobject
                     .filter(objects::hubuum_class_id.eq(payload.class_id))
@@ -954,7 +966,6 @@ async fn process_reindex_batch(
                     .select(ObjectRow::as_select())
                     .load::<ObjectRow>(connection)
                     .await?;
-                acquire_computed_class_shared_lock(connection, payload.class_id).await?;
                 let state = ensure_computation_state(connection, payload.class_id).await?;
                 if state.evaluation_revision != payload.target_revision
                     || state.active_task_id != Some(claimed.id)

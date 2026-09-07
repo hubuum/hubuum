@@ -7,7 +7,7 @@ use crate::models::{
     NewHubuumObjectRelation, Permissions,
 };
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::{ResourceAttrs, ResourceKind};
+use crate::permissions::{ResourceFields, ResourceKind};
 use crate::tests::api_operations::{get_request, get_request_with_permission_backend};
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{CollectionFixture, TestContext, create_test_group};
@@ -391,14 +391,14 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
         action: Permissions::ReadClass,
         resource_kind: ResourceKind::Class,
         resource_id: Some(room_class.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     permission_backend.add_rule(MockAllowRule {
         group_id: group.id,
         action: Permissions::ReadCollection,
         resource_kind: ResourceKind::Collection,
         resource_id: Some(collection.collection.id),
-        attrs: ResourceAttrs::default(),
+        attrs: ResourceFields::default(),
     });
     for object_id in [
         room.id,
@@ -411,7 +411,7 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
             action: Permissions::ReadObject,
             resource_kind: ResourceKind::Object,
             resource_id: Some(object_id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
     for relation_id in [allowed_first.id, allowed_second.id] {
@@ -420,7 +420,7 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
             action: Permissions::ReadObjectRelation,
             resource_kind: ResourceKind::ObjectRelation,
             resource_id: Some(relation_id),
-            attrs: ResourceAttrs::default(),
+            attrs: ResourceFields::default(),
         });
     }
 

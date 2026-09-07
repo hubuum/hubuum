@@ -1,3 +1,4 @@
+use hubuum_query::TraversalBudget;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -733,6 +734,7 @@ impl fmt::Debug for StorageObjectRelationsTouchingIdsQuery {
 #[derive(Clone, PartialEq)]
 pub struct StorageRelationGraphQuery {
     root_id: ResourceId,
+    traversal: TraversalBudget,
     options: QueryOptions,
     visibility: StorageVisibility,
 }
@@ -741,11 +743,13 @@ impl StorageRelationGraphQuery {
     #[must_use]
     pub const fn new(
         root_id: ResourceId,
+        traversal: TraversalBudget,
         options: QueryOptions,
         visibility: StorageVisibility,
     ) -> Self {
         Self {
             root_id,
+            traversal,
             options,
             visibility,
         }
@@ -757,8 +761,8 @@ impl StorageRelationGraphQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (ResourceId, QueryOptions, StorageVisibility) {
-        (self.root_id, self.options, self.visibility)
+    pub fn into_parts(self) -> (ResourceId, TraversalBudget, QueryOptions, StorageVisibility) {
+        (self.root_id, self.traversal, self.options, self.visibility)
     }
 }
 
@@ -794,7 +798,7 @@ pub struct StorageRelatedObjectsForRootsQuery {
     class_relation_id: Option<ClassRelationId>,
     direction: StorageRelatedDirection,
     sort: StorageRelatedSort,
-    max_depth: i32,
+    traversal: TraversalBudget,
     limit: i32,
     preserve_alternative_paths: bool,
     visibility: StorageVisibility,
@@ -813,7 +817,8 @@ impl StorageRelatedObjectsForRootsQuery {
             class_relation_id: None,
             direction: StorageRelatedDirection::Any,
             sort: StorageRelatedSort::Path,
-            max_depth: 1,
+            traversal: TraversalBudget::new(1, hubuum_query::MAX_TRAVERSAL_WORK_ROWS)
+                .expect("default traversal budget is valid"),
             limit: 1,
             preserve_alternative_paths: false,
             visibility,
@@ -839,8 +844,8 @@ impl StorageRelatedObjectsForRootsQuery {
     }
 
     #[must_use]
-    pub const fn max_depth(mut self, max_depth: i32) -> Self {
-        self.max_depth = max_depth;
+    pub const fn traversal_budget(mut self, traversal: TraversalBudget) -> Self {
+        self.traversal = traversal;
         self
     }
 
@@ -866,7 +871,7 @@ impl StorageRelatedObjectsForRootsQuery {
         Option<ClassRelationId>,
         StorageRelatedDirection,
         StorageRelatedSort,
-        i32,
+        TraversalBudget,
         i32,
         bool,
         StorageVisibility,
@@ -877,7 +882,7 @@ impl StorageRelatedObjectsForRootsQuery {
             self.class_relation_id,
             self.direction,
             self.sort,
-            self.max_depth,
+            self.traversal,
             self.limit,
             self.preserve_alternative_paths,
             self.visibility,
@@ -892,7 +897,7 @@ impl fmt::Debug for StorageRelatedObjectsForRootsQuery {
             .field("root_count", &self.root_object_ids.len())
             .field("direction", &self.direction)
             .field("sort", &self.sort)
-            .field("max_depth", &self.max_depth)
+            .field("traversal", &self.traversal)
             .field("limit", &self.limit)
             .field(
                 "preserve_alternative_paths",
@@ -906,7 +911,7 @@ impl fmt::Debug for StorageRelatedObjectsForRootsQuery {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageBidirectionalRelatedObjectsQuery {
     root_object_ids: Vec<ObjectId>,
-    max_depth: i32,
+    traversal: TraversalBudget,
     per_root_cap: i32,
     preserve_alternative_paths: bool,
     visibility: StorageVisibility,
@@ -916,14 +921,14 @@ impl StorageBidirectionalRelatedObjectsQuery {
     #[must_use]
     pub fn new(
         root_object_ids: impl IntoIterator<Item = ObjectId>,
-        max_depth: i32,
+        traversal: TraversalBudget,
         per_root_cap: i32,
         preserve_alternative_paths: bool,
         visibility: StorageVisibility,
     ) -> Self {
         Self {
             root_object_ids: root_object_ids.into_iter().collect(),
-            max_depth,
+            traversal,
             per_root_cap,
             preserve_alternative_paths,
             visibility,
@@ -931,10 +936,10 @@ impl StorageBidirectionalRelatedObjectsQuery {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<ObjectId>, i32, i32, bool, StorageVisibility) {
+    pub fn into_parts(self) -> (Vec<ObjectId>, TraversalBudget, i32, bool, StorageVisibility) {
         (
             self.root_object_ids,
-            self.max_depth,
+            self.traversal,
             self.per_root_cap,
             self.preserve_alternative_paths,
             self.visibility,
@@ -947,7 +952,7 @@ impl fmt::Debug for StorageBidirectionalRelatedObjectsQuery {
         formatter
             .debug_struct("StorageBidirectionalRelatedObjectsQuery")
             .field("root_count", &self.root_object_ids.len())
-            .field("max_depth", &self.max_depth)
+            .field("traversal", &self.traversal)
             .field("per_root_cap", &self.per_root_cap)
             .field(
                 "preserve_alternative_paths",

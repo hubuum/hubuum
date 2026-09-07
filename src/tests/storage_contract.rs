@@ -3831,6 +3831,175 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
     }
 }
 
+#[rstest::rstest]
+#[case::strict(true)]
+#[case::best_effort(false)]
+#[actix_web::test]
+async fn every_available_storage_backend_commits_claimed_import_effects_and_receipts(
+    #[case] strict: bool,
+) {
+    use hubuum_storage_core::{FencedImportItem, FencedImportPlan};
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let user = create_backend_user(&backend, &prefix("fenced_import_user")).await;
+        let task = backend
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Import,
+                    user.principal_id,
+                    serde_json::json!({}),
+                    1,
+                )
+                .try_build(10)
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let duration = StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap();
+        let claimed = match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                    pool,
+                    task.id(),
+                    duration,
+                )
+                .await
+                .unwrap()
+            }
+            BackendTestEnvironment::Memory { .. } => {
+                backend.claim_next_task(duration).await.unwrap().unwrap()
+            }
+        };
+        let name = prefix("fenced_import_collection");
+        let operation = crate::services::import_boundary::import_operation_to_storage(
+            ApplicationImportOperation::CreateCollection(ImportCollectionInput {
+                ref_: None,
+                name: name.clone(),
+                description: "atomic receipt".into(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
+                condition: None,
+                timestamps: None,
+            }),
+        )
+        .unwrap();
+        let plan = FencedImportPlan::try_new(
+            claimed.lease().clone(),
+            vec![FencedImportItem::new(
+                0,
+                Some(operation),
+                StorageImportResult::builder(task.id(), "collection", "create", "succeeded")
+                    .identifier(Some(name.clone()))
+                    .build(),
+            )],
+        )
+        .unwrap();
+        if strict {
+            backend.apply_claimed_import_strict(plan).await.unwrap();
+        } else {
+            backend
+                .apply_claimed_import_best_effort(
+                    plan,
+                    crate::services::import_boundary::import_mode_to_storage(ImportMode::default()),
+                )
+                .await
+                .unwrap();
+        }
+        let root = backend.get_import_root_collection().await.unwrap();
+        let collection = backend
+            .get_import_collection_child_by_name(root.id(), &name)
+            .await
+            .unwrap();
+        let (receipts, _) = backend
+            .list_import_task_results(StorageTaskChildListQuery::new(
+                task.id(),
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            (collection.is_some(), receipts.len()),
+            (true, 1),
+            "a committed effect must have exactly one durable receipt"
+        );
+        backend
+            .collection_store()
+            .delete_collection(collection.unwrap().id(), &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            hubuum_storage_postgres::test_support::delete_task(pool, task.id())
+                .await
+                .unwrap();
+        }
+        delete_backend_user(&backend, user).await;
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_fences_planning_result_writes() {
+    use hubuum_storage_core::FencedImportResults;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let user = create_backend_user(&backend, &prefix("planning_receipt_user")).await;
+        let task = backend
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Import,
+                    user.principal_id,
+                    serde_json::json!({}),
+                    1,
+                )
+                .try_build(10)
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let lease = StorageTaskLease::new(
+            task.id(),
+            StorageTaskClaimToken::new("00000000-0000-0000-0000-000000000001"),
+        );
+        let results = FencedImportResults::try_new(
+            lease,
+            vec![
+                StorageImportResult::builder(task.id(), "collection", "create", "failed")
+                    .error(Some("planning failure".into()))
+                    .build(),
+            ],
+        )
+        .unwrap();
+        assert!(
+            backend
+                .record_claimed_import_results(results)
+                .await
+                .is_err(),
+            "a queued task does not authorize worker writes"
+        );
+        let (receipts, _) = backend
+            .list_import_task_results(StorageTaskChildListQuery::new(
+                task.id(),
+                QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        assert!(
+            receipts.is_empty(),
+            "rejected claims cannot leave planning results"
+        );
+        if let BackendTestEnvironment::Postgres { pool } = &environment {
+            hubuum_storage_postgres::test_support::delete_task(pool, task.id())
+                .await
+                .unwrap();
+        }
+        delete_backend_user(&backend, user).await;
+    }
+}
+
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_the_complete_task_queue() {
     let _permit = postgres_permit().await;
@@ -6486,6 +6655,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         let (list_related_classes, _) = backend
             .list_related_classes(StorageRelationGraphQuery::new(
                 class_one_id,
+                hubuum_query::TraversalBudget::new(1, 100).unwrap(),
                 options(),
                 visibility(),
             ))
@@ -6497,6 +6667,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
         let (list_related_objects, _) = backend
             .list_related_objects(StorageRelationGraphQuery::new(
                 object_one_resource_id,
+                hubuum_query::TraversalBudget::new(1, 100).unwrap(),
                 options(),
                 visibility(),
             ))
@@ -6515,7 +6686,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
                 .class_relation_id(Some(class_relation_id))
                 .direction(StorageRelatedDirection::Any)
                 .sort(StorageRelatedSort::Path)
-                .max_depth(1)
+                .traversal_budget(hubuum_query::TraversalBudget::new(1, 100).unwrap())
                 .limit(10),
             )
             .await
@@ -6526,7 +6697,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             .list_bidirectionally_related_objects_for_roots(
                 StorageBidirectionalRelatedObjectsQuery::new(
                     [object_one_id],
-                    1,
+                    hubuum_query::TraversalBudget::new(1, 100).unwrap(),
                     10,
                     false,
                     visibility(),

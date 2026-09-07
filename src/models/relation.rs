@@ -1,3 +1,5 @@
+use crate::permissions::ClassResourceEndpoint;
+use crate::permissions::ObjectResourceEndpoint;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -9,7 +11,7 @@ use crate::models::{
     HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
     HubuumObjectWithPath, ResourceRevision,
 };
-use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::utilities::aliases::normalize_template_alias;
 
@@ -165,23 +167,15 @@ impl NewHubuumClassRelationFromClass {
 }
 
 fn class_relation_authorization_resource(
-    relation_id: i32,
+    relation_id: Option<i32>,
     from_class: &HubuumClass,
     to_class: &HubuumClass,
 ) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::ClassRelation,
-        id: relation_id,
-        attrs: ResourceAttrs {
-            collection_id: (from_class.collection_id == to_class.collection_id)
-                .then_some(from_class.collection_id),
-            from_collection_id: Some(from_class.collection_id),
-            to_collection_id: Some(to_class.collection_id),
-            from_class_id: Some(from_class.id),
-            to_class_id: Some(to_class.id),
-            ..Default::default()
-        },
-    }
+    ResourceRef::class_relation(
+        relation_id,
+        ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
+        ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
+    )
 }
 
 /// A normalized prospective class relation together with both endpoint classes.
@@ -229,7 +223,7 @@ impl PreparedClassRelation {
     }
 
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
-        class_relation_authorization_resource(0, &self.from_class, &self.to_class)
+        class_relation_authorization_resource(None, &self.from_class, &self.to_class)
     }
 }
 
@@ -279,7 +273,11 @@ impl ResolvedClassRelationTarget {
     }
 
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
-        class_relation_authorization_resource(self.relation.id, &self.from_class, &self.to_class)
+        class_relation_authorization_resource(
+            Some(self.relation.id),
+            &self.from_class,
+            &self.to_class,
+        )
     }
 }
 
@@ -401,27 +399,25 @@ impl ObjectRelationCreateSelector {
 }
 
 fn object_relation_authorization_resource(
-    relation_id: i32,
+    relation_id: Option<i32>,
     class_relation_id: i32,
     from_object: &HubuumObject,
     to_object: &HubuumObject,
 ) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::ObjectRelation,
-        id: relation_id,
-        attrs: ResourceAttrs {
-            collection_id: (from_object.collection_id == to_object.collection_id)
-                .then_some(from_object.collection_id),
-            from_collection_id: Some(from_object.collection_id),
-            to_collection_id: Some(to_object.collection_id),
-            from_class_id: Some(from_object.hubuum_class_id),
-            to_class_id: Some(to_object.hubuum_class_id),
-            from_object_id: Some(from_object.id),
-            to_object_id: Some(to_object.id),
-            class_relation_id: Some(class_relation_id),
-            ..Default::default()
-        },
-    }
+    ResourceRef::object_relation(
+        relation_id,
+        ObjectResourceEndpoint::new(
+            from_object.collection_id,
+            from_object.hubuum_class_id,
+            from_object.id,
+        ),
+        ObjectResourceEndpoint::new(
+            to_object.collection_id,
+            to_object.hubuum_class_id,
+            to_object.id,
+        ),
+        class_relation_id,
+    )
 }
 
 fn validate_object_relation_membership(
@@ -500,7 +496,7 @@ impl PreparedObjectRelation {
 
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         object_relation_authorization_resource(
-            0,
+            None,
             self.class_relation.relation().id,
             &self.from_object,
             &self.to_object,
@@ -560,7 +556,7 @@ impl ResolvedObjectRelationTarget {
 
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         object_relation_authorization_resource(
-            self.relation.id,
+            Some(self.relation.id),
             self.relation.class_relation_id,
             &self.from_object,
             &self.to_object,
@@ -750,20 +746,12 @@ impl AuthzTarget for HubuumClassRelation {
         let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
             .instance(pool)
             .await?;
-        let same_collection = from_class.collection_id == to_class.collection_id;
 
-        Ok(ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: same_collection.then_some(from_class.collection_id),
-                from_collection_id: Some(from_class.collection_id),
-                to_collection_id: Some(to_class.collection_id),
-                from_class_id: Some(self.from_hubuum_class_id),
-                to_class_id: Some(self.to_hubuum_class_id),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::class_relation(
+            Some(self.id),
+            ClassResourceEndpoint::new(from_class.collection_id, self.from_hubuum_class_id),
+            ClassResourceEndpoint::new(to_class.collection_id, self.to_hubuum_class_id),
+        ))
     }
 }
 
@@ -779,19 +767,11 @@ impl AuthzTarget for NewHubuumClassRelation {
         let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
             .instance(pool)
             .await?;
-        Ok(ResourceRef {
-            kind: ResourceKind::ClassRelation,
-            id: 0,
-            attrs: ResourceAttrs {
-                collection_id: (from_class.collection_id == to_class.collection_id)
-                    .then_some(from_class.collection_id),
-                from_collection_id: Some(from_class.collection_id),
-                to_collection_id: Some(to_class.collection_id),
-                from_class_id: Some(from_class.id),
-                to_class_id: Some(to_class.id),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::class_relation(
+            None,
+            ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
+            ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
+        ))
     }
 }
 
@@ -817,23 +797,21 @@ impl AuthzTarget for HubuumObjectRelation {
         let to_object = HubuumObjectID::new(self.to_hubuum_object_id)?
             .instance(pool)
             .await?;
-        let same_collection = from_object.collection_id == to_object.collection_id;
 
-        Ok(ResourceRef {
-            kind: ResourceKind::ObjectRelation,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: same_collection.then_some(from_object.collection_id),
-                from_collection_id: Some(from_object.collection_id),
-                to_collection_id: Some(to_object.collection_id),
-                from_class_id: Some(from_object.hubuum_class_id),
-                to_class_id: Some(to_object.hubuum_class_id),
-                from_object_id: Some(self.from_hubuum_object_id),
-                to_object_id: Some(self.to_hubuum_object_id),
-                class_relation_id: Some(self.class_relation_id),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::object_relation(
+            Some(self.id),
+            ObjectResourceEndpoint::new(
+                from_object.collection_id,
+                from_object.hubuum_class_id,
+                self.from_hubuum_object_id,
+            ),
+            ObjectResourceEndpoint::new(
+                to_object.collection_id,
+                to_object.hubuum_class_id,
+                self.to_hubuum_object_id,
+            ),
+            self.class_relation_id,
+        ))
     }
 }
 
@@ -849,22 +827,20 @@ impl AuthzTarget for NewHubuumObjectRelation {
         let to_object = HubuumObjectID::new(self.to_hubuum_object_id)?
             .instance(pool)
             .await?;
-        Ok(ResourceRef {
-            kind: ResourceKind::ObjectRelation,
-            id: 0,
-            attrs: ResourceAttrs {
-                collection_id: (from_object.collection_id == to_object.collection_id)
-                    .then_some(from_object.collection_id),
-                from_collection_id: Some(from_object.collection_id),
-                to_collection_id: Some(to_object.collection_id),
-                from_class_id: Some(from_object.hubuum_class_id),
-                to_class_id: Some(to_object.hubuum_class_id),
-                from_object_id: Some(from_object.id),
-                to_object_id: Some(to_object.id),
-                class_relation_id: Some(self.class_relation_id),
-                ..Default::default()
-            },
-        })
+        Ok(ResourceRef::object_relation(
+            None,
+            ObjectResourceEndpoint::new(
+                from_object.collection_id,
+                from_object.hubuum_class_id,
+                from_object.id,
+            ),
+            ObjectResourceEndpoint::new(
+                to_object.collection_id,
+                to_object.hubuum_class_id,
+                to_object.id,
+            ),
+            self.class_relation_id,
+        ))
     }
 }
 

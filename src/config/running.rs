@@ -230,6 +230,7 @@ pub struct PaginationConfig {
     pub default_page_limit: usize,
     pub max_page_limit: usize,
     pub max_transitive_depth: i32,
+    pub max_traversal_work_rows: i32,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -480,6 +481,7 @@ impl RunningConfig {
                 default_page_limit: config.default_page_limit,
                 max_page_limit: config.max_page_limit,
                 max_transitive_depth: config.max_transitive_depth,
+                max_traversal_work_rows: hubuum_query::MAX_TRAVERSAL_WORK_ROWS,
             },
             network: NetworkConfig {
                 trust_ip_headers: config.trust_ip_headers,
