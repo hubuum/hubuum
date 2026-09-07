@@ -1,6 +1,10 @@
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use hubuum_domain::OrderedConstraint;
+
+pub(crate) const TASK_HEARTBEAT_CONSTRAINT: OrderedConstraint =
+    OrderedConstraint::less_than("HUBUUM_TASK_HEARTBEAT_SECONDS", "HUBUUM_TASK_LEASE_SECONDS");
 
 /// Validated settings for task execution, lease renewal, and maintenance work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,7 +113,10 @@ impl TaskWorkerSettingsBuilder {
             return Err("task worker poll interval must be greater than zero".to_string());
         }
         let lease_duration = TaskLeaseDuration::new(lease_duration)?;
-        if heartbeat_interval.is_zero() || heartbeat_interval >= lease_duration.duration() {
+        if heartbeat_interval.is_zero()
+            || !TASK_HEARTBEAT_CONSTRAINT
+                .ordered_values_satisfy(heartbeat_interval, lease_duration.duration())
+        {
             return Err(
                 "task worker heartbeat interval must be greater than zero and shorter than the lease"
                     .to_string(),

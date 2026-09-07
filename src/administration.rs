@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -245,6 +245,10 @@ struct AdminCli {
     /// Possible values: trace, debug, info, warn, error
     #[arg(long, env = "HUBUUM_LOG_LEVEL", default_value = "info")]
     log_level: String,
+}
+
+pub(crate) fn admin_command() -> clap::Command {
+    AdminCli::command()
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]

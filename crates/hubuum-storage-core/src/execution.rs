@@ -34,6 +34,21 @@ pub enum StorageCallSite {
 }
 
 impl StorageCallSite {
+    pub const ALL: [Self; 12] = [
+        Self::EventDelivery,
+        Self::EventFanout,
+        Self::EventRetention,
+        Self::HttpRequest,
+        Self::MetricsRefresh,
+        Self::Readiness,
+        Self::RequestMaintenance,
+        Self::RestoreCoordinator,
+        Self::TaskLease,
+        Self::TaskWorker,
+        Self::TokenRetention,
+        Self::Unattributed,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

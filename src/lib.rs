@@ -31,6 +31,7 @@ pub mod macros;
 pub mod middlewares;
 pub mod models;
 pub mod observability;
+mod operational_contracts;
 pub mod pagination;
 pub mod permissions;
 pub mod restores;
@@ -62,4 +63,16 @@ pub fn generate_openapi_json() -> String {
 
     let openapi = api::openapi::ApiDoc::openapi();
     serde_json::to_string_pretty(&openapi).expect("failed to serialize OpenAPI document")
+}
+
+/// Generate the canonical operational-contract snapshot.
+#[must_use]
+pub fn generate_operational_contract_json() -> String {
+    operational_contracts::generate_json()
+}
+
+/// Generate the canonical metric inventory documentation.
+#[must_use]
+pub fn generate_operational_metrics_markdown() -> String {
+    operational_contracts::generate_metrics_markdown()
 }

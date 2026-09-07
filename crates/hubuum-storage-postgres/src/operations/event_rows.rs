@@ -281,7 +281,7 @@ mod tests {
             before: None,
             after: Some(serde_json::json!({"name": "collection"})),
             metadata: serde_json::json!({}),
-            schema_version: 1,
+            schema_version: hubuum_events_core::CURRENT_EVENT_SCHEMA_VERSION,
             initiator_user_id: None,
             task_id: None,
             before_revision: None,

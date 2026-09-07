@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// Current serialized event-envelope schema version.
+pub const CURRENT_EVENT_SCHEMA_VERSION: i32 = 1;
+
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
 pub const TRACE_ID_HEX_BYTES: usize = 32;
 pub const SPAN_ID_HEX_BYTES: usize = 16;
@@ -243,6 +246,8 @@ pub enum ActorKind {
 }
 
 impl ActorKind {
+    pub const ALL: &'static [Self] = &[Self::User, Self::System, Self::Worker];
+
     pub fn as_str(self) -> &'static str {
         match self {
             ActorKind::User => "user",
@@ -490,6 +495,28 @@ pub enum EntityType {
 }
 
 impl EntityType {
+    pub const ALL: &'static [Self] = &[
+        Self::Collection,
+        Self::Class,
+        Self::Object,
+        Self::ClassRelation,
+        Self::ObjectRelation,
+        Self::User,
+        Self::Group,
+        Self::UserGroup,
+        Self::Permission,
+        Self::Token,
+        Self::RemoteTarget,
+        Self::ExportTemplate,
+        Self::Task,
+        Self::ServiceAccount,
+        Self::EventSink,
+        Self::EventSubscription,
+        Self::ComputedFieldDefinition,
+        Self::ExternalIdentitySync,
+        Self::Restore,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             EntityType::Collection => "collection",
@@ -571,6 +598,28 @@ pub enum Action {
 }
 
 impl Action {
+    pub const ALL: &'static [Self] = &[
+        Self::Created,
+        Self::Updated,
+        Self::Deleted,
+        Self::Added,
+        Self::Removed,
+        Self::Granted,
+        Self::Revoked,
+        Self::Purged,
+        Self::Invoked,
+        Self::Queued,
+        Self::Started,
+        Self::Validating,
+        Self::Running,
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+        Self::Cleanup,
+        Self::Disabled,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Action::Created => "created",
@@ -1016,7 +1065,7 @@ impl EventEnvelopeBuilder {
             }
         }
 
-        let schema_version = self.schema_version.unwrap_or(1);
+        let schema_version = self.schema_version.unwrap_or(CURRENT_EVENT_SCHEMA_VERSION);
         if schema_version <= 0 {
             return Err(EventEnvelopeError::new(
                 "event envelope schema_version must be positive",

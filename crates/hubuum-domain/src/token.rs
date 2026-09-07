@@ -1,5 +1,7 @@
 use chrono::{Duration, NaiveDateTime};
 
+use crate::OrderedConstraint;
+
 /// Maximum number of persisted resource entries in one token boundary.
 pub const MAX_TOKEN_RESOURCE_SCOPES: usize = 1_000;
 use std::fmt;
@@ -23,6 +25,12 @@ impl fmt::Display for TokenPolicyError {
 impl std::error::Error for TokenPolicyError {}
 
 pub const MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE: usize = 10;
+
+/// Operational constraint enforced for the default and maximum token lifetimes.
+pub const TOKEN_LIFETIME_CONSTRAINT: OrderedConstraint = OrderedConstraint::less_than_or_equal(
+    "HUBUUM_TOKEN_LIFETIME_HOURS",
+    "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+);
 
 /// Validated post-terminal period for retaining token metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +58,8 @@ impl TokenRetentionPeriod {
 pub struct TokenLifetime(Duration);
 
 impl TokenLifetime {
+    pub const MAX_HOURS: i64 = i32::MAX as i64;
+
     pub fn from_hours(hours: i64) -> Result<Self, TokenPolicyError> {
         Self::from_hours_for("token_lifetime_hours", hours)
     }
@@ -60,10 +70,10 @@ impl TokenLifetime {
                 "{setting_name} must be greater than 0"
             )));
         }
-        if hours > i64::from(i32::MAX) {
+        if hours > Self::MAX_HOURS {
             return Err(TokenPolicyError::new(format!(
                 "{setting_name} must not exceed {}",
-                i32::MAX
+                Self::MAX_HOURS
             )));
         }
         Duration::try_hours(hours).map(Self).ok_or_else(|| {
@@ -105,9 +115,11 @@ impl TokenIssuancePolicy {
         let default_lifetime = TokenLifetime::from_hours(default_lifetime_hours)?;
         let maximum_lifetime =
             TokenLifetime::from_hours_for("max_token_lifetime_hours", maximum_lifetime_hours)?;
-        if default_lifetime.hours() > maximum_lifetime.hours() {
+        if !TOKEN_LIFETIME_CONSTRAINT
+            .ordered_values_satisfy(default_lifetime.hours(), maximum_lifetime.hours())
+        {
             return Err(TokenPolicyError::new(
-                "token_lifetime_hours must not exceed max_token_lifetime_hours".to_string(),
+                "token_lifetime_hours must not exceed max_token_lifetime_hours",
             ));
         }
         Ok(Self {
@@ -161,16 +173,23 @@ impl TokenIssuancePolicy {
 pub struct TokenRetentionBatchSize(usize);
 
 impl TokenRetentionBatchSize {
+    pub const MIN: usize = MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE;
+    pub const MAX: usize = i64::MAX as usize;
+
     pub fn new(batch_size: usize) -> Result<Self, TokenPolicyError> {
-        if batch_size < MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE {
+        if batch_size < Self::MIN {
             return Err(TokenPolicyError::new(format!(
                 "token_retention_purge_batch_size must be at least \
                  {MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE}"
             )));
         }
-        i64::try_from(batch_size).map_err(|_| {
-            TokenPolicyError::new("token_retention_purge_batch_size is too large".to_string())
-        })?;
+        if batch_size > Self::MAX {
+            return Err(TokenPolicyError::new(
+                "token_retention_purge_batch_size is too large",
+            ));
+        }
+        i64::try_from(batch_size)
+            .map_err(|_| TokenPolicyError::new("token_retention_purge_batch_size is too large"))?;
         Ok(Self(batch_size))
     }
 
@@ -297,6 +316,15 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case(TokenRetentionBatchSize::MIN, true)]
+    #[case(TokenRetentionBatchSize::MAX, true)]
+    #[case(TokenRetentionBatchSize::MIN - 1, false)]
+    #[case(usize::MAX, cfg!(target_pointer_width = "32"))]
+    fn retention_batch_bounds_match_validation(#[case] value: usize, #[case] accepted: bool) {
+        assert_eq!(TokenRetentionBatchSize::new(value).is_ok(), accepted);
+    }
 
     fn settings() -> TokenRetentionSettings {
         TokenRetentionSettings::builder()

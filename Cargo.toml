@@ -223,6 +223,12 @@ path = "src/bin/openapi.rs"
 test = false
 
 [[bin]]
+name = "hubuum-operational-contracts"
+path = "src/bin/operational_contracts.rs"
+test = false
+required-features = ["embedded-migrations"]
+
+[[bin]]
 name = "hubuum-runtime-behavior-check"
 path = "src/bin/runtime_behavior_check.rs"
 test = false

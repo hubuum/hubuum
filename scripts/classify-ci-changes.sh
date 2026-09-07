@@ -14,6 +14,7 @@ markdown=false
 code=false
 rust_api_policy=false
 openapi=false
+operational_contract=false
 container=false
 artifacts=false
 benchmarks=false
@@ -50,6 +51,16 @@ for path in "$@"; do
   esac
 
   case "$path" in
+    CHANGELOG.md | docs/operational-contract.json | docs/metrics-reference.md | \
+      .github/operational-contract-breaking-exceptions.json | \
+      scripts/check-operational-contract-compatibility.py | \
+      scripts/resolve-operational-contract-baseline.sh | \
+      scripts/test-operational-contract-github-api.sh | \
+      scripts/test-operational-contract-compatibility.py | \
+      scripts/test-operational-contract-compatibility.sh)
+      code=true
+      operational_contract=true
+      ;;
     docs/openapi.json)
       openapi=true
       ;;
@@ -111,6 +122,7 @@ for path in "$@"; do
     .github/workflows/ci.yml)
       code=true
       openapi=true
+      operational_contract=true
       container=true
       artifacts=true
       ;;
@@ -128,6 +140,7 @@ for path in "$@"; do
       ;;
     src/*)
       code=true
+      operational_contract=true
       container=true
       artifacts=true
       benchmarks=true
@@ -148,6 +161,7 @@ for path in "$@"; do
       ;;
     crates/*)
       code=true
+      operational_contract=true
       container=true
       artifacts=true
       benchmarks=true
@@ -159,6 +173,7 @@ for path in "$@"; do
     Cargo.toml | Cargo.lock)
       code=true
       openapi=true
+      operational_contract=true
       container=true
       artifacts=true
       benchmarks=true
@@ -190,6 +205,7 @@ for path in "$@"; do
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
       scripts/test-install-script-refresh.sh | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \
+      scripts/single-host-health-probe.py | scripts/test-single-host-health-probe.py | \
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
       code=true
       container=true
@@ -215,6 +231,7 @@ outputs=(
   "code=$code"
   "rust_api_policy=$rust_api_policy"
   "openapi=$openapi"
+  "operational_contract=$operational_contract"
   "container=$container"
   "artifacts=$artifacts"
   "benchmarks=$benchmarks"

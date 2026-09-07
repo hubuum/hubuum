@@ -35,6 +35,8 @@ pub enum ExportTemplateKind {
 }
 
 impl ExportTemplateKind {
+    pub const ALL: &'static [Self] = &[Self::Export, Self::Fragment];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Export => "export",

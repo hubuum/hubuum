@@ -124,6 +124,13 @@ pub enum ExportContentType {
 }
 
 impl ExportContentType {
+    pub const ALL: &'static [Self] = &[
+        Self::ApplicationJson,
+        Self::TextPlain,
+        Self::TextHtml,
+        Self::TextCsv,
+    ];
+
     pub fn as_mime(self) -> &'static str {
         match self {
             ExportContentType::ApplicationJson => "application/json",
@@ -351,6 +358,15 @@ pub struct ExportTemplateRunRequest {
 }
 
 impl ExportScopeKind {
+    pub const ALL: &'static [Self] = &[
+        Self::Collections,
+        Self::Classes,
+        Self::ObjectsInClass,
+        Self::ClassRelations,
+        Self::ObjectRelations,
+        Self::RelatedObjects,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             ExportScopeKind::Collections => "collections",
@@ -389,6 +405,8 @@ impl FromStr for ExportScopeKind {
 }
 
 impl ExportMissingDataPolicy {
+    pub const ALL: &'static [Self] = &[Self::Strict, Self::Null, Self::Omit];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",

@@ -49,6 +49,15 @@ two frontend containers. Caddy actively checks backend `/readyz` and frontend
 HTTP health, excludes unavailable replicas, and retries connection failures
 against a healthy replica.
 
+A changed Caddy configuration can close a client connection before its first
+HTTP response while the old HTTP server shuts down. This is distinct from an
+unavailable backend. The live rollout test permits one retry of a read-only
+`/healthz` or `/readyz` probe after such a pre-response disconnect, within the
+original seven-second deadline, and reports these retries separately. HTTP
+errors, connection refusal, timeouts, partial responses, and repeated
+disconnects still fail the test. This does not authorize replaying writes or
+promise uninterrupted TCP connections across a proxy configuration reload.
+
 The generated configuration keeps the backend active-check interval at five
 seconds but defines only one health-checked reverse proxy per listener. In an
 all-mode public API deployment, each backend receives at most one public Caddy

@@ -115,6 +115,8 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
   documented in [docs/database_roles.md](docs/database_roles.md); the default
   topology retains one database login.
 - Database pool sizing, observability, and load testing are documented in [docs/performance.md](docs/performance.md).
+- Non-HTTP compatibility snapshots and policy are documented in
+  [docs/operational_contracts.md](docs/operational_contracts.md).
 
 ### Production Behavior
 

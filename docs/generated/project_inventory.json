@@ -46,6 +46,7 @@
   "binaries": [
     "hubuum-admin",
     "hubuum-openapi",
+    "hubuum-operational-contracts",
     "hubuum-runtime-behavior-check",
     "hubuum-scale-benchmark",
     "hubuum-server"

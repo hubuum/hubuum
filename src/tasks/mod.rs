@@ -11,6 +11,7 @@ mod worker;
 pub use helpers::{idempotency_key_from_headers, request_hash};
 #[cfg(feature = "integration-test-support")]
 pub(crate) use remote_call::{enter_local_remote_target_test, exit_local_remote_target_test};
+pub(crate) use settings::TASK_HEARTBEAT_CONSTRAINT;
 pub use settings::{TaskWorkerSettings, TaskWorkerSettingsBuilder};
 pub use worker::{
     ensure_task_worker_running, ensure_task_worker_running_with_settings,

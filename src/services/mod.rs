@@ -42,14 +42,20 @@ pub use objects::ObjectService;
 #[cfg(test)]
 use std::sync::Arc;
 
-#[cfg(test)]
-use crate::storage::ApplicationStorageObserver;
 use crate::storage::StorageHandle;
 #[cfg(test)]
 use crate::storage::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
-    ObservedStorage,
+    ObservedStorage, StorageObservation, StorageObserver,
 };
+
+#[cfg(test)]
+struct TestStorageObserver;
+
+#[cfg(test)]
+impl StorageObserver for TestStorageObserver {
+    fn operation_finished(&self, _observation: &StorageObservation) {}
+}
 
 /// Application use-case facade.
 #[derive(Clone)]
@@ -85,7 +91,7 @@ impl Services {
         let storage = Arc::new(ObservedStorage::new(
             storage,
             "test",
-            Arc::new(ApplicationStorageObserver),
+            Arc::new(TestStorageObserver),
         ));
         Self {
             classes: ClassService::new(storage.clone()),

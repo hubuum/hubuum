@@ -72,6 +72,8 @@ impl FromStr for RemoteTargetSubjectType {
 }
 
 impl RemoteHttpMethod {
+    pub const ALL: &'static [Self] = &[Self::Get, Self::Post, Self::Patch, Self::Delete];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Get => "get",

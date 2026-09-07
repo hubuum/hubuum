@@ -179,39 +179,21 @@ max by (template_id, template_name) (
 
 ## Metrics
 
+The complete metric inventory—including type, unit, process/database scope,
+allowed label names, feature ownership, and explicit histogram buckets—is
+generated in [Metric Reference](metrics-reference.md). The generated reference
+and `docs/operational-contract.json` are the canonical compatibility sources;
+CI rejects drift from the typed registry.
+
 ### Process, HTTP, And Database
 
-| Metric | Labels | Description |
-| --- | --- | --- |
-| `hubuum_build_info` | `version`, `git_sha` | Build identity for the scraped process |
-| `hubuum_runtime_info` | `role` | Runtime role for the scraped process |
-| `hubuum_process_start_time_seconds` | none | Unix timestamp when the process initialized metrics |
-| `process_cpu_seconds_total` | none | Process user and system CPU time |
-| `process_open_fds` | none | Process open file descriptors or handles |
-| `process_max_fds` | none | Comparable process file-descriptor limit; zero when unavailable |
-| `process_resident_memory_bytes` | none | Process resident memory |
-| `process_virtual_memory_bytes` | none | Process virtual memory |
-| `process_start_time_seconds` | none | Operating-system process start time |
-| `hubuum_http_requests_total` | `method`, `route`, `status_code`, `status_family` | HTTP requests by stable route template or coarse route group |
-| `hubuum_http_request_duration_seconds` | `method`, `route`, `status_family` | HTTP request duration histogram |
-| `hubuum_http_requests_in_flight` | `route` | Requests currently being handled by stable route |
-| `hubuum_api_errors_total` | `class` | API errors by public error class |
-| `hubuum_extraction_failures_total` | `kind` | JSON and path extraction failures |
-| `hubuum_db_pool_connections` | `state` | Database pool connections by configured, open, idle, and checked-out state |
-| `hubuum_db_connection_acquire_duration_seconds` | `caller` | Pool connection acquisition duration |
-| `hubuum_db_connection_acquire_failures_total` | `caller` | Pool connection acquisition failures |
-| `hubuum_db_operation_duration_seconds` | `caller`, `operation`, `result` | `with_connection` and `with_transaction` helper duration |
-| `hubuum_db_operation_errors_total` | `caller`, `operation`, `result` | Database helper failures by broad public error class |
-| `hubuum_storage_backend_info` | `backend` | Complete storage backend selected for the process |
-| `hubuum_storage_operation_duration_seconds` | `backend`, `capability`, `operation`, `result` | Backend-neutral logical storage duration |
-| `hubuum_storage_operation_errors_total` | `backend`, `capability`, `operation`, `result` | Backend-neutral logical storage failures |
-| `hubuum_metrics_refresh_duration_seconds` | `source` | Duration of the latest refresh attempt |
-| `hubuum_metrics_refresh_last_success_timestamp_seconds` | `source` | Unix timestamp of the latest successful refresh |
-| `hubuum_metrics_refresh_failures_total` | `source` | Best-effort refresh failures |
-| `hubuum_metrics_refresh_skipped_total` | `source`, `reason` | Refreshes skipped because another scrape was already refreshing |
+The generated [Metric Reference](metrics-reference.md) replaces the former
+hand-maintained table for this group. The notes below explain the bounded
+domains and aggregation semantics that are not part of each metric's structural
+signature.
 
 The bounded refresh `source` values are `database`, `events`, `inventory`,
-`login_limiter`, `process`, and `tasks`.
+`login_limiter`, `process`, `tasks`, and `token_keys`.
 
 The bounded database `caller` values are `event_delivery`, `event_fanout`,
 `event_retention`, `http_request`, `metrics_refresh`, `readiness`,
@@ -347,7 +329,7 @@ limited to `total`, `planning`, and `execution`; their outcomes are `success`,
 | `hubuum_event_worker_batch_size` | `worker` | Configured event-worker batch size |
 | `hubuum_event_worker_poll_interval_seconds` | `worker` | Configured event-worker poll interval |
 | `hubuum_event_worker_lock_timeout_seconds` | `worker` | Configured event-worker claim lock timeout |
-| `hubuum_event_worker_wakeups_total` | `worker`, `kind` | Notification, poll, and notification-send wakeups observed by this process |
+| `hubuum_event_worker_wakeups_total` | `worker`, `kind` | Notification, poll, and notifications-sent wakeups observed by this process |
 | `hubuum_inventory_entities` | `entity_type` | Database-wide collections, classes, objects, users, groups, service accounts, and remote targets |
 
 ## Alert Starting Points
