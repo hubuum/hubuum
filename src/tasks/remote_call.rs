@@ -4,7 +4,7 @@ use base64::Engine;
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
 };
-use hubuum_templates::{TemplateLimits, prepare_template};
+use hubuum_templates::{MissingDataPolicy, TemplateBatch, TemplateExecution, TemplateLimits};
 #[cfg(feature = "integration-test-support")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -17,9 +17,10 @@ use crate::config::{
 };
 use crate::errors::ApiError;
 use crate::models::{
-    NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod, RemoteInvocationBodyOverride,
-    RemoteInvocationParameters, RemoteTargetSubjectType, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus, authorize_remote_invocation,
+    NewTaskEventRecord, RemoteAuthConfig, RemoteHeaderTemplates, RemoteHttpMethod,
+    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTargetSubjectType,
+    RemoteTemplateContext, StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus,
+    authorize_remote_invocation,
 };
 use crate::observability::metrics;
 use crate::permissions::AuthorizationContext;
@@ -150,8 +151,17 @@ where
         request.body_override.clone(),
     )?;
 
-    let rendered_url =
-        render_template(RemoteTemplateSurface::Url, &target.url_template, &context).await?;
+    let RenderedRemoteTemplates {
+        url: rendered_url,
+        headers: rendered_headers,
+        body: rendered_body,
+    } = render_remote_templates(
+        &target.url_template,
+        &target.headers_template,
+        target.body_template.as_deref(),
+        &context,
+    )
+    .await?;
     let start = Instant::now();
     let failure_context = RemoteFailureContext {
         task_id,
@@ -170,14 +180,6 @@ where
                 error,
             ));
         }
-    };
-
-    let rendered_headers = render_headers(&target.headers_template, &context).await?;
-    let rendered_body = match target.body_template.as_deref() {
-        Some(template) => {
-            Some(render_template(RemoteTemplateSurface::Body, template, &context).await?)
-        }
-        None => None,
     };
 
     let mut headers = rendered_headers;
@@ -431,21 +433,16 @@ impl RemoteTemplateSurface {
     }
 }
 
-async fn render_template(
-    surface: RemoteTemplateSurface,
-    template: &str,
-    context: &serde_json::Value,
-) -> Result<String, ApiError> {
+fn remote_template(surface: RemoteTemplateSurface, source: &str) -> TemplateExecution<'_> {
     let (recursion_limit, fuel) = remote_template_limits();
-    let label = surface.label();
-    prepare_template(template)
-        .limits(
-            TemplateLimits::new(recursion_limit, fuel).with_max_output_bytes(surface.max_bytes()),
-        )
-        .context(context)
-        .render()
-        .await
-        .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
+    TemplateExecution::new(
+        "template",
+        source,
+        TemplateLimits::new(recursion_limit, fuel),
+    )
+    .keep_trailing_newline(false)
+    .missing_data(MissingDataPolicy::Lenient)
+    .max_output_bytes(surface.max_bytes())
 }
 
 fn remote_template_limits() -> (usize, u64) {
@@ -462,25 +459,55 @@ fn remote_template_limits() -> (usize, u64) {
         ))
 }
 
-async fn render_headers(
+struct RenderedRemoteTemplates {
+    url: String,
+    headers: OutboundHeaders,
+    body: Option<String>,
+}
+
+async fn render_remote_templates(
+    url_template: &str,
     headers_template: &serde_json::Value,
+    body_template: Option<&str>,
     context: &serde_json::Value,
-) -> Result<OutboundHeaders, ApiError> {
-    let mut headers = OutboundHeaders::new();
-    let object = headers_template.as_object().ok_or_else(|| {
-        ApiError::BadRequest("headers_template must be a JSON object".to_string())
-    })?;
-    if object.len() > 128 {
-        return Err(ApiError::BadRequest(
-            "remote calls support at most 128 headers".into(),
-        ));
+) -> Result<RenderedRemoteTemplates, ApiError> {
+    let templates = RemoteHeaderTemplates::new(headers_template)?;
+    let mut batch = TemplateBatch::new(8192 + 64 * 1024 + 1024 * 1024);
+    let entries = std::iter::once((RemoteTemplateSurface::Url, url_template))
+        .chain(
+            templates
+                .iter()
+                .map(|(_, source)| (RemoteTemplateSurface::Header, source)),
+        )
+        .chain(body_template.map(|source| (RemoteTemplateSurface::Body, source)));
+    let mut labels = Vec::new();
+    for (surface, source) in entries {
+        batch
+            .push(remote_template(surface, source))
+            .map_err(|error| {
+                ApiError::BadRequest(format!("Failed rendering {}: {error}", surface.label()))
+            })?;
+        labels.push(surface.label());
     }
+    let outputs = batch.render(context).await.map_err(|error| {
+        let label = error
+            .template_index()
+            .and_then(|index| labels.get(index))
+            .copied()
+            .unwrap_or("template batch");
+        ApiError::BadRequest(format!("Failed rendering {label}: {error}"))
+    })?;
+    let mut outputs = outputs.into_iter().map(|output| output.into_parts().0);
+    let mut next = || {
+        outputs
+            .next()
+            .ok_or_else(|| ApiError::InternalServerError("Missing remote template result".into()))
+    };
+    let url = next()?;
+    let mut headers = OutboundHeaders::new();
     let mut total_bytes: usize = 0;
-    for (name, value) in object {
-        let value = value.as_str().ok_or_else(|| {
-            ApiError::BadRequest("header template values must be strings".to_string())
-        })?;
-        let rendered = render_template(RemoteTemplateSurface::Header, value, context).await?;
+    for (name, _) in templates.iter() {
+        let rendered = next()?;
         total_bytes = total_bytes
             .saturating_add(name.len())
             .saturating_add(rendered.len());
@@ -493,7 +520,8 @@ async fn render_headers(
             .insert(name, &rendered)
             .map_err(outbound_error_to_bad_request)?;
     }
-    Ok(headers)
+    let body = body_template.map(|_| next()).transpose()?;
+    Ok(RenderedRemoteTemplates { url, headers, body })
 }
 
 async fn apply_auth(
@@ -704,32 +732,101 @@ mod tests {
         // The `tojson` filter is documented for remote target body templates; it must
         // actually render, not just compile, so execution matches the docs.
         let context = serde_json::json!({ "object": { "data": { "host": "h1" } } });
-        let rendered = render_template(
-            RemoteTemplateSurface::Body,
-            "{{ object.data | tojson }}",
+        let rendered = render_remote_templates(
+            "https://example.invalid/",
+            &serde_json::json!({}),
+            Some("{{ object.data | tojson }}"),
             &context,
         )
         .await
         .unwrap();
-        assert_eq!(rendered, "{\"host\":\"h1\"}");
+        assert_eq!(rendered.body.as_deref(), Some("{\"host\":\"h1\"}"));
     }
 
     #[tokio::test]
     async fn render_template_is_fuel_bounded() {
         let context = serde_json::json!({});
-        let error = render_template(
-            RemoteTemplateSurface::Body,
-            "{% for _ in range(1000000000) %}x{% endfor %}",
+        let error = render_remote_templates(
+            "https://example.invalid/",
+            &serde_json::json!({}),
+            Some("{% for _ in range(1000000000) %}x{% endfor %}"),
             &context,
         )
         .await
-        .unwrap_err();
+        .err()
+        .expect("fuel limit must reject the batch");
 
         assert!(
             error.to_string().contains("fuel")
                 || error.to_string().contains("operation")
                 || error.to_string().contains("limit")
         );
+    }
+
+    #[rstest]
+    #[case::url(RemoteTemplateSurface::Url)]
+    #[case::header(RemoteTemplateSurface::Header)]
+    #[case::body(RemoteTemplateSurface::Body)]
+    #[tokio::test]
+    async fn batch_keeps_surface_output_limits(#[case] surface: RemoteTemplateSurface) {
+        let mut url = "https://example.invalid/";
+        let mut headers = serde_json::json!({});
+        let mut body = None;
+        match surface {
+            RemoteTemplateSurface::Url => url = "{{ 'x' * 8193 }}",
+            RemoteTemplateSurface::Header => {
+                headers = serde_json::json!({ "X-Large": "{{ 'x' * 8193 }}" })
+            }
+            RemoteTemplateSurface::Body => body = Some("{{ 'x' * 1048577 }}"),
+        }
+
+        let error = render_remote_templates(url, &headers, body, &serde_json::json!({}))
+            .await
+            .err()
+            .expect("surface output limit must fail");
+
+        assert!(error.to_string().contains(surface.label()), "{error}");
+        assert!(error.to_string().contains("output limit"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn batch_keeps_the_aggregate_header_limit_including_names() {
+        let headers = serde_json::Value::Object(
+            (0..8)
+                .map(|index| (format!("X-{index}"), serde_json::json!("{{ 'x' * 8192 }}")))
+                .collect(),
+        );
+
+        let error = render_remote_templates(
+            "https://example.invalid/",
+            &headers,
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .err()
+        .expect("aggregate header limit must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("rendered remote headers exceed 64 KiB"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_preserves_an_absent_body() {
+        let rendered = render_remote_templates(
+            "https://example.invalid/",
+            &serde_json::json!({}),
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+        assert!(rendered.body.is_none());
     }
 
     #[test]

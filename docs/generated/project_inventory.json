@@ -49,6 +49,7 @@
     "hubuum-operational-contracts",
     "hubuum-runtime-behavior-check",
     "hubuum-scale-benchmark",
-    "hubuum-server"
+    "hubuum-server",
+    "hubuum-template-worker"
   ]
 }

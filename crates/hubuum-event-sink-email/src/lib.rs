@@ -5,7 +5,10 @@ use hubuum_event_sinks_common::{
     ensure_payload_within_limit, parse_sink_config, parse_sink_routing,
     reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme, resolve_secret_uri,
 };
-use hubuum_templates::{TemplateLimits, prepare_template};
+use hubuum_templates::{
+    MissingDataPolicy, RenderedTemplate, TemplateBatch, TemplateError, TemplateExecution,
+    TemplateLimits,
+};
 use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
@@ -82,7 +85,7 @@ impl EmailSink {
         envelope: &EventEnvelope,
         delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
-        let config = parse_config(&delivery).await?;
+        let config = parse_config(&delivery)?;
         let routing = parse_routing(&delivery)?;
         let uri = resolve_secret_uri(&config.uri, delivery.secret(), "email")?;
         require_tls_uri_scheme(&uri, "email", &["smtps"])?;
@@ -120,15 +123,13 @@ impl EmailSink {
     }
 }
 
-async fn parse_config(delivery: &SinkDelivery<'_>) -> Result<EmailConfig, SinkError> {
+fn parse_config(delivery: &SinkDelivery<'_>) -> Result<EmailConfig, SinkError> {
     let config: EmailConfig = parse_sink_config(delivery, "email")?;
     require_non_empty(&config.uri, "email config", "uri")?;
     reject_literal_uri_credentials(&config.uri, "email")?;
     require_non_empty(&config.from, "email config", "from")?;
     require_non_empty(&config.subject_template, "email config", "subject_template")?;
     require_non_empty(&config.body_template, "email config", "body_template")?;
-    validate_template("subject_template", &config.subject_template).await?;
-    validate_template("body_template", &config.body_template).await?;
     Ok(config)
 }
 
@@ -152,8 +153,28 @@ async fn render_email(
             .max_payload_bytes
             .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
     )?;
-    let subject =
-        render_template("subject_template", &config.subject_template, &context, 4096).await?;
+    let mut batch = TemplateBatch::new(4096 + 1024 * 1024);
+    for (name, source, max_bytes) in [
+        ("subject_template", config.subject_template.as_str(), 4096),
+        ("body_template", config.body_template.as_str(), 1024 * 1024),
+    ] {
+        batch
+            .push(
+                TemplateExecution::new("template", source, template_limits())
+                    .keep_trailing_newline(false)
+                    .missing_data(MissingDataPolicy::Lenient)
+                    .max_output_bytes(max_bytes),
+            )
+            .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))?;
+    }
+    // Rendering compiles each source inside this one worker. Separate syntax
+    // workers would only duplicate that compilation for every delivery.
+    let outputs = batch.render(&context).await.map_err(email_template_error)?;
+    let [subject, body]: [RenderedTemplate; 2] = outputs
+        .try_into()
+        .map_err(|_| SinkError::new("Invalid email template result count"))?;
+    let subject = subject.into_parts().0;
+    let body = body.into_parts().0;
     if subject.trim().is_empty() {
         return Err(SinkError::new(
             "Invalid email config: rendered subject is empty",
@@ -164,13 +185,6 @@ async fn render_email(
             "Invalid email config: rendered subject must not contain line breaks",
         ));
     }
-    let body = render_template(
-        "body_template",
-        &config.body_template,
-        &context,
-        1024 * 1024,
-    )
-    .await?;
     if body.trim().is_empty() {
         return Err(SinkError::new(
             "Invalid email config: rendered body is empty",
@@ -231,26 +245,12 @@ fn template_context(
     Ok(Value::Object(root))
 }
 
-async fn validate_template(name: &str, source: &str) -> Result<(), SinkError> {
-    prepare_template(source)
-        .limits(template_limits())
-        .validate()
-        .await
-        .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))
-}
-
-async fn render_template(
-    name: &str,
-    source: &str,
-    context: &Value,
-    max_bytes: usize,
-) -> Result<String, SinkError> {
-    prepare_template(source)
-        .limits(template_limits().with_max_output_bytes(max_bytes))
-        .context(context)
-        .render()
-        .await
-        .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))
+fn email_template_error(error: TemplateError) -> SinkError {
+    let name = error
+        .template_index()
+        .and_then(|index| ["subject_template", "body_template"].get(index).copied())
+        .unwrap_or("template batch");
+    SinkError::new(format!("Invalid email config: {name}: {error}"))
 }
 
 fn template_limits() -> TemplateLimits {
@@ -378,15 +378,13 @@ mod tests {
         SinkDelivery::new(config, routing, secret)
     }
 
-    async fn config() -> EmailConfig {
+    fn config() -> EmailConfig {
         let config = serde_json::json!({
             "uri": "smtp://localhost:2525",
             "from": "Hubuum <hubuum@example.invalid>"
         });
         let routing = serde_json::json!({});
-        parse_config(&delivery(&config, &routing, None))
-            .await
-            .unwrap()
+        parse_config(&delivery(&config, &routing, None)).unwrap()
     }
 
     #[test]
@@ -408,32 +406,28 @@ mod tests {
         assert_eq!(routing.recipients, vec!["ops@example.invalid"]);
     }
 
-    #[tokio::test]
-    async fn config_requires_uri_from_and_templates() {
+    #[test]
+    fn config_requires_uri_from_and_templates() {
         let config = serde_json::json!({
             "uri": "",
             "from": "hubuum@example.invalid"
         });
         let routing = serde_json::json!({});
-        let error = parse_config(&delivery(&config, &routing, None))
-            .await
-            .unwrap_err();
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(error.to_string(), "Invalid email config: uri is required");
 
         let config = serde_json::json!({
             "uri": "smtp://localhost:2525",
             "from": ""
         });
-        let error = parse_config(&delivery(&config, &routing, None))
-            .await
-            .unwrap_err();
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(error.to_string(), "Invalid email config: from is required");
     }
 
     #[tokio::test]
     async fn default_templates_render_readable_event_email() {
         let envelope = envelope();
-        let rendered = render_email(&envelope, &config().await).await.unwrap();
+        let rendered = render_email(&envelope, &config()).await.unwrap();
 
         assert_eq!(rendered.subject, "Hubuum collection created: example");
         assert!(rendered.body.contains("collection created"));
@@ -442,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_context_exposes_provenance() {
-        let mut config = config().await;
+        let mut config = config();
         config.body_template =
             "Initiator {{ provenance.initiator.principal_id }}, task {{ provenance.task_id }}"
                 .to_string();
@@ -454,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn rendered_subject_must_not_contain_line_breaks() {
-        let mut config = config().await;
+        let mut config = config();
         config.subject_template = "hello\n{{ summary }}".to_string();
 
         let error = render_email(&envelope(), &config).await.unwrap_err();
@@ -462,6 +456,35 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Invalid email config: rendered subject must not contain line breaks"
+        );
+    }
+
+    #[tokio::test]
+    async fn rendering_still_rejects_invalid_body_syntax() {
+        let mut config = config();
+        config.body_template = "{% if %}".into();
+
+        let error = render_email(&envelope(), &config).await.unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .starts_with("Invalid email config: body_template:")
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_keeps_the_subject_output_limit() {
+        let mut config = config();
+        config.subject_template = "{{ 'x' * 4097 }}".into();
+
+        let error = render_email(&envelope(), &config).await.unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("subject_template: invalid operation: template output limit exceeded"),
+            "{error}"
         );
     }
 
@@ -475,7 +498,7 @@ mod tests {
         });
         let routing = parse_routing(&delivery(&config_json, &routing, None)).unwrap();
         let message = build_message(
-            &config().await,
+            &config(),
             &routing,
             RenderedEmail {
                 subject: "Test".to_string(),
@@ -501,16 +524,14 @@ mod tests {
         assert_eq!(uri, "smtps://publisher:p%40ss%2Fw%3Ard@smtp.example");
     }
 
-    #[tokio::test]
-    async fn config_rejects_literal_uri_credentials() {
+    #[test]
+    fn config_rejects_literal_uri_credentials() {
         let config = serde_json::json!({
             "uri": "smtps://user:password@smtp.example",
             "from": "Hubuum <hubuum@example.invalid>"
         });
         let routing = serde_json::json!({});
-        let error = parse_config(&delivery(&config, &routing, None))
-            .await
-            .unwrap_err();
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid email config: uri credentials must use {secret} with secret_ref"

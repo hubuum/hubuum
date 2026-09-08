@@ -23,8 +23,9 @@ use serde::{Deserialize, Serialize};
 use crate::{MissingValue, SizeLimitedWriter, TemplateAutoEscape, TemplateError, TemplateLimits};
 
 pub const MAX_WORKER_HEAP_BYTES: usize = 128 * 1024 * 1024;
-const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
-const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_BATCH_TEMPLATES: usize = 130;
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_CONCURRENT_WORKERS: usize = 4;
 const MAX_WAITING_WORKERS: usize = 16;
@@ -48,17 +49,29 @@ pub(crate) enum Operation {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct WorkerRequest<'a> {
-    pub operation: Operation,
+pub(crate) struct WorkerTemplate<'a> {
     pub name: Cow<'a, str>,
     pub source: Cow<'a, str>,
     pub sources: Cow<'a, [(String, String)]>,
-    pub context: Cow<'a, serde_json::Value>,
     pub limits: TemplateLimits,
     pub auto_escape: TemplateAutoEscape,
     pub keep_trailing_newline: bool,
     pub missing_data: MissingDataPolicy,
     pub max_output_bytes: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WorkerRequest<'a> {
+    pub operation: Operation,
+    pub templates: Vec<WorkerTemplate<'a>>,
+    pub context: Cow<'a, serde_json::Value>,
+    pub max_output_bytes: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WorkerFailure {
+    pub template_index: usize,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -68,6 +81,16 @@ pub struct RenderedTemplate {
     peak_heap_bytes: usize,
 }
 impl RenderedTemplate {
+    pub(crate) fn output_bytes(&self) -> usize {
+        self.output.len()
+    }
+    pub(crate) fn truncate_missing_values(&mut self, limit: usize) {
+        self.missing.truncate(limit);
+    }
+    pub(crate) fn missing_value_count(&self) -> usize {
+        self.missing.len()
+    }
+
     pub fn peak_heap_bytes(&self) -> usize {
         self.peak_heap_bytes
     }
@@ -137,30 +160,106 @@ impl<'a> TemplateExecution<'a> {
         self,
         context: &serde_json::Value,
     ) -> Result<RenderedTemplate, TemplateError> {
-        // Check before cloning attacker-controlled inputs into the protocol.
-        let source_bytes = self
-            .sources
-            .iter()
-            .try_fold(self.source.len(), |size, (name, body)| {
-                size.checked_add(name.len())
-                    .and_then(|size| size.checked_add(body.len()))
-            });
-        if source_bytes.is_none_or(|size| size > MAX_REQUEST_BYTES) {
-            return Err(TemplateError::boundary(
-                "template input or output budget exceeded",
-            ));
-        }
-        execute(WorkerRequest {
-            operation: Operation::Render,
+        let mut batch = TemplateBatch::new(self.max_output_bytes);
+        batch.push(self)?;
+        batch
+            .render(context)
+            .await?
+            .pop()
+            .ok_or_else(|| TemplateError::boundary("missing template worker result"))
+    }
+
+    fn source_bytes(&self) -> Option<usize> {
+        self.sources.iter().try_fold(
+            self.name.len().checked_add(self.source.len())?,
+            |size, (name, body)| size.checked_add(name.len())?.checked_add(body.len()),
+        )
+    }
+
+    fn into_request(self) -> WorkerTemplate<'a> {
+        WorkerTemplate {
             name: self.name.into(),
             source: self.source.into(),
             sources: Cow::Borrowed(self.sources),
-            context: Cow::Borrowed(context),
             limits: self.limits,
             auto_escape: self.auto_escape,
             keep_trailing_newline: self.keep_trailing_newline,
             missing_data: self.missing_data,
             max_output_bytes: self.max_output_bytes,
+        }
+    }
+}
+
+/// A bounded group of templates sharing one context and one disposable worker.
+/// Each template has an independent environment, fuel allowance and output cap.
+/// The entire batch shares admission, a five-second deadline, 16 MiB of encoded
+/// input, 128 MiB of live Rust heap and the configured aggregate output cap.
+pub struct TemplateBatch<'a> {
+    templates: Vec<WorkerTemplate<'a>>,
+    source_bytes: usize,
+    max_output_bytes: usize,
+}
+
+impl<'a> TemplateBatch<'a> {
+    pub fn new(max_output_bytes: usize) -> Self {
+        Self {
+            templates: Vec::new(),
+            source_bytes: 0,
+            max_output_bytes: max_output_bytes.min(MAX_OUTPUT_BYTES),
+        }
+    }
+
+    /// Add at most 130 templates. Reject excessive sources before allocating
+    /// protocol buffers; the shared context is serialized only at execution.
+    pub fn push(&mut self, template: TemplateExecution<'a>) -> Result<(), TemplateError> {
+        if self.templates.len() >= MAX_BATCH_TEMPLATES {
+            return Err(TemplateError::boundary(
+                "template batch supports at most 130 templates",
+            ));
+        }
+        let size = template
+            .source_bytes()
+            .and_then(|size| self.source_bytes.checked_add(size))
+            .filter(|size| *size <= MAX_REQUEST_BYTES)
+            .ok_or_else(|| TemplateError::boundary("template input budget exceeded"))?;
+        self.templates.push(template.into_request());
+        self.source_bytes = size;
+        Ok(())
+    }
+
+    /// Results follow insertion order. No partial results escape a failed batch.
+    pub async fn render(
+        self,
+        context: &serde_json::Value,
+    ) -> Result<Vec<RenderedTemplate>, TemplateError> {
+        self.execute(Operation::Render, context).await
+    }
+
+    /// Compile all entries without rendering or admitting a worker per entry.
+    pub async fn validate(self) -> Result<(), TemplateError> {
+        self.execute(Operation::Syntax, &serde_json::Value::Null)
+            .await
+            .map(|_| ())
+    }
+
+    async fn execute(
+        self,
+        operation: Operation,
+        context: &serde_json::Value,
+    ) -> Result<Vec<RenderedTemplate>, TemplateError> {
+        if self.templates.is_empty() {
+            return Err(TemplateError::boundary("template batch must not be empty"));
+        }
+        let max_output_bytes = if matches!(operation, Operation::Syntax) {
+            0
+        } else {
+            self.max_output_bytes
+        };
+        execute(WorkerRequest {
+            operation,
+            templates: self.templates,
+            context: Cow::Borrowed(context),
+            max_output_bytes,
         })
         .await
     }
@@ -170,23 +269,9 @@ pub(crate) async fn validate_syntax(
     source: &str,
     limits: TemplateLimits,
 ) -> Result<(), TemplateError> {
-    if source.len() > MAX_REQUEST_BYTES {
-        return Err(TemplateError::boundary("template input budget exceeded"));
-    }
-    execute(WorkerRequest {
-        operation: Operation::Syntax,
-        name: "template".into(),
-        source: source.into(),
-        sources: Cow::Borrowed(&[]),
-        context: Cow::Owned(serde_json::Value::Null),
-        limits,
-        auto_escape: TemplateAutoEscape::None,
-        keep_trailing_newline: false,
-        missing_data: MissingDataPolicy::Strict,
-        max_output_bytes: 0,
-    })
-    .await
-    .map(|_| ())
+    let mut batch = TemplateBatch::new(0);
+    batch.push(TemplateExecution::new("template", source, limits))?;
+    batch.validate().await
 }
 
 fn worker_executable() -> Result<PathBuf, TemplateError> {
@@ -258,9 +343,10 @@ struct WorkerRuntime {
 struct Job {
     encoded: String,
     max_response_bytes: usize,
+    expected_results: usize,
     started: Instant,
     deadline: Instant,
-    response: oneshot::Sender<Result<RenderedTemplate, TemplateError>>,
+    response: oneshot::Sender<Result<Vec<RenderedTemplate>, TemplateError>>,
     capacity: OwnedSemaphorePermit,
     span: tracing::Span,
     dispatcher: tracing::Dispatch,
@@ -343,7 +429,7 @@ pub async fn shutdown_template_workers() {
     }
 }
 
-async fn execute(request: WorkerRequest<'_>) -> Result<RenderedTemplate, TemplateError> {
+async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, TemplateError> {
     let started = Instant::now();
     if SHUTTING_DOWN.load(Ordering::SeqCst) {
         return Err(TemplateError::boundary(
@@ -384,6 +470,7 @@ async fn execute(request: WorkerRequest<'_>) -> Result<RenderedTemplate, Templat
     let job = Job {
         encoded,
         max_response_bytes,
+        expected_results: request.templates.len(),
         started,
         deadline: started + DEADLINE,
         response,
@@ -519,9 +606,23 @@ async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::R
             // JSON decoding can be substantial at the bounded output ceiling.
             // It must not stall process supervision or request executor threads.
             tokio::task::spawn_blocking(move || {
-                let response: Result<RenderedTemplate, String> = serde_json::from_slice(&bytes)
-                    .map_err(|_| TemplateError::boundary("invalid template worker response"))?;
-                response.map_err(|message| TemplateError::boundary(&message))
+                let response: Result<Vec<RenderedTemplate>, WorkerFailure> =
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| TemplateError::boundary("invalid template worker response"))?;
+                let templates = response.map_err(|failure| {
+                    if failure.template_index >= job.expected_results {
+                        TemplateError::boundary("invalid template worker failure index")
+                    } else {
+                        TemplateError::boundary(&failure.message)
+                            .at_template(failure.template_index)
+                    }
+                })?;
+                if templates.len() != job.expected_results {
+                    return Err(TemplateError::boundary(
+                        "invalid template worker result count",
+                    ));
+                }
+                Ok(templates)
             })
             .await
             .unwrap_or_else(|_| Err(TemplateError::boundary("template response decoding failed")))

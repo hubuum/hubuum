@@ -28,13 +28,14 @@ impl Fixture {
         command: Command,
         input: String,
         duration: Duration,
-    ) -> oneshot::Receiver<Result<RenderedTemplate, TemplateError>> {
+    ) -> oneshot::Receiver<Result<Vec<RenderedTemplate>, TemplateError>> {
         let started = Instant::now();
         let capacity = self.runtime.admit(started).unwrap();
         let (response, receiver) = oneshot::channel();
         let job = Job {
             encoded: input,
             max_response_bytes: 1024,
+            expected_results: 1,
             started,
             deadline: started + duration,
             response,
@@ -51,7 +52,7 @@ impl Fixture {
         name: &str,
         input: String,
         duration: Duration,
-    ) -> oneshot::Receiver<Result<RenderedTemplate, TemplateError>> {
+    ) -> oneshot::Receiver<Result<Vec<RenderedTemplate>, TemplateError>> {
         let mut command = shell("echo $$ > \"$1\"; exec sleep 60");
         command.arg("fixture").arg(self.directory.path().join(name));
         self.submit(command, input, duration)
@@ -79,7 +80,7 @@ impl Fixture {
         .await
         .expect("all capacity should be returned after cleanup");
     }
-    async fn occupy(&self) -> Vec<oneshot::Receiver<Result<RenderedTemplate, TemplateError>>> {
+    async fn occupy(&self) -> Vec<oneshot::Receiver<Result<Vec<RenderedTemplate>, TemplateError>>> {
         let mut receivers = Vec::new();
         for index in 0..MAX_CONCURRENT_WORKERS {
             let name = format!("active-{index}");
@@ -111,7 +112,7 @@ fn assert_reaped(pid: i32) {
         Some(libc::ECHILD)
     );
 }
-fn error(result: Result<RenderedTemplate, TemplateError>) -> String {
+fn error(result: Result<Vec<RenderedTemplate>, TemplateError>) -> String {
     result.err().expect("operation must fail").to_string()
 }
 
@@ -210,6 +211,11 @@ async fn shutdown_drains_active_and_queued_work_and_closes_admission() {
 #[case::malformed("printf invalid", "invalid template worker response")]
 #[case::oversized("exec head -c 2048 /dev/zero", "response budget")]
 #[case::exit_failure("exit 70", "heap budget")]
+#[case::wrong_count("printf '%s' '{\"Ok\":[]}'", "result count")]
+#[case::wrong_error_index(
+    "printf '%s' '{\"Err\":{\"template_index\":1,\"message\":\"invalid\"}}'",
+    "failure index"
+)]
 #[tokio::test]
 async fn protocol_failures_return_capacity_and_allow_recovery(
     #[case] script: &str,
@@ -220,11 +226,14 @@ async fn protocol_failures_return_capacity_and_allow_recovery(
     assert!(error(result.await.unwrap()).contains(expected));
     fixture.idle().await;
     let result = fixture.submit(
-        shell(r#"printf '%s' '{"Ok":{"output":"healthy","missing":[],"peak_heap_bytes":0}}'"#),
+        shell(r#"printf '%s' '{"Ok":[{"output":"healthy","missing":[],"peak_heap_bytes":0}]}'"#),
         String::new(),
         Duration::from_secs(3),
     );
-    assert_eq!(result.await.unwrap().unwrap().into_parts().0, "healthy");
+    assert_eq!(
+        result.await.unwrap().unwrap().pop().unwrap().into_parts().0,
+        "healthy"
+    );
     fixture.runtime.shutdown().await;
 }
 

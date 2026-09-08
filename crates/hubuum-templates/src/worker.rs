@@ -3,9 +3,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 
+use minijinja::value::Value;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior, escape_formatter};
 
-use crate::isolation::{MissingDataPolicy, Operation, RenderedTemplate, WorkerRequest};
+use crate::isolation::{
+    MAX_BATCH_TEMPLATES, MAX_OUTPUT_BYTES, MAX_REQUEST_BYTES, MissingDataPolicy, Operation,
+    RenderedTemplate, WorkerFailure, WorkerRequest, WorkerTemplate,
+};
 use crate::{
     MissingValue, SizeLimitedWriter, TemplateAutoEscape, json_value_to_template_value,
     register_curated_helpers,
@@ -28,23 +32,59 @@ fn record(missing: MissingValue) {
 pub fn serve_template_worker(heap_peak: fn() -> usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     std::io::stdin()
-        .take(16 * 1024 * 1024 + 1)
+        .take(MAX_REQUEST_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > 16 * 1024 * 1024 {
+    if bytes.len() > MAX_REQUEST_BYTES {
         return Err("template request too large".into());
     }
     let request: WorkerRequest = serde_json::from_slice(&bytes)?;
-    let result = render(request)
-        .map(|mut output| {
-            output.set_peak_heap_bytes(heap_peak());
-            output
-        })
-        .map_err(|error| error.to_string());
+    if request.templates.is_empty()
+        || request.templates.len() > MAX_BATCH_TEMPLATES
+        || request.max_output_bytes > MAX_OUTPUT_BYTES
+    {
+        return Err("invalid template batch limits".into());
+    }
+    let result = render_batch(request).map(|mut outputs| {
+        let peak = heap_peak();
+        for output in &mut outputs {
+            output.set_peak_heap_bytes(peak);
+        }
+        outputs
+    });
     serde_json::to_writer(std::io::stdout().lock(), &result)?;
     Ok(())
 }
 
-fn render(request: WorkerRequest<'_>) -> Result<RenderedTemplate, minijinja::Error> {
+fn render_batch(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, WorkerFailure> {
+    // Convert the shared context once. MiniJinja values share immutable context
+    // storage; each render still receives a separate environment and state.
+    let context = json_value_to_template_value(&request.context);
+    let mut remaining_output = request.max_output_bytes;
+    let mut remaining_warnings = 1024;
+    let mut outputs = Vec::with_capacity(request.templates.len());
+    for (template_index, template) in request.templates.into_iter().enumerate() {
+        let mut output =
+            render(template, &request.operation, &context, remaining_output).map_err(|error| {
+                WorkerFailure {
+                    template_index,
+                    message: error.to_string(),
+                }
+            })?;
+        remaining_output -= output.output_bytes();
+        output.truncate_missing_values(remaining_warnings);
+        remaining_warnings -= output.missing_value_count();
+        outputs.push(output);
+    }
+    Ok(outputs)
+}
+
+fn render(
+    request: WorkerTemplate<'_>,
+    operation: &Operation,
+    context: &Value,
+    remaining_output: usize,
+) -> Result<RenderedTemplate, minijinja::Error> {
+    MISSING.with(|values| values.borrow_mut().clear());
     let mut environment = Environment::new();
     environment.set_keep_trailing_newline(request.keep_trailing_newline);
     environment.set_recursion_limit(request.limits.recursion_limit());
@@ -85,17 +125,21 @@ fn render(request: WorkerRequest<'_>) -> Result<RenderedTemplate, minijinja::Err
     });
     register_curated_helpers(&mut environment, Some(record));
     environment.add_template_owned(request.name.to_string(), request.source.into_owned())?;
-    if matches!(request.operation, Operation::Syntax) {
+    if matches!(operation, Operation::Syntax) {
         return Ok(RenderedTemplate::new(String::new(), vec![]));
     }
-    let mut writer = SizeLimitedWriter::new(request.max_output_bytes);
+    let mut writer = SizeLimitedWriter::new(request.max_output_bytes.min(remaining_output));
     let rendered = environment
         .get_template(&request.name)?
-        .render_captured_to(json_value_to_template_value(&request.context), &mut writer);
+        .render_captured_to(context.clone(), &mut writer);
     if writer.exceeded() {
         return Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            "template output limit exceeded",
+            if remaining_output < request.max_output_bytes {
+                "template batch output limit exceeded"
+            } else {
+                "template output limit exceeded"
+            },
         ));
     }
     rendered?;

@@ -15,8 +15,8 @@
 mod isolation;
 mod worker;
 pub use isolation::{
-    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateExecution, WorkerEvent,
-    set_worker_event_handler, shutdown_template_workers,
+    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateBatch, TemplateExecution,
+    WorkerEvent, set_worker_event_handler, shutdown_template_workers,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -218,13 +218,26 @@ impl TemplateLimits {
 pub struct TemplateError {
     message: String,
     source: Option<MiniJinjaError>,
+    template_index: Option<usize>,
 }
 
 impl TemplateError {
+    /// The failing entry's insertion index, when the worker identified one.
+    /// Admission, transport and process failures affect the batch as a whole.
+    pub fn template_index(&self) -> Option<usize> {
+        self.template_index
+    }
+
+    fn at_template(mut self, index: usize) -> Self {
+        self.template_index = Some(index);
+        self
+    }
+
     fn boundary(message: &str) -> Self {
         Self {
             message: message.to_string(),
             source: None,
+            template_index: None,
         }
     }
 
@@ -232,6 +245,7 @@ impl TemplateError {
         Self {
             message: format!("template {name} limit is not configured"),
             source: None,
+            template_index: None,
         }
     }
 }

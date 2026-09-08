@@ -393,3 +393,11 @@ async_worker_metrics="$(bash "$classifier" src/observability/metrics/template.rs
 assert_flag "$async_worker_metrics" code true
 async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telemetry.rs)"
 assert_flag "$async_worker_telemetry" code true
+
+# Batch protocol regressions and the shared-context benchmark must stay selected.
+batch_tests="$(bash "$classifier" crates/hubuum-templates/tests/batching.rs)"
+assert_flag "$batch_tests" code true
+assert_flag "$batch_tests" container true
+batch_benchmark="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
+assert_flag "$batch_benchmark" code true
+assert_flag "$batch_benchmark" benchmarks true

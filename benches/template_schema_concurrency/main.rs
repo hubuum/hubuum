@@ -1,5 +1,5 @@
 //! End-to-end execution evidence, including child startup and schema contention.
-use hubuum_templates::{TemplateExecution, TemplateLimits};
+use hubuum_templates::{TemplateBatch, TemplateExecution, TemplateLimits};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Instant;
@@ -74,5 +74,80 @@ async fn main() {
             "{}",
             json!({"scenario":"template_schema_concurrency", "concurrency":concurrency, "renders":concurrency*10, "elapsed_ms":started.elapsed().as_millis(), "p50_us":samples[samples.len()/2], "p95_us":samples[(samples.len()-1)*95/100], "peak_worker_rust_heap_bytes":peak_heap})
         );
+    }
+    benchmark_batches().await;
+}
+
+async fn benchmark_batches() {
+    // Paired samples on the same process/worker build. The email baseline also
+    // compiles both entries separately, matching the former delivery path.
+    let context = json!({"name": "example", "id": 42, "payload": "x".repeat(4096)});
+    for (scenario, entries, validate_first) in
+        [("email", 2, true), ("remote_ten_headers", 12, false)]
+    {
+        let mut individual = Vec::new();
+        let mut batched = Vec::new();
+        for iteration in 0..21 {
+            // Reverse the order each round to reduce systematic order effects.
+            for use_batch in if iteration % 2 == 0 {
+                [false, true]
+            } else {
+                [true, false]
+            } {
+                let started = Instant::now();
+                let limits = TemplateLimits::new(64, 50_000);
+                let execution = || TemplateExecution::new("entry", "{{ name }}:{{ id }}", limits);
+                let outputs = if use_batch {
+                    let mut batch = TemplateBatch::new(entries * 1024);
+                    for _ in 0..entries {
+                        batch.push(execution()).unwrap();
+                    }
+                    batch.render(&context).await.unwrap()
+                } else {
+                    if validate_first {
+                        for _ in 0..entries {
+                            hubuum_templates::prepare_template("{{ name }}:{{ id }}")
+                                .limits(limits)
+                                .validate()
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    let mut outputs = Vec::new();
+                    for _ in 0..entries {
+                        outputs.push(execution().render(&context).await.unwrap());
+                    }
+                    outputs
+                };
+                let elapsed = started.elapsed().as_micros();
+                assert_eq!(outputs.len(), entries);
+                for output in outputs {
+                    assert_eq!(output.into_parts().0, "example:42");
+                }
+                if iteration > 0 {
+                    if use_batch {
+                        batched.push(elapsed);
+                    } else {
+                        individual.push(elapsed);
+                    }
+                }
+            }
+        }
+        for (mode, mut samples, worker_starts) in [
+            (
+                "individual",
+                individual,
+                entries * if validate_first { 2 } else { 1 },
+            ),
+            ("batch", batched, 1),
+        ] {
+            samples.sort_unstable();
+            println!(
+                "{}",
+                json!({"scenario": scenario, "mode": mode, "operations": samples.len(),
+                "templates_per_operation": entries, "worker_starts_per_operation": worker_starts,
+                "p50_us": samples[samples.len()/2], "p95_us": samples[(samples.len()-1)*95/100]})
+            );
+        }
     }
 }

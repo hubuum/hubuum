@@ -1375,9 +1375,18 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         }
         ("hubuum_metrics_refresh_skipped_total", "reason") => strings(&["concurrent"]),
         (name, "event") if name.starts_with("hubuum_template_worker") => strings(&[
-            "admitted", "started", "completed", "cancelled", "shutdown", "overloaded",
-            "input_limit", "admission_timeout", "spawn_failed", "worker_failed",
-            "execution_timeout", "render_failed",
+            "admitted",
+            "started",
+            "completed",
+            "cancelled",
+            "shutdown",
+            "overloaded",
+            "input_limit",
+            "admission_timeout",
+            "spawn_failed",
+            "worker_failed",
+            "execution_timeout",
+            "render_failed",
         ]),
         (name, "outcome") if name.starts_with("hubuum_remote_call") => strings(&[
             "success",
@@ -2502,6 +2511,7 @@ mod tests {
         include_str!("observability/metrics/security.rs"),
         include_str!("observability/metrics/storage.rs"),
         include_str!("observability/metrics/task.rs"),
+        include_str!("observability/metrics/template.rs"),
         include_str!("observability/metrics/token.rs"),
         include_str!("observability/metrics/tracing.rs"),
     ];
@@ -3239,6 +3249,11 @@ mod tests {
     }
 
     fn quoted_strings(source: &str) -> impl Iterator<Item = &str> {
+        // Test assertions may contain exported metric names and sample labels;
+        // this check inventories the production instrument definitions.
+        let source = source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(production, _)| production);
         source.split('"').skip(1).step_by(2)
     }
 

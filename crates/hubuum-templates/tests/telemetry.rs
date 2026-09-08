@@ -4,7 +4,9 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use hubuum_templates::{TemplateExecution, TemplateLimits, shutdown_template_workers};
+use hubuum_templates::{
+    TemplateBatch, TemplateExecution, TemplateLimits, shutdown_template_workers,
+};
 
 #[derive(Clone)]
 struct Capture(Arc<Mutex<Vec<u8>>>);
@@ -30,14 +32,17 @@ async fn lifecycle_logging_reports_results_without_template_content() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
     let context = serde_json::json!({ "private_context_key": "private-rendered-output" });
-    TemplateExecution::new(
-        "private-template-name",
-        "{{ private_context_key }}",
-        TemplateLimits::new(16, 50_000),
-    )
-    .render(&context)
-    .await
-    .unwrap();
+    let mut batch = TemplateBatch::new(1024);
+    for _ in 0..12 {
+        batch
+            .push(TemplateExecution::new(
+                "private-template-name",
+                "{{ private_context_key }}",
+                TemplateLimits::new(16, 50_000),
+            ))
+            .unwrap();
+    }
+    batch.render(&context).await.unwrap();
     let error = TemplateExecution::new(
         "private-error-template",
         "{{ private_missing_value }}",
@@ -53,6 +58,8 @@ async fn lifecycle_logging_reports_results_without_template_content() {
         assert!(logs.contains(lifecycle), "missing {lifecycle}: {logs}");
     }
     assert!(logs.contains("operation_id=") && logs.contains("pid="));
+    // One child for the twelve-entry batch, and one for the failing single render.
+    assert_eq!(logs.matches("Template worker started").count(), 2);
     assert!(
         !logs.contains("private_")
             && !logs.contains("private-")

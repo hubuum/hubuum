@@ -95,6 +95,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Batch email subject/body rendering and remote-call URL/header/body rendering
+  into one disposable template worker per operation, sharing context serialization
+  and avoiding duplicate email syntax compilation. Remote-target syntax checks
+  also use one batch. Per-template limits and outbound validation remain enforced.
+  **Breaking (batch resource limits):** the five-second deadline, 16 MiB input
+  allowance and 128 MiB live Rust heap budget now cover the entire batch. Reduce
+  combined template size or execution work for operations that exceed these
+  limits; remote targets must have at most 128 headers. Deploy the matching worker
+  binary with the server and administrator. See [template worker limits](docs/template_worker.md).
+
 - **Breaking (external authorization):** prospective resources use distinct
   identities and omit unknown endpoint IDs. Upload the updated Treetop schema
   and guard optional ID attributes with Cedar `has` checks before deployment.
