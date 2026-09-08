@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use chrono::Utc;
 use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
 use hubuum::backups::create_backup_document;
@@ -15,14 +18,24 @@ use hubuum::restores::{
     reconcile_interrupted_restore, restore_status, stage_restore,
 };
 use hubuum::schema::{
-    collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
-    restore_jobs, restore_success_receipts, system_maintenance, tasks,
+    collections, events, hubuumclass, hubuumclass_history, hubuumclass_reachability,
+    hubuumclass_relation, restore_jobs, restore_success_receipts, server_instances,
+    system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
+use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
+use hubuum_storage_core::RestoreStorage;
 use hubuum_storage_postgres::diesel_async_prelude::*;
-use hubuum_storage_postgres::{with_connection, with_transaction};
+use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
+use rstest::rstest;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
+use uuid::Uuid;
+
+// These tests replace the whole runner-owned database, so they must not overlap.
+static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn database_url() -> String {
     std::env::var("HUBUUM_MIGRATION_DATABASE_URL")
@@ -36,6 +49,7 @@ fn runtime_database_url() -> String {
 
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
+    let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
     let runtime_pool = postgres_test_pool_with_timeout(
         &runtime_database_url(),
@@ -358,4 +372,158 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         (completed.status, remaining_restore_jobs, success_receipts),
         (RestoreJobStatus::Succeeded, 0, 1)
     );
+}
+
+#[rstest]
+#[case::previously_busy(false)]
+#[case::previously_drained(true)]
+#[tokio::test]
+async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_drained: bool) {
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    let scope = TestScope::new();
+    let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let runtime_pool = postgres_test_pool_with_timeout(
+        &runtime_database_url(),
+        2,
+        DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    );
+    let backend = PostgresStorage::unobserved(runtime_pool.clone());
+    let instance_id = Uuid::new_v4();
+    let root_collection_id = with_connection(&pool, async |conn| {
+        collections::table
+            .filter(collections::parent_collection_id.is_null())
+            .select(collections::id)
+            .first::<i32>(conn)
+            .await
+    })
+    .await
+    .expect("root collection");
+
+    for cycle in 0..2 {
+        let document = create_backup_document(
+            &pool,
+            &BackupRequest {
+                include_history: true,
+            },
+        )
+        .await
+        .expect("full backup");
+        let document = serde_json::to_vec(&document).expect("serialize backup");
+        let settings = RestoreSettings::new(60, document.len() + 1).unwrap();
+        let initiator = RestoreInitiator::new(None, "test", scope.scoped_name("drain")).unwrap();
+        let staged = stage_restore(
+            &runtime_pool,
+            &settings,
+            RestoreStageRequest::new(initiator, document).unwrap(),
+        )
+        .await
+        .expect("stage restore");
+        let capability = staged.restore_capability.clone().unwrap();
+        let job_id = RestoreJobID::new(staged.id).unwrap();
+        let marker = NewHubuumClass {
+            name: scope.scoped_name(&format!("drain_marker_{cycle}")),
+            description: "must survive until every instance drains".to_string(),
+            collection_id: root_collection_id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&runtime_pool)
+        .await
+        .expect("post-backup marker");
+
+        backend
+            .tick_restore_coordinator(instance_id, &|| false, false)
+            .await
+            .expect("heartbeat before confirmation");
+        // A drained acknowledgement from an earlier generation must not permit
+        // replacement either. Hold this heartbeat fixed until the executor waits.
+        with_connection(&pool, async |conn| {
+            diesel::update(server_instances::table.find(instance_id))
+                .set(server_instances::drained.eq(previously_drained))
+                .execute(conn)
+                .await
+        })
+        .await
+        .expect("set previous generation acknowledgement");
+        confirm_restore(
+            &runtime_pool,
+            job_id,
+            &RestoreConfirmRequest {
+                restore_capability: capability.clone(),
+                sha256: staged.sha256,
+                confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
+            },
+        )
+        .await
+        .expect("confirm restore");
+
+        let (generation, instances) = backend
+            .get_restore_drain_state(Utc::now() - chrono::Duration::seconds(10))
+            .await
+            .expect("lagging heartbeat must remain a valid pending instance")
+            .into_parts();
+        let instance = instances
+            .iter()
+            .find(|instance| instance.instance_id() == instance_id)
+            .expect("lagging instance must not be filtered out");
+        assert_ne!(instance.maintenance_generation(), generation);
+
+        let execution = execute_confirmed_restore(&pool);
+        tokio::pin!(execution);
+        assert!(
+            timeout(Duration::from_millis(250), &mut execution)
+                .await
+                .is_err(),
+            "restore must wait for the current generation acknowledgement"
+        );
+
+        backend
+            .tick_restore_coordinator(instance_id, &|| false, false)
+            .await
+            .expect("observe new generation while still busy");
+        assert!(
+            timeout(Duration::from_millis(250), &mut execution)
+                .await
+                .is_err(),
+            "a current generation heartbeat must still wait for active work"
+        );
+        let marker_exists = with_connection(&pool, async |conn| {
+            hubuumclass::table
+                .find(marker.id)
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .expect("marker before drain");
+        assert_eq!(marker_exists, 1, "replacement must not begin before drain");
+
+        backend
+            .tick_restore_coordinator(instance_id, &|| true, false)
+            .await
+            .expect("acknowledge current generation as drained");
+        assert!(
+            timeout(Duration::from_secs(10), &mut execution)
+                .await
+                .expect("restore must complete after drain")
+                .expect("restore must succeed")
+        );
+        let completed = restore_status(&runtime_pool, job_id, &capability)
+            .await
+            .unwrap();
+        assert_eq!(completed.status, RestoreJobStatus::Succeeded);
+        let marker_exists = with_connection(&pool, async |conn| {
+            hubuumclass::table
+                .find(marker.id)
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .expect("marker after replacement");
+        assert_eq!(
+            marker_exists, 0,
+            "successful restore must remove the marker"
+        );
+    }
 }

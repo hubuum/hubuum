@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Full restores now wait for live server instances to acknowledge the current
+  maintenance generation instead of failing drain-state validation while a
+  heartbeat is still pending.
+- PostgreSQL restores preserve JSON `null` in required JSON columns, including
+  object data, instead of converting it to SQL `NULL` and failing a not-null
+  constraint. Existing format 5 backups remain readable without modification.
+
 ## [0.0.12] - 2026-09-08
 
 ### Upgrade notes
