@@ -74,6 +74,8 @@ macro_rules! option {
 
 /// Variables consumed by `AppConfig` through clap.
 pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
+    option!("HUBUUM_SECRET_SOURCE", Operations),
+    option!("HUBUUM_SECRET_FILE_ROOT", Operations, metadata),
     option!("HUBUUM_BIND_IP", Server),
     option!("HUBUUM_BIND_PORT", Server),
     option!("HUBUUM_LOG_LEVEL", Server),
@@ -224,8 +226,6 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
     option!("HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY", Authentication),
-    option!("HUBUUM_SECRET_SOURCE", Operations),
-    option!("HUBUUM_SECRET_FILE_ROOT", Operations, metadata),
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
     option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, metadata),
     option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),

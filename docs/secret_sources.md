@@ -1,69 +1,218 @@
 # Secret Sources
 
-Hubuum resolves credential material through one process-wide secret source. API
-records and authentication configuration contain validated aliases only; they
-cannot select an environment variable, provider, or filesystem path.
+Hubuum defaults to environment-backed credentials. Both `hubuum-server` and
+`hubuum-admin` can instead read supported secrets from mounted files. File mode
+covers credential material; ordinary settings such as ports, database role
+mode, token key IDs, and LDAP configuration still use their existing CLI,
+environment, or TOML inputs.
 
-## Environment Source
+API records and LDAP `bind_password_ref` contain validated aliases. An alias
+cannot select a provider, arbitrary environment variable, or filesystem path.
+Inline LDAP `bind_password` remains a separate compatibility option.
 
-The default source is `environment`. Existing deployments remain compatible:
+## Configuration Interfaces And Precedence
 
-| Consumer | Environment mapping |
-| --- | --- |
-| PostgreSQL | `HUBUUM_DATABASE_URL` |
-| Token hashing (compatible single key) | `HUBUUM_TOKEN_HASH_KEY` |
-| Token key-ring ID `primary` | `HUBUUM_TOKEN_HASH_KEY_PRIMARY` |
-| Event sink alias `NAME` | `HUBUUM_EVENT_SINK_SECRET_NAME` |
-| Remote-target alias `NAME` | `HUBUUM_REMOTE_SECRET_NAME` |
-| LDAP alias `NAME` | `HUBUUM_LDAP_SECRET_NAME` |
+| CLI option (both binaries) | Environment variable | Default |
+| --- | --- | --- |
+| `--secret-source environment` or `--secret-source file` | `HUBUUM_SECRET_SOURCE` | `environment` |
+| `--secret-file-root DIRECTORY` | `HUBUUM_SECRET_FILE_ROOT` | Unset; required for file mode |
 
-Alias letters are uppercased and hyphens become underscores for environment
-lookup. Missing `HUBUUM_SECRET_SOURCE` is equivalent to:
+CLI options override their corresponding environment variables. For ordinary
+configuration, an unset option uses its documented default. The source and
+root are selected once per process and require restart to change.
 
-```text
-HUBUUM_SECRET_SOURCE=environment
-```
+Database URL selection has these rules:
+
+1. `--database-url` explicitly overrides the runtime URL from either source.
+   `--migration-database-url` similarly overrides the administrator's privileged
+   URL. The server has no migration-URL option.
+2. Otherwise, `environment` mode uses the corresponding environment variable,
+   and `file` mode reads the corresponding file in the table below.
+3. File mode does not fall back to environment credentials when a file is
+   missing, unreadable, empty, or invalid. An explicit URL argument is an
+   intentional override, not an automatic fallback.
+
+The default `single` database role mode uses the runtime URL for all workloads,
+with an optional privileged URL for migrations and restores. That privileged
+URL takes priority for those commands, including when `--database-url` is also
+supplied. Only an absent privileged URL falls back to the runtime URL; an
+invalid privileged file fails the command. In opt-in `split` mode, migration
+and restore commands require the privileged URL and never use the runtime URL
+as a fallback. See [PostgreSQL Database Roles](database_roles.md).
+
+The server retains its `postgres://localhost` default in environment mode.
+Administrator database commands require a configured URL. Offline
+`hubuum-admin --verify-backup` and role-SQL generation need no database secret;
+a restore drill with `--restore-test-database-url` checks mounted database URLs
+as well as CLI/environment URLs to reject a production database as its target.
+
+## Environment And File Mappings
+
+File paths below are relative to `HUBUUM_SECRET_FILE_ROOT` (or
+`--secret-file-root`). Configure only the secrets each workload needs.
+
+| Consumer | Environment source | File source | Explicit URL option |
+| --- | --- | --- | --- |
+| Runtime/shared PostgreSQL URL | `HUBUUM_DATABASE_URL` | `database/url` | `--database-url` |
+| Admin migration/restore PostgreSQL URL | `HUBUUM_MIGRATION_DATABASE_URL` | `database/migration-url` | `--migration-database-url` (admin only) |
+| Compatible single token-hash key | `HUBUUM_TOKEN_HASH_KEY` | `token/key` | None |
+| Token key-ring ID `primary` | `HUBUUM_TOKEN_HASH_KEY_PRIMARY` | `token/primary` | None |
+| Event sink alias `inventory-api` | `HUBUUM_EVENT_SINK_SECRET_INVENTORY_API` | `event-sink/inventory-api` | None |
+| Remote-target alias `inventory-api` | `HUBUUM_REMOTE_SECRET_INVENTORY_API` | `remote/inventory-api` | None |
+| LDAP alias `readonly_password` | `HUBUUM_LDAP_SECRET_READONLY_PASSWORD` | `ldap/readonly_password` | None |
+
+Aliases contain 1-128 ASCII letters, numbers, underscores, or hyphens. For
+file lookup, spelling and case are preserved. For environment lookup, letters
+are uppercased and hyphens become underscores. There is no general
+`HUBUUM_*_FILE` convention and no CLI option for individual integration secrets.
 
 Environment values are limited to 1 MiB and preserve raw bytes on Unix.
-Missing and empty values are distinct; an empty value is rejected as invalid.
+Missing and empty secrets are distinct; an empty secret value is rejected.
+The optional administrator migration URL treats an empty environment or CLI
+value as unset for compatibility with existing deployment automation. Empty
+URL files are errors.
 
 ## Mounted File Source
 
-Set both variables to use a mounted secret volume:
+Set the source and root in the environment:
 
-```text
-HUBUUM_SECRET_SOURCE=file
-HUBUUM_SECRET_FILE_ROOT=/run/secrets/hubuum
+```bash
+export HUBUUM_SECRET_SOURCE=file
+export HUBUUM_SECRET_FILE_ROOT=/run/secrets/hubuum
 ```
 
-The root has a fixed, application-owned layout:
+Or supply the equivalent options to either binary:
+
+```bash
+hubuum-server --secret-source file --secret-file-root /run/secrets/hubuum
+hubuum-admin --secret-source file --secret-file-root /run/secrets/hubuum --database-ready
+```
+
+For example, a single-role workload's mounted directory can contain:
 
 ```text
 /run/secrets/hubuum/
 ├── database/
 │   └── url
 ├── event-sink/
-│   └── <alias>
+│   └── inventory-api
 ├── ldap/
-│   └── <alias>
+│   └── readonly_password
 ├── remote/
-│   └── <alias>
+│   └── inventory-api
 └── token/
-    ├── key
-    ├── primary
-    └── previous
+    └── key
 ```
 
-The file provider accepts binary values up to 1 MiB, opens ordinary files
-only, performs a descriptor-bounded read, detects changes during the read, and
-rejects traversal outside the configured root. Consumer protocols that require
-text reject values that are not UTF-8.
+Each file contains the complete secret value. `database/url` contains a whole
+PostgreSQL connection URL, including any password and query parameters; it is
+not just a password file. `token/key` contains at least 32 bytes. File contents
+are not trimmed: when transferring existing text secrets, use `printf '%s'`
+rather than appending a newline. Existing environment-backed token keys are
+trimmed, so preserve their effective bytes when moving them to files.
 
-Kubernetes projected-secret symlinks are supported explicitly. Every resolved
-target and opened descriptor must remain below `HUBUUM_SECRET_FILE_ROOT`;
-symlinks escaping that root are rejected. Other users of the internal file
-provider default to rejecting symlinks unless they opt into the same confined
-projected-volume behavior.
+Mount the directory read-only and grant directory traversal and file read
+access to the process user. The production image uses UID/GID `10001:10001`
+unless changed at build time. The provider accepts binary values up to 1 MiB,
+opens ordinary files only, bounds each read, detects concurrent file changes,
+and rejects paths outside the configured root. Consumers that require text
+reject values that are not UTF-8.
+
+Kubernetes projected-secret symlinks are supported: resolved targets and
+opened files must remain below the root. Project keys into the relative paths
+in the mapping table, and mount the directory containing the projection.
+Symlinks escaping that directory are rejected.
+
+Changing an LDAP alias file affects `bind_password_ref`; it does not replace
+an inline `bind_password`. Changing the token key source does not change the
+active/previous key IDs. Keep `HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true` when
+stable tokens are required: the legacy single-key mode otherwise retains its
+ephemeral-key fallback if `token/key` is absent.
+
+## Single-Role Deployment Example
+
+Prepare `./secrets/database/url` for an existing PostgreSQL database and
+`./secrets/token/key` with a stable key. Add integration files as needed.
+For native binaries, export the source/root above, run
+`hubuum-admin --migrate`, then supervise `hubuum-admin --restore-executor` and
+`hubuum-server` as separate processes using those same settings. `single` is
+the default; no migration URL or additional PostgreSQL roles are required.
+
+This Compose example uses the same mounted files for all three workloads.
+Set `HUBUUM_IMAGE` to the release image being deployed. The database URL must
+be reachable from inside the containers.
+
+```yaml
+x-hubuum: &hubuum
+  image: ${HUBUUM_IMAGE:?Set HUBUUM_IMAGE to the release image}
+  environment: &secret-environment
+    HUBUUM_SECRET_SOURCE: file
+    HUBUUM_SECRET_FILE_ROOT: /run/secrets/hubuum
+    HUBUUM_DATABASE_ROLE_MODE: single
+    HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY: "true"
+  volumes:
+    - ./secrets:/run/secrets/hubuum:ro
+  read_only: true
+  tmpfs:
+    - /tmp
+
+services:
+  migrate:
+    <<: *hubuum
+    profiles: [administration]
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: [--migrate]
+    healthcheck:
+      disable: true
+
+  restore-executor:
+    <<: *hubuum
+    entrypoint: /usr/local/bin/hubuum-admin
+    command: [--restore-executor]
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  hubuum:
+    <<: *hubuum
+    environment:
+      <<: *secret-environment
+      HUBUUM_BIND_IP: 0.0.0.0
+      HUBUUM_CLIENT_ALLOWLIST: "*"
+    ports:
+      - "127.0.0.1:8080:8080"
+```
+
+Run the migration before starting the server and web-restore executor:
+
+```bash
+docker compose --profile administration run --rm migrate
+docker compose up -d restore-executor hubuum
+```
+
+The example publishes only on localhost. Configure the client allowlist and
+proxy trust for the intended deployment before exposing the API more widely.
+Container startup passes explicit secret-source and database URL options to
+its administrator readiness probe, so CLI overrides agree with the server.
+
+## Split-Role Mounts
+
+For `HUBUUM_DATABASE_ROLE_MODE=split`, first provision and adopt the roles using
+[the database role guide](database_roles.md#adopting-an-existing-single-role-database).
+Set split mode consistently on the server, migration job, and restore executor.
+Give API/worker workloads a directory containing `database/url` with only the
+runtime login, the shared token keys, and their required integration secrets.
+Give the migration job and restore executor a separate directory containing
+`database/migration-url` with the migrator login. Each workload may mount its
+own directory at the same `/run/secrets/hubuum` path; do not mount the migrator
+credential into API or ordinary worker containers.
+
+In the Compose example, change role mode to `split` and replace the shared
+volume on each admin service with `./admin-secrets:/run/secrets/hubuum:ro`, while
+the server keeps `./secrets:/run/secrets/hubuum:ro`. Configure any non-default
+owner/migrator/runtime role names consistently. No database URL environment
+variables are needed in either mode. One-shot `hubuum-admin --restore` uses the
+same role-specific file selection as the restore executor.
 
 ## Reload And Rotation
 
@@ -80,10 +229,15 @@ and Valkey sink connection pools key clients by the resolved URI, so a rotated
 credential creates a new client and old idle clients leave through the existing
 bounded LRU policy.
 
-The PostgreSQL URL and token-hash keys are startup secrets. Updating their
-source does not change an established process; restart replicas according to
-the database or token key-ring procedure. The ring makes rolling process
-restarts safe, but does not hot-reload key material inside a process.
+PostgreSQL URLs and token-hash keys are loaded at startup. Updating their
+files does not change a running database pool or key ring. Restart affected
+processes after a database credential change; rotate token keys using the
+staged procedure below, which includes rolling process restarts.
+
+Cache expiry is checked on use. After a mounted integration file changes, the
+next operation after its five-minute cache entry expires reads the new value.
+Changing a container's environment configuration also requires recreating or
+restarting it; cache expiry cannot update an existing process's environment.
 
 The login rate-limit Valkey URL, Treetop URL, TLS private-key passphrase, and
 other certificate paths continue to use their existing configuration adapters

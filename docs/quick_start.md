@@ -2,7 +2,19 @@
 
 ## Environment Variables
 
-Hubuum can be configured using environment variables or command-line arguments. All environment variables have the prefix `HUBUUM_`.
+Hubuum accepts command-line options and `HUBUUM_` environment variables; CLI
+options override the corresponding environment values. Supported credentials
+can also come from mounted files. Both binaries accept `--secret-source file`
+and `--secret-file-root DIRECTORY`, equivalent to `HUBUUM_SECRET_SOURCE=file`
+and `HUBUUM_SECRET_FILE_ROOT`. The default source remains `environment`.
+
+File mode changes where supported secret values are read, while ordinary
+configuration keeps its existing inputs. Explicit database URL arguments
+override the selected source; missing required files do not fall back to
+environment credentials. See [Secret Sources](secret_sources.md) for the full
+precedence rules, environment/file mapping, and complete server, migration,
+and restore-executor deployment examples. Use `hubuum-server --help` or
+`hubuum-admin --help` to list each binary's CLI options.
 
 ### Health Probes
 
@@ -78,9 +90,9 @@ examples.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_STORAGE_BACKEND` | `postgresql` | Storage adapter selected from those registered in this application build; empty selects the default, while other unknown values are rejected at startup |
-| `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL; used by all workloads in `single` mode and only runtime workloads in `split` mode |
+| `HUBUUM_DATABASE_URL` | `postgres://localhost` (server only) | Runtime/shared PostgreSQL connection URL in environment mode; file mode uses `database/url`. `--database-url` overrides either source |
 | `HUBUUM_DATABASE_ROLE_MODE` | `single` | Credential topology: one shared login (`single`) or separate owner, migrator, and runtime roles (`split`) |
-| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Optional privileged URL for admin migrations and restore execution in `single` mode; required for those workloads in `split` mode and never configured on an API or worker process |
+| `HUBUUM_MIGRATION_DATABASE_URL` | *(none)* | Privileged admin URL; file mode uses `database/migration-url`. Optional in `single`, required for migrations/restores in `split`; `--migration-database-url` overrides either source. Keep it out of API/worker processes |
 | `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role used in `split` mode |
 | `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role used in `split` mode |
 | `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role used in `split` mode |
@@ -238,8 +250,8 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID` | *(legacy single-key mode)* | Active key ID for newly issued tokens |
 | `HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS` | *(empty)* | Comma-separated previous verification key IDs (maximum seven) |
 | `HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY` | `false` | Fail startup when stable token key material is unavailable |
-| `HUBUUM_SECRET_SOURCE` | `environment` | Process-wide secret source: `environment` or `file` |
-| `HUBUUM_SECRET_FILE_ROOT` | *(empty)* | Mounted secret root required by the `file` source |
+| `HUBUUM_SECRET_SOURCE` | `environment` | Secret source: `environment` or `file`; overridden by `--secret-source` on either binary |
+| `HUBUUM_SECRET_FILE_ROOT` | *(empty)* | Mounted secret directory required by file mode; overridden by `--secret-file-root` on either binary |
 
 See [Secret Sources](secret_sources.md) for the mounted-file layout and
 rotation contracts, and [External Authentication](external_auth.md) for LDAP
@@ -340,6 +352,24 @@ export HUBUUM_ACTIX_WORKERS="8"
 export HUBUUM_DB_POOL_SIZE="20"
 ./hubuum-server
 ```
+
+### Mounted Secrets
+
+For a mounted directory containing `database/url` and `token/key`:
+
+```bash
+export HUBUUM_SECRET_SOURCE=file
+export HUBUUM_SECRET_FILE_ROOT=/run/secrets/hubuum
+export HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true
+hubuum-admin --migrate
+```
+
+Then run `hubuum-admin --restore-executor` and `hubuum-server` as separate
+supervised processes with the same environment. The default `single` database
+mode shares `database/url`; opt-in `split` uses a separate admin mount containing
+`database/migration-url`. See the complete
+[mounted-secret Compose example](secret_sources.md#single-role-deployment-example)
+and [split-role mounts](secret_sources.md#split-role-mounts).
 
 ### Docker Compose
 

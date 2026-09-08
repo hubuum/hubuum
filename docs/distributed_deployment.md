@@ -272,10 +272,20 @@ those layers need their own redundancy and maintenance procedures.
 
 ## Shared Configuration And Secrets
 
+Environment-backed credentials are the default. For mounted credentials, set
+`HUBUUM_SECRET_SOURCE=file` and `HUBUUM_SECRET_FILE_ROOT` on each workload, or
+pass `--secret-source file --secret-file-root DIRECTORY` to either binary.
+The [secret-source mapping and precedence](secret_sources.md#configuration-interfaces-and-precedence)
+apply to API replicas, workers, one-shot migrations, and restore executors.
+In single-role mode those workloads can share `database/url`; in split mode
+mount `database/migration-url` only into migration and restore workloads.
+See [split-role mounts](secret_sources.md#split-role-mounts) for the layout.
+
 All replicas must use the same values for settings that define cluster-wide
 identity or behavior. In particular:
 
-- `HUBUUM_DATABASE_URL` must point to the same PostgreSQL database.
+- The effective database URL (`HUBUUM_DATABASE_URL`, `database/url`, or an
+  explicit `--database-url`) must point to the same PostgreSQL database.
 - The token hash key ring (active ID, ordered previous IDs, and every key's
   material) must be equivalent on all replicas except during the documented
   staged rotation boundary. Compare the redacted ring identity in runtime

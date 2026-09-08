@@ -46,8 +46,58 @@ if [ "${1:-}" = --container-healthcheck ]; then
     exit $?
 fi
 
+database_ready() {
+    source_set=false
+    root_set=false
+    url_set=false
+    backend_set=false
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --secret-source|--secret-file-root|--database-url|--storage-backend)
+                option="$1"
+                if [ "$#" -lt 2 ]; then
+                    echo "Missing value for $option" >&2
+                    exit 2
+                fi
+                value="$2"
+                shift
+                ;;
+            --secret-source=*|--secret-file-root=*|--database-url=*|--storage-backend=*)
+                option="${1%%=*}"
+                value="${1#*=}"
+                ;;
+            *)
+                shift
+                continue
+                ;;
+        esac
+        case "$option" in
+            --secret-source) source_set=true; source_value="$value" ;;
+            --secret-file-root) root_set=true; root_value="$value" ;;
+            --database-url) url_set=true; url_value="$value" ;;
+            --storage-backend) backend_set=true; backend_value="$value" ;;
+        esac
+        shift
+    done
+
+    set -- --database-ready
+    if [ "$source_set" = true ]; then
+        set -- "$@" --secret-source "$source_value"
+    fi
+    if [ "$root_set" = true ]; then
+        set -- "$@" --secret-file-root "$root_value"
+    fi
+    if [ "$url_set" = true ]; then
+        set -- "$@" --database-url "$url_value"
+    fi
+    if [ "$backend_set" = true ]; then
+        set -- "$@" --storage-backend "$backend_value"
+    fi
+    hubuum-admin "$@"
+}
+
 echo "Waiting for database to be ready..."
-until hubuum-admin --database-ready; do
+until database_ready "$@"; do
     echo "Database is unavailable - sleeping"
     sleep 1
 done

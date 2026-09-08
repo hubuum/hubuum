@@ -62,7 +62,10 @@ fn run_entrypoint(runtime_role: &str, arguments: &[&str]) -> Output {
     ));
     fs::create_dir(&commands).expect("fake command directory should be created");
     for (name, body) in [
-        ("hubuum-admin", "#!/bin/sh\nprintf 'admin:%s\\n' \"$*\"\n"),
+        (
+            "hubuum-admin",
+            "#!/bin/sh\nprintf 'admin:%s\\n' \"$*\"\nprintf 'admin-argument:<%s>\\n' \"$@\"\n",
+        ),
         ("hubuum-server", "#!/bin/sh\nprintf 'server:%s\\n' \"$*\"\n"),
         ("wget", "#!/bin/sh\nprintf 'wget:%s\\n' \"$*\"\n"),
     ] {
@@ -228,6 +231,39 @@ fn healthcheck_uses_cli_runtime_role_over_environment(
         assert!(output.status.success(), "healthcheck failed: {stdout}");
     }
     assert_eq!(stdout.contains("wget:"), expects_http_probe);
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn entrypoint_forwards_secret_and_database_options_to_readiness(#[case] equals: bool) {
+    let options = [
+        ("--secret-source", "file"),
+        ("--secret-file-root", "/run/secret files"),
+        (
+            "--database-url",
+            "postgres://user:literal$credential@db/hubuum",
+        ),
+        ("--storage-backend", "postgresql"),
+    ];
+    let arguments = options
+        .iter()
+        .flat_map(|(key, value)| {
+            if equals {
+                vec![format!("{key}={value}")]
+            } else {
+                vec![key.to_string(), value.to_string()]
+            }
+        })
+        .collect::<Vec<_>>();
+    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = run_entrypoint("all", &arguments);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("admin:--database-ready --secret-source file --secret-file-root /run/secret files --database-url postgres://user:literal$credential@db/hubuum --storage-backend postgresql"));
+    assert!(stdout.contains("admin-argument:</run/secret files>"));
+    assert!(stdout.contains("admin-argument:<postgres://user:literal$credential@db/hubuum>"));
 }
 
 #[test]
