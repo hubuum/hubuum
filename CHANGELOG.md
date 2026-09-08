@@ -7,6 +7,35 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-09-08
+
+### Upgrade notes
+
+- The certified application upgrade and rollback path is `v0.0.11` to this
+  release. Create and verify a version 5 backup before upgrading. Installations
+  on `v0.0.9` or older must first upgrade to `v0.0.10` or `v0.0.11` and create a
+  version 5 backup; older backup formats are not converted in place.
+- Drain old workers and quiesce backup, import, and restore operations during
+  the mixed-version interval. Run `hubuum-admin --migrate` before starting
+  upgraded API or worker processes. The default `single` role mode retains the
+  existing database credential; adopting `split` roles is optional and requires
+  the documented role and credential setup.
+- Install the matching server, administrator, and `hubuum-template-worker`
+  binaries together. Deploy `hubuum-admin --restore-executor` before permitting
+  web restore confirmations, and update clients to poll the capability-protected
+  status endpoint after confirmation returns `202 Accepted`.
+- Update the Treetop schema and optional-ID policy guards before deploying with
+  external authorization. Review the traversal, export, and template batch
+  limits described below. Keep the existing token-hash key during a mixed-version
+  rollout; rotate keys only through the staged key-ring procedure.
+- Third-party storage adapters must follow the coordinated experimental SDK
+  `0.2` migration. SDK package publication is separate from this server release.
+- Application rollback retains the migrated database; it does not downgrade the
+  schema or make newer backup/import formats readable by the previous release.
+  After split-role adoption, keep old synchronous web restore confirmation
+  blocked and use the new one-shot administrator restore path until this
+  release is restored.
+
 ### Added
 
 - Both server and administrator commands now accept `--secret-source` and
