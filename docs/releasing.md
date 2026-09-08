@@ -8,7 +8,9 @@ This repository uses the CI workflow in
 - `Cargo.toml` package version must match the release tag.
 - `CHANGELOG.md` must contain a section for the release version.
 - `docs/openapi.json` must be regenerated for the release version.
-- A version bump in `Cargo.toml` must come with matching changelog and OpenAPI updates.
+- `docs/operational-contract.json` must be regenerated for the release version.
+- A version bump in `Cargo.toml` must come with matching changelog, OpenAPI, and
+  operational-contract updates.
 - The candidate OpenAPI contract must have no unaccepted breaks from the
   immediately preceding stable release.
 - The candidate must pass the adjacent stable release upgrade and application
@@ -44,8 +46,9 @@ Use the helper script in [`scripts/release.sh`](../scripts/release.sh):
 3. Review the generated release branch `release/v0.0.2`, including the full
    `Cargo.lock` dependency refresh, polish `CHANGELOG.md` if needed, and commit it.
 4. Open and merge that release branch.
-5. Check out the merged `main` and run `./scripts/release.sh tag`.
-6. Push `main` and the new tag.
+5. Wait for successful CI on the exact merged `main` commit, check out that
+   commit on clean `main`, and run `./scripts/release.sh tag`.
+6. Push the new tag.
 
 The helper script:
 
@@ -54,7 +57,7 @@ The helper script:
 - updates all Cargo dependencies to the newest versions allowed by the workspace
   manifests
 - rolls the current `Unreleased` changelog notes into the new release section
-- regenerates `docs/openapi.json`
+- regenerates `docs/openapi.json` and `docs/operational-contract.json`
 - runs the existing release validation scripts before you commit or tag
 
 Once the tag is pushed, the CI workflow will:
@@ -184,8 +187,8 @@ when an older installation must cross a format boundary.
 ## Native archives
 
 Linux AMD64 and ARM64 archives are exported from the same Alpine builder used by the production
-container. Both executables are stripped, statically linked musl binaries. CI rejects the archive
-if either binary declares a dynamic runtime dependency, so users do not need system copies of
+container. All three executables are stripped, statically linked musl binaries. CI rejects the archive
+if any binary declares a dynamic runtime dependency, so users do not need system copies of
 glibc, libpq, or OpenSSL.
 
 macOS and Windows use their native Rust targets. Their builds enable embedded migrations, bundled
@@ -193,7 +196,8 @@ libpq, and vendored OpenSSL, so users do not need Homebrew, PostgreSQL client li
 packages. They retain the standard operating-system libraries expected by native executables.
 
 Both tagged releases and `main-latest` use these platform contracts. Every archive includes
-`hubuum-server`, `hubuum-admin`, and the embedded migration runner exposed through
+`hubuum-server`, `hubuum-admin`, and `hubuum-template-worker`. Install all three
+together. The administrator exposes the embedded migration runner through
 `hubuum-admin --migrate`.
 
 ## Container images
