@@ -224,6 +224,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Windows administrator backups now reset the ACL subprocess's module search
+  path so inherited PowerShell 7 paths cannot prevent loading the Windows
+  PowerShell ACL cmdlets. Backups retain their owner-only permissions.
+
 - Explicit `--database-url` arguments are no longer overwritten by an inherited
   environment value during server startup. Explicit runtime and migration URL
   arguments override the selected secret source; missing required files never

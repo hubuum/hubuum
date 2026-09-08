@@ -1084,6 +1084,9 @@ Set-Acl -LiteralPath $path -AclObject $acl
             "-Command",
             ACL_SCRIPT,
         ])
+        // A parent PowerShell 7 process can supply incompatible module paths.
+        // Let Windows PowerShell construct its own path for the built-in ACL cmdlets.
+        .env_remove("PSModulePath")
         .env("ADMIN_BACKUP_ACL_PATH", path)
         .output()?;
     if output.status.success() {

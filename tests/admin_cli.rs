@@ -286,6 +286,59 @@ fn split_role_migration_requires_the_privileged_database_url(
     assert!(stderr.contains("HUBUUM_MIGRATION_DATABASE_URL must be set"));
 }
 
+#[cfg(windows)]
+#[test]
+fn backup_files_remain_owner_only_with_an_incompatible_powershell_module_path() {
+    let directory = SecretDirectory::new();
+    let modules = directory.0.join("modules");
+    let security_module = modules.join("Microsoft.PowerShell.Security");
+    std::fs::create_dir_all(&security_module).unwrap();
+    std::fs::write(
+        security_module.join("Microsoft.PowerShell.Security.psm1"),
+        "function Set-Acl { throw 'Inherited module path must not be used for backup ACLs' }",
+    )
+    .unwrap();
+    let backup = directory.0.join("backup.json");
+    let output = admin_command(&database_url())
+        .env("PSModulePath", &modules)
+        .arg("--backup")
+        .arg(&backup)
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+
+    // Read the resulting ACL through .NET, independently of Set-Acl and module lookup.
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            r#"
+$ErrorActionPreference = 'Stop'
+$path = [Environment]::GetEnvironmentVariable('TEST_BACKUP_ACL_PATH', 'Process')
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = [System.IO.File]::GetAccessControl($path)
+$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+$rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+if ($owner -ne $identity -or -not $acl.AreAccessRulesProtected -or $rules.Count -ne 1) {
+    throw 'Backup ACL must be owned by the current user with one protected access rule'
+}
+$rule = $rules[0]
+if ($rule.IdentityReference -ne $identity -or $rule.IsInherited -or
+    $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+    $rule.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) {
+    throw 'Backup ACL must grant only the current user full control'
+}
+"#,
+        ])
+        .env_remove("PSModulePath")
+        .env("TEST_BACKUP_ACL_PATH", &backup)
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+}
+
 #[cfg(unix)]
 #[test]
 fn backup_files_are_owner_only_and_atomically_replaced() {
