@@ -3,8 +3,8 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{BigInt, Jsonb, Timestamp};
-use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
+use diesel::sql_types::{BigInt, Jsonb, Text, Timestamp};
+use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
@@ -692,6 +692,14 @@ async fn replace_backend_state(
     Ok(())
 }
 
+#[derive(QueryableByName)]
+struct RestoreRowProjection {
+    #[diesel(sql_type = Text)]
+    columns: String,
+    #[diesel(sql_type = Text)]
+    values: String,
+}
+
 async fn insert_restore_rows(
     connection: &mut PostgresConnection,
     table: &str,
@@ -701,8 +709,27 @@ async fn insert_restore_rows(
     if rows.is_empty() {
         return Ok(());
     }
+    // PostgreSQL's record conversion maps JSON null to SQL NULL, including
+    // required JSONB columns such as object data. Read those values directly
+    // from the document; retain record conversion for nullable columns where
+    // backup null represents SQL NULL. Missing required values still fail the
+    // database constraint. Catalog-derived identifiers are quoted by format().
+    let projection = diesel::sql_query(
+        "SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum) AS columns, \
+         string_agg(CASE WHEN atttypid = 'jsonb'::regtype AND attnotnull \
+             THEN format('source.value -> %L', attname) \
+             ELSE format('restored.%I', attname) END, ', ' ORDER BY attnum) AS values \
+         FROM pg_attribute \
+         WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped",
+    )
+    .bind::<Text, _>(table)
+    .get_result::<RestoreRowProjection>(connection)
+    .await?;
     let query = format!(
-        "INSERT INTO {table} SELECT * FROM jsonb_populate_recordset(NULL::{table}, $1::jsonb)"
+        "INSERT INTO {table} ({}) SELECT {} \
+         FROM jsonb_array_elements($1::jsonb) AS source(value) \
+         CROSS JOIN LATERAL jsonb_populate_record(NULL::{table}, source.value) AS restored",
+        projection.columns, projection.values,
     );
     diesel::sql_query(query)
         .bind::<Jsonb, _>(Value::Array(rows))
@@ -1087,5 +1114,81 @@ mod tests {
             validate_restore_identifier(table, column).is_ok(),
             expected_valid
         );
+    }
+
+    #[cfg(feature = "integration-test-support")]
+    mod database {
+        use diesel::QueryableByName;
+        use diesel::sql_types::{Jsonb, Nullable};
+        use diesel_async::RunQueryDsl;
+        use rstest::rstest;
+        use serde_json::{Value, json};
+
+        use super::super::insert_restore_rows;
+        use crate::test_support::integration_test_pool;
+        use crate::{PostgresStorageError, with_transaction};
+
+        #[derive(QueryableByName)]
+        struct RestoredJsonRow {
+            #[diesel(sql_type = Jsonb)]
+            data: Value,
+            #[diesel(sql_type = Nullable<Jsonb>)]
+            optional_data: Option<Value>,
+        }
+
+        async fn restore_json_row(row: Value) -> Result<RestoredJsonRow, PostgresStorageError> {
+            let pool = integration_test_pool(1);
+            with_transaction(&pool, async |connection| {
+                // A connection-local shadow table exercises the production
+                // insert without replacing shared integration fixtures.
+                diesel::sql_query(
+                    "CREATE TEMP TABLE hubuumobject (data JSONB NOT NULL, optional_data JSONB) \
+                     ON COMMIT DROP",
+                )
+                .execute(connection)
+                .await?;
+                insert_restore_rows(connection, "hubuumobject", vec![row]).await?;
+                Ok::<_, PostgresStorageError>(
+                    diesel::sql_query("SELECT data, optional_data FROM hubuumobject")
+                        .get_result(connection)
+                        .await?,
+                )
+            })
+            .await
+        }
+
+        #[rstest]
+        #[case::null(json!(null))]
+        #[case::object(json!({"nested": null}))]
+        #[case::array(json!([null, 1, "value"]))]
+        #[case::number(json!(42))]
+        #[case::boolean(json!(false))]
+        #[case::string(json!("null"))]
+        #[tokio::test]
+        async fn restore_preserves_required_json_values(#[case] data: Value) {
+            let restored = restore_json_row(json!({"data": data})).await.unwrap();
+
+            assert_eq!(restored.data, data);
+        }
+
+        #[rstest]
+        #[case::sql_null(json!(null), None)]
+        #[case::object(json!({"nested": null}), Some(json!({"nested": null})))]
+        #[tokio::test]
+        async fn restore_preserves_nullable_json_values(
+            #[case] value: Value,
+            #[case] expected: Option<Value>,
+        ) {
+            let restored = restore_json_row(json!({"data": {}, "optional_data": value}))
+                .await
+                .unwrap();
+
+            assert_eq!(restored.optional_data, expected);
+        }
+
+        #[tokio::test]
+        async fn restore_rejects_missing_required_json_value() {
+            assert!(restore_json_row(json!({})).await.is_err());
+        }
     }
 }

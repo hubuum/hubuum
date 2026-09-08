@@ -875,12 +875,14 @@ impl StorageRestoreDrainState {
             ));
         }
         let mut instance_ids = std::collections::HashSet::with_capacity(instances.len());
-        if instances.iter().any(|instance| {
-            instance.maintenance_generation != generation
-                || !instance_ids.insert(instance.instance_id)
-        }) {
+        // Live instances acknowledge maintenance asynchronously. Keep their
+        // observed generations so the executor can wait for acknowledgements.
+        if instances
+            .iter()
+            .any(|instance| !instance_ids.insert(instance.instance_id))
+        {
             return Err(StorageValidationError::invalid(
-                "restore drain instances must have unique ids and match the drain generation",
+                "restore drain instances must have unique ids",
             ));
         }
         Ok(Self {
@@ -999,11 +1001,47 @@ pub trait RestoreStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::{StorageBackupRow, StorageBackupStateSection};
 
     fn timestamp() -> DateTime<Utc> {
         chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+    }
+
+    #[rstest]
+    #[case::not_yet_acknowledged(0, false)]
+    #[case::previously_drained(1, true)]
+    #[case::current(2, true)]
+    #[case::snapshot_advanced(3, false)]
+    fn restore_drain_state_preserves_instance_acknowledgements(
+        #[case] instance_generation: i64,
+        #[case] drained: bool,
+    ) {
+        let instance =
+            StorageRestoreInstance::try_new(Uuid::new_v4(), instance_generation, drained).unwrap();
+        let state = StorageRestoreDrainState::try_new(2, vec![instance]).unwrap();
+
+        assert_eq!(state.into_parts(), (2, vec![instance]));
+    }
+
+    #[rstest]
+    #[case::same_generation(2)]
+    #[case::different_generation(1)]
+    fn restore_drain_state_rejects_duplicate_instances(#[case] other_generation: i64) {
+        let instance_id = Uuid::new_v4();
+        let instances = vec![
+            StorageRestoreInstance::try_new(instance_id, 2, true).unwrap(),
+            StorageRestoreInstance::try_new(instance_id, other_generation, false).unwrap(),
+        ];
+
+        assert!(StorageRestoreDrainState::try_new(2, instances).is_err());
+    }
+
+    #[test]
+    fn restore_drain_state_rejects_negative_generation() {
+        assert!(StorageRestoreDrainState::try_new(-1, vec![]).is_err());
     }
 
     #[test]
