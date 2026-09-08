@@ -27,6 +27,7 @@ use hubuum_storage_conformance::{
 };
 use hubuum_storage_core::StorageTaskClaimToken;
 use hubuum_storage_memory::MemoryStorage;
+use hubuum_storage_postgres::test_support::fanout_event;
 use hubuum_storage_postgres::{
     PostgresFaultController, PostgresFaultPoint, PostgresObserver,
     PostgresStorage as AdapterPostgresStorage,
@@ -96,14 +97,14 @@ use crate::storage::{
     StorageComputedFieldVisibility, StorageComputedObjectEnrichmentQuery,
     StorageComputedObjectListQuery, StorageComputedObjectProjection,
     StorageComputedObjectQueryOptions, StorageComputedObjectVisibility,
-    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDeliveryListQuery,
-    StorageEventRetentionBatch, StorageEventSinkCreate, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscriptionCreate,
-    StorageEventSubscriptionDelete, StorageEventSubscriptionListQuery,
-    StorageEventSubscriptionUpdate, StorageExecutionScope, StorageExportTaskArtifact,
-    StorageExportTemplateCreate, StorageExportTemplateDefinition, StorageExportTemplateDelete,
-    StorageExportTemplateListQuery, StorageExportTemplateReplace, StorageGroupCreate,
-    StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
+    StorageDefaultAdminBootstrap, StorageError, StorageErrorKind, StorageEventDelivery,
+    StorageEventDeliveryListQuery, StorageEventRetentionBatch, StorageEventSinkCreate,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscriptionCreate, StorageEventSubscriptionDelete,
+    StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate, StorageExecutionScope,
+    StorageExportTaskArtifact, StorageExportTemplateCreate, StorageExportTemplateDefinition,
+    StorageExportTemplateDelete, StorageExportTemplateListQuery, StorageExportTemplateReplace,
+    StorageGroupCreate, StorageGroupListQuery, StorageGroupUpdate, StorageHistoryAsOfQuery,
     StorageHistoryCollectionScope, StorageHistoryListQuery, StorageImportPlan,
     StorageImportPlanItem, StorageImportResult, StorageLocalPasswordReset, StorageObject,
     StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
@@ -850,6 +851,26 @@ impl PostgresAuditContractFixture {
         )
     }
 
+    async fn fanout_deliveries(&self) -> Result<Vec<StorageEventDelivery>, FixtureError> {
+        // Parallel fixtures share the queue and may claim our event before their
+        // fan-out transaction finishes. Drive only this fixture's events through
+        // the adapter's production fan-out operation instead of polling global
+        // batches for an arbitrary number of scheduler yields.
+        for event in self.collection_events(self.collection_id).await? {
+            let (envelope, _, _) = event.into_parts();
+            fanout_event(&self.pool, envelope.id()).await?;
+        }
+        let (deliveries, _) = self
+            .backend
+            .list_event_deliveries(
+                StorageEventDeliveryListQuery::new(Self::query_options())
+                    .subscription_id(Some(self.subscription_id)),
+            )
+            .await?
+            .into_parts();
+        Ok(deliveries)
+    }
+
     async fn cleanup_resources(&self) -> Result<(), FixtureError> {
         let context = EventContext::system();
         self.backend
@@ -970,60 +991,43 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
     }
 
     async fn fanout_to_recording_sink(&self) -> Result<FanoutProbe, FixtureError> {
-        let subscription_id = self.subscription_id;
-        let fanout = EventFanoutSettings::new(1_000, 30_000)
+        let deliveries = self.fanout_deliveries().await?;
+        let durable_delivery_count = deliveries.len();
+        let settings = EventDeliverySettings::builder()
+            .batch_size(1_000)
+            .lock_timeout_ms(30_000)
+            .transport_timeout_ms(25_000)
+            .retry_backoff_base_ms(1_000)
+            .retry_backoff_max_ms(10_000)
+            .max_attempts(3)
+            .build()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        for _ in 0..10 {
-            self.backend.process_event_fanout_batch(fanout).await?;
-            let (deliveries, _) = self
-                .backend
-                .list_event_deliveries(
-                    StorageEventDeliveryListQuery::new(Self::query_options())
-                        .subscription_id(Some(subscription_id)),
-                )
-                .await?
-                .into_parts();
-            if !deliveries.is_empty() {
-                let durable_delivery_count = deliveries.len();
-                let settings = EventDeliverySettings::builder()
-                    .batch_size(1_000)
-                    .lock_timeout_ms(30_000)
-                    .transport_timeout_ms(25_000)
-                    .retry_backoff_base_ms(1_000)
-                    .retry_backoff_max_ms(10_000)
-                    .max_attempts(3)
-                    .build()
-                    .map_err(|error| std::io::Error::other(error.to_string()))?;
-                let resolver = ContractSinkResolver {
-                    recording: ContractRecordingSink {
-                        deliveries: self.sink_deliveries.clone(),
-                    },
-                    discard: ContractDiscardSink,
-                };
-                for delivery in deliveries {
-                    let item = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
-                        &self.pool,
-                        delivery.id(),
-                        settings,
-                    )
-                    .await?;
-                    crate::events::process_event_delivery_work_item(
-                        &self.backend,
-                        settings,
-                        &resolver,
-                        item,
-                    )
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()))?;
-                }
-                return Ok(FanoutProbe::new(
-                    durable_delivery_count,
-                    AtomicUsize::load(self.sink_deliveries.as_ref(), Ordering::Relaxed),
-                ));
-            }
-            tokio::task::yield_now().await;
+        let resolver = ContractSinkResolver {
+            recording: ContractRecordingSink {
+                deliveries: self.sink_deliveries.clone(),
+            },
+            discard: ContractDiscardSink,
+        };
+        for delivery in deliveries {
+            let item = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
+                &self.pool,
+                delivery.id(),
+                settings,
+            )
+            .await?;
+            crate::events::process_event_delivery_work_item(
+                &self.backend,
+                settings,
+                &resolver,
+                item,
+            )
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         }
-        Ok(FanoutProbe::new(0, 0))
+        Ok(FanoutProbe::new(
+            durable_delivery_count,
+            self.sink_deliveries.load(Ordering::Relaxed),
+        ))
     }
 
     async fn observations(&self) -> Result<ObservationProbe, FixtureError> {
@@ -1080,28 +1084,12 @@ impl BackendAuditFixture for PostgresAuditContractFixture {
 impl DeliveryFaultFixture for PostgresAuditContractFixture {
     async fn delivery_fault_probe(&self) -> Result<DeliveryFaultProbe, FixtureError> {
         self.committed_mutation().await?;
-        let subscription_id = self.subscription_id;
-        let fanout = EventFanoutSettings::new(1_000, 30_000)
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let mut delivery_id = None;
-        for _ in 0..10 {
-            self.backend.process_event_fanout_batch(fanout).await?;
-            let (deliveries, _) = self
-                .backend
-                .list_event_deliveries(
-                    StorageEventDeliveryListQuery::new(Self::query_options())
-                        .subscription_id(Some(subscription_id)),
-                )
-                .await?
-                .into_parts();
-            if let Some(delivery) = deliveries.into_iter().next() {
-                delivery_id = Some(delivery.id());
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        let delivery_id = delivery_id
-            .ok_or_else(|| std::io::Error::other("delivery fault event produced no delivery"))?;
+        let delivery_id = self
+            .fanout_deliveries()
+            .await?
+            .first()
+            .ok_or_else(|| std::io::Error::other("delivery fault event produced no delivery"))?
+            .id();
         let settings = EventDeliverySettings::builder()
             .batch_size(1)
             .lock_timeout_ms(30_000)
