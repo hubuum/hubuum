@@ -378,3 +378,26 @@ hardening_docs="$(bash "$classifier" docs/runtime_hardening.md)"
 assert_flag "$hardening_docs" code false
 inventory_output="$(bash "$classifier" docs/generated/project_inventory.json)"
 assert_flag "$inventory_output" code true
+# The isolated worker, its tests, telemetry, and benchmark retain CI coverage.
+worker_output="$(bash "$classifier" crates/hubuum-templates/src/bin/hubuum-template-worker.rs)"
+assert_flag "$worker_output" container true
+assert_flag "$worker_output" artifacts true
+performance_output="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
+assert_flag "$performance_output" code true
+assert_flag "$performance_output" benchmarks true
+
+async_worker_tests="$(bash "$classifier" crates/hubuum-templates/src/isolation/tests.rs)"
+assert_flag "$async_worker_tests" code true
+assert_flag "$async_worker_tests" container true
+async_worker_metrics="$(bash "$classifier" src/observability/metrics/template.rs)"
+assert_flag "$async_worker_metrics" code true
+async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telemetry.rs)"
+assert_flag "$async_worker_telemetry" code true
+
+# Batch protocol regressions and the shared-context benchmark must stay selected.
+batch_tests="$(bash "$classifier" crates/hubuum-templates/tests/batching.rs)"
+assert_flag "$batch_tests" code true
+assert_flag "$batch_tests" container true
+batch_benchmark="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
+assert_flag "$batch_benchmark" code true
+assert_flag "$batch_benchmark" benchmarks true

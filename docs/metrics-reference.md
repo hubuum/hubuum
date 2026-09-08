@@ -75,6 +75,8 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_task_worker_iterations_total` | counter | none | process | `outcome` | Task worker loop iterations |
 | `hubuum_task_workers_configured` | gauge | none | process | none | Configured task workers |
 | `hubuum_tasks` | gauge | none | database | `kind`, `status` | Current task counts |
+| `hubuum_template_worker_duration_seconds` | histogram | seconds | process | `event` | Template worker terminal operation duration |
+| `hubuum_template_worker_events_total` | counter | none | process | `event` | Template worker lifecycle events |
 | `hubuum_token_authentications_total` | counter | none | process | `format`, `key_state`, `outcome` | Bearer-token authentication outcomes |
 | `hubuum_token_hash_key_info` | gauge | none | process | `mode`, `active_key_id`, `ring_identity` | Token hash key-ring identity |
 | `hubuum_token_hash_keys` | gauge | none | process | `state` | Configured token hash keys |

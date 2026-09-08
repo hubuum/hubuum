@@ -95,6 +95,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Batch email subject/body rendering and remote-call URL/header/body rendering
+  into one disposable template worker per operation, sharing context serialization
+  and avoiding duplicate email syntax compilation. Remote-target syntax checks
+  also use one batch. Per-template limits and outbound validation remain enforced.
+  **Breaking (batch resource limits):** the five-second deadline, 16 MiB input
+  allowance and 128 MiB live Rust heap budget now cover the entire batch. Reduce
+  combined template size or execution work for operations that exceed these
+  limits; remote targets must have at most 128 headers. Deploy the matching worker
+  binary with the server and administrator. See [template worker limits](docs/template_worker.md).
+
 - **Breaking (external authorization):** prospective resources use distinct
   identities and omit unknown endpoint IDs. Upload the updated Treetop schema
   and guard optional ID attributes with Cedar `has` checks before deployment.
@@ -181,6 +191,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Kubernetes projected-secret symlinks. LDAP, event, and remote integrations
   observe rotation after cache refresh; PostgreSQL pools and token hashing
   explicitly require restart rather than claiming unsafe live rotation.
+
+- **Breaking:** template execution requires `hubuum-template-worker` beside the
+  server and administrator binaries. Containers and release archives include
+  it. Rendering and validation now enforce worker heap, deadline, admission,
+  protocol, and output budgets. Async worker supervision keeps request threads
+  responsive, bounds waiting work, and cleans up cancelled children, with
+  lifecycle logs and metrics. Remote URLs and headers and email subjects have
+  smaller output caps. Existing integration and export trailing-newline
+  behavior is preserved. See `docs/template_worker.md` for limits and deployment.
 
 ### Fixed
 

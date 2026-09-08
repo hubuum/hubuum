@@ -32,3 +32,4 @@ Every task kind is covered by the worker's exhaustive dispatch and the inventory
 - `hubuum-runtime-behavior-check`
 - `hubuum-scale-benchmark`
 - `hubuum-server`
+- `hubuum-template-worker`

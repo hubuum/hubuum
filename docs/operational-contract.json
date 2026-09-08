@@ -2672,6 +2672,80 @@
       "feature": null
     },
     {
+      "name": "hubuum_template_worker_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "event",
+          "bounded_by": "enumerated values",
+          "values": [
+            "admitted",
+            "started",
+            "completed",
+            "cancelled",
+            "shutdown",
+            "overloaded",
+            "input_limit",
+            "admission_timeout",
+            "spawn_failed",
+            "worker_failed",
+            "execution_timeout",
+            "render_failed"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Template worker terminal operation duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_template_worker_events_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "event",
+          "bounded_by": "enumerated values",
+          "values": [
+            "admitted",
+            "started",
+            "completed",
+            "cancelled",
+            "shutdown",
+            "overloaded",
+            "input_limit",
+            "admission_timeout",
+            "spawn_failed",
+            "worker_failed",
+            "execution_timeout",
+            "render_failed"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Template worker lifecycle events",
+      "feature": null
+    },
+    {
       "name": "hubuum_token_authentications_total",
       "kind": "counter",
       "unit": null,

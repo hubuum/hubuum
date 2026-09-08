@@ -1,0 +1,89 @@
+{
+  "recorded_at_utc": "2026-09-07T21:36:23.584362+00:00",
+  "base_commit": "44371d2f666c9afdeb2060654c5f3ce8c6c6385b",
+  "working_tree": "uncommitted batching implementation",
+  "profile": "release",
+  "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "host": {
+    "system": "Linux",
+    "kernel": "5.14.0-687.33.1.el9_8.x86_64",
+    "architecture": "x86_64",
+    "cpu": "Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz",
+    "logical_cpus": 32
+  },
+  "limitations": "Shared developer host with other verification builds running. Paired small-template samples exclude HTTP, SMTP and database work. Both modes use the same worker binary and protocol; these are not production-capacity measurements or a complete before/after comparison against PR #373.",
+  "source_sha256": {
+    "benches/template_schema_concurrency/main.rs": "d47da41d1c14aed4dcaf9c26405a4d1b3b5de4fd261090f4b27c75d07949b7b5",
+    "crates/hubuum-templates/src/isolation.rs": "59d6440f8a487c807afc293ceaef364ebcdc133d16d16efe1ce22513bf6eebe0",
+    "crates/hubuum-templates/src/worker.rs": "712f0603a4d5dc9f09be26a851c82271525398e07e17df65168f6ba8ef10a950"
+  },
+  "results": [
+    {
+      "elapsed_us": 8706,
+      "scenario": "template_schema_cold_start"
+    },
+    {
+      "concurrency": 1,
+      "elapsed_ms": 51,
+      "p50_us": 5030,
+      "p95_us": 5153,
+      "peak_worker_rust_heap_bytes": 1960307,
+      "renders": 10,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 4,
+      "elapsed_ms": 55,
+      "p50_us": 5341,
+      "p95_us": 5746,
+      "peak_worker_rust_heap_bytes": 1960307,
+      "renders": 40,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 8,
+      "elapsed_ms": 91,
+      "p50_us": 8804,
+      "p95_us": 9870,
+      "peak_worker_rust_heap_bytes": 1960307,
+      "renders": 80,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "mode": "individual",
+      "operations": 20,
+      "p50_us": 3693,
+      "p95_us": 3753,
+      "scenario": "email",
+      "templates_per_operation": 2,
+      "worker_starts_per_operation": 4
+    },
+    {
+      "mode": "batch",
+      "operations": 20,
+      "p50_us": 956,
+      "p95_us": 1011,
+      "scenario": "email",
+      "templates_per_operation": 2,
+      "worker_starts_per_operation": 1
+    },
+    {
+      "mode": "individual",
+      "operations": 20,
+      "p50_us": 11336,
+      "p95_us": 11568,
+      "scenario": "remote_ten_headers",
+      "templates_per_operation": 12,
+      "worker_starts_per_operation": 12
+    },
+    {
+      "mode": "batch",
+      "operations": 20,
+      "p50_us": 1107,
+      "p95_us": 1125,
+      "scenario": "remote_ten_headers",
+      "templates_per_operation": 12,
+      "worker_starts_per_operation": 1
+    }
+  ]
+}

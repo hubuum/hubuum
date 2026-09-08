@@ -228,6 +228,8 @@ pub fn init() -> Result<(), ApiError> {
         import_failed_items: u64_counter(&meter, "hubuum_import_failed_items"),
         remote_call_duration: duration_histogram(&meter, "hubuum_remote_call_duration"),
         remote_call_results: u64_counter(&meter, "hubuum_remote_call_results"),
+        template_worker_events: u64_counter(&meter, "hubuum_template_worker_events"),
+        template_worker_duration: duration_histogram(&meter, "hubuum_template_worker_duration"),
         login_attempts: u64_counter(&meter, "hubuum_login_attempts"),
         login_lockouts: u64_counter(&meter, "hubuum_login_lockouts"),
         #[cfg(feature = "login-rate-limit-valkey")]

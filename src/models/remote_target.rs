@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 use hubuum_outbound_http::OutboundHeaderName;
-use hubuum_templates::prepare_template;
+use hubuum_templates::{TemplateBatch, TemplateExecution, TemplateLimits};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -526,7 +526,7 @@ impl UpdateRemoteTarget {
     }
 }
 
-pub fn validate_target_parts(
+pub async fn validate_target_parts(
     class_id: Option<i32>,
     url_template: &str,
     headers_template: &serde_json::Value,
@@ -540,16 +540,32 @@ pub fn validate_target_parts(
             "timeout_ms must be greater than 0".to_string(),
         ));
     }
-    if !headers_template.is_object() {
-        return Err(ApiError::BadRequest(
-            "headers_template must be a JSON object".to_string(),
-        ));
+    let headers = RemoteHeaderTemplates::new(headers_template)?;
+    let (recursion_limit, fuel) = remote_template_limits();
+    let limits = TemplateLimits::new(recursion_limit, fuel);
+    let mut batch = TemplateBatch::new(0);
+    let templates = std::iter::once(("url_template", url_template))
+        .chain(body_template.map(|body| ("body_template", body)))
+        .chain(
+            headers
+                .iter()
+                .map(|(_, source)| ("header template", source)),
+        );
+    let mut labels = Vec::new();
+    for (label, source) in templates {
+        batch
+            .push(TemplateExecution::new("template", source, limits))
+            .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))?;
+        labels.push(label);
     }
-    validate_template("url_template", url_template)?;
-    if let Some(body_template) = body_template {
-        validate_template("body_template", body_template)?;
-    }
-    validate_header_templates(headers_template)?;
+    batch.validate().await.map_err(|error| {
+        let label = error
+            .template_index()
+            .and_then(|index| labels.get(index))
+            .copied()
+            .unwrap_or("template batch");
+        ApiError::BadRequest(format!("Invalid {label}: {error}"))
+    })?;
     validate_auth_config(auth_config)?;
     validate_allowed_subject_types(allowed_subject_types)?;
     validate_class_scope(class_id, allowed_subject_types)?;
@@ -789,27 +805,42 @@ fn unique_collections(collections: Vec<Collection>) -> Vec<Collection> {
         .collect()
 }
 
-fn validate_header_templates(value: &serde_json::Value) -> Result<(), ApiError> {
-    let object = value.as_object().ok_or_else(|| {
-        ApiError::BadRequest("headers_template must be a JSON object".to_string())
-    })?;
-    for (name, value) in object {
-        if name.trim().is_empty() {
+/// Validated remote header names, string sources and count, shared by target
+/// validation and execution. Values remain borrowed until batch serialization.
+pub(crate) struct RemoteHeaderTemplates<'a> {
+    templates: Vec<(&'a str, &'a str)>,
+}
+
+impl<'a> RemoteHeaderTemplates<'a> {
+    pub(crate) fn new(value: &'a serde_json::Value) -> Result<Self, ApiError> {
+        let object = value.as_object().ok_or_else(|| {
+            ApiError::BadRequest("headers_template must be a JSON object".to_string())
+        })?;
+        if object.len() > 128 {
             return Err(ApiError::BadRequest(
-                "header names must not be empty".to_string(),
+                "remote calls support at most 128 headers".into(),
             ));
         }
-        OutboundHeaderName::new(name).map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        match value {
-            serde_json::Value::String(template) => validate_template("header template", template)?,
-            _ => {
+        let mut templates = Vec::with_capacity(object.len());
+        for (name, value) in object {
+            if name.trim().is_empty() {
                 return Err(ApiError::BadRequest(
-                    "header template values must be strings".to_string(),
+                    "header names must not be empty".to_string(),
                 ));
             }
+            OutboundHeaderName::new(name)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            let source = value.as_str().ok_or_else(|| {
+                ApiError::BadRequest("header template values must be strings".to_string())
+            })?;
+            templates.push((name.as_str(), source));
         }
+        Ok(Self { templates })
     }
-    Ok(())
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&'a str, &'a str)> + '_ {
+        self.templates.iter().copied()
+    }
 }
 
 fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> {
@@ -838,15 +869,6 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
                 .to_string(),
         ))
     }
-}
-
-fn validate_template(label: &str, source: &str) -> Result<(), ApiError> {
-    let (recursion_limit, fuel) = remote_template_limits();
-    prepare_template(source)
-        .limit_recursion(recursion_limit)
-        .limit_fuel(fuel)
-        .validate()
-        .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))
 }
 
 fn remote_template_limits() -> (usize, u64) {
@@ -929,7 +951,26 @@ impl CursorPaginated for RemoteTarget {
 mod tests {
     use std::str::FromStr;
 
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case::maximum(128, true)]
+    #[case::excessive(129, false)]
+    #[test]
+    fn remote_header_count_is_validated_before_execution(
+        #[case] count: usize,
+        #[case] accepted: bool,
+    ) {
+        let headers = serde_json::Value::Object(
+            (0..count)
+                .map(|index| (format!("X-{index}"), serde_json::json!("{{ value }}")))
+                .collect(),
+        );
+
+        assert_eq!(RemoteHeaderTemplates::new(&headers).is_ok(), accepted);
+    }
 
     #[test]
     fn remote_http_method_parses_supported_methods() {
@@ -944,8 +985,8 @@ mod tests {
         assert!(RemoteHttpMethod::from_str("put").is_err());
     }
 
-    #[test]
-    fn target_parts_validate_templates_and_auth_references() {
+    #[tokio::test]
+    async fn target_parts_validate_templates_and_auth_references() {
         assert!(
             validate_target_parts(
                 Some(1),
@@ -958,6 +999,7 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_ok()
         );
 
@@ -971,6 +1013,7 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_err()
         );
         assert!(
@@ -983,6 +1026,7 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_err()
         );
         assert!(
@@ -995,6 +1039,7 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_err()
         );
         assert!(
@@ -1010,12 +1055,13 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_err()
         );
     }
 
-    #[test]
-    fn curated_filters_are_accepted_in_templates() {
+    #[tokio::test]
+    async fn curated_filters_are_accepted_in_templates() {
         // The `tojson` filter is documented for remote targets; validation must accept it.
         assert!(
             validate_target_parts(
@@ -1027,6 +1073,7 @@ mod tests {
                 &[RemoteTargetSubjectType::Object],
                 1000,
             )
+            .await
             .is_ok()
         );
     }
@@ -1070,8 +1117,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn transport_controlled_header_template_is_rejected() {
+    #[tokio::test]
+    async fn transport_controlled_header_template_is_rejected() {
         let error = validate_target_parts(
             Some(1),
             "https://example.com",
@@ -1081,6 +1128,7 @@ mod tests {
             &[RemoteTargetSubjectType::Object],
             1000,
         )
+        .await
         .unwrap_err();
 
         assert!(
