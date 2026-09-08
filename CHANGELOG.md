@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-09-09
+
+### Upgrade notes
+
+- Install the matching server, administrator, and template worker binaries
+  together. Update the separately deployed `hubuum-admin --restore-executor`
+  so restore execution uses these fixes.
+
 ### Fixed
 
 - Full restores now wait for live server instances to acknowledge the current
