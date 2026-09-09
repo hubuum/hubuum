@@ -26,8 +26,7 @@ pub enum StorageBackendKind {
 
 impl StorageBackendKind {
     /// Every backend kind selectable by this application build.
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 2] = [Self::Postgres, Self::Memory];
+    pub const ALL: [Self; 2] = [Self::Postgres, Self::Memory];
 
     pub const fn as_str(self) -> &'static str {
         match self {

@@ -122,6 +122,15 @@ maintaining a second hand-written operation list.
 
 ## Shared Resource Operation Contracts
 
+The destructive recovery suite in `tests/restore_contract/mod.rs` runs the
+shared `verify_backup_restore_contract` conformance runner against every
+selectable backend. It provisions all seven temporal resource kinds, restores
+both history modes, performs later revisioned updates and deletions, and
+restores a second history-inclusive backup. Assertions compare authoritative
+state and retained history, allowing exactly one additional restore-success
+event. Native fixture setup and destructive database isolation stay outside
+the shared runner.
+
 Collection, class, object, class-relation, and object-relation service behavior
 runs against both:
 

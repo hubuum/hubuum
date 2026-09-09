@@ -9029,6 +9029,49 @@
           "requires": []
         },
         {
+          "id": "repair_backup_history",
+          "long": "repair-backup-history",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "backup",
+            "restore",
+            "restore_executor",
+            "verify_backup"
+          ],
+          "requires": [
+            "repaired_backup_output"
+          ]
+        },
+        {
+          "id": "repaired_backup_output",
+          "long": "repaired-backup-output",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "repair_backup_history"
+          ]
+        },
+        {
           "id": "restore_test_database_url",
           "long": "restore-test-database-url",
           "short": null,

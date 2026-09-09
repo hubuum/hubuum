@@ -1,3 +1,5 @@
+mod restore_contract;
+
 use std::time::Duration;
 
 use chrono::Utc;

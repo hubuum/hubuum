@@ -6,6 +6,11 @@
 //! and bounded logical/native observations.
 
 use std::collections::HashSet;
+
+mod backup_restore;
+pub use backup_restore::{
+    BackupRestoreFixture, verify_backup_restore_contract, verify_failed_restore_preserves_snapshot,
+};
 use std::error::Error;
 use std::fmt;
 use std::sync::Mutex;

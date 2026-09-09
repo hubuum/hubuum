@@ -7,6 +7,31 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- History-free restores now preserve resource revisions while establishing
+  current temporal snapshots through the shared storage contract. Subsequent
+  default backups remain restorable, including after further mutations.
+- Backup creation now rejects snapshots that violate restore validation before
+  reporting success. The memory adapter now restores the captured resource
+  state and retained history atomically, following the same recovery contract
+  as PostgreSQL.
+
+### Added
+
+- `hubuum-admin --repair-backup-history INPUT --repaired-backup-output OUTPUT`
+  repairs existing history-inclusive artifacts affected by the history-free
+  restore defect, preserving retained history and rejecting contradictory
+  revisions. Restore the repaired artifact through the normal recovery path.
+
+### Upgrade notes
+
+- Update the server and administrator/restore-executor binaries together.
+  Before upgrading a deployment affected by the history-free restore defect,
+  retain a history-inclusive artifact for explicit repair if its accumulated
+  history is needed. Existing history-free artifacts can be restored directly
+  with the fixed executor; see the backup/restore guide.
+
 ## [0.0.13] - 2026-09-09
 
 ### Upgrade notes

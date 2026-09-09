@@ -252,26 +252,6 @@ pub(super) fn history_scope_allows(
     }
 }
 
-pub(super) fn history_valid_to(
-    state: &MemoryState,
-    entry: &MemoryHistoryEntry,
-) -> Option<DateTime<Utc>> {
-    let variant = std::mem::discriminant(&entry.value);
-    state
-        .history
-        .iter()
-        .filter(|candidate| {
-            candidate.id != entry.id
-                && candidate.value.entity_id() == entry.value.entity_id()
-                && std::mem::discriminant(&candidate.value) == variant
-                && (candidate.valid_from > entry.valid_from
-                    || (candidate.valid_from == entry.valid_from
-                        && candidate.id.id() > entry.id.id()))
-        })
-        .min_by_key(|candidate| (candidate.valid_from, candidate.id.id()))
-        .map(|candidate| candidate.valid_from)
-}
-
 pub(super) fn transition_restore_record(
     record: &MemoryRestoreRecord,
     status: StorageRestoreJobStatus,

@@ -564,3 +564,20 @@ pub async fn sync_external_user(
 ) -> Result<User, ApiError> {
     crate::auth::sync_external_user(pool, configured, authenticated).await
 }
+
+/// Opaque storage for destructive recovery certification. Adapter setup is
+/// confined to this focused test fixture and covers every selectable backend.
+fn restore_contract_storage(
+    kind: crate::storage::StorageBackendKind,
+    pool: PostgresPool,
+) -> crate::storage::StorageHandle {
+    match kind {
+        crate::storage::StorageBackendKind::Postgres => {
+            crate::storage::StorageHandle::postgres(pool)
+        }
+        crate::storage::StorageBackendKind::Memory => crate::storage::StorageHandle::memory(),
+    }
+}
+
+mod recovery;
+pub use recovery::RestoreContractFixture;

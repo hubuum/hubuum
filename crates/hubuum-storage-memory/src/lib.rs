@@ -76,6 +76,8 @@ struct MemoryTaskRecord {
     request_redacted_at: Option<DateTime<Utc>>,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
+    deleted_at: Option<DateTime<Utc>>,
+    deleted_by: Option<PrincipalId>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     lease_expires_at: Option<DateTime<Utc>>,
@@ -143,8 +145,9 @@ struct MemoryHistoryEntry {
     value: MemoryHistoryValue,
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
+    valid_to: Option<DateTime<Utc>>,
     actor_id: Option<PrincipalId>,
-    actor_kind: String,
+    actor_kind: Option<String>,
     initiator_principal_id: Option<PrincipalId>,
     task_id: Option<TaskId>,
 }
@@ -218,20 +221,17 @@ macro_rules! append_memory_scoped_simple_event {
 }
 
 impl MemoryHistoryEntry {
-    fn metadata(
-        &self,
-        valid_to: Option<DateTime<Utc>>,
-    ) -> Result<StorageHistoryMetadata, StorageError> {
+    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
             self.valid_from,
-            valid_to,
+            self.valid_to,
             self.id,
             self.value.revision(),
         )
         .map(|metadata| {
             metadata
-                .actor(self.actor_id, Some(self.actor_kind.clone()))
+                .actor(self.actor_id, self.actor_kind.clone())
                 .initiator_principal_id(self.initiator_principal_id)
                 .task_id(self.task_id)
         })
@@ -362,6 +362,8 @@ struct MemoryState {
     groups: BTreeMap<i32, StorageIdentityGroup>,
     memberships: BTreeMap<(i32, i32), StoragePrincipalGroup>,
     external_memberships: BTreeSet<(i32, i32)>,
+    membership_sources: Vec<StorageBackupRow>,
+    authorization_revisions: BTreeMap<i32, ResourceRevision>,
     tokens: BTreeMap<i32, MemoryTokenRecord>,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
@@ -382,7 +384,12 @@ struct MemoryState {
     event_delivery_claims: BTreeMap<i64, Uuid>,
     event_retention_batches: BTreeMap<Uuid, Vec<i64>>,
     history: Vec<MemoryHistoryEntry>,
+    relation_history: StorageBackupHistorySections,
+    remote_call_results: Vec<StorageBackupRow>,
+    export_output_ids: BTreeMap<i32, i32>,
     restore_jobs: BTreeMap<i64, MemoryRestoreRecord>,
+    restore_receipts: BTreeMap<i64, MemoryRestoreRecord>,
+    event_dispatched_at: BTreeMap<i64, DateTime<Utc>>,
     maintenance_state: MaintenanceState,
     maintenance_restore_job_id: Option<RestoreJobId>,
     maintenance_generation: i64,
@@ -507,13 +514,23 @@ impl MemoryState {
         let id = HistoryRecordId::new(self.next_history_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         self.next_history_id += 1;
+        let now = Utc::now();
+        for previous in &mut self.history {
+            if previous.valid_to.is_none()
+                && previous.value.entity_id() == value.entity_id()
+                && std::mem::discriminant(&previous.value) == std::mem::discriminant(&value)
+            {
+                previous.valid_to = Some(now);
+            }
+        }
         self.history.push(MemoryHistoryEntry {
             id,
             value,
             operation,
-            valid_from: Utc::now(),
+            valid_from: now,
+            valid_to: (operation == StorageHistoryOperation::Delete).then_some(now),
             actor_id: context.actor_user_id(),
-            actor_kind: context.actor_kind().as_str().to_string(),
+            actor_kind: Some(context.actor_kind().as_str().to_string()),
             initiator_principal_id: context.initiator_user_id(),
             task_id: context.task_id(),
         });
@@ -645,6 +662,7 @@ impl Default for MemoryStorage {
 mod support;
 use support::*;
 
+mod backup;
 mod events;
 mod execution;
 mod identity;

@@ -1,3 +1,6 @@
+mod baseline;
+mod revisions;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -190,6 +193,11 @@ pub struct StorageBackupSnapshot {
 }
 
 impl StorageBackupSnapshot {
+    #[must_use]
+    pub const fn includes_history(&self) -> bool {
+        self.history_sections.is_some()
+    }
+
     pub fn try_new(
         state_sections: StorageBackupStateSections,
         mut history_sections: Option<StorageBackupHistorySections>,
@@ -222,10 +230,12 @@ impl StorageBackupSnapshot {
             }
         }
 
-        Ok(Self {
+        let snapshot = Self {
             state_sections,
             history_sections,
-        })
+        };
+        revisions::validate_backup_revisions(&snapshot)?;
+        Ok(snapshot)
     }
 
     #[must_use]
@@ -264,6 +274,10 @@ impl fmt::Debug for StorageBackupSnapshot {
 }
 
 /// Mandatory full-system snapshot behavior for every selectable backend.
+/// Capture every section from one consistent view. When history is requested,
+/// every live temporal resource must have exactly one matching open snapshot,
+/// including resources restored from a history-free backup. Missing or
+/// contradictory history is a contract failure, never synthesized on capture.
 #[async_trait]
 pub trait BackupSnapshotStorage: Send + Sync {
     async fn capture_backup_snapshot(
@@ -376,13 +390,18 @@ mod tests {
         let mut state = complete_state();
         state.insert(
             StorageBackupStateSection::Classes,
-            vec![StorageBackupRow::try_from_value(serde_json::json!({"secret": "state"})).unwrap()],
+            vec![
+                StorageBackupRow::try_from_value(
+                    serde_json::json!({"id": 1, "revision": 7, "secret": "state"}),
+                )
+                .unwrap(),
+            ],
         );
         let mut history = complete_history();
         history.insert(
             StorageBackupHistorySection::ClassHistory,
             vec![
-                StorageBackupRow::try_from_value(serde_json::json!({"secret": "history"})).unwrap(),
+                StorageBackupRow::try_from_value(serde_json::json!({"id": 1, "revision": 7, "valid_to": null, "operation": "create", "secret": "history"})).unwrap(),
             ],
         );
         let snapshot = StorageBackupSnapshot::try_new(state, Some(history)).unwrap();

@@ -2085,6 +2085,8 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
+        ("hubuum-admin", "repair_backup_history") => &["repaired_backup_output"],
+        ("hubuum-admin", "repaired_backup_output") => &["repair_backup_history"],
         ("hubuum-admin", "backup_without_history") => &["backup"],
         ("hubuum-admin", "restore_test_database_url") => &["verify_backup"],
         ("hubuum-admin", "keep_restore_test_database") => &["restore_test_database_url"],

@@ -74,16 +74,26 @@ pub async fn create_backup_document(
     request: &BackupRequest,
 ) -> Result<BackupDocument, ApiError> {
     let include_history = request.include_history;
-    let (state, history) = capture_backup_snapshot(backend, include_history).await?;
+    let (state, history) = capture_backup_snapshot(backend, include_history)
+        .await?
+        .into_parts();
+    let state = BackupState { sections: state };
+    let history = history.map(|sections| BackupHistory { sections });
     let manifest = build_manifest(&state, history.as_ref());
-    Ok(BackupDocument {
+    let mut document = BackupDocument {
         backup_version: CURRENT_BACKUP_VERSION,
         created_at: Utc::now(),
         source_version: env!("CARGO_PKG_VERSION").to_string(),
         state,
         history,
         manifest,
-    })
+    };
+    crate::restores::validate_document_fields(&mut document).map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Captured backup violates the restore contract: {error}"
+        ))
+    })?;
+    Ok(document)
 }
 
 pub(crate) async fn execute_backup_task(
