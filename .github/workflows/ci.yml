@@ -193,6 +193,8 @@ jobs:
         run: python3 scripts/check-supply-chain-policy.py
       - name: Test supply-chain policy validation
         run: python3 scripts/test-supply-chain-policy.py
+      - name: Test Windows PostgreSQL archive installation
+        run: python3 scripts/test-install-windows-postgresql.py
       - name: Test release SBOM composition
         run: bash scripts/test-generate-release-sbom.sh
       - name: Test container evidence input validation
@@ -885,17 +887,7 @@ jobs:
       - name: Install Windows PostgreSQL libraries
         if: contains(matrix.platform.os, 'windows')
         shell: pwsh
-        run: |
-          choco install postgresql --params '"/Password:postgres"' --no-progress -y
-          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
-          $binPath = Join-Path $pgRoot.FullName 'bin'
-          $libPath = Join-Path $pgRoot.FullName 'lib'
-          if (-not (Test-Path (Join-Path $binPath 'pg_isready.exe'))) { throw "PostgreSQL client tools not found in $binPath" }
-          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
-          "$binPath" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          "PG_BIN=$binPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8          
+        run: python3 scripts/install-windows-postgresql.py
 
       - name: Set up database (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
@@ -915,6 +907,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not $env:PG_BIN) { throw 'PG_BIN is not set' }
+          $postgresVersion = & "$env:PG_BIN\postgres.exe" --version
+          if ($LASTEXITCODE -ne 0 -or $postgresVersion -ne "postgres (PostgreSQL) $env:PG_EXPECTED_VERSION") {
+            throw "Unexpected PostgreSQL version: $postgresVersion (expected $env:PG_EXPECTED_VERSION)"
+          }
+          Write-Host $postgresVersion
+          $startupTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
           # Use an isolated cluster to avoid runner service credentials/state drift.
           $pgData = Join-Path $env:RUNNER_TEMP 'postgres-data'
@@ -926,7 +924,9 @@ jobs:
           }
 
           & "$env:PG_BIN\initdb.exe" -D $pgData -U postgres -A trust --encoding=UTF8
+          if ($LASTEXITCODE -ne 0) { throw "initdb failed with exit code $LASTEXITCODE" }
           & "$env:PG_BIN\pg_ctl.exe" -D $pgData -l $pgLog -o "-p $pgPort" -w -t 60 start
+          if ($LASTEXITCODE -ne 0) { throw "pg_ctl failed with exit code $LASTEXITCODE" }
 
           $isReady = $false
           $maxAttempts = 30
@@ -940,6 +940,10 @@ jobs:
             Start-Sleep -Seconds 1
           }
           if (-not $isReady) { throw 'PostgreSQL did not become ready in time' }
+          $startupTimer.Stop()
+          $startupTiming = "PostgreSQL cluster initialization and startup: $($startupTimer.Elapsed.TotalSeconds.ToString('F2'))s"
+          Write-Host $startupTiming
+          if ($env:GITHUB_STEP_SUMMARY) { Add-Content $env:GITHUB_STEP_SUMMARY "- $startupTiming" }
 
           $dbUrl = "postgres://postgres@127.0.0.1:$pgPort/hubuum_rust_test"
           "DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -949,40 +953,59 @@ jobs:
           "PG_LOG=$pgLog" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           $dieselVersion = python3 scripts/check-supply-chain-policy.py --tool-value DIESEL_CLI_VERSION
-          if (-not $dieselVersion) { throw 'DIESEL_CLI_VERSION is not configured' }
-          cargo install --locked --force --version "=$dieselVersion" --no-default-features --features postgres diesel_cli
-          $dieselBin = Join-Path $env:USERPROFILE '.cargo\bin\diesel.exe'
-          if (-not (Test-Path $dieselBin)) { throw "Diesel CLI not found at $dieselBin" }
-          $dieselDescription = & $dieselBin --version
-          $dieselVersionCandidates = @(
-            foreach ($line in $dieselDescription) {
-              if ($line -match '^\s*Version:\s+(\d+\.\d+\.\d+)\s*$') {
-                $Matches[1]
-              } elseif ($line -match '^diesel\s+(\d+\.\d+\.\d+)\s*$') {
-                $Matches[1]
-              }
+          if ($LASTEXITCODE -ne 0 -or -not $dieselVersion) { throw 'DIESEL_CLI_VERSION is not configured' }
+          function Get-DieselVersion([string] $Binary) {
+            if (-not (Test-Path $Binary -PathType Leaf)) { return $null }
+            try {
+              $description = & $Binary --version 2>$null
+              if ($LASTEXITCODE -ne 0) { return $null }
+            } catch {
+              return $null
             }
-          )
-          if ($dieselVersionCandidates.Count -ne 1) {
-            throw "Could not parse exactly one Diesel CLI version from: $($dieselDescription -join '; ')"
+            $candidates = @(
+              foreach ($line in $description) {
+                if ($line -match '^\s*Version:\s+(\d+\.\d+\.\d+)\s*$') {
+                  $Matches[1]
+                } elseif ($line -match '^diesel\s+(\d+\.\d+\.\d+)\s*$') {
+                  $Matches[1]
+                }
+              }
+            )
+            if ($candidates.Count -eq 1) { return $candidates[0] }
+            return $null
           }
-          $installedDieselVersion = $dieselVersionCandidates[0]
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+          $dieselBin = Join-Path $cargoHome 'bin\diesel.exe'
+          $dieselTimer = [System.Diagnostics.Stopwatch]::StartNew()
+          $dieselReused = (Get-DieselVersion $dieselBin) -eq $dieselVersion
+          if (-not $dieselReused) {
+            cargo install --locked --force --version "=$dieselVersion" --no-default-features --features postgres diesel_cli
+            if ($LASTEXITCODE -ne 0) { throw "Diesel CLI installation failed with exit code $LASTEXITCODE" }
+          }
+          $installedDieselVersion = Get-DieselVersion $dieselBin
           if ($installedDieselVersion -ne $dieselVersion) {
-            throw "Unexpected Diesel CLI version $installedDieselVersion (expected $dieselVersion)"
+            throw "Unexpected Diesel CLI version '$installedDieselVersion' (expected $dieselVersion)"
           }
+          $dieselTimer.Stop()
+          $dieselTiming = "Diesel CLI setup: $($dieselTimer.Elapsed.TotalSeconds.ToString('F2'))s; reused installed version: $dieselReused"
+          Write-Host $dieselTiming
           $dieselLabel = "diesel $installedDieselVersion"
           $dieselDigest = (Get-FileHash $dieselBin -Algorithm SHA256).Hash.ToLower()
           Write-Host $dieselLabel
           Write-Host "diesel sha256:$dieselDigest"
           if ($env:GITHUB_STEP_SUMMARY) {
+            Add-Content $env:GITHUB_STEP_SUMMARY "- $dieselTiming"
             Add-Content $env:GITHUB_STEP_SUMMARY "- Diesel CLI: ``$dieselLabel``"
             Add-Content $env:GITHUB_STEP_SUMMARY "- Diesel CLI executable: ``sha256:$dieselDigest``"
           }
           "DIESEL_BIN=$dieselBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           & "$env:PG_BIN\createdb.exe" -U postgres -h 127.0.0.1 -p $pgPort hubuum_rust_test
+          if ($LASTEXITCODE -ne 0) { throw "createdb failed with exit code $LASTEXITCODE" }
           & $dieselBin migration run --database-url "$dbUrl"
+          if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
           & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
+          if ($LASTEXITCODE -ne 0) { throw "Database verification failed with exit code $LASTEXITCODE" }
       
       - name: Build test configuration (non-Windows)
         if: "!contains(matrix.platform.os, 'windows')"

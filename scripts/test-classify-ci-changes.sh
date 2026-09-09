@@ -333,6 +333,12 @@ assert_flag "$classifier_output" runtime_benchmark true
 assert_flag "$classifier_output" scale_benchmark true
 assert_flag "$classifier_output" artifacts false
 
+for windows_setup_path in scripts/install-windows-postgresql.py scripts/test-install-windows-postgresql.py; do
+  windows_setup_output="$(bash "$classifier" "$windows_setup_path")"
+  assert_flag "$windows_setup_output" code true
+  assert_flag "$windows_setup_output" benchmarks false
+done
+
 docker_output="$(bash "$classifier" Dockerfile)"
 assert_flag "$docker_output" code true
 assert_flag "$docker_output" container true
