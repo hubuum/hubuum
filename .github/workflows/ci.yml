@@ -686,6 +686,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_default_suite == 'true'
     runs-on: ubuntu-24.04
+    env:
+      # Match the platform test jobs' faster release compilation settings.
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_LTO: "off"
     strategy:
       fail-fast: false
       matrix:
@@ -707,6 +711,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ matrix.feature.name }}
       - name: Install database libraries on Linux
         run: |
           sudo apt-get update --yes
@@ -769,6 +775,10 @@ jobs:
         needs.changes.outputs.treetop_conformance == 'true'
       )
     runs-on: ubuntu-24.04
+    env:
+      # Match the platform test jobs' faster release compilation settings.
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_LTO: "off"
     services:
       postgres:
         image: postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
