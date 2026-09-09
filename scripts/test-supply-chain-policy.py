@@ -31,6 +31,8 @@ VALID_VALUES = {
     "CARGO_DENY_VERSION": "0.20.2",
     "CARGO_SEMVER_CHECKS_VERSION": "0.49.0",
     "DIESEL_CLI_VERSION": "2.3.11",
+    "POSTGRES_WINDOWS_VERSION": "18.6-3",
+    "POSTGRES_WINDOWS_SHA256": DIGEST,
     "SYFT_IMAGE": f"anchore/syft:v1.50.0@sha256:{DIGEST}",
     "TRIVY_IMAGE": f"aquasec/trivy:0.73.0@sha256:{DIGEST}",
     "COSIGN_VERSION": "v3.1.2",
@@ -62,6 +64,18 @@ class ToolManifestTests(unittest.TestCase):
 
     def test_manifest_whitespace_is_rejected(self) -> None:
         self.assert_policy_error(lambda: self.parse(" COSIGN_VERSION=v3.1.2\n"))
+
+    def test_invalid_postgres_archive_pins_are_rejected(self) -> None:
+        for key, value in (
+            ("POSTGRES_WINDOWS_VERSION", "18"),
+            ("POSTGRES_WINDOWS_VERSION", "18.6"),
+            ("POSTGRES_WINDOWS_VERSION", "18.6-3/../../other"),
+            ("POSTGRES_WINDOWS_SHA256", "a" * 63),
+            ("POSTGRES_WINDOWS_SHA256", "g" * 64),
+        ):
+            with self.subTest(key=key, value=value):
+                values = VALID_VALUES | {key: value}
+                self.assert_policy_error(lambda: POLICY.validate_tool_values(values))
 
 
 class DieselVersionTests(unittest.TestCase):

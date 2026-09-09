@@ -28,6 +28,8 @@ REQUIRED_TOOL_KEYS = {
     "CARGO_DENY_VERSION",
     "CARGO_SEMVER_CHECKS_VERSION",
     "DIESEL_CLI_VERSION",
+    "POSTGRES_WINDOWS_VERSION",
+    "POSTGRES_WINDOWS_SHA256",
     "SYFT_IMAGE",
     "TRIVY_IMAGE",
     "COSIGN_VERSION",
@@ -227,6 +229,10 @@ def validate_tool_values(values: dict[str, str]) -> None:
             fail(f"{key} must be an exact semantic version")
     if not re.fullmatch(r"v\d+\.\d+\.\d+", values["COSIGN_VERSION"]):
         fail("COSIGN_VERSION must be an exact v-prefixed semantic version")
+    if not re.fullmatch(r"\d+\.\d+-\d+", values["POSTGRES_WINDOWS_VERSION"]):
+        fail("POSTGRES_WINDOWS_VERSION must include an exact version and EDB revision")
+    if not re.fullmatch(r"[0-9a-f]{64}", values["POSTGRES_WINDOWS_SHA256"]):
+        fail("POSTGRES_WINDOWS_SHA256 must be a full lowercase SHA-256 digest")
 
 
 def check_tool_manifest() -> None:
