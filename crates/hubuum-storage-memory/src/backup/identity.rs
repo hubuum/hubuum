@@ -57,9 +57,11 @@ pub(super) fn capture(
                 .groups
                 .get(&key.1)
                 .ok_or_else(|| invalid("membership group"))?;
+            let external = state.external_memberships.contains(&key);
             sources.push(row(json!({"principal_id": key.0, "group_id": key.1,
-                "source": if state.external_memberships.contains(&key) { "provider" } else { "manual" },
-                "source_scope_id": group.identity_scope_id().id(), "source_key": "",
+                "source": if external { EXTERNAL_MEMBERSHIP_SOURCE } else { MANUAL_MEMBERSHIP_SOURCE },
+                "source_scope_id": group.identity_scope_id().id(),
+                "source_key": if external { group.external_key().unwrap_or_default() } else { "" },
                 "created_at": membership.created_at(), "updated_at": membership.updated_at()}))?);
         } else {
             sources.extend(retained);

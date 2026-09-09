@@ -34,9 +34,7 @@ prepare a complete replacement, including fresh current temporal snapshots
 for a history-free source. `StorageRestoreDocument::new` retains its existing
 signature; `at_restore_boundary` accepts an explicit boundary timestamp.
 Adapters must persist the prepared history even when `source_includes_history`
-is false. Explicit artifact repair is available through
-`StorageBackupSnapshot::try_repair_missing_history` and never runs implicitly
-during capture.
+is false.
 
 Application composition supplies `StorageObserver`, keeping metrics exporters
 and global registries out of adapter-neutral contracts.

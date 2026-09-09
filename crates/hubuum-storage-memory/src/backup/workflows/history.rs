@@ -99,9 +99,14 @@ fn trace(r: &Row<'_>) -> Result<Option<TraceLink>, StorageError> {
 }
 
 pub(in crate::backup) fn restore_history(
-    sections: StorageBackupHistorySections,
+    mut sections: StorageBackupHistorySections,
     state: &mut MemoryState,
 ) -> Result<(), StorageError> {
+    for (&section, rows) in &mut sections {
+        for row in rows {
+            row.normalize_legacy_history(section);
+        }
+    }
     state.history.clear();
     for section in [
         StorageBackupHistorySection::CollectionHistory,
@@ -161,6 +166,9 @@ pub(in crate::backup) fn restore_history(
             });
         }
     }
+    state
+        .history
+        .sort_by_key(|entry| (entry.valid_from, entry.id));
     for section in [
         StorageBackupHistorySection::ClassRelationHistory,
         StorageBackupHistorySection::ObjectRelationHistory,
@@ -192,6 +200,7 @@ pub(in crate::backup) fn restore_history(
         .checked_add(1)
         .ok_or_else(|| invalid("history sequence"))?;
     state.events.clear();
+    state.task_events.clear();
     for row in &sections[&StorageBackupHistorySection::AuditEvents] {
         let r = Row(row);
         let actor = r
@@ -285,11 +294,15 @@ pub(in crate::backup) fn restore_history(
         state
             .event_dispatched_at
             .insert(envelope.id().get(), r.time("dispatched_at")?);
+        state.index_task_event(&envelope)?;
         state.events.push(StorageRecordedEvent::new(
             envelope,
             revision("before_revision")?,
             revision("after_revision")?,
         ));
+    }
+    for events in state.task_events.values_mut() {
+        events.sort_by_key(|event| event.id().get());
     }
     state.next_event_sequence = state
         .events

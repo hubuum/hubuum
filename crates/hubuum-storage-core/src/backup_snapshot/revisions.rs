@@ -74,10 +74,7 @@ pub(super) const REVISION_HISTORY_SECTIONS: &[(
     ),
 ];
 
-pub(super) fn row_revision(
-    section: &str,
-    row: &StorageBackupRow,
-) -> Result<i64, StorageValidationError> {
+fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, StorageValidationError> {
     row.get("revision")
         .and_then(Value::as_i64)
         .filter(|revision| (1..i64::MAX).contains(revision))

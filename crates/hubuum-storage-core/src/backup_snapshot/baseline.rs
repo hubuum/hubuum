@@ -1,90 +1,10 @@
-use std::collections::{HashMap, HashSet};
-
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 
-use super::revisions::{REVISION_HISTORY_SECTIONS, row_revision};
+use super::revisions::REVISION_HISTORY_SECTIONS;
 use super::{StorageBackupHistorySection, StorageBackupRow, StorageBackupSnapshot};
-use crate::StorageValidationError;
 
 impl StorageBackupSnapshot {
-    /// Explicitly repair an artifact with missing current temporal snapshots.
-    /// Existing history is never replaced. Contradictory revisions, duplicate
-    /// open snapshots, and incomplete sections still fail normal validation.
-    /// This operation is deliberately separate from ordinary snapshot capture.
-    pub fn try_repair_missing_history(
-        state: super::StorageBackupStateSections,
-        mut history: super::StorageBackupHistorySections,
-        observed_at: DateTime<Utc>,
-    ) -> Result<Self, StorageValidationError> {
-        for &(history_section, state_section) in REVISION_HISTORY_SECTIONS {
-            let live = state.get(&state_section).ok_or_else(|| {
-                StorageValidationError::invalid(format!("Missing state section '{state_section}'"))
-            })?;
-            let rows = history.get_mut(&history_section).ok_or_else(|| {
-                StorageValidationError::invalid(format!(
-                    "Missing history section '{history_section}'"
-                ))
-            })?;
-            let mut next_id = 0;
-            let mut entry_ids = HashSet::new();
-            let mut open_ids = HashSet::new();
-            let mut latest_revisions = HashMap::<i64, i64>::new();
-            for existing in rows.iter() {
-                let id = existing
-                    .get("history_entry_id")
-                    .and_then(Value::as_i64)
-                    .filter(|id| *id > 0)
-                    .ok_or_else(|| {
-                        StorageValidationError::invalid("Invalid temporal history entry identifier")
-                    })?;
-                if !entry_ids.insert(id) {
-                    return Err(StorageValidationError::invalid(
-                        "Duplicate temporal history entry identifier",
-                    ));
-                }
-                next_id = next_id.max(id);
-                let resource_id = existing
-                    .get("id")
-                    .and_then(Value::as_i64)
-                    .filter(|id| *id > 0)
-                    .ok_or_else(|| {
-                        StorageValidationError::invalid("Invalid temporal resource identifier")
-                    })?;
-                let revision = row_revision(history_section.as_str(), existing)?;
-                latest_revisions
-                    .entry(resource_id)
-                    .and_modify(|latest| *latest = (*latest).max(revision))
-                    .or_insert(revision);
-                if existing.get("valid_to").is_some_and(Value::is_null) {
-                    open_ids.insert(resource_id);
-                }
-            }
-            for current in live {
-                let id = current.get("id").and_then(Value::as_i64).ok_or_else(|| {
-                    StorageValidationError::invalid("Invalid temporal resource identifier")
-                })?;
-                if open_ids.contains(&id) {
-                    continue;
-                }
-                let revision = row_revision(state_section.as_str(), current)?;
-                if latest_revisions
-                    .get(&id)
-                    .is_some_and(|previous| *previous >= revision)
-                {
-                    return Err(StorageValidationError::invalid(
-                        "Missing current snapshot contradicts retained history revisions",
-                    ));
-                }
-                next_id = next_id.checked_add(1).ok_or_else(|| {
-                    StorageValidationError::too_large("History entry identifier overflow")
-                })?;
-                rows.push(baseline(current, next_id, observed_at));
-            }
-        }
-        Self::try_new(state, Some(history))
-    }
-
     /// Establish the first observed version in a newly restored timeline.
     /// Existing history is preserved. Baselines retain authoritative revisions
     /// and timestamps; only temporal validity begins at the restore boundary.
@@ -256,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn history_inclusive_capture_does_not_repair_missing_history() {
+    fn history_inclusive_capture_rejects_missing_history() {
         let (state, _) = state_with_resource(StorageBackupStateSection::Classes).into_parts();
         let history = StorageBackupHistorySection::ALL
             .iter()
@@ -265,94 +185,5 @@ mod tests {
             .collect();
         let error = StorageBackupSnapshot::try_new(state, Some(history)).unwrap_err();
         assert!(error.to_string().contains("live revisions disagree"));
-    }
-
-    #[test]
-    fn explicit_repair_retains_closed_history_and_is_idempotent() {
-        let at = DateTime::parse_from_rfc3339("2026-09-09T12:00:00Z")
-            .unwrap()
-            .to_utc();
-        let (state, _) = state_with_resource(StorageBackupStateSection::Classes).into_parts();
-        let old = StorageBackupRow::try_from_value(json!({"id": 17, "revision": 41, "history_entry_id": 77,
-            "operation": "update", "valid_from": "2026-01-01T00:00:00Z", "valid_to": "2026-02-01T00:00:00Z", "name": "old"})).unwrap();
-        let mut history = StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect::<super::super::StorageBackupHistorySections>();
-        history.insert(StorageBackupHistorySection::ClassHistory, vec![old.clone()]);
-        let repaired =
-            StorageBackupSnapshot::try_repair_missing_history(state.clone(), history, at).unwrap();
-        let (actual_state, history) = repaired.clone().into_parts();
-        assert_eq!(actual_state, state);
-        let history = history.unwrap();
-        let rows = &history[&StorageBackupHistorySection::ClassHistory];
-        assert_eq!(
-            rows,
-            &vec![
-                old,
-                baseline(&state[&StorageBackupStateSection::Classes][0], 78, at)
-            ]
-        );
-        let repeated = StorageBackupSnapshot::try_repair_missing_history(
-            state,
-            history,
-            at + chrono::Duration::days(1),
-        )
-        .unwrap();
-        assert_eq!(repeated, repaired);
-    }
-
-    #[rstest]
-    #[case::same_revision(42)]
-    #[case::later_revision(43)]
-    fn explicit_repair_rejects_closed_history_at_or_after_the_current_revision(
-        #[case] revision: i64,
-    ) {
-        let at = DateTime::parse_from_rfc3339("2026-09-09T12:00:00Z")
-            .unwrap()
-            .to_utc();
-        let (state, history) = state_with_resource(StorageBackupStateSection::Classes)
-            .restart_history(at)
-            .into_parts();
-        let mut history = history.unwrap();
-        let rows = history
-            .get_mut(&StorageBackupHistorySection::ClassHistory)
-            .unwrap();
-        let mut fields = rows[0].fields().clone();
-        fields.insert("revision".to_string(), json!(revision));
-        fields.insert("valid_to".to_string(), json!(at));
-        rows[0] = StorageBackupRow::try_from_value(Value::Object(fields)).unwrap();
-        assert!(StorageBackupSnapshot::try_repair_missing_history(state, history, at).is_err());
-    }
-
-    #[rstest]
-    #[case::stale(41, "update", false)]
-    #[case::ahead(43, "update", false)]
-    #[case::open_tombstone(42, "delete", false)]
-    #[case::duplicate(42, "create", true)]
-    fn explicit_repair_rejects_contradictory_open_history(
-        #[case] revision: i64,
-        #[case] operation: &str,
-        #[case] duplicate: bool,
-    ) {
-        let at = DateTime::parse_from_rfc3339("2026-09-09T12:00:00Z")
-            .unwrap()
-            .to_utc();
-        let (state, history) = state_with_resource(StorageBackupStateSection::Classes)
-            .restart_history(at)
-            .into_parts();
-        let mut history = history.unwrap();
-        let rows = history
-            .get_mut(&StorageBackupHistorySection::ClassHistory)
-            .unwrap();
-        let mut fields = rows[0].fields().clone();
-        fields.insert("revision".to_string(), json!(revision));
-        fields.insert("operation".to_string(), json!(operation));
-        rows[0] = StorageBackupRow::try_from_value(Value::Object(fields)).unwrap();
-        if duplicate {
-            rows.push(rows[0].clone());
-        }
-        assert!(StorageBackupSnapshot::try_repair_missing_history(state, history, at).is_err());
     }
 }

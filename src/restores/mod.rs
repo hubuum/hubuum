@@ -15,11 +15,10 @@ use crate::lifecycle::spawn_background_worker;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::retention::FutureRetention;
 use crate::models::{
-    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, BackupHistory, BackupManifest,
-    COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
-    ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState,
-    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobStatus,
-    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
+    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL,
+    COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinitionRequest, ComputedResultType,
+    MaintenanceState, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID,
+    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
@@ -688,32 +687,6 @@ pub fn verify_backup_document(
         section_counts,
         restore_test: None,
     })
-}
-
-/// Explicit artifact repair for the history-free-restore defect. Preserve all
-/// retained rows and authoritative state; only add missing current snapshots.
-pub(crate) fn repair_backup_history(
-    mut document: BackupDocument,
-    observed_at: DateTime<Utc>,
-) -> Result<BackupDocument, ApiError> {
-    document.validate_version()?;
-    validate_backup_manifest(&document)?;
-    validate_backup_timestamps(&document)?;
-    let history = document.history.take().ok_or_else(|| {
-        ApiError::BadRequest("History repair requires a history-inclusive backup; history-free backups can be restored directly".to_string())
-    })?;
-    let repaired = StorageBackupSnapshot::try_repair_missing_history(
-        std::mem::take(&mut document.state.sections),
-        history.sections,
-        observed_at,
-    )
-    .map_err(|error| ApiError::from(error.into_request_error()))?;
-    let (state, history) = repaired.into_parts();
-    document.state.sections = state;
-    document.history = history.map(|sections| BackupHistory { sections });
-    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
-    validation_summary(&mut document)?;
-    Ok(document)
 }
 
 /// Compare a post-restore logical snapshot with the source artifact. The
@@ -1859,29 +1832,6 @@ mod tests {
         let class =
             &document.history.unwrap().sections[&StorageBackupHistorySection::ClassHistory][0];
         assert_eq!(class.get("validate_schema"), Some(&json!(false)));
-    }
-
-    #[test]
-    fn repaired_artifact_passes_offline_validation_and_repeated_repair() {
-        let mut document = minimally_valid_document();
-        document.history = Some(BackupHistory {
-            sections: StorageBackupHistorySection::ALL
-                .iter()
-                .copied()
-                .map(|section| (section, Vec::new()))
-                .collect(),
-        });
-        document.manifest =
-            BackupManifest::from_sections(&document.state, document.history.as_ref());
-        let invalid = serde_json::to_vec(&document).unwrap();
-        assert!(verify_backup_document(&invalid, invalid.len()).is_err());
-        let repaired = super::repair_backup_history(document.clone(), backup_instant()).unwrap();
-        assert_eq!(repaired.state, document.state);
-        let bytes = serde_json::to_vec(&repaired).unwrap();
-        verify_backup_document(&bytes, bytes.len()).unwrap();
-        let repeated =
-            super::repair_backup_history(repaired, backup_instant() + Duration::hours(1)).unwrap();
-        assert_eq!(serde_json::to_vec(&repeated).unwrap(), bytes);
     }
 
     #[test]

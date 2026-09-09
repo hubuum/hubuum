@@ -340,6 +340,7 @@ impl TaskQueueStorage for MemoryStorage {
         let rows = state
             .tasks
             .values()
+            .filter(|task| task.deleted_at.is_none())
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
             .filter(|task| status.is_none_or(|value| task.status == value))

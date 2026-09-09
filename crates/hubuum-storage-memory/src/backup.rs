@@ -7,6 +7,9 @@ mod identity;
 mod resources;
 mod workflows;
 
+#[cfg(test)]
+mod tests;
+
 fn row(value: Value) -> Result<StorageBackupRow, StorageError> {
     StorageBackupRow::try_from_value(value).map_err(invalid_contract_value)
 }

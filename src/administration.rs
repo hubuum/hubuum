@@ -1,4 +1,3 @@
-use chrono::Utc;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -79,14 +78,6 @@ struct AdminCli {
         conflicts_with_all = ["backup", "restore", "restore_executor"]
     )]
     verify_backup: Option<PathBuf>,
-
-    /// Add missing current history snapshots to an existing backup artifact
-    #[arg(long, value_name = "PATH", requires = "repaired_backup_output", conflicts_with_all = ["backup", "restore", "restore_executor", "verify_backup"])]
-    repair_backup_history: Option<PathBuf>,
-
-    /// Write the validated repaired artifact to a different path
-    #[arg(long, value_name = "PATH", requires = "repair_backup_history")]
-    repaired_backup_output: Option<PathBuf>,
 
     /// Restore a verified backup into this newly created empty disposable database
     #[arg(long, value_name = "URL", requires = "verify_backup")]
@@ -282,15 +273,6 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
     init_logging(&admin_cli.log_level);
-
-    if let Some(path) = admin_cli.repair_backup_history.as_deref() {
-        let output = admin_cli
-            .repaired_backup_output
-            .as_deref()
-            .expect("clap requires repair output");
-        repair_backup_history_file(path, output, admin_cli.restore_max_upload_bytes)?;
-        return Ok(());
-    }
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
@@ -683,38 +665,6 @@ async fn backup_database(
         "Wrote consistent backup to '{}' ({} bytes).",
         path.display(),
         bytes.len()
-    );
-    Ok(())
-}
-
-fn repair_backup_history_file(
-    path: &Path,
-    output: &Path,
-    max_bytes: usize,
-) -> Result<(), ApiError> {
-    let bytes = read_backup_file(path, max_bytes)?;
-    if path == output
-        || std::fs::canonicalize(output)
-            .ok()
-            .is_some_and(|destination| {
-                std::fs::canonicalize(path).ok().as_ref() == Some(&destination)
-            })
-    {
-        return Err(ApiError::BadRequest(
-            "History repair output must differ from its source artifact".to_string(),
-        ));
-    }
-    let document = serde_json::from_slice(&bytes)?;
-    let repaired = crate::restores::repair_backup_history(document, Utc::now())?;
-    let repaired_bytes = serde_json::to_vec_pretty(&repaired)?;
-    verify_backup_document(&repaired_bytes, max_bytes)?;
-    write_backup_file(output, &repaired_bytes).map_err(|error| {
-        ApiError::InternalServerError(format!("Failed to write repaired backup: {error}"))
-    })?;
-    println!(
-        "Wrote validated history-repaired backup to '{}' ({} bytes). Restore this artifact to apply the repair.",
-        output.display(),
-        repaired_bytes.len()
     );
     Ok(())
 }
@@ -1404,21 +1354,6 @@ mod tests {
         DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
         StorageDatabaseRoleNames, resolve_database_roles,
     };
-
-    #[rstest::rstest]
-    #[case(vec!["--repair-backup-history", "source.json"], false)]
-    #[case(vec!["--repaired-backup-output", "output.json"], false)]
-    #[case(vec!["--repair-backup-history", "source.json", "--repaired-backup-output", "output.json"], true)]
-    #[case(vec!["--repair-backup-history", "source.json", "--repaired-backup-output", "output.json", "--restore-executor"], false)]
-    fn history_repair_requires_a_separate_output_operation(
-        #[case] arguments: Vec<&str>,
-        #[case] valid: bool,
-    ) {
-        assert_eq!(
-            AdminCli::try_parse_from(std::iter::once("hubuum-admin").chain(arguments)).is_ok(),
-            valid
-        );
-    }
 
     #[test]
     fn storage_backend_selection_defaults_only_for_an_empty_value() {

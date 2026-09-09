@@ -258,6 +258,7 @@ impl MemoryTaskRecord {
         .request_redacted_at(self.request_redacted_at)
         .started_at(self.started_at)
         .finished_at(self.finished_at)
+        .deletion(self.deleted_at, self.deleted_by)
         .lease_expires_at(self.lease_expires_at)
         .attempt_count(self.attempt_count)
         .initiator_principal_id(self.initiator_principal_id)
@@ -339,7 +340,6 @@ struct MemoryState {
     next_group_id: i32,
     next_token_id: i32,
     next_task_id: i32,
-    next_task_event_sequence: i64,
     next_import_result_id: i32,
     next_computed_field_id: i32,
     next_export_template_id: i32,
@@ -454,6 +454,7 @@ impl MemoryState {
             .schema_version(document.schema_version())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        self.index_task_event(&envelope)?;
         let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision);
         let receipt = recorded.clone().into_audit_receipt();
         self.events.push(recorded);
@@ -596,13 +597,76 @@ impl MemoryState {
         input: StorageTaskEventInput,
     ) -> Result<(), StorageError> {
         let (event_type, message, data) = input.into_parts();
-        let id = EventSequence::new(self.next_task_event_sequence)
+        let action = Action::parse(&event_type).map_err(|_| {
+            StorageError::internal(format!("Unknown task event type '{event_type}'"))
+        })?;
+        let task = self
+            .tasks
+            .get(&task_id.id())
+            .ok_or_else(|| StorageError::internal("Task event is missing its task"))?;
+        let context = EventContext::from_mutation(MutationProvenance::system_for_task(
+            task.initiator_principal_id,
+            task_id,
+        ))
+        .with_trace_link(task.trace_link.clone());
+        let mut metadata = serde_json::json!({
+            "task_id": task_id.id(),
+            "task_kind": task.kind.as_str(),
+        });
+        if let Some(data) = data {
+            metadata["data"] = data;
+        }
+        let document = AuditDocument::try_new(message, None, None, metadata)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        self.next_task_event_sequence += 1;
-        let event =
-            StorageTaskEvent::builder(id, task_id, event_type, message, Utc::now(), "system")
-                .data(data)
-                .build();
+        append_memory_event!(
+            self,
+            EntityType::Task,
+            task_id.id(),
+            None,
+            None,
+            action,
+            &context,
+            document,
+            None,
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn index_task_event(&mut self, envelope: &EventEnvelope) -> Result<(), StorageError> {
+        if envelope.entity_type() != EntityType::Task {
+            return Ok(());
+        }
+        let task_id = envelope
+            .entity_id()
+            .ok_or_else(|| StorageError::internal("Task event is missing its task id"))?;
+        let task_id = TaskId::new(task_id.get())
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        let event = StorageTaskEvent::builder(
+            envelope.id(),
+            task_id,
+            envelope.action().as_str(),
+            envelope.summary(),
+            envelope.occurred_at(),
+            envelope.actor_kind().as_str(),
+        )
+        .data(
+            envelope
+                .metadata()
+                .get("data")
+                .filter(|v| !v.is_null())
+                .cloned(),
+        )
+        .actor_principal_id(envelope.actor_user_id())
+        .provenance(
+            envelope
+                .provenance()
+                .initiator
+                .as_ref()
+                .map(|p| p.principal_id),
+            envelope.provenance().task_id.or(Some(task_id)),
+        )
+        .build();
         self.task_events
             .entry(task_id.id())
             .or_default()

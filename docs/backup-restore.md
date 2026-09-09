@@ -160,39 +160,6 @@ History is included by default. Add `--backup-without-history` only to create a
 backup whose eventual restore resets terminal task, audit, delivery, and
 temporal history.
 
-### Repair artifacts from an earlier history-free restore
-
-In v0.0.13, restoring without history could leave current temporal snapshots
-missing. A later default backup could succeed but fail validation with
-`Full backup live revisions disagree with 'collection_history'` (or another
-temporal section). Install the fixed server and administrator/executor binaries
-together. Existing history-free artifacts can be restored directly by the
-fixed executor, which establishes the new current snapshots.
-
-To retain history accumulated since an affected restore, repair an existing
-history-inclusive artifact explicitly:
-
-```text
-hubuum-admin --repair-backup-history affected-backup.json \
-  --repaired-backup-output repaired-backup.json
-hubuum-admin --verify-backup repaired-backup.json --json
-```
-
-The repair command runs without a database connection and requires a different
-output path. It preserves authoritative state and retained history, adds only
-missing current snapshots with system provenance at the repair boundary, and
-recomputes manifest counts. It rejects conflicting revisions, duplicate open
-snapshots, and other validation failures. Repeating repair on an already repaired
-artifact adds no snapshots. This command repairs an artifact; use the normal
-staged restore or an isolated recovery rehearsal to apply it to a database.
-
-Keep the original artifact. If the affected deployment has not yet produced a
-history-inclusive artifact, capture one with its existing binary before
-upgrading: the fixed backup producer rejects inconsistent stored history.
-History-free backups remain available for recovery when retaining that history
-is unnecessary. Credential exclusions and destructive restore confirmation
-apply equally to repaired artifacts.
-
 ### Verify and rehearse recovery
 
 Verify the artifact without a database connection before moving or archiving

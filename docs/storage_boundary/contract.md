@@ -273,11 +273,6 @@ they do not reconstruct the history policy. Failure must expose none of the
 replacement state or provenance. A successful restore must permit another
 history-inclusive backup and restore, including after normal mutations.
 
-Explicit artifact repair uses
-`StorageBackupSnapshot::try_repair_missing_history`. It adds missing current
-snapshots while preserving retained rows and rejects contradictory open rows.
-It is separate from ordinary capture and restore validation.
-
 Every selectable backend must pass the shared
 `hubuum-storage-conformance::verify_backup_restore_contract` runner, exercised
 by `tests/restore_contract/mod.rs` with both history modes and later mutations.
