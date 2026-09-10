@@ -203,7 +203,7 @@ for path in "$@"; do
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
-      scripts/test-install-script-refresh.sh | scripts/test-single-host-rollout.sh | \
+      scripts/test-install-script-refresh.sh | scripts/test-single-host-tags.py | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \
       scripts/single-host-health-probe.py | scripts/test-single-host-health-probe.py | \
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
