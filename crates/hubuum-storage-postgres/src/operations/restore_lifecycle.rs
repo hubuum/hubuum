@@ -521,10 +521,10 @@ pub async fn apply_restore(
 ) -> Result<StorageRestoreCompletion, PostgresStorageError> {
     let (job_id, document) = request.into_parts();
     let job_id = job_id.id();
+    let includes_history = document.source_includes_history();
     let (metadata, snapshot) = document.into_parts();
     let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
     let (state_sections, history_sections) = snapshot.into_parts();
-    let includes_history = history_sections.is_some();
 
     runtime
         .with_transaction(

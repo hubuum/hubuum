@@ -303,13 +303,13 @@ native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_fin
 source = "crates/hubuum-storage-core/src/backup_snapshot.rs"
 methods = ["capture_backup_snapshot"]
 effects = { point_read = ["capture_backup_snapshot"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
 
 [traits.RestoreStorage]
 source = "crates/hubuum-storage-core/src/restore.rs"
 methods = ["stage_restore", "get_restore_job", "get_restore_status", "expire_restore_stage", "start_restore_draining", "apply_restore", "fail_restore_and_resume", "get_restore_coordinator_snapshot", "resume_maintenance_without_restore", "resume_terminal_restore", "tick_restore_coordinator", "get_restore_drain_state", "remove_restore_instance"]
 effects = { point_read = ["get_restore_job", "get_restore_status", "get_restore_coordinator_snapshot", "get_restore_drain_state"], workflow_mutation = ["stage_restore", "expire_restore_stage", "start_restore_draining", "apply_restore", "fail_restore_and_resume", "resume_maintenance_without_restore", "resume_terminal_restore", "tick_restore_coordinator", "remove_restore_instance"] }
-shared_scenarios = ["src/restores/mod.rs::confirm_restore", "src/restores/mod.rs::apply_restore", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination"]
+shared_scenarios = ["src/restores/mod.rs::confirm_restore", "src/restores/mod.rs::apply_restore", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
 native_scenarios = ["tests/restore_roundtrip.rs::interrupted_restore_is_reconciled_after_the_drain_transition", "src/tests/storage_contract.rs::postgres_restore_faults_roll_back_coordination_transitions"]
 
 [traits.ImportStorage]

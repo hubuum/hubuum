@@ -675,20 +675,72 @@ impl fmt::Debug for StorageRestoreDocumentMetadata {
 pub struct StorageRestoreDocument {
     metadata: StorageRestoreDocumentMetadata,
     snapshot: StorageBackupSnapshot,
+    history_origin: RestoreHistoryOrigin,
+}
+
+#[derive(Clone, PartialEq)]
+enum RestoreHistoryOrigin {
+    Preserved,
+    Restarted,
+    RestartOnApply,
 }
 
 impl StorageRestoreDocument {
+    /// Carry a validated source, preparing missing history when consumed by
+    /// the adapter. Use `at_restore_boundary` to specify that boundary explicitly.
     #[must_use]
     pub const fn new(
         metadata: StorageRestoreDocumentMetadata,
         snapshot: StorageBackupSnapshot,
     ) -> Self {
-        Self { metadata, snapshot }
+        let history_origin = if snapshot.includes_history() {
+            RestoreHistoryOrigin::Preserved
+        } else {
+            RestoreHistoryOrigin::RestartOnApply
+        };
+        Self {
+            metadata,
+            snapshot,
+            history_origin,
+        }
+    }
+
+    /// Prepare complete logical state and temporal history before adapter apply.
+    /// A history-free source starts a new timeline at `restored_at`, preserving
+    /// resource revisions. Adapters must persist these exact prepared rows.
+    #[must_use]
+    pub fn at_restore_boundary(
+        metadata: StorageRestoreDocumentMetadata,
+        snapshot: StorageBackupSnapshot,
+        restored_at: DateTime<Utc>,
+    ) -> Self {
+        let history_origin = if snapshot.includes_history() {
+            RestoreHistoryOrigin::Preserved
+        } else {
+            RestoreHistoryOrigin::Restarted
+        };
+        Self {
+            metadata,
+            snapshot: snapshot.restart_history(restored_at),
+            history_origin,
+        }
+    }
+
+    /// Whether the source artifact retained history, independent of the new
+    /// temporal baselines prepared for a history-free source.
+    #[must_use]
+    pub fn source_includes_history(&self) -> bool {
+        self.history_origin == RestoreHistoryOrigin::Preserved
     }
 
     #[must_use]
     pub fn into_parts(self) -> (StorageRestoreDocumentMetadata, StorageBackupSnapshot) {
-        (self.metadata, self.snapshot)
+        let snapshot = if self.history_origin == RestoreHistoryOrigin::RestartOnApply {
+            self.snapshot.restart_history(Utc::now())
+        } else {
+            self.snapshot
+        };
+        (self.metadata, snapshot)
     }
 }
 
@@ -953,6 +1005,11 @@ pub trait RestoreStorage: Send + Sync {
     /// derived state and identifiers, write success provenance, return to
     /// normal operation, erase coordinator staging records, and retain a
     /// document-free terminal receipt for capability-authenticated polling.
+    /// Prepared history is mandatory even for a history-free source: the
+    /// shared plan already contains its new current temporal snapshots. Apply
+    /// must preserve their revisions and validity boundaries without producing
+    /// additional resource mutation events. A subsequent history-inclusive
+    /// snapshot must satisfy the same logical validation contract.
     async fn apply_restore(
         &self,
         request: StorageRestoreApply,
@@ -1065,7 +1122,7 @@ mod tests {
             timestamp(),
         )
         .unwrap();
-        let document = StorageRestoreDocument::new(
+        let document = StorageRestoreDocument::at_restore_boundary(
             StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
             StorageBackupSnapshot::try_new(
                 StorageBackupStateSection::ALL
@@ -1075,7 +1132,7 @@ mod tests {
                         let rows = if section == StorageBackupStateSection::Classes {
                             vec![
                                 StorageBackupRow::try_from_value(
-                                    serde_json::json!({"secret-row": true}),
+                                    serde_json::json!({"id": 1, "revision": 7, "secret-row": true}),
                                 )
                                 .expect("object backup row"),
                             ]
@@ -1088,6 +1145,7 @@ mod tests {
                 None,
             )
             .expect("complete backup snapshot"),
+            timestamp(),
         );
 
         let debug = format!("{request:?} {document:?}");

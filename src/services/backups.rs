@@ -1,19 +1,19 @@
 use crate::errors::ApiError;
-use crate::models::{BackupHistory, BackupState};
-use crate::storage::{BackupSnapshotStorage, StorageContext, storage_handle};
+use crate::storage::{
+    BackupSnapshotStorage, StorageBackupSnapshot, StorageContext, storage_handle,
+};
 
 pub(crate) async fn capture_backup_snapshot(
     backend: &impl StorageContext,
     include_history: bool,
-) -> Result<(BackupState, Option<BackupHistory>), ApiError> {
-    let (state_sections, history_sections) = storage_handle(backend)
+) -> Result<StorageBackupSnapshot, ApiError> {
+    let snapshot = storage_handle(backend)
         .capture_backup_snapshot(include_history)
-        .await?
-        .into_parts();
-    Ok((
-        BackupState {
-            sections: state_sections,
-        },
-        history_sections.map(|sections| BackupHistory { sections }),
-    ))
+        .await?;
+    if snapshot.includes_history() != include_history {
+        return Err(ApiError::InternalServerError(
+            "Captured backup history does not match the request".to_string(),
+        ));
+    }
+    Ok(snapshot)
 }

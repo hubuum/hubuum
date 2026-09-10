@@ -555,10 +555,49 @@ impl ClassStorage for MemoryStorage {
             context,
         )?;
         state.classes.remove(&id.id());
-        state.objects.retain(|_, object| object.class_id() != id);
-        state
+        let objects = state
+            .objects
+            .values()
+            .filter(|object| object.class_id() == id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let relations = state
             .class_relations
-            .retain(|_, relation| relation.from_class_id() != id && relation.to_class_id() != id);
+            .values()
+            .filter(|relation| relation.from_class_id() == id || relation.to_class_id() == id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for object in objects {
+            delete_object_relations(
+                &mut state,
+                |relation| {
+                    relation.from_object_id() == object.id()
+                        || relation.to_object_id() == object.id()
+                },
+                context,
+            )?;
+            state.append_history(
+                MemoryHistoryValue::Object(object.clone()),
+                StorageHistoryOperation::Delete,
+                context,
+            )?;
+            state.objects.remove(&object.id().id());
+        }
+        for relation in relations {
+            let relation_id = ClassRelationId::from(relation.metadata().id());
+            delete_object_relations(
+                &mut state,
+                |relation| relation.class_relation_id() == relation_id,
+                context,
+            )?;
+            crate::backup::record_class_relation_history(
+                &mut state,
+                &relation,
+                StorageHistoryOperation::Delete,
+                context,
+            )?;
+            state.class_relations.remove(&relation_id.id());
+        }
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -888,9 +927,11 @@ impl ObjectStorage for MemoryStorage {
             context,
         )?;
         state.objects.remove(&id.id());
-        state
-            .object_relations
-            .retain(|_, relation| relation.from_object_id() != id && relation.to_object_id() != id);
+        delete_object_relations(
+            &mut state,
+            |relation| relation.from_object_id() == id || relation.to_object_id() == id,
+            context,
+        )?;
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -1096,6 +1137,12 @@ impl ClassRelationStorage for MemoryStorage {
             None,
             Some(relation.metadata().revision()),
         )?;
+        crate::backup::record_class_relation_history(
+            &mut state,
+            &relation,
+            StorageHistoryOperation::Create,
+            context,
+        )?;
         state.class_relations.insert(id, relation);
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
@@ -1145,10 +1192,18 @@ impl ClassRelationStorage for MemoryStorage {
             Some(current.metadata().revision()),
             None,
         )?;
+        crate::backup::record_class_relation_history(
+            &mut state,
+            &current,
+            StorageHistoryOperation::Delete,
+            context,
+        )?;
         state.class_relations.remove(&relation_id.id());
-        state
-            .object_relations
-            .retain(|_, relation| relation.class_relation_id() != relation_id);
+        delete_object_relations(
+            &mut state,
+            |relation| relation.class_relation_id() == relation_id,
+            context,
+        )?;
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
@@ -1348,6 +1403,12 @@ impl ObjectRelationStorage for MemoryStorage {
             None,
             Some(relation.metadata().revision()),
         )?;
+        crate::backup::record_object_relation_history(
+            &mut state,
+            &relation,
+            StorageHistoryOperation::Create,
+            context,
+        )?;
         state.object_relations.insert(id, relation);
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
@@ -1400,7 +1461,38 @@ impl ObjectRelationStorage for MemoryStorage {
             Some(current.metadata().revision()),
             None,
         )?;
+        crate::backup::record_object_relation_history(
+            &mut state,
+            &current,
+            StorageHistoryOperation::Delete,
+            context,
+        )?;
         state.object_relations.remove(&relation_id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
+}
+
+fn delete_object_relations(
+    state: &mut MemoryState,
+    matches: impl Fn(&StorageObjectRelation) -> bool,
+    context: &EventContext,
+) -> Result<(), StorageError> {
+    let relations = state
+        .object_relations
+        .values()
+        .filter(|relation| matches(relation))
+        .cloned()
+        .collect::<Vec<_>>();
+    for relation in relations {
+        crate::backup::record_object_relation_history(
+            state,
+            &relation,
+            StorageHistoryOperation::Delete,
+            context,
+        )?;
+        state
+            .object_relations
+            .remove(&relation.metadata().id().id());
+    }
+    Ok(())
 }

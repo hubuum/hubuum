@@ -27,6 +27,13 @@ Content-Type: application/json
 `include_history` defaults to `true`. Set it to `false` only when the eventual
 restore is intended to reset audit, task, delivery, and temporal history.
 
+A history-free restore preserves resource revisions and starts a new temporal
+timeline. Each live resource receives one system-attributed current snapshot
+at the restore boundary; earlier versions remain omitted. The `create`
+operation on that baseline means entry into the restored timeline, not the
+resource's original creation. Subsequent default backups include these
+snapshots and are restorable, including after further changes or deletions.
+
 The response is a background task. Poll `GET /api/v1/backups/{task_id}` and,
 after it succeeds, download `GET /api/v1/backups/{task_id}/output`. The output
 response includes `Digest` and `X-Hubuum-Backup-SHA256` headers. Stored outputs
@@ -152,6 +159,8 @@ directory before reporting success.
 History is included by default. Add `--backup-without-history` only to create a
 backup whose eventual restore resets terminal task, audit, delivery, and
 temporal history.
+
+### Verify and rehearse recovery
 
 Verify the artifact without a database connection before moving or archiving
 it:

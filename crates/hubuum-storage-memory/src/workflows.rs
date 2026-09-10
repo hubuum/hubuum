@@ -298,6 +298,8 @@ impl TaskQueueStorage for MemoryStorage {
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
+            deleted_at: None,
+            deleted_by: None,
             created_at: now,
             updated_at: now,
             lease_expires_at: None,
@@ -338,6 +340,7 @@ impl TaskQueueStorage for MemoryStorage {
         let rows = state
             .tasks
             .values()
+            .filter(|task| task.deleted_at.is_none())
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
             .filter(|task| status.is_none_or(|value| task.status == value))
@@ -693,9 +696,15 @@ impl TaskExecutionStorage for MemoryStorage {
         }
         let now = Utc::now();
         match payload {
-            StorageTaskCompletionPayload::Import
-            | StorageTaskCompletionPayload::Reindex
-            | StorageTaskCompletionPayload::RemoteCall(_) => {}
+            StorageTaskCompletionPayload::Import | StorageTaskCompletionPayload::Reindex => {}
+            StorageTaskCompletionPayload::RemoteCall(artifact) => {
+                crate::backup::store_remote_call_result(
+                    &mut state,
+                    lease.task_id(),
+                    artifact,
+                    now,
+                )?;
+            }
             StorageTaskCompletionPayload::Export(artifact) => {
                 let (identity, content, report, output_expires_at, durations) =
                     artifact.into_parts();
@@ -716,6 +725,17 @@ impl TaskExecutionStorage for MemoryStorage {
                 .durations(durations)
                 .try_build()
                 .map_err(invalid_contract_value)?;
+                let output_id = state
+                    .export_output_ids
+                    .values()
+                    .copied()
+                    .max()
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| StorageError::internal("Export output identifier overflow"))?;
+                state
+                    .export_output_ids
+                    .insert(lease.task_id().id(), output_id);
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
@@ -815,122 +835,8 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         let state = self.state.read().await;
-        let mut state_sections = StorageBackupStateSection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect::<StorageBackupStateSections>();
-        state_sections.insert(
-            StorageBackupStateSection::Collections,
-            state
-                .collections
-                .values()
-                .map(|collection| {
-                    memory_backup_row(serde_json::json!({
-                        "id": collection.id().id(),
-                        "name": collection.name(),
-                        "description": collection.description(),
-                        "created_at": collection.created_at(),
-                        "updated_at": collection.updated_at(),
-                        "parent_collection_id": collection.parent_collection_id().map(CollectionId::id),
-                        "revision": collection.revision().get(),
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        state_sections.insert(
-            StorageBackupStateSection::Classes,
-            state
-                .classes
-                .values()
-                .map(|class| {
-                    memory_backup_row(serde_json::json!({
-                        "id": class.id().id(),
-                        "name": class.name(),
-                        "collection_id": class.collection_id().id(),
-                        "json_schema": class.json_schema(),
-                        "validate_schema": class.validates_schema(),
-                        "description": class.description(),
-                        "created_at": class.created_at(),
-                        "updated_at": class.updated_at(),
-                        "revision": class.revision().get(),
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        state_sections.insert(
-            StorageBackupStateSection::Objects,
-            state
-                .objects
-                .values()
-                .map(|object| {
-                    memory_backup_row(serde_json::json!({
-                        "id": object.id().id(),
-                        "name": object.name(),
-                        "collection_id": object.collection_id().id(),
-                        "class_id": object.class_id().id(),
-                        "data": object.data(),
-                        "description": object.description(),
-                        "created_at": object.created_at(),
-                        "updated_at": object.updated_at(),
-                        "revision": object.revision().get(),
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        state_sections.insert(
-            StorageBackupStateSection::ClassRelations,
-            state
-                .class_relations
-                .values()
-                .map(|relation| {
-                    memory_backup_row(serde_json::json!({
-                        "id": relation.metadata().id().id(),
-                        "from_class_id": relation.from_class_id().id(),
-                        "to_class_id": relation.to_class_id().id(),
-                        "forward_template_alias": relation.forward_template_alias(),
-                        "reverse_template_alias": relation.reverse_template_alias(),
-                        "from_max_relations": relation.from_max_relations(),
-                        "to_max_relations": relation.to_max_relations(),
-                        "created_at": relation.metadata().created_at(),
-                        "updated_at": relation.metadata().updated_at(),
-                        "revision": relation.metadata().revision().get(),
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        state_sections.insert(
-            StorageBackupStateSection::ObjectRelations,
-            state
-                .object_relations
-                .values()
-                .map(|relation| {
-                    memory_backup_row(serde_json::json!({
-                        "id": relation.metadata().id().id(),
-                        "from_object_id": relation.from_object_id().id(),
-                        "to_object_id": relation.to_object_id().id(),
-                        "class_relation_id": relation.class_relation_id().id(),
-                        "created_at": relation.metadata().created_at(),
-                        "updated_at": relation.metadata().updated_at(),
-                        "revision": relation.metadata().revision().get(),
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        let history_sections = include_history.then(|| {
-            StorageBackupHistorySection::ALL
-                .iter()
-                .copied()
-                .map(|section| (section, Vec::new()))
-                .collect()
-        });
-        StorageBackupSnapshot::try_new(state_sections, history_sections)
-            .map_err(invalid_contract_value)
+        crate::backup::capture(&state, include_history)
     }
-}
-
-fn memory_backup_row(value: serde_json::Value) -> Result<StorageBackupRow, StorageError> {
-    StorageBackupRow::try_from_value(value).map_err(invalid_contract_value)
 }
 
 #[async_trait]
@@ -989,9 +895,13 @@ impl RestoreStorage for MemoryStorage {
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreStatus, StorageError> {
         let state = self.state.read().await;
-        let record = state.restore_jobs.get(&job_id.id()).ok_or_else(|| {
-            StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
-        })?;
+        let record = state
+            .restore_jobs
+            .get(&job_id.id())
+            .or_else(|| state.restore_receipts.get(&job_id.id()))
+            .ok_or_else(|| {
+                StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
+            })?;
         let (summary, _, capability_hash) = record.job.clone().into_parts();
         StorageRestoreStatus::try_new(summary, capability_hash, record.validation_summary.clone())
             .map_err(invalid_contract_value)
@@ -1068,7 +978,7 @@ impl RestoreStorage for MemoryStorage {
         &self,
         request: StorageRestoreApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
-        let (job_id, _document) = request.into_parts();
+        let (job_id, document) = request.into_parts();
         let mut state = self.state.write().await;
         if state.maintenance_state != MaintenanceState::Draining
             || state.maintenance_restore_job_id != Some(job_id)
@@ -1087,24 +997,37 @@ impl RestoreStorage for MemoryStorage {
         if current.job.summary().status() != StorageRestoreJobStatus::Confirmed {
             return Err(StorageError::conflict("The restore job is not confirmed"));
         }
-        let timestamp_parts = current.job.summary().timestamps().into_parts();
-        let started_at = timestamp_parts
-            .confirmed_at()
-            .ok_or_else(|| StorageError::internal("confirmed restore timestamp is missing"))?;
+        let started_at = Utc::now();
+        let source_includes_history = document.source_includes_history();
+        let (metadata, snapshot) = document.into_parts();
+        let mut replacement = crate::backup::restore(snapshot)?;
+        crate::backup::append_restore_event(
+            &mut replacement,
+            &current,
+            metadata,
+            source_includes_history,
+        )?;
         let finished_at = Utc::now();
         let succeeded = transition_restore_record(
             &current,
             StorageRestoreJobStatus::Succeeded,
             None,
-            Some(started_at),
+            current
+                .job
+                .summary()
+                .timestamps()
+                .into_parts()
+                .confirmed_at(),
             Some(finished_at),
             true,
         )?;
-        state.restore_jobs.insert(job_id.id(), succeeded);
-        state.maintenance_state = MaintenanceState::Normal;
-        state.maintenance_restore_job_id = None;
-        state.restore_instances.clear();
-        StorageRestoreCompletion::try_new(started_at, finished_at).map_err(invalid_contract_value)
+        replacement.restore_receipts.insert(job_id.id(), succeeded);
+        replacement.maintenance_generation = state.maintenance_generation;
+        replacement.next_restore_job_id = state.next_restore_job_id;
+        let completion = StorageRestoreCompletion::try_new(started_at, finished_at)
+            .map_err(invalid_contract_value)?;
+        *state = replacement;
+        Ok(completion)
     }
 
     async fn fail_restore_and_resume(

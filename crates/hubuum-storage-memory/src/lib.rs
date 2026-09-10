@@ -76,6 +76,8 @@ struct MemoryTaskRecord {
     request_redacted_at: Option<DateTime<Utc>>,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
+    deleted_at: Option<DateTime<Utc>>,
+    deleted_by: Option<PrincipalId>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     lease_expires_at: Option<DateTime<Utc>>,
@@ -143,8 +145,9 @@ struct MemoryHistoryEntry {
     value: MemoryHistoryValue,
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
+    valid_to: Option<DateTime<Utc>>,
     actor_id: Option<PrincipalId>,
-    actor_kind: String,
+    actor_kind: Option<String>,
     initiator_principal_id: Option<PrincipalId>,
     task_id: Option<TaskId>,
 }
@@ -218,20 +221,17 @@ macro_rules! append_memory_scoped_simple_event {
 }
 
 impl MemoryHistoryEntry {
-    fn metadata(
-        &self,
-        valid_to: Option<DateTime<Utc>>,
-    ) -> Result<StorageHistoryMetadata, StorageError> {
+    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
             self.valid_from,
-            valid_to,
+            self.valid_to,
             self.id,
             self.value.revision(),
         )
         .map(|metadata| {
             metadata
-                .actor(self.actor_id, Some(self.actor_kind.clone()))
+                .actor(self.actor_id, self.actor_kind.clone())
                 .initiator_principal_id(self.initiator_principal_id)
                 .task_id(self.task_id)
         })
@@ -258,6 +258,7 @@ impl MemoryTaskRecord {
         .request_redacted_at(self.request_redacted_at)
         .started_at(self.started_at)
         .finished_at(self.finished_at)
+        .deletion(self.deleted_at, self.deleted_by)
         .lease_expires_at(self.lease_expires_at)
         .attempt_count(self.attempt_count)
         .initiator_principal_id(self.initiator_principal_id)
@@ -339,7 +340,6 @@ struct MemoryState {
     next_group_id: i32,
     next_token_id: i32,
     next_task_id: i32,
-    next_task_event_sequence: i64,
     next_import_result_id: i32,
     next_computed_field_id: i32,
     next_export_template_id: i32,
@@ -362,6 +362,8 @@ struct MemoryState {
     groups: BTreeMap<i32, StorageIdentityGroup>,
     memberships: BTreeMap<(i32, i32), StoragePrincipalGroup>,
     external_memberships: BTreeSet<(i32, i32)>,
+    membership_sources: Vec<StorageBackupRow>,
+    authorization_revisions: BTreeMap<i32, ResourceRevision>,
     tokens: BTreeMap<i32, MemoryTokenRecord>,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
@@ -382,7 +384,12 @@ struct MemoryState {
     event_delivery_claims: BTreeMap<i64, Uuid>,
     event_retention_batches: BTreeMap<Uuid, Vec<i64>>,
     history: Vec<MemoryHistoryEntry>,
+    relation_history: StorageBackupHistorySections,
+    remote_call_results: Vec<StorageBackupRow>,
+    export_output_ids: BTreeMap<i32, i32>,
     restore_jobs: BTreeMap<i64, MemoryRestoreRecord>,
+    restore_receipts: BTreeMap<i64, MemoryRestoreRecord>,
+    event_dispatched_at: BTreeMap<i64, DateTime<Utc>>,
     maintenance_state: MaintenanceState,
     maintenance_restore_job_id: Option<RestoreJobId>,
     maintenance_generation: i64,
@@ -447,6 +454,7 @@ impl MemoryState {
             .schema_version(document.schema_version())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        self.index_task_event(&envelope)?;
         let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision);
         let receipt = recorded.clone().into_audit_receipt();
         self.events.push(recorded);
@@ -507,13 +515,23 @@ impl MemoryState {
         let id = HistoryRecordId::new(self.next_history_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         self.next_history_id += 1;
+        let now = Utc::now();
+        for previous in &mut self.history {
+            if previous.valid_to.is_none()
+                && previous.value.entity_id() == value.entity_id()
+                && std::mem::discriminant(&previous.value) == std::mem::discriminant(&value)
+            {
+                previous.valid_to = Some(now);
+            }
+        }
         self.history.push(MemoryHistoryEntry {
             id,
             value,
             operation,
-            valid_from: Utc::now(),
+            valid_from: now,
+            valid_to: (operation == StorageHistoryOperation::Delete).then_some(now),
             actor_id: context.actor_user_id(),
-            actor_kind: context.actor_kind().as_str().to_string(),
+            actor_kind: Some(context.actor_kind().as_str().to_string()),
             initiator_principal_id: context.initiator_user_id(),
             task_id: context.task_id(),
         });
@@ -579,13 +597,76 @@ impl MemoryState {
         input: StorageTaskEventInput,
     ) -> Result<(), StorageError> {
         let (event_type, message, data) = input.into_parts();
-        let id = EventSequence::new(self.next_task_event_sequence)
+        let action = Action::parse(&event_type).map_err(|_| {
+            StorageError::internal(format!("Unknown task event type '{event_type}'"))
+        })?;
+        let task = self
+            .tasks
+            .get(&task_id.id())
+            .ok_or_else(|| StorageError::internal("Task event is missing its task"))?;
+        let context = EventContext::from_mutation(MutationProvenance::system_for_task(
+            task.initiator_principal_id,
+            task_id,
+        ))
+        .with_trace_link(task.trace_link.clone());
+        let mut metadata = serde_json::json!({
+            "task_id": task_id.id(),
+            "task_kind": task.kind.as_str(),
+        });
+        if let Some(data) = data {
+            metadata["data"] = data;
+        }
+        let document = AuditDocument::try_new(message, None, None, metadata)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        self.next_task_event_sequence += 1;
-        let event =
-            StorageTaskEvent::builder(id, task_id, event_type, message, Utc::now(), "system")
-                .data(data)
-                .build();
+        append_memory_event!(
+            self,
+            EntityType::Task,
+            task_id.id(),
+            None,
+            None,
+            action,
+            &context,
+            document,
+            None,
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn index_task_event(&mut self, envelope: &EventEnvelope) -> Result<(), StorageError> {
+        if envelope.entity_type() != EntityType::Task {
+            return Ok(());
+        }
+        let task_id = envelope
+            .entity_id()
+            .ok_or_else(|| StorageError::internal("Task event is missing its task id"))?;
+        let task_id = TaskId::new(task_id.get())
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        let event = StorageTaskEvent::builder(
+            envelope.id(),
+            task_id,
+            envelope.action().as_str(),
+            envelope.summary(),
+            envelope.occurred_at(),
+            envelope.actor_kind().as_str(),
+        )
+        .data(
+            envelope
+                .metadata()
+                .get("data")
+                .filter(|v| !v.is_null())
+                .cloned(),
+        )
+        .actor_principal_id(envelope.actor_user_id())
+        .provenance(
+            envelope
+                .provenance()
+                .initiator
+                .as_ref()
+                .map(|p| p.principal_id),
+            envelope.provenance().task_id.or(Some(task_id)),
+        )
+        .build();
         self.task_events
             .entry(task_id.id())
             .or_default()
@@ -645,6 +726,7 @@ impl Default for MemoryStorage {
 mod support;
 use support::*;
 
+mod backup;
 mod events;
 mod execution;
 mod identity;

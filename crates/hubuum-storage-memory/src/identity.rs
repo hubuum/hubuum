@@ -1993,8 +1993,16 @@ impl AuthorizationDataStorage for MemoryStorage {
             })
             .cloned()
             .collect();
-        StorageAuthorizationPermissionSet::try_new(collection.id(), collection.revision(), grants)
-            .map_err(invalid_contract_value)
+        StorageAuthorizationPermissionSet::try_new(
+            collection.id(),
+            state
+                .authorization_revisions
+                .get(&collection.id().id())
+                .copied()
+                .unwrap_or(ResourceRevision::INITIAL),
+            grants,
+        )
+        .map_err(invalid_contract_value)
     }
 
     async fn apply_local_collection_grant(
@@ -2055,6 +2063,16 @@ impl AuthorizationDataStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
+        let revision = state
+            .authorization_revisions
+            .get(&key.collection_id().id())
+            .copied()
+            .unwrap_or(ResourceRevision::INITIAL)
+            .checked_advance()
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        state
+            .authorization_revisions
+            .insert(key.collection_id().id(), revision);
         state.authorization_grants.insert(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
@@ -2103,6 +2121,16 @@ impl AuthorizationDataStorage for MemoryStorage {
             Utc::now(),
         )
         .map_err(invalid_contract_value)?;
+        let revision = state
+            .authorization_revisions
+            .get(&key.collection_id().id())
+            .copied()
+            .unwrap_or(ResourceRevision::INITIAL)
+            .checked_advance()
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        state
+            .authorization_revisions
+            .insert(key.collection_id().id(), revision);
         state.authorization_grants.insert(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,

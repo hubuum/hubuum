@@ -668,7 +668,7 @@ pub fn verify_backup_document(
     let mut document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
         ApiError::BadRequest(format!("Backup document is not valid backup JSON: {error}"))
     })?;
-    let summary = validation_summary(&mut document)?;
+    let (summary, _) = validation_summary(&mut document)?;
     let section_counts = backup_section_counts(&document)?;
     Ok(BackupVerificationReport {
         report_version: BACKUP_VERIFICATION_REPORT_VERSION,
@@ -822,11 +822,11 @@ fn invalid_restore_capability() -> ApiError {
     ApiError::Forbidden("Restore capability is invalid".to_string())
 }
 
-fn validation_summary(document: &mut BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
-    document.validate_version()?;
-    normalize_legacy_class_schema_policies(document);
-    validate_backup_metadata(document)?;
-    StorageBackupSnapshot::try_new(
+pub(crate) fn validation_summary(
+    document: &mut BackupDocument,
+) -> Result<(RestoreValidationSummary, StorageBackupSnapshot), ApiError> {
+    let summary = validate_document_fields(document)?;
+    let snapshot = StorageBackupSnapshot::try_new(
         document.state.sections.clone(),
         document
             .history
@@ -834,11 +834,21 @@ fn validation_summary(document: &mut BackupDocument) -> Result<RestoreValidation
             .map(|history| history.sections.clone()),
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
+    Ok((summary, snapshot))
+}
+
+/// Validate artifact metadata and application-owned resource schemas. Snapshot
+/// revision consistency is already proved by the storage capture contract.
+pub(crate) fn validate_document_fields(
+    document: &mut BackupDocument,
+) -> Result<RestoreValidationSummary, ApiError> {
+    document.validate_version()?;
+    normalize_legacy_class_schema_policies(document);
+    validate_backup_metadata(document)?;
     let item_counts = validate_backup_manifest(document)?;
     validate_backup_timestamps(document)?;
     validate_required_seed_rows(document)?;
     validate_backup_state_references(document)?;
-    validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
     validate_computed_field_definitions(document)?;
     let total_items = item_counts.values().try_fold(0_i64, |total, count| {
@@ -938,217 +948,6 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
                     .unwrap_or_else(|| "with unknown id".to_string())
             ))
         })?;
-    }
-    Ok(())
-}
-
-const REVISION_STATE_SECTIONS: &[StorageBackupStateSection] = &[
-    StorageBackupStateSection::IdentityScopes,
-    StorageBackupStateSection::Groups,
-    StorageBackupStateSection::Principals,
-    StorageBackupStateSection::GroupMemberships,
-    StorageBackupStateSection::Collections,
-    StorageBackupStateSection::CollectionAuthorization,
-    StorageBackupStateSection::Classes,
-    StorageBackupStateSection::ComputedFieldDefinitions,
-    StorageBackupStateSection::ClassRelations,
-    StorageBackupStateSection::Objects,
-    StorageBackupStateSection::ObjectRelations,
-    StorageBackupStateSection::ExportTemplates,
-    StorageBackupStateSection::RemoteTargets,
-    StorageBackupStateSection::EventSinks,
-    StorageBackupStateSection::EventSubscriptions,
-];
-
-const REVISION_HISTORY_SECTIONS: &[(StorageBackupHistorySection, StorageBackupStateSection)] = &[
-    (
-        StorageBackupHistorySection::CollectionHistory,
-        StorageBackupStateSection::Collections,
-    ),
-    (
-        StorageBackupHistorySection::ClassHistory,
-        StorageBackupStateSection::Classes,
-    ),
-    (
-        StorageBackupHistorySection::ClassRelationHistory,
-        StorageBackupStateSection::ClassRelations,
-    ),
-    (
-        StorageBackupHistorySection::ObjectHistory,
-        StorageBackupStateSection::Objects,
-    ),
-    (
-        StorageBackupHistorySection::ObjectRelationHistory,
-        StorageBackupStateSection::ObjectRelations,
-    ),
-    (
-        StorageBackupHistorySection::ExportTemplateHistory,
-        StorageBackupStateSection::ExportTemplates,
-    ),
-    (
-        StorageBackupHistorySection::RemoteTargetHistory,
-        StorageBackupStateSection::RemoteTargets,
-    ),
-];
-
-fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, ApiError> {
-    row.get("revision")
-        .and_then(Value::as_i64)
-        .filter(|revision| (1..i64::MAX).contains(revision))
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Full backup section '{section}' contains an invalid resource revision"
-            ))
-        })
-}
-
-fn row_i64(section: &str, row: &StorageBackupRow, field: &str) -> Result<i64, ApiError> {
-    row.get(field).and_then(Value::as_i64).ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "Full backup section '{section}' contains an invalid {field}"
-        ))
-    })
-}
-
-fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    for section in REVISION_STATE_SECTIONS {
-        for row in required_state_section(document, *section)? {
-            row_revision(section.as_str(), row)?;
-        }
-    }
-
-    validate_authorization_state_revisions(document)?;
-
-    let Some(history) = &document.history else {
-        return validate_event_revisions(document);
-    };
-    for (history_section, state_section) in REVISION_HISTORY_SECTIONS {
-        let rows = history.sections.get(history_section).ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Full backup history is missing required section '{history_section}'"
-            ))
-        })?;
-        for row in rows {
-            row_revision(history_section.as_str(), row)?;
-        }
-        validate_live_history_revisions(document, *history_section, *state_section, rows)?;
-    }
-    validate_event_revisions(document)
-}
-
-fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let collection_ids = required_state_section(document, StorageBackupStateSection::Collections)?
-        .iter()
-        .map(|row| row_i64("collections", row, "id"))
-        .collect::<Result<HashSet<_>, _>>()?;
-    let authorization_ids =
-        required_state_section(document, StorageBackupStateSection::CollectionAuthorization)?
-            .iter()
-            .map(|row| row_i64("collection_authorization", row, "collection_id"))
-            .collect::<Result<Vec<_>, _>>()?;
-    let unique_authorization_ids = authorization_ids.iter().copied().collect::<HashSet<_>>();
-    if authorization_ids.len() != unique_authorization_ids.len()
-        || unique_authorization_ids != collection_ids
-    {
-        return Err(ApiError::BadRequest(
-            "Full backup collection authorization revisions do not match collections".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_live_history_revisions(
-    document: &BackupDocument,
-    history_section: StorageBackupHistorySection,
-    state_section: StorageBackupStateSection,
-    history_rows: &[StorageBackupRow],
-) -> Result<(), ApiError> {
-    let live = required_state_section(document, state_section)?
-        .iter()
-        .map(|row| {
-            Ok((
-                row_i64(state_section.as_str(), row, "id")?,
-                row_revision(state_section.as_str(), row)?,
-            ))
-        })
-        .collect::<Result<HashMap<_, _>, ApiError>>()?;
-    let mut open = HashMap::new();
-    for row in history_rows
-        .iter()
-        .filter(|row| row.get("valid_to").is_some_and(Value::is_null))
-    {
-        let id = row_i64(history_section.as_str(), row, "id")?;
-        let revision = row_revision(history_section.as_str(), row)?;
-        if row.get("operation").and_then(Value::as_str) == Some("delete")
-            || open.insert(id, revision).is_some()
-        {
-            return Err(ApiError::BadRequest(format!(
-                "Full backup history section '{history_section}' has an invalid open snapshot"
-            )));
-        }
-    }
-    if open != live {
-        return Err(ApiError::BadRequest(format!(
-            "Full backup live revisions disagree with '{history_section}'"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_event_revisions(document: &BackupDocument) -> Result<(), ApiError> {
-    let Some(events) = document.history.as_ref().and_then(|history| {
-        history
-            .sections
-            .get(&StorageBackupHistorySection::AuditEvents)
-    }) else {
-        return Ok(());
-    };
-    for event in events {
-        for (column, snapshot) in [("before_revision", "before"), ("after_revision", "after")] {
-            let stored = match event.get(column) {
-                None | Some(Value::Null) => None,
-                Some(value) => Some(
-                    value
-                        .as_i64()
-                        .filter(|revision| (1..i64::MAX).contains(revision))
-                        .ok_or_else(|| {
-                            ApiError::BadRequest(format!(
-                                "Full backup event contains an invalid {column}"
-                            ))
-                        })?,
-                ),
-            };
-            let snapshot_revision = event
-                .get(snapshot)
-                .filter(|value| !value.is_null())
-                .and_then(|value| value.get("revision"))
-                .and_then(Value::as_i64);
-            if stored.is_some() && stored != snapshot_revision {
-                return Err(ApiError::BadRequest(format!(
-                    "Full backup event {column} disagrees with its {snapshot} snapshot"
-                )));
-            }
-        }
-        if event.get("schema_version").and_then(Value::as_i64) == Some(2) {
-            let before = event
-                .get("before_revision")
-                .is_some_and(|value| !value.is_null());
-            let after = event
-                .get("after_revision")
-                .is_some_and(|value| !value.is_null());
-            let action = event.get("action").and_then(Value::as_str);
-            let valid_shape = match action {
-                Some("created" | "queued" | "added") => !before && after,
-                Some("deleted" | "removed" | "purged") => before && !after,
-                _ => before && after,
-            };
-            if !valid_shape {
-                return Err(ApiError::BadRequest(
-                    "Full backup revision-aware event has inconsistent before/after revisions"
-                        .to_string(),
-                ));
-            }
-        }
     }
     Ok(())
 }
@@ -1373,7 +1172,7 @@ pub async fn stage_restore(
                 "Restore document is not valid backup JSON: {error}"
             ))
         })?;
-    let validation = validation_summary(&mut document)?;
+    let (validation, _) = validation_summary(&mut document)?;
     let document_sha = sha256(&document_bytes);
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
@@ -1494,20 +1293,10 @@ pub async fn restore_status(
 async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
-    mut document: BackupDocument,
+    metadata: StorageRestoreDocumentMetadata,
+    snapshot: StorageBackupSnapshot,
 ) -> Result<StorageRestoreCompletion, ApiError> {
-    normalize_legacy_class_schema_policies(&mut document);
-    let metadata = StorageRestoreDocumentMetadata::new(
-        document.backup_version,
-        document.created_at,
-        document.source_version,
-    );
-    let snapshot = StorageBackupSnapshot::try_new(
-        document.state.sections,
-        document.history.map(|history| history.sections),
-    )
-    .map_err(|error| ApiError::from(error.into_request_error()))?;
-    let document = StorageRestoreDocument::new(metadata, snapshot);
+    let document = StorageRestoreDocument::at_restore_boundary(metadata, snapshot, Utc::now());
     storage_handle(pool)
         .apply_restore(StorageRestoreApply::new(job_id, document))
         .await
@@ -1599,7 +1388,7 @@ pub async fn confirm_restore(
                 "Staged restore document became invalid: {error}"
             ))
         })?;
-    let validation = validation_summary(&mut document)?;
+    let (validation, _) = validation_summary(&mut document)?;
     // Confirmation commits only the maintenance transition. A separately
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.
@@ -1726,15 +1515,23 @@ async fn reconcile_restore_from_snapshot(
             return Err(error);
         }
     };
-    if let Err(error) = validation_summary(&mut document) {
-        fail_restore_and_resume(pool, job_id, &error).await?;
-        return Err(error);
-    }
+    let (_, snapshot) = match validation_summary(&mut document) {
+        Ok(validated) => validated,
+        Err(error) => {
+            fail_restore_and_resume(pool, job_id, &error).await?;
+            return Err(error);
+        }
+    };
+    let metadata = StorageRestoreDocumentMetadata::new(
+        document.backup_version,
+        document.created_at,
+        document.source_version,
+    );
     if let Err(error) = wait_for_instances_drained(pool).await {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    if let Err(error) = apply_restore(pool, job_id, document).await {
+    if let Err(error) = apply_restore(pool, job_id, metadata, snapshot).await {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
@@ -1860,7 +1657,7 @@ mod tests {
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
         RestoreSettings, confirmation_is_stale, normalize_legacy_class_schema_policies,
         restore_capability_matches, restore_error_for_storage, sha256,
-        validate_computed_field_definitions, validate_event_revisions, verify_backup_document,
+        validate_computed_field_definitions, verify_backup_document,
     };
     use crate::errors::ApiError;
     use crate::models::{
@@ -1910,22 +1707,6 @@ mod tests {
                 )]),
             },
             history: None,
-            manifest: BackupManifest::default(),
-        }
-    }
-
-    fn document_with_event(event: serde_json::Value) -> BackupDocument {
-        BackupDocument {
-            backup_version: CURRENT_BACKUP_VERSION,
-            created_at: backup_instant(),
-            source_version: "test".to_string(),
-            state: BackupState::default(),
-            history: Some(BackupHistory {
-                sections: BTreeMap::from([(
-                    StorageBackupHistorySection::AuditEvents,
-                    vec![StorageBackupRow::try_from_value(event).unwrap()],
-                )]),
-            }),
             manifest: BackupManifest::default(),
         }
     }
@@ -2425,23 +2206,6 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.to_string().contains("duplicate"));
-    }
-
-    #[rstest]
-    #[case::deleted("deleted")]
-    #[case::removed("removed")]
-    #[case::purged("purged")]
-    fn restore_accepts_revisioned_deletion_event_shapes(#[case] action: &str) {
-        let event = json!({
-            "schema_version": 2,
-            "action": action,
-            "before": {"revision": 7},
-            "after": null,
-            "before_revision": 7,
-            "after_revision": null,
-        });
-
-        assert!(validate_event_revisions(&document_with_event(event)).is_ok());
     }
 
     #[rstest]

@@ -959,11 +959,10 @@ impl HistoryStorage for MemoryStorage {
         let rows = entries
             .into_iter()
             .map(|entry| match &entry.value {
-                MemoryHistoryValue::Collection(record) => StorageCollectionHistoryRecord::try_new(
-                    record.clone(),
-                    entry.metadata(history_valid_to(&state, entry))?,
-                )
-                .map_err(invalid_contract_value),
+                MemoryHistoryValue::Collection(record) => {
+                    StorageCollectionHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map_err(invalid_contract_value)
+                }
                 _ => unreachable!("collection history filter guarantees the variant"),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -988,12 +987,11 @@ impl HistoryStorage for MemoryStorage {
             return Ok(None);
         }
         match &entry.value {
-            MemoryHistoryValue::Collection(record) => StorageCollectionHistoryRecord::try_new(
-                record.clone(),
-                entry.metadata(history_valid_to(&state, entry))?,
-            )
-            .map(Some)
-            .map_err(invalid_contract_value),
+            MemoryHistoryValue::Collection(record) => {
+                StorageCollectionHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map(Some)
+                    .map_err(invalid_contract_value)
+            }
             _ => unreachable!("collection history filter guarantees the variant"),
         }
     }
@@ -1017,11 +1015,10 @@ impl HistoryStorage for MemoryStorage {
         let rows = entries
             .into_iter()
             .map(|entry| match &entry.value {
-                MemoryHistoryValue::Class(record) => StorageClassHistoryRecord::try_new(
-                    record.clone(),
-                    entry.metadata(history_valid_to(&state, entry))?,
-                )
-                .map_err(invalid_contract_value),
+                MemoryHistoryValue::Class(record) => {
+                    StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map_err(invalid_contract_value)
+                }
                 _ => unreachable!("class history filter guarantees the variant"),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1046,12 +1043,11 @@ impl HistoryStorage for MemoryStorage {
             return Ok(None);
         }
         match &entry.value {
-            MemoryHistoryValue::Class(record) => StorageClassHistoryRecord::try_new(
-                record.clone(),
-                entry.metadata(history_valid_to(&state, entry))?,
-            )
-            .map(Some)
-            .map_err(invalid_contract_value),
+            MemoryHistoryValue::Class(record) => {
+                StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map(Some)
+                    .map_err(invalid_contract_value)
+            }
             _ => unreachable!("class history filter guarantees the variant"),
         }
     }
@@ -1078,11 +1074,10 @@ impl HistoryStorage for MemoryStorage {
         let rows = entries
             .into_iter()
             .map(|entry| match &entry.value {
-                MemoryHistoryValue::Object(record) => StorageObjectHistoryRecord::try_new(
-                    record.clone(),
-                    entry.metadata(history_valid_to(&state, entry))?,
-                )
-                .map_err(invalid_contract_value),
+                MemoryHistoryValue::Object(record) => {
+                    StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map_err(invalid_contract_value)
+                }
                 _ => unreachable!("object history filter guarantees the variant"),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1108,12 +1103,11 @@ impl HistoryStorage for MemoryStorage {
             return Ok(None);
         }
         match &entry.value {
-            MemoryHistoryValue::Object(record) => StorageObjectHistoryRecord::try_new(
-                record.clone(),
-                entry.metadata(history_valid_to(&state, entry))?,
-            )
-            .map(Some)
-            .map_err(invalid_contract_value),
+            MemoryHistoryValue::Object(record) => {
+                StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map(Some)
+                    .map_err(invalid_contract_value)
+            }
             _ => unreachable!("object history filter guarantees the variant"),
         }
     }
@@ -1138,11 +1132,8 @@ impl HistoryStorage for MemoryStorage {
             .into_iter()
             .map(|entry| match &entry.value {
                 MemoryHistoryValue::ExportTemplate(record) => {
-                    StorageExportTemplateHistoryRecord::try_new(
-                        record.clone(),
-                        entry.metadata(history_valid_to(&state, entry))?,
-                    )
-                    .map_err(invalid_contract_value)
+                    StorageExportTemplateHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map_err(invalid_contract_value)
                 }
                 _ => unreachable!("export-template history filter guarantees the variant"),
             })
@@ -1169,12 +1160,9 @@ impl HistoryStorage for MemoryStorage {
         }
         match &entry.value {
             MemoryHistoryValue::ExportTemplate(record) => {
-                StorageExportTemplateHistoryRecord::try_new(
-                    record.clone(),
-                    entry.metadata(history_valid_to(&state, entry))?,
-                )
-                .map(Some)
-                .map_err(invalid_contract_value)
+                StorageExportTemplateHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map(Some)
+                    .map_err(invalid_contract_value)
             }
             _ => unreachable!("export-template history filter guarantees the variant"),
         }
@@ -1200,11 +1188,8 @@ impl HistoryStorage for MemoryStorage {
             .into_iter()
             .map(|entry| match &entry.value {
                 MemoryHistoryValue::RemoteTarget(record) => {
-                    StorageRemoteTargetHistoryRecord::try_new(
-                        record.clone(),
-                        entry.metadata(history_valid_to(&state, entry))?,
-                    )
-                    .map_err(invalid_contract_value)
+                    StorageRemoteTargetHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map_err(invalid_contract_value)
                 }
                 _ => unreachable!("remote-target history filter guarantees the variant"),
             })
@@ -1230,12 +1215,11 @@ impl HistoryStorage for MemoryStorage {
             return Ok(None);
         }
         match &entry.value {
-            MemoryHistoryValue::RemoteTarget(record) => StorageRemoteTargetHistoryRecord::try_new(
-                record.clone(),
-                entry.metadata(history_valid_to(&state, entry))?,
-            )
-            .map(Some)
-            .map_err(invalid_contract_value),
+            MemoryHistoryValue::RemoteTarget(record) => {
+                StorageRemoteTargetHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map(Some)
+                    .map_err(invalid_contract_value)
+            }
             _ => unreachable!("remote-target history filter guarantees the variant"),
         }
     }
