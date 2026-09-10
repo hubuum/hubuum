@@ -125,6 +125,14 @@
 - Prefer deterministic library-level benchmarks over handlers or database-backed flows.
 - Avoid reading global `CONFIG` from benchmarks; provide config-free helper functions that accept limits or options explicitly.
 
+## Releases
+
+- Update `README.md` in every release preparation pull request with the new release
+  version and date, pinned container examples, release links and highlights, and
+  any changed installation or upgrade requirements. Keep this information aligned
+  with `Cargo.toml`, `CHANGELOG.md`, and the artifacts published by the release
+  workflow; do not leave the README describing an older release.
+
 ## Pull Requests And Merges
 
 - Treat the changelog review as required for every pull request. Before merge, add relevant user-facing additions, changes, fixes, and security notes to the `[Unreleased]` section of `CHANGELOG.md`. If a pull request has no changelog-worthy impact, state that explicitly in its description; do not add empty or internal-only changelog entries.

@@ -24,31 +24,25 @@ This repository uses the CI workflow in
 
 ## Scripted release flow
 
-### First release (`v0.0.1`)
+Use the helper script in [`scripts/release.sh`](../scripts/release.sh), replacing
+`X.Y.Z` with the new release version:
 
-The repository is already prepared at version `0.0.1`. Once the release changes are on
-`main` and that commit has a successful CI run:
-
-1. Check out the release commit on a clean local `main` branch.
-2. Run `./scripts/check-release-readiness.sh v0.0.1`.
-3. Run `./scripts/release.sh tag`.
-4. Push the tag with `git push origin v0.0.1`.
+1. Start from a clean local `main`.
+2. Run `./scripts/release.sh prepare X.Y.Z`.
+3. Review the generated release branch `release/vX.Y.Z`, including the full
+   `Cargo.lock` dependency refresh, and polish `CHANGELOG.md` if needed.
+4. Update [`README.md`](../README.md) for the new release: version and date,
+   pinned container example, release links and highlights, and changed installation
+   or upgrade requirements. Keep these aligned with `Cargo.toml`, `CHANGELOG.md`,
+   and the release artifacts. This review is required for every release; the helper
+   script does not update the README automatically.
+5. Commit the changes, then open and merge that release branch.
+6. Wait for successful CI on the exact merged `main` commit, check out that
+   commit on clean `main`, and run `./scripts/release.sh tag`.
+7. Push the new tag with `git push origin vX.Y.Z`.
 
 Do not tag a different commit while CI is still running: the tag workflow requires the
 exact tagged commit to have a successful `main` CI run.
-
-### Later releases
-
-Use the helper script in [`scripts/release.sh`](../scripts/release.sh):
-
-1. Start from a clean local `main`.
-2. Run `./scripts/release.sh prepare 0.0.2`.
-3. Review the generated release branch `release/v0.0.2`, including the full
-   `Cargo.lock` dependency refresh, polish `CHANGELOG.md` if needed, and commit it.
-4. Open and merge that release branch.
-5. Wait for successful CI on the exact merged `main` commit, check out that
-   commit on clean `main`, and run `./scripts/release.sh tag`.
-6. Push the new tag.
 
 The helper script:
 
@@ -205,15 +199,17 @@ together. The administrator exposes the embedded migration runner through
 The CI workflow publishes one Alpine-based container image with both the `rustls` and OpenSSL TLS
 backends:
 
-- Default tags like `ghcr.io/hubuum/hubuum-server:v0.0.1` and `:main` are the full image.
+- Versioned tags (`ghcr.io/hubuum/hubuum-server:vX.Y.Z`) and `:main` are the full image.
   It can also run plain HTTP when no TLS certificate and key are configured.
 
 The full image also gets explicit aliases ending in `-full`.
 
 The image never runs embedded Diesel migrations from a long-lived server
 entrypoint. It does not need the standalone Diesel CLI or `psql`; operators run
-migrations with `hubuum-admin --migrate` in a one-shot workload using the
-separate migration database credential.
+migrations with `hubuum-admin --migrate` in a one-shot workload. The default
+`single` role mode uses `HUBUUM_DATABASE_URL` unless an optional migration URL
+override is configured; `split` mode requires the separate migrator credential
+in `HUBUUM_MIGRATION_DATABASE_URL`.
 
 Publishing from `main` happens in the same workflow run and depends directly on the CI jobs passing.
 Documentation-only and repository-metadata pushes do not rebuild or replace

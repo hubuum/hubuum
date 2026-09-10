@@ -8,22 +8,36 @@
 
 Hubuum is a REST service that provides a shared interface for your resources.
 
-Hubuum `0.0.1` is the first public release. It is suitable for evaluation and early
-deployments, but its API and configuration may change before `1.0.0`. Pin deployments to
-an explicit version instead of using the moving `main` image tag.
+The latest release is [Hubuum `0.0.14`](https://github.com/hubuum/hubuum/releases/tag/v0.0.14),
+published on September 10, 2026. Hubuum is suitable for evaluation and early deployments,
+but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
+version instead of using the moving `main` image tag. See [Releases](#releases) for recent
+changes and upgrade guidance.
 
 ## Getting Started
 
-Hubuum requires PostgreSQL. The release is available as pre-built archives for Linux,
-macOS, and Windows, and as a Linux container image for AMD64 and ARM64.
+Production deployments require PostgreSQL. An experimental, non-durable `memory` storage
+backend is available for disposable development and contract validation. Native release
+archives support Linux AMD64 and ARM64, macOS ARM64, and Windows AMD64; the Linux container
+image supports AMD64 and ARM64.
 
 Linux archives contain stripped, statically linked executables and do not require a compatible
 system glibc, libpq, or OpenSSL installation. macOS and Windows archives bundle libpq and OpenSSL
 while retaining only their normal operating-system runtime dependencies.
 
+Every archive includes `hubuum-server`, `hubuum-admin`, and `hubuum-template-worker`.
+Install matching versions of all three together; template rendering and validation
+require the worker executable beside the server and administrator binaries.
+
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.14
 ```
+
+Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
+server. Container server entrypoints do not apply migrations. The default `single`
+database role mode uses the existing `HUBUUM_DATABASE_URL`; separate owner, migrator,
+and runtime roles are optional. Web restores also require a separately supervised
+`hubuum-admin --restore-executor` process.
 
 - Follow the [quick start guide](docs/quick_start.md) for configuration and first-time
   administrator setup.
@@ -33,7 +47,7 @@ docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
   multiple API/worker replicas, one-shot migrations, and optional shared login
   throttling.
 - Download native binaries and checksums from
-  [GitHub Releases](https://github.com/hubuum/hubuum/releases).
+  [the latest GitHub Release](https://github.com/hubuum/hubuum/releases/latest).
 - Check a running instance at `/healthz` and `/readyz`.
 
 The Alpine-based container image includes both the `rustls` and OpenSSL TLS backends. See the
@@ -226,7 +240,7 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 
 ### Configuration Reference
 
-Both binaries support CLI options and environment configuration. Credentials
+The server and administrator support CLI options and environment configuration. Credentials
 can also come from mounted files using `--secret-source file` and
 `--secret-file-root DIRECTORY` (or `HUBUUM_SECRET_SOURCE` and
 `HUBUUM_SECRET_FILE_ROOT`). Environment-backed secrets remain the default.
@@ -267,10 +281,40 @@ development workflow.
 
 ## Releases
 
-Release notes are maintained in [CHANGELOG.md](CHANGELOG.md). Pushing an annotated
+Recent published releases:
+
+| Release | Date | Highlights |
+| --- | --- | --- |
+| [0.0.14](https://github.com/hubuum/hubuum/releases/tag/v0.0.14) | 2026-09-10 | Keeps subsequent backups restorable after restoring without history. Makes memory backup and restore preserve resource state, retained history, and task artifacts. Retains backup format 5. |
+| [0.0.13](https://github.com/hubuum/hubuum/releases/tag/v0.0.13) | 2026-09-09 | Fixes full-restore coordination with live servers and preserves JSON `null` during PostgreSQL restores. Existing format 5 backups remain compatible. |
+| [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
+| [0.0.11](https://github.com/hubuum/hubuum/releases/tag/v0.0.11) | 2026-08-30 | Adds the experimental memory storage backend and a coordinated public storage adapter SDK, with bounded authorization queries. |
+
+Before upgrading:
+
+- Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
+  CI certifies upgrades and application rollbacks only between adjacent stable
+  releases; application rollback retains the migrated database.
+- Version `0.0.14` retains backup format 5 and adds no database migration. Update
+  the restore executor together with the server to apply the history-free restore
+  fix; existing history-free artifacts can be restored directly with the fixed executor.
+- Create and verify a version 5 backup. Installations on `0.0.9` or older must
+  first upgrade to `0.0.10` or `0.0.11` and create a version 5 backup there;
+  follow the [existing deployment upgrade path](docs/backup-restore.md#existing-deployment-upgrade-path).
+- Run migrations before rolling API and worker processes, install matching server,
+  administrator, and template worker binaries, and update the separate restore
+  executor. Since `0.0.12`, web restore confirmation returns `202 Accepted`;
+  clients must poll the restore status endpoint until completion.
+
+Full release notes are maintained in [CHANGELOG.md](CHANGELOG.md). Pushing an annotated
 `vX.Y.Z` tag for a commit that has passed CI on `main` publishes a GitHub Release with
-native archives, SHA-256 checksums, and versioned multi-architecture container images.
+native archives, SHA-256 checksums, SBOMs, provenance attestations, and versioned
+multi-architecture container images.
 Maintainer instructions are in [docs/releasing.md](docs/releasing.md).
+
+Every release must update this README with the new version and release date, pinned
+container example, release links and highlights, and any changed installation or
+upgrade requirements. Include these updates in the release preparation pull request.
 
 ## License
 

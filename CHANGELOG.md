@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-09-10
+
 ### Fixed
 
 - Memory backups preserve external membership provenance so directory sync can
@@ -23,9 +25,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Upgrade notes
 
-- Update the server and administrator/restore-executor binaries together.
-  Existing history-free artifacts can be restored directly with the fixed
-  executor; see the backup/restore guide.
+- Install the matching server, administrator, and template worker binaries
+  together. Update the separately deployed `hubuum-admin --restore-executor`
+  to apply these recovery fixes. Existing history-free artifacts can be restored
+  directly with the fixed executor; see the backup/restore guide.
+- This release retains backup format 5 and adds no database migration. The
+  certified application upgrade and rollback path is `v0.0.13` to this release;
+  application rollback retains the migrated database.
 
 ## [0.0.13] - 2026-09-09
 
