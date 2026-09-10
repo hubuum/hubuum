@@ -236,7 +236,32 @@ must pass before `main-latest` artifacts or container images are published.
 ## Benchmarks
 
 Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via
-`terjekv/rust-pr-bench`.
+`terjekv/rust-pr-bench` v1.3.0, pinned to its release commit.
+
+PR comparisons cache Cargo downloads, compiled outputs, exact-version benchmark
+runners, and verified benchmark executables under the `hubuum-benchmarks` namespace.
+Every push to `main` also runs a `compile_only` build to warm caches accessible to
+later PRs. To warm them manually, dispatch the Benchmarks workflow on `main`.
+Warming skips measurements, service lifecycle hooks, and PR comments; ordinary
+PR runs still measure both revisions and apply the configured regression limits.
+
+Keep the comparison and warming jobs' action revision, namespace, benchmark
+selection, toolchain, features, and Cargo arguments aligned. Both use `--locked`
+and enable `cache_binaries` so exact source/build matches can skip compilation
+and linking. The action elects cache writers within each run; PRs can save their
+own entries and runner installations, while the `main` build supplies shared
+baseline entries. The existing `Swatinem/rust-cache` entries used by other CI jobs
+are separate and do not populate these benchmark caches. Platform and feature
+tests use 16 codegen units with LTO disabled, while benchmarks retain the
+production release profile; their compiled outputs are not interchangeable.
+
+Executable reuse requires reproducible builds. If benchmarks gain external build
+inputs or custom compile-time environment variables, version them with matching
+`binary_cache_key` values in both jobs. Declare extra runtime assets through
+`binary_cache_paths`; Cargo build-script outputs are bundled automatically.
+Review the build/cache tables and `performance.jsonl` artifacts for hit/miss,
+transfer, compilation, and executable-reuse evidence. See the upstream
+[cache setup and diagnostics](https://github.com/terjekv/rust-pr-bench/blob/v1.3.0/docs/caching.md).
 
 ### Local execution
 
