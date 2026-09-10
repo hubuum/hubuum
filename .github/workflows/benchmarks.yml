@@ -1,6 +1,10 @@
 name: Benchmarks
 
 on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
   pull_request:
     types:
       - opened
@@ -30,6 +34,7 @@ jobs:
   changes:
     name: Classify benchmark changes
     if: >-
+      github.event_name == 'pull_request' &&
       (
         github.event.pull_request.draft == false ||
         contains(github.event.pull_request.labels.*.name, 'ci:full') ||
@@ -101,18 +106,41 @@ jobs:
     name: Benchmarks
     needs: changes
     if: needs.changes.outputs.run_benchmarks == 'true'
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@cdeb6a01e7164eef7ebbd117f6b9edd6524db3d3 # v1.1.1
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
     secrets: inherit
     with:
-      action_ref: cdeb6a01e7164eef7ebbd117f6b9edd6524db3d3
+      # Keep build/cache inputs aligned with warm-cache below.
+      action_ref: d0202becabbd115351a879c21f53ab9da6812a44
       backend: all
       auto_discover: true
       auto_detect_moved_benchmarks: true
+      cargo_args: --locked
+      cache: true
+      cache_namespace: hubuum-benchmarks
+      cache_binaries: true
       criterion_statistic: median
       criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
       regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
+
+  warm-cache:
+    name: Warm benchmark caches on main
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
+    with:
+      action_ref: d0202becabbd115351a879c21f53ab9da6812a44
+      backend: all
+      auto_discover: true
+      auto_detect_moved_benchmarks: true
+      cargo_args: --locked
+      cache: true
+      cache_namespace: hubuum-benchmarks
+      cache_binaries: true
+      compile_only: true
+      comment_mode: never
 
   runtime-limits:
     name: Template and schema resource evidence

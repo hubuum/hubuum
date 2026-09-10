@@ -255,6 +255,53 @@ assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
 assert_flag "$benchmark_output" scale_benchmark false
 
+python3 - "$repo_root/.github/workflows/benchmarks.yml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+
+def job(name):
+    start = workflow.index(f"\n  {name}:\n")
+    return re.split(r"\n  [\w-]+:\n", workflow[start + 1:], maxsplit=1)[0]
+
+
+def build_inputs(name):
+    block = job(name)
+    implementation = re.search(r"^    uses: (\S+)", block, re.MULTILINE).group(1)
+    inputs = {
+        key: value.strip()
+        for key, value in re.findall(
+            r"^      (\w+):([\s\S]*?)(?=^      \w+:|\Z)", block, re.MULTILINE
+        )
+    }
+    # Measurement/reporting controls can differ; all build inputs must match,
+    # including future toolchain, feature, and external-input declarations.
+    for key in tuple(inputs):
+        if key.startswith(("criterion_", "regression_")) or key in {
+            "fail_on_regression", "compile_only", "comment_mode", "cache_save"
+        }:
+            del inputs[key]
+    return implementation, inputs
+
+
+if build_inputs("benchmarks") != build_inputs("warm-cache"):
+    raise SystemExit("PR benchmark and main cache-warming build inputs must match")
+if "github.event_name == 'pull_request' &&" not in job("changes"):
+    raise SystemExit("PR change classification must not run during cache warming")
+for required in (
+    "github.ref == 'refs/heads/main'",
+    "github.event_name == 'push'",
+    "github.event_name == 'workflow_dispatch'",
+    "compile_only: true",
+    "comment_mode: never",
+):
+    if required not in job("warm-cache"):
+        raise SystemExit(f"Benchmark cache warming is missing: {required}")
+PY
+
 scale_benchmark_output="$(bash "$classifier" \
   .github/workflows/scale-benchmarks.yml \
   scale-benchmarks/profiles/large.toml \
