@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "0.0.13",
+  "release": "0.0.14",
   "metrics": [
     {
       "name": "hubuum_api_errors_total",
