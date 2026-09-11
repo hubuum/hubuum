@@ -319,6 +319,16 @@ through `hubuum-storage-core` or make schema ownership part of the neutral API.
 
 Migration compatibility with the adjacent supported release is tested directly in CI. The workflow starts the previous release, creates representative resources and workflow configuration, migrates the database with the candidate, verifies the candidate application, and then restarts the previous application against the migrated schema. A separate static policy rejects migration shapes known to violate adjacent-release compatibility.
 
+Backup recovery follows the artifact's format contract. Format-6 artifacts are
+restored directly by the candidate. For the format-5 to format-6 transition, CI
+checks that direct restore is rejected, restores with the matching previous
+release, and migrates that database with the candidate. Both retained-history
+and history-free artifacts must preserve the class policies and acquire schema
+revision 1 without fabricated object validation evidence. The report records the
+recovery path and final cleanup separately from the original restore report.
+The restored candidate API and worker still exercise authentication, state and
+history reads, token exclusion, and computed-field rebuilding.
+
 That test certifies one supported `N-1` transition. It does not promise arbitrary rollback across multiple releases, and it does not make destructive down migrations safe.
 
 ## Application and Authorization Coverage

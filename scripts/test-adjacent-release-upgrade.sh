@@ -468,26 +468,96 @@ verify_restore_artifact() {
   local report_path="$3"
   local retention="$4"
   local backup_name
+  local source_version
+  local candidate_version
+  local restore_service="candidate-api"
+  local recovery_path="direct"
+  local target_cleanup
   local args
 
   backup_name="$(basename -- "$backup_path")"
+  source_version="$(jq --exit-status '.backup_version' "$backup_path")"
+  candidate_version="$(jq --exit-status '.backup_version' "$current_backup_file")"
+  if [[ "$source_version" != "$candidate_version" ]]; then
+    [[ "$source_version" == 5 && "$candidate_version" == 6 ]] || {
+      echo "ERROR: untested backup format transition $source_version -> $candidate_version" >&2
+      return 1
+    }
+    # The format-6 contract requires restoring format 5 with its matching
+    # release before migrating the database. A new format must add its own
+    # recovery coverage; do not silently fall back on arbitrary failures.
+    if "${compose[@]}" run --rm --no-deps -T \
+      --user 0:0 --volume "$test_root:/verification:ro,Z" \
+      --entrypoint /usr/local/bin/hubuum-admin candidate-api \
+      --verify-backup "/verification/$backup_name" --log-level error --json \
+      > "$report_path.rejection.log" 2>&1; then
+      echo "ERROR: candidate unexpectedly accepted a format-5 artifact directly" >&2
+      return 1
+    fi
+    grep --fixed-strings --quiet "Unsupported backup version '5'; expected 6" \
+      "$report_path.rejection.log"
+    restore_service="previous-api"
+    recovery_path="matching_release_then_migrate"
+  fi
   args=(
     --verify-backup "/verification/$backup_name"
     --restore-test-database-url "$target_database_url"
     --log-level error
     --json
   )
-  if [[ "$retention" == "keep" ]]; then
+  if [[ "$retention" == "keep" || "$recovery_path" == matching_release_then_migrate ]]; then
     args+=(--keep-restore-test-database)
   fi
   "${compose[@]}" run --rm --no-deps -T \
     --user 0:0 \
     --volume "$test_root:/verification:ro,Z" \
     --entrypoint /usr/local/bin/hubuum-admin \
-    candidate-api "${args[@]}" > "$report_path"
+    "$restore_service" "${args[@]}" > "$report_path"
   jq --exit-status \
     '.result == "passed" and .mode == "isolated_restore" and .restore_test.storage_ready == true' \
     "$report_path" >/dev/null
+  target_cleanup="$(jq --raw-output '.restore_test.target_cleanup' "$report_path")"
+  if [[ "$recovery_path" == matching_release_then_migrate ]]; then
+    "${compose[@]}" run --rm --no-deps -T \
+      --env HUBUUM_DATABASE_URL="$target_database_url" \
+      --entrypoint /usr/local/bin/hubuum-admin candidate-api --migrate \
+      > "$report_path.migration.log" 2>&1
+    "${compose[@]}" run --rm --no-deps -T \
+      --env HUBUUM_DATABASE_URL="$target_database_url" \
+      --entrypoint /usr/local/bin/hubuum-admin candidate-api --database-ready \
+      >> "$report_path.migration.log" 2>&1
+    local target_database="${target_database_url##*/}"
+    target_database="${target_database%%\?*}"
+    # Migration must bind every restored class to revision 1 without inventing
+    # evidence for its existing objects, including history-free restores.
+    [[ "$("${compose[@]}" exec -T postgres psql --username hubuum \
+      --dbname "$target_database" --tuples-only --no-align --set ON_ERROR_STOP=1 \
+      --command "SELECT
+        (SELECT count(*) FROM class_schema_state) = (SELECT count(*) FROM hubuumclass)
+        AND NOT EXISTS (
+          SELECT 1 FROM hubuumclass c
+          LEFT JOIN class_schema_state s ON s.class_id = c.id
+          LEFT JOIN class_schema_revisions r ON r.class_id = c.id AND r.revision = s.active_revision
+          WHERE s.active_revision IS DISTINCT FROM 1 OR r.status IS DISTINCT FROM 'active'
+            OR r.json_schema IS DISTINCT FROM c.json_schema
+            OR r.validate_schema IS DISTINCT FROM c.validate_schema)
+        AND EXISTS (SELECT 1 FROM hubuumobject o JOIN hubuumclass c ON c.id = o.hubuum_class_id
+          WHERE c.validate_schema AND o.data->>'owner' = 'previous')
+        AND NOT EXISTS (SELECT 1 FROM object_schema_evidence)")" == t ]]
+    if [[ "$retention" == reset ]]; then
+      "${compose[@]}" exec -T postgres psql --username hubuum \
+        --dbname "$target_database" --set ON_ERROR_STOP=1 \
+        --command 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' \
+        >> "$report_path.migration.log" 2>&1
+      target_cleanup="schema_reset"
+    fi
+  fi
+  jq --arg path "$recovery_path" --argjson source_version "$source_version" \
+    --argjson candidate_version "$candidate_version" --arg cleanup "$target_cleanup" \
+    '. + {recovery: {path: $path, source_backup_version: $source_version,
+      candidate_backup_version: $candidate_version, candidate_storage_ready: true,
+      target_cleanup: $cleanup}}' "$report_path" > "$report_path.tmp"
+  mv "$report_path.tmp" "$report_path"
 }
 
 seed_previous_release() {
@@ -738,9 +808,9 @@ verify_restore_artifact \
   "$current_backup_file" "$current_restore_database_url" "$current_restore_report" reset
 jq --exit-status '.includes_history == true and .source_version != ""' \
   "$adjacent_restore_report" >/dev/null
-jq --exit-status '.includes_history == false and .restore_test.target_cleanup == "schema_reset"' \
+jq --exit-status '.includes_history == false and .recovery.target_cleanup == "schema_reset"' \
   "$history_free_restore_report" >/dev/null
-jq --exit-status '.includes_history == true and .restore_test.target_cleanup == "schema_reset"' \
+jq --exit-status '.includes_history == true and .recovery.target_cleanup == "schema_reset"' \
   "$current_restore_report" >/dev/null
 
 phase="restored-api-smoke"
