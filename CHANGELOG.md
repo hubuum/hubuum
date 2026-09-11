@@ -23,6 +23,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   next stable release publishes the server alias, use `--tag latest` to follow
   stable releases. Existing installations retain their configured images.
 
+### Fixed
+
+- Capture PostgreSQL backup tables row by row so large current-state and history
+  sections do not fail at PostgreSQL's single JSON-array size limit.
+
 ### Security
 
 - Principal credential, settings, and service-account management now honor the
@@ -31,6 +36,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   principal's credentials or settings, or manage unrelated service accounts.
   External administrators can manage these resources without local admin-group
   membership; self-management and human owner-group permissions are preserved.
+- Related-object and related-class endpoints now apply the selected authorization
+  backend to every returned path vertex and relation before producing contents,
+  totals, or pagination cursors. Graph responses also authorize their edges.
+  Local administrator membership no longer bypasses external descendant policy,
+  and token resource boundaries apply to intermediate vertices. Returned contents
+  retain their captured authorization attributes across concurrent collection
+  moves or edits.
+- **Breaking query-limit change for external authorization only:** Hubuum bounds
+  delegated traversal candidate loading and policy checks at 10,000 candidates.
+  Narrow filters or reduce traversal depth for previously accepted larger external
+  queries before upgrading. Local authorization retains its existing traversal
+  limits and is not subject to this new cap.
+- **Breaking storage-adapter contract change:** External adapters must apply
+  `StorageRelationIdsQuery::max_results()` before materializing relation rows.
+  Update class touching/between and object between queries before using delegated
+  traversal. Existing query constructors and `into_parts()` remain source compatible.
 
 ## [0.0.14] - 2026-09-10
 

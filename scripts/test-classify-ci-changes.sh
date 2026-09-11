@@ -238,6 +238,12 @@ for probe_path in src/extractors/mod.rs src/api/v1/handlers/principals.rs \
   assert_flag "$probe_output" treetop_conformance true
 done
 
+for traversal_path in src/services/authorized_traversal.rs src/services/authorization_resources.rs src/models/traits/user.rs src/tests/search/related_objects.rs; do
+  traversal_output="$(bash "$classifier" "$traversal_path")"
+  assert_flag "$traversal_output" code true
+  assert_flag "$traversal_output" treetop_conformance true
+done
+
 treetop_fixture_output="$(bash "$classifier" \
   docs/treetop/schema.cedarschema \
   docs/treetop/schema.json \
@@ -319,7 +325,8 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/workloads/v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
   crates/hubuum-scale-core/src/lib.rs \
-  crates/hubuum-storage-postgres/src/scale_benchmark.rs)"
+  crates/hubuum-storage-postgres/src/scale_benchmark.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
 assert_flag "$scale_benchmark_output" code true
 assert_flag "$scale_benchmark_output" benchmarks true
 assert_flag "$scale_benchmark_output" runtime_benchmark false

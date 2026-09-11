@@ -1,12 +1,13 @@
 use crate::models::search::QueryOptions;
 use crate::models::token_scope::TokenScope;
 use crate::models::{
-    ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, RelatedObjectForRootRow,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, User, UserID,
+    ClassGraphRow, Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
+    HubuumObject, HubuumObjectRelation, RelatedObjectGraphRow, User, UserID,
 };
 
 use crate::errors::ApiError;
+use crate::permissions::AuthorizationContext;
+use crate::services::authorized_traversal;
 use crate::storage::StorageContext;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
@@ -205,22 +206,12 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
         K: SelfAccessors<HubuumClass>,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_related_classes(
-            backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
-            class.id(),
-            query_options,
-        )
-        .await
-        .map(|(rows, _)| rows)
+        authorized_traversal::list_related_classes(backend, self, class.id(), query_options, scopes)
+            .await
+            .map(|(rows, _)| rows)
     }
 
     async fn classes_related_to_page<C, K>(
@@ -231,19 +222,15 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
         K: SelfAccessors<HubuumClass>,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        let (rows, total) = crate::services::relation_queries::list_related_classes(
+        let (rows, total) = authorized_traversal::list_related_classes(
             backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
+            self,
             class.id(),
             query_options,
+            scopes,
         )
         .await?;
         Ok((
@@ -288,19 +275,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_class_relations_between_ids(
-            backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
-            class_ids,
-        )
-        .await
+        authorized_traversal::list_class_relations_between_ids(backend, self, class_ids, scopes)
+            .await
     }
 
     async fn search_object_relations<C>(
@@ -360,19 +338,15 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_related_objects(
+        authorized_traversal::list_related_objects(
             backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
+            self,
             object.id(),
             query_options,
+            scopes,
         )
         .await
         .map(|(rows, _)| rows)
@@ -386,77 +360,21 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        let (rows, total) = crate::services::relation_queries::list_related_objects(
+        let (rows, total) = authorized_traversal::list_related_objects(
             backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
+            self,
             object.id(),
             query_options,
+            scopes,
         )
         .await?;
         Ok((
             rows,
             total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
         ))
-    }
-
-    async fn list_related_objects_for_roots<C>(
-        &self,
-        backend: &C,
-        root_object_ids: &[i32],
-        include: ExportIncludeRelatedQuery,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
-    where
-        C: StorageContext,
-    {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_related_objects_for_roots(
-            backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
-            root_object_ids,
-            include,
-            false,
-        )
-        .await
-    }
-
-    async fn list_bidirectionally_related_objects_for_roots<C>(
-        &self,
-        backend: &C,
-        root_object_ids: &[i32],
-        max_depth: i32,
-        per_root_cap: i32,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
-    where
-        C: StorageContext,
-    {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_bidirectionally_related_objects_for_roots(
-            backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
-            root_object_ids,
-            max_depth,
-            per_root_cap,
-            false,
-        )
-        .await
     }
 
     async fn object_relations_touching_page<C, O>(
@@ -495,19 +413,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: StorageContext,
+        C: AuthorizationContext,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::relation_queries::list_object_relations_between_ids(
-            backend,
-            crate::services::relation_queries::RelationAccess::new(
-                self.principal_id(),
-                is_admin,
-                scopes,
-            ),
-            object_ids,
-        )
-        .await
+        authorized_traversal::list_object_relations_between_ids(backend, self, object_ids, scopes)
+            .await
     }
 }
 

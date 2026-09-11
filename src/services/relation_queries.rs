@@ -424,11 +424,16 @@ pub(crate) async fn list_class_relations_between_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     class_ids: &[i32],
+    max_results: Option<u32>,
 ) -> Result<Vec<HubuumClassRelation>, ApiError> {
     let query = StorageRelationIdsQuery::new(
         class_ids.iter().copied().map(resource_id_to_storage),
         access.visibility()?,
     );
+    let query = match max_results {
+        Some(limit) => query.with_max_results(limit),
+        None => query,
+    };
     storage_handle(backend)
         .list_class_relations_between_ids(query)
         .await?
@@ -441,11 +446,16 @@ pub(crate) async fn list_object_relations_between_ids(
     backend: &impl StorageContext,
     access: RelationAccess<'_>,
     object_ids: &[i32],
+    max_results: Option<u32>,
 ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
     let query = StorageRelationIdsQuery::new(
         object_ids.iter().copied().map(resource_id_to_storage),
         access.visibility()?,
     );
+    let query = match max_results {
+        Some(limit) => query.with_max_results(limit),
+        None => query,
+    };
     storage_handle(backend)
         .list_object_relations_between_ids(query)
         .await?

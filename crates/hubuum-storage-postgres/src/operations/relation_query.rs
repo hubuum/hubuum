@@ -284,6 +284,7 @@ pub async fn list_object_relations_between_ids(
     runtime: &PostgresRuntime,
     query: StorageRelationIdsQuery,
 ) -> Result<Vec<StorageObjectRelation>, PostgresStorageError> {
+    let max_results = query.max_results();
     let (ids, visibility) = query.into_parts();
     if ids.is_empty() || !visibility.allows_permissions(&[OBJECT_RELATION_PERMISSION]) {
         return Ok(Vec::new());
@@ -295,9 +296,16 @@ pub async fn list_object_relations_between_ids(
                 authorized_collection_ids(connection, &visibility, &[OBJECT_RELATION_PERMISSION])
                     .await?;
             let options = empty_options();
-            let rows = build_object_relation_query(&options, &visibility, &collection_ids, None)?
-                .filter(crate::schema::hubuumobject_relation::from_hubuum_object_id.eq_any(&ids))
-                .filter(crate::schema::hubuumobject_relation::to_hubuum_object_id.eq_any(&ids))
+            let mut records =
+                build_object_relation_query(&options, &visibility, &collection_ids, None)?
+                    .filter(
+                        crate::schema::hubuumobject_relation::from_hubuum_object_id.eq_any(&ids),
+                    )
+                    .filter(crate::schema::hubuumobject_relation::to_hubuum_object_id.eq_any(&ids));
+            if let Some(max_results) = max_results {
+                records = records.limit(i64::from(max_results));
+            }
+            let rows = records
                 .order(crate::schema::hubuumobject_relation::id.asc())
                 .select(ObjectRelationRow::as_select())
                 .load::<ObjectRelationRow>(connection)
@@ -1928,6 +1936,7 @@ async fn class_relations_for_ids(
     query: StorageRelationIdsQuery,
     mode: IdMatch,
 ) -> Result<Vec<StorageClassRelation>, PostgresStorageError> {
+    let max_results = query.max_results();
     let (ids, visibility) = query.into_parts();
     if ids.is_empty() || !visibility.allows_permissions(&[CLASS_RELATION_PERMISSION]) {
         return Ok(Vec::new());
@@ -1947,7 +1956,7 @@ async fn class_relations_for_ids(
                 None,
                 None,
             )?;
-            let records = match mode {
+            let mut records = match mode {
                 IdMatch::Touching => records.filter(
                     crate::schema::hubuumclass_relation::from_hubuum_class_id
                         .eq_any(&ids)
@@ -1957,6 +1966,9 @@ async fn class_relations_for_ids(
                     .filter(crate::schema::hubuumclass_relation::from_hubuum_class_id.eq_any(&ids))
                     .filter(crate::schema::hubuumclass_relation::to_hubuum_class_id.eq_any(&ids)),
             };
+            if let Some(max_results) = max_results {
+                records = records.limit(i64::from(max_results));
+            }
             let rows = records
                 .order(crate::schema::hubuumclass_relation::id.asc())
                 .select(ClassRelationRow::as_select())

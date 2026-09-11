@@ -1002,6 +1002,7 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
+        let max_results = query.max_results();
         let (ids, _) = query.into_parts();
         let ids = ids.into_iter().map(ClassId::from).collect::<BTreeSet<_>>();
         Ok(self
@@ -1013,6 +1014,7 @@ impl RelationQueryStorage for MemoryStorage {
             .filter(|relation| {
                 ids.contains(&relation.from_class_id()) || ids.contains(&relation.to_class_id())
             })
+            .take(max_results.map_or(usize::MAX, |limit| limit as usize))
             .cloned()
             .collect())
     }
@@ -1021,6 +1023,7 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError> {
+        let max_results = query.max_results();
         let (ids, _) = query.into_parts();
         let ids = ids.into_iter().map(ClassId::from).collect::<BTreeSet<_>>();
         Ok(self
@@ -1032,6 +1035,7 @@ impl RelationQueryStorage for MemoryStorage {
             .filter(|relation| {
                 ids.contains(&relation.from_class_id()) && ids.contains(&relation.to_class_id())
             })
+            .take(max_results.map_or(usize::MAX, |limit| limit as usize))
             .cloned()
             .collect())
     }
@@ -1064,6 +1068,7 @@ impl RelationQueryStorage for MemoryStorage {
         &self,
         query: StorageRelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
+        let max_results = query.max_results();
         let (ids, _) = query.into_parts();
         let ids = ids.into_iter().map(ObjectId::from).collect::<BTreeSet<_>>();
         Ok(self
@@ -1075,6 +1080,7 @@ impl RelationQueryStorage for MemoryStorage {
             .filter(|relation| {
                 ids.contains(&relation.from_object_id()) && ids.contains(&relation.to_object_id())
             })
+            .take(max_results.map_or(usize::MAX, |limit| limit as usize))
             .cloned()
             .collect())
     }

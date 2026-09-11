@@ -223,7 +223,12 @@ Required trait: `RelationQueryStorage`.
 Owns relation lists and counts, endpoint-set queries, bounded frontier reads,
 related-class and related-object graphs, and multi-root expansion for exports.
 It must preserve documented direction, path, exclusion, limit, and
-alternative-path semantics.
+alternative-path semantics. `StorageRelationIdsQuery::max_results()` is an
+optional bound on rows materialized by class touching/between and object
+between queries. Apply it in the native read after endpoint selection and
+visibility, preserving ascending relation IDs; zero returns no rows and
+`None` retains complete results. ID sets are typed inputs and must not be
+restricted by public integer-filter list limits.
 
 ### `temporal_history`
 

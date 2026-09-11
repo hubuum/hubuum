@@ -14,7 +14,8 @@ use hubuum_scale_core::{
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::{
-    PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection, with_transaction,
+    PostgresPool, PostgresPoolSettings, PostgresStorageError, build_postgres_pool, with_connection,
+    with_transaction,
 };
 
 const BENCHMARK_PASSWORD: &str = "hubuum-scale-benchmark-disposable-password";
@@ -135,6 +136,7 @@ async fn load_dataset_with_pool(profile: &ScaleProfile, pool: &PostgresPool) -> 
             load_object_relations(connection, &transaction_profile).await?;
             load_authorization(connection, &transaction_profile).await?;
             load_history_and_operations(connection, &transaction_profile).await?;
+            load_history_baselines(connection).await?;
             reset_sequences(connection).await?;
             Ok(())
         },
@@ -783,7 +785,7 @@ async fn load_history_and_operations(
          INSERT INTO events (\n\
            id, event_id, occurred_at, entity_type, entity_id, entity_name, collection_id, action,\n\
            actor_user_id, actor_kind, summary, metadata, schema_version, dispatched_at,\n\
-           initiator_user_id, before_revision, after_revision\n\
+           initiator_user_id, before_revision, after_revision, \"before\", \"after\"\n\
          )\n\
          SELECT n, md5(format('scale-event-%s-{seed}', n))::uuid,\n\
            timestamp '2026-01-01' + n * interval '1 second',\n\
@@ -795,7 +797,10 @@ async fn load_history_and_operations(
            jsonb_build_object('benchmark', true, 'bucket', n % 100), 1,\n\
            timestamp '2026-01-01' + (n + 1) * interval '1 second', 1,\n\
            CASE WHEN n % 3 IN (1, 2) THEN 1 ELSE NULL END,\n\
-           CASE n % 3 WHEN 0 THEN 1 WHEN 1 THEN 2 ELSE NULL END\n\
+           CASE n % 3 WHEN 0 THEN 1 WHEN 1 THEN 2 ELSE NULL END,\n\
+           CASE WHEN n % 3 IN (1, 2) THEN jsonb_build_object('revision', 1) ELSE NULL END,\n\
+           CASE n % 3 WHEN 0 THEN jsonb_build_object('revision', 1)\n\
+             WHEN 1 THEN jsonb_build_object('revision', 2) ELSE NULL END\n\
          FROM generate_series(1, {events}) AS n;",
         principals = profile.totals.principals,
         tasks = overlays.terminal_tasks,
@@ -824,6 +829,62 @@ async fn load_history_and_operations(
             deliveries = overlays.event_deliveries,
         ))
         .await?;
+    Ok(())
+}
+
+async fn load_history_baselines(
+    connection: &mut diesel_async::AsyncPgConnection,
+) -> std::result::Result<(), diesel::result::Error> {
+    connection
+        .batch_execute(include_str!("scale_benchmark/history_baselines.sql"))
+        .await
+}
+
+async fn verify_backup_revision_invariants(
+    connection: &mut diesel_async::AsyncPgConnection,
+) -> std::result::Result<(), PostgresStorageError> {
+    for table in [
+        "collections",
+        "hubuumclass",
+        "hubuumclass_relation",
+        "hubuumobject",
+        "hubuumobject_relation",
+        "export_templates",
+        "remote_targets",
+    ] {
+        let mismatch = diesel::sql_query(format!(
+            "SELECT count(*)::bigint AS value
+             FROM {table} resource FULL JOIN (
+                 SELECT id, min(revision) AS revision, count(*) AS open_count,
+                        bool_or(op = 'D') AS deleted
+                 FROM {table}_history WHERE valid_to IS NULL GROUP BY id
+             ) history USING (id)
+             WHERE resource.id IS NULL OR history.id IS NULL
+                OR resource.revision <> history.revision
+                OR history.open_count <> 1 OR history.deleted"
+        ))
+        .get_result::<CountRow>(connection)
+        .await?;
+        if mismatch.value != 0 {
+            return Err(PostgresStorageError::database(format!(
+                "Scale fixture live revisions disagree with {table}_history"
+            )));
+        }
+    }
+    let mismatch = diesel::sql_query(
+        "SELECT count(*)::bigint AS value FROM events
+         WHERE (before_revision IS NOT NULL AND
+                before_revision IS DISTINCT FROM (\"before\"->>'revision')::bigint)
+            OR (after_revision IS NOT NULL AND
+                after_revision IS DISTINCT FROM (\"after\"->>'revision')::bigint)",
+    )
+    .get_result::<CountRow>(connection)
+    .await?;
+    if mismatch.value != 0 {
+        return Err(PostgresStorageError::database(
+            "Scale fixture audit revision fields disagree with their snapshots",
+        ));
+    }
     Ok(())
 }
 
@@ -1025,6 +1086,13 @@ async fn verify_loaded_dataset(
     if history_max < profile.invariants.minimum_heavy_history_revisions {
         return Err(invalid_data("loaded history-heavy invariant failed"));
     }
+    // Size preflight may legitimately exclude an over-limit backup, so prove
+    // the fixture's revision/history contract independently before any workload.
+    with_connection(pool, async |connection| {
+        verify_backup_revision_invariants(connection).await
+    })
+    .await
+    .map_err(storage_error)?;
     let sparse_visibility = ratio(
         pool,
         "SELECT 100.0 * count(DISTINCT object.id)::DOUBLE PRECISION /\n\
@@ -1077,6 +1145,20 @@ impl ScaleBenchmarkBackend for PostgresScaleBackend {
         manifest: &DatasetManifest,
     ) -> Result<()> {
         verify_loaded_dataset(&self.pool, profile, manifest).await
+    }
+
+    async fn backup_size_lower_bound(&self, ceiling_bytes: u64) -> Result<u64> {
+        with_transaction(
+            &self.pool,
+            async |connection| -> std::result::Result<u64, crate::PostgresStorageError> {
+                connection
+                    .batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                    .await?;
+                crate::operations::backup::backup_size_lower_bound(connection, ceiling_bytes).await
+            },
+        )
+        .await
+        .map_err(storage_error)
     }
 
     async fn prepare_measurement(&self) -> Result<BackendPreparation> {
@@ -1319,4 +1401,139 @@ fn operation_error(operation: &str, error: impl std::fmt::Display) -> Error {
     invalid_data(format!(
         "PostgreSQL scale benchmark failed while {operation}: {error}"
     ))
+}
+
+#[cfg(all(test, feature = "integration-test-support"))]
+mod tests {
+    use super::*;
+    use crate::test_support::integration_test_pool;
+    use rstest::rstest;
+
+    async fn shadow_temporal_tables(
+        connection: &mut diesel_async::AsyncPgConnection,
+    ) -> std::result::Result<(), diesel::result::Error> {
+        // Shadow every resource table and sequence so the seeding SQL
+        // cannot modify another parallel test's persistent fixtures.
+        for resource in [
+            "collections",
+            "hubuumclass",
+            "hubuumclass_relation",
+            "hubuumobject",
+            "hubuumobject_relation",
+            "export_templates",
+            "remote_targets",
+        ] {
+            connection
+                .batch_execute(&format!(
+                    "CREATE TEMP TABLE {resource} (
+                id integer, revision bigint, updated_at timestamp, data jsonb
+             ) ON COMMIT DROP;
+             CREATE TEMP SEQUENCE {resource}_history_seq;
+             CREATE TEMP TABLE {resource}_history (
+                LIKE {resource}, op text, valid_from timestamptz,
+                valid_to timestamptz, actor_id integer, history_id bigint,
+                actor_kind text, initiator_user_id integer, task_id integer
+             ) ON COMMIT DROP;"
+                ))
+                .await?;
+        }
+        connection
+            .batch_execute(
+                "CREATE TEMP TABLE events (before_revision bigint, after_revision bigint,
+            \"before\" jsonb, \"after\" jsonb) ON COMMIT DROP",
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::empty(0, 0, 0)]
+    #[case::below_one_row(3, 0, 1)]
+    #[case::exact_row_boundary(3, 1, 2)]
+    #[case::complete(3, 3, 3)]
+    #[tokio::test]
+    async fn backup_preflight_counts_logical_bytes_until_above_the_ceiling(
+        #[case] rows: u32,
+        #[case] ceiling_rows: u64,
+        #[case] counted_rows: u64,
+    ) {
+        let pool = integration_test_pool(1);
+        with_transaction(
+            &pool,
+            async |connection| -> std::result::Result<(), PostgresStorageError> {
+                shadow_temporal_tables(connection).await?;
+                connection
+                    .batch_execute(&format!(
+                        "INSERT INTO collections
+                     SELECT n, 1, timestamp '2026-01-01', to_jsonb(repeat('x', 4096))
+                     FROM generate_series(1, {rows}) n"
+                    ))
+                    .await?;
+                let logical_row = serde_json::json!({
+                    "id": 1, "revision": 1, "updated_at": "2026-01-01T00:00:00Z",
+                    "data": "x".repeat(4096)
+                });
+                let row_bytes = serde_json::to_vec(&logical_row).unwrap().len() as u64;
+                let bytes = crate::operations::backup::backup_size_lower_bound(
+                    connection,
+                    row_bytes * ceiling_rows,
+                )
+                .await?;
+                assert_eq!(bytes, row_bytes * counted_rows);
+                Ok(())
+            },
+        )
+        .await
+        .expect("bounded backup preflight");
+    }
+
+    #[rstest]
+    #[case("collections")]
+    #[case("hubuumclass")]
+    #[case("hubuumclass_relation")]
+    #[case("hubuumobject")]
+    #[case("hubuumobject_relation")]
+    #[case("export_templates")]
+    #[case("remote_targets")]
+    #[tokio::test]
+    async fn history_baselines_preserve_overlays_and_cover_unversioned_resources(
+        #[case] table: &str,
+    ) {
+        let pool = integration_test_pool(1);
+        with_transaction(
+            &pool,
+            async |connection| -> std::result::Result<(), diesel::result::Error> {
+                shadow_temporal_tables(connection).await?;
+                connection
+                    .batch_execute(&format!(
+                        "INSERT INTO {table} VALUES
+                        (1, 2, '2026-01-02', '{{\"value\":\"current\"}}'),
+                        (2, 1, '2026-01-01', '{{\"value\":\"baseline\"}}');
+                     INSERT INTO {table}_history (id, revision, data, op, valid_from, valid_to)
+                     VALUES
+                        (1, 1, '{{\"value\":\"old\"}}', 'I', '2026-01-01', '2026-01-02'),
+                        (1, 2, '{{\"value\":\"current\"}}', 'U', '2026-01-02', NULL);"
+                    ))
+                    .await?;
+                assert!(verify_backup_revision_invariants(connection).await.is_err(),
+                    "the incomplete fixture must fail even when backup generation is over its ceiling");
+                load_history_baselines(connection).await?;
+                verify_backup_revision_invariants(connection).await.expect("complete history");
+                let rows = diesel::sql_query(format!(
+                    "SELECT concat(id, ':', revision, ':', data->>'value', ':',
+                                   valid_to IS NULL, ':', op) AS value
+                     FROM {table}_history ORDER BY id, revision"
+                ))
+                .load::<TextRow>(connection)
+                .await?;
+                assert_eq!(
+                    rows.into_iter().map(|row| row.value).collect::<Vec<_>>(),
+                    ["1:1:old:f:I", "1:2:current:t:U", "2:1:baseline:t:I"]
+                );
+                Ok(())
+            },
+        )
+        .await
+        .expect("scale history baselines");
+    }
 }

@@ -3,8 +3,10 @@ use crate::permissions::ObjectResourceEndpoint;
 use std::collections::HashMap;
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
 use crate::models::{HubuumClassRelation, HubuumObjectRelation};
 use crate::permissions::ResourceRef;
+use crate::services::catalog;
 use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
@@ -71,6 +73,45 @@ pub(crate) async fn class_relation_authorization_resources(
                 ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
                 ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
             ))
+        })
+        .collect()
+}
+
+pub(crate) async fn class_authorization_resources(
+    backend: &impl StorageContext,
+    principal_id: i32,
+    class_ids: &[i32],
+) -> Result<Vec<ResourceRef>, ApiError> {
+    let mut resources = HashMap::new();
+    // Equality filters accept at most 50 values, even for internal queries.
+    for ids in class_ids.chunks(50) {
+        let query = QueryOptions::new(
+            vec![ParsedQueryParam {
+                field: FilterField::Id,
+                operator: SearchOperator::Equals { is_negated: false },
+                value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+            }],
+            Vec::new(),
+            Some(ids.len()),
+            None,
+            false,
+        )?;
+        let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
+        resources.extend(classes.into_iter().map(|class| {
+            (
+                class.id,
+                ResourceRef::class(class.id, class.collection.id, Some(class.name)),
+            )
+        }));
+    }
+    class_ids
+        .iter()
+        .map(|id| {
+            resources.get(id).cloned().ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "authorization candidate references missing class {id}"
+                ))
+            })
         })
         .collect()
 }

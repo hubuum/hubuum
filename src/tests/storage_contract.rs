@@ -6510,6 +6510,63 @@ async fn delegated_object_aggregation_keeps_one_snapshot_across_authorization_ba
         .expect("delegated aggregate snapshot fixture should be removed");
 }
 
+#[rstest::rstest]
+#[case(0)]
+#[case(1)]
+#[actix_web::test]
+async fn every_available_storage_backend_limits_relation_id_queries(
+    #[case] limit: u32,
+    #[values("class_between", "class_touching", "object_between")] kind: &str,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("limited_relations")).await;
+        let ids = if kind == "object_between" {
+            fixture
+                .objects
+                .iter()
+                .map(|object| ResourceId::new(object.id().id()).unwrap())
+                .collect::<Vec<_>>()
+        } else {
+            fixture
+                .classes
+                .iter()
+                .map(|class| ResourceId::new(class.id().id()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let query = StorageRelationIdsQuery::new(
+            ids,
+            StorageVisibility::new(
+                principal_id(i32::MAX),
+                true,
+                None::<Vec<StorageAuthorizationPermission>>,
+                None,
+            ),
+        )
+        .with_max_results(limit);
+        let count = match kind {
+            "class_between" => backend
+                .list_class_relations_between_ids(query)
+                .await
+                .unwrap()
+                .len(),
+            "class_touching" => backend
+                .list_class_relations_touching_ids(query)
+                .await
+                .unwrap()
+                .len(),
+            "object_between" => backend
+                .list_object_relations_between_ids(query)
+                .await
+                .unwrap()
+                .len(),
+            _ => unreachable!(),
+        };
+        assert_eq!(count, limit as usize);
+        delete_backend_relation_fixture(&backend, fixture).await;
+    }
+}
+
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_relation_queries() {
     let _permit = postgres_permit().await;

@@ -368,6 +368,14 @@ telemetry types remain in the PostgreSQL adapter rather than leaking into
 
 ## Performance Contract
 
+Relation endpoint-set reads must enforce any supplied
+`StorageRelationIdsQuery::max_results()` in their native query before
+materializing rows. Apply the bound after endpoint and visibility selection,
+with ascending relation IDs; zero produces an empty result. An absent bound
+preserves complete results. Typed endpoint IDs do not inherit public
+integer-filter list limits. The shared adapter scenarios cover these bounds
+for both class and object relation reads.
+
 The semantic guarantees do not prescribe SQL, but they must not conceal
 unbounded queries, repeated pool checkout, or accidental per-row work.
 Query-budget tests protect representative database shapes. Benchmarks measure
