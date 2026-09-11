@@ -215,15 +215,29 @@ pub async fn authenticate_bearer_token(
         .unwrap_or(true);
     if last_used_is_stale {
         let id = row.id;
+        let stale_before = observed_at.checked_sub_signed(throttle);
         let updated = runtime
-            .with_connection(async move |conn| {
-                diesel::update(tokens.filter(token_id.eq(id)))
-                    .set(last_used_at.eq(observed_at))
-                    .execute(conn)
-                    .await
+            .with_connection(async move |conn| -> Result<_, PostgresStorageError> {
+                crate::reach_fault_point(
+                    crate::PostgresFaultPoint::AuthenticationBeforeActivityUpdate,
+                    Some(conn),
+                )
+                .await?;
+                // Recheck the current row under PostgreSQL's update lock. A
+                // competing refresh must still be stale relative to this
+                // observation, which also prevents timestamps moving backward.
+                diesel::update(
+                    tokens
+                        .filter(token_id.eq(id))
+                        .filter(last_used_at.is_null().or(last_used_at.le(stale_before))),
+                )
+                .set(last_used_at.eq(observed_at))
+                .execute(conn)
+                .await
+                .map_err(PostgresStorageError::from)
             })
             .await;
-        if updated.is_ok() {
+        if matches!(updated, Ok(1)) {
             observed_last_used = Some(observed_at);
         }
     }
@@ -362,6 +376,9 @@ pub async fn get_authentication_token_scope(
         })
         .await
 }
+
+#[cfg(all(test, feature = "integration-test-support"))]
+mod integration_tests;
 
 #[cfg(test)]
 mod tests {
