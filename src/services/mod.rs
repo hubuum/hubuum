@@ -1,6 +1,7 @@
 pub mod authentication;
 pub(crate) mod authorization;
 pub(crate) mod authorization_resources;
+pub(crate) mod authorized_traversal;
 pub(crate) mod backups;
 pub(crate) mod catalog;
 mod class_relations;

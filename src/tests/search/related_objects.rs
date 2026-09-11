@@ -442,3 +442,198 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
     collection.cleanup().await.unwrap();
     group.delete_without_events(&context.pool).await.unwrap();
 }
+
+#[rstest::rstest]
+#[case::allowed(true, None, false, false, false)]
+#[case::denied_descendant(true, Some(2), false, false, false)]
+#[case::denied_intermediate(true, Some(1), false, false, false)]
+#[case::denied_edge(true, None, true, false, false)]
+#[case::external_scoped_descendant(true, Some(2), false, true, false)]
+#[case::external_scoped_intermediate(true, Some(1), false, true, false)]
+#[case::local_scoped_descendant(false, Some(2), false, true, false)]
+#[case::local_scoped_intermediate(false, Some(1), false, true, false)]
+#[case::local_allowed(false, None, false, false, false)]
+#[case::denied_graph_chord(true, None, false, false, true)]
+#[actix_web::test]
+async fn traversal_authorizes_complete_paths(
+    #[case] external: bool,
+    #[case] denied_vertex: Option<usize>,
+    #[case] denied_edge: bool,
+    #[case] scoped: bool,
+    #[case] star: bool,
+    #[values(false, true)] classes: bool,
+    #[values(false, true)] graph: bool,
+) {
+    use crate::models::TokenResourceScope;
+    use crate::tests::resource_scoped_token;
+
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("traversal_policy").await;
+    let group = create_test_group(&context.pool).await;
+    group
+        .add_member_without_events(&context.pool, &context.admin_user)
+        .await
+        .unwrap();
+    let policy = MockTreetopBackend::new();
+    let allow = |permission, kind, id| {
+        policy.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: permission,
+            resource_kind: kind,
+            resource_id: Some(id),
+            attrs: ResourceFields::default(),
+        })
+    };
+    allow(
+        Permissions::ReadCollection,
+        ResourceKind::Collection,
+        collection.collection.id,
+    );
+    let mut vertices = Vec::new();
+    for index in 0..3 {
+        let class = save_class(&context, &collection, &format!("path_class_{index}")).await;
+        let object = save_object(
+            &context,
+            &collection,
+            &class,
+            &format!("path_object_{index}"),
+            serde_json::json!({"secret": index}),
+        )
+        .await;
+        if scoped || denied_vertex != Some(index) {
+            allow(Permissions::ReadClass, ResourceKind::Class, class.id);
+            allow(Permissions::ReadObject, ResourceKind::Object, object.id);
+        }
+        vertices.push((class, object));
+    }
+    let edges = if star {
+        vec![(0, 1), (0, 2), (1, 2)]
+    } else {
+        vec![(0, 1), (1, 2)]
+    };
+    for (index, (from, to)) in edges.into_iter().enumerate() {
+        let pair = [&vertices[from], &vertices[to]];
+        let relation = relate_classes(&context, &pair[0].0, &pair[1].0).await;
+        let object_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: pair[0].1.id,
+            to_hubuum_object_id: pair[1].1.id,
+            class_relation_id: relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        if (!denied_edge || index != 0) && (!star || index != 2) {
+            allow(
+                Permissions::ReadClassRelation,
+                ResourceKind::ClassRelation,
+                relation.id,
+            );
+            allow(
+                Permissions::ReadObjectRelation,
+                ResourceKind::ObjectRelation,
+                object_relation.id,
+            );
+        }
+    }
+    let token = if scoped {
+        let scopes = vertices
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != denied_vertex)
+            .map(|(_, (class, _))| {
+                TokenResourceScope::Class(crate::models::HubuumClassID::new(class.id).unwrap())
+            })
+            .collect();
+        resource_scoped_token(&context.pool, context.admin_user.id, scopes).await
+    } else {
+        context.admin_token.clone()
+    };
+    let endpoint = if classes {
+        format!(
+            "/api/v1/classes/{}/related/{}",
+            vertices[0].0.id,
+            if graph { "graph" } else { "classes" }
+        )
+    } else {
+        format!(
+            "/api/v1/classes/{}/objects/{}/related/{}",
+            vertices[0].0.id,
+            vertices[0].1.id,
+            if graph { "graph" } else { "objects" }
+        )
+    };
+    let expected_count = if denied_edge || denied_vertex == Some(1) {
+        0
+    } else if denied_vertex == Some(2) {
+        1
+    } else {
+        2
+    };
+    let endpoint = format!(
+        "{endpoint}?include_total=true&limit={}",
+        if graph { 10 } else { 1 }
+    );
+    let policy = Arc::new(policy);
+    if external
+        && !scoped
+        && let Some(index) = denied_vertex
+    {
+        let (class, object) = &vertices[index];
+        let direct = if classes {
+            format!("/api/v1/classes/{}", class.id)
+        } else {
+            format!("/api/v1/classes/{}/{}", class.id, object.id)
+        };
+        let response =
+            get_request_with_permission_backend(&context.pool, &token, &direct, policy.clone())
+                .await;
+        assert_response_status(response, http::StatusCode::FORBIDDEN).await;
+    }
+    let mut next_endpoint = endpoint.clone();
+    let mut actual = Vec::new();
+    loop {
+        let response = if external {
+            get_request_with_permission_backend(
+                &context.pool,
+                &token,
+                &next_endpoint,
+                policy.clone(),
+            )
+            .await
+        } else {
+            get_request(&context.pool, &token, &next_endpoint).await
+        };
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let total = header_value(&response, "X-Total-Count");
+        let cursor = header_value(&response, "X-Next-Cursor");
+        let body: serde_json::Value = test::read_body_json(response).await;
+        let rows = if graph {
+            assert_eq!(body["relations"].as_array().unwrap().len(), expected_count);
+            body[if classes { "classes" } else { "objects" }]
+                .as_array()
+                .unwrap()
+        } else {
+            assert_eq!(total, Some(expected_count.to_string()));
+            body.as_array().unwrap()
+        };
+        actual.extend(rows.iter().map(|row| row["id"].as_i64().unwrap() as i32));
+        if let Some(cursor) = cursor {
+            assert!(
+                !graph && actual.len() < expected_count,
+                "cursor exposes denied or nonexistent rows"
+            );
+            next_endpoint = format!("{endpoint}&cursor={cursor}");
+        } else {
+            break;
+        }
+    }
+    let expected = vertices
+        .iter()
+        .take(expected_count + 1)
+        .skip(usize::from(!graph))
+        .map(|(class, object)| if classes { class.id } else { object.id })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    collection.cleanup().await.unwrap();
+    group.delete_without_events(&context.pool).await.unwrap();
+}

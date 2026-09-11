@@ -31,6 +31,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   principal's credentials or settings, or manage unrelated service accounts.
   External administrators can manage these resources without local admin-group
   membership; self-management and human owner-group permissions are preserved.
+- Related-object and related-class endpoints now apply the selected authorization
+  backend to every returned path vertex and relation before producing contents,
+  totals, or pagination cursors. Graph responses also authorize their edges.
+  Local administrator membership no longer bypasses external descendant policy,
+  and token resource boundaries apply to intermediate vertices.
+- **Breaking query-limit change:** External traversal authorization rejects queries
+  exceeding 10,000 candidates. Narrow filters or reduce traversal depth for
+  previously accepted larger queries before upgrading.
 
 ## [0.0.14] - 2026-09-10
 

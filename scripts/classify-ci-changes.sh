@@ -48,6 +48,8 @@ for path in "$@"; do
       src/extractors/mod.rs | src/api/v1/handlers/principals.rs | \
       src/api/v1/handlers/service_accounts.rs | \
       tests/api_identity_suite/administrative_authorization.rs | \
+      src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
+      src/models/traits/user.rs | src/tests/search/related_objects.rs | \
       tests/api_core_data_suite/object_aggregates/external_authorization.rs)
       treetop_conformance=true
       ;;

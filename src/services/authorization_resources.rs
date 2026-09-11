@@ -3,8 +3,10 @@ use crate::permissions::ObjectResourceEndpoint;
 use std::collections::HashMap;
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
 use crate::models::{HubuumClassRelation, HubuumObjectRelation};
 use crate::permissions::ResourceRef;
+use crate::services::catalog;
 use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
@@ -71,6 +73,51 @@ pub(crate) async fn class_relation_authorization_resources(
                 ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
                 ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
             ))
+        })
+        .collect()
+}
+
+pub(crate) async fn class_authorization_resources(
+    backend: &impl StorageContext,
+    principal_id: i32,
+    class_ids: &[i32],
+) -> Result<Vec<ResourceRef>, ApiError> {
+    if class_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let query = QueryOptions::new(
+        vec![ParsedQueryParam {
+            field: FilterField::Id,
+            operator: SearchOperator::Equals { is_negated: false },
+            value: class_ids
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        }],
+        Vec::new(),
+        Some(class_ids.len()),
+        None,
+        false,
+    )?;
+    let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
+    let resources = classes
+        .into_iter()
+        .map(|class| {
+            (
+                class.id,
+                ResourceRef::class(class.id, class.collection.id, Some(class.name)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    class_ids
+        .iter()
+        .map(|id| {
+            resources.get(id).cloned().ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "authorization candidate references missing class {id}"
+                ))
+            })
         })
         .collect()
 }
