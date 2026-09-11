@@ -38,9 +38,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   and token resource boundaries apply to intermediate vertices. Returned contents
   retain their captured authorization attributes across concurrent collection
   moves or edits.
-- **Breaking query-limit change:** External traversal authorization rejects queries
-  exceeding 10,000 candidates. Narrow filters or reduce traversal depth for
-  previously accepted larger queries before upgrading.
+- **Breaking query-limit change for external authorization only:** Hubuum bounds
+  delegated traversal candidate loading and policy checks at 10,000 candidates.
+  Narrow filters or reduce traversal depth for previously accepted larger external
+  queries before upgrading. Local authorization retains its existing traversal
+  limits and is not subject to this new cap.
 - **Breaking storage-adapter contract change:** External adapters must apply
   `StorageRelationIdsQuery::max_results()` before materializing relation rows.
   Update class touching/between and object between queries before using delegated
