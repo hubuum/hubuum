@@ -43,6 +43,12 @@ The migration gives existing classes revision 1 and preserves their policy.
 Existing enforced objects start pending; other objects are not required.
 Administrators can request revalidation after upgrading.
 
+Deploy the migration during a quiet period. Indexes and the expanded task-kind
+constraint commit atomically with the schema state; lock acquisition is limited
+to five seconds and each statement to sixty seconds. A timeout rolls back the
+whole migration, so retry it after reducing load. The task-kind replacement is
+validated before commit and preserves every previously accepted task kind.
+
 ## API workflow
 
 All routes below are relative to `/api/v1/classes/{class_id}/schema`.

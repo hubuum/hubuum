@@ -57,6 +57,12 @@ for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-h
   assert_flag "$probe_output" container true
 done
 
+for migration_policy_path in scripts/check-migration-check-replacements.py \
+  scripts/test-migration-check-replacements.py; do
+  migration_policy_output="$(bash "$classifier" "$migration_policy_path")"
+  assert_flag "$migration_policy_output" code true
+done
+
 policy_fixture_root="$(mktemp -d)"
 trap 'rm -rf "$policy_fixture_root"' EXIT
 mkdir -p "$policy_fixture_root/src"

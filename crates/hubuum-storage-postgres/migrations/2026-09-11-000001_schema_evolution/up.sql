@@ -1,3 +1,7 @@
+-- Deploy during a quiet period; timeout rolls back this entire migration.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 CREATE TABLE public.class_schema_revisions (
     class_id INTEGER NOT NULL REFERENCES public.hubuumclass(id) ON DELETE CASCADE,
     revision BIGINT NOT NULL CHECK (revision > 0),
@@ -13,7 +17,7 @@ CREATE TABLE public.class_schema_revisions (
     CHECK ((status IN ('active', 'retired')) = (activated_at IS NOT NULL)),
     CHECK ((activated_at IS NOT NULL) = (activation_policy IS NOT NULL))
 );
-CREATE UNIQUE INDEX class_schema_one_active ON public.class_schema_revisions(class_id) WHERE status = 'active';
+CREATE UNIQUE INDEX class_schema_one_active ON public.class_schema_revisions(class_id) WHERE status = 'active'; -- hubuum-compat: bounded-transactional-index
 
 CREATE TABLE public.class_schema_state (
     class_id INTEGER PRIMARY KEY REFERENCES public.hubuumclass(id) ON DELETE CASCADE,
@@ -47,7 +51,7 @@ CREATE TABLE object_schema_evidence (
     validated_at TIMESTAMPTZ NOT NULL,
     FOREIGN KEY (class_id, schema_revision) REFERENCES public.class_schema_revisions(class_id, revision) ON DELETE CASCADE
 );
-CREATE INDEX object_schema_evidence_class ON object_schema_evidence(class_id, schema_revision, valid, object_id);
+CREATE INDEX object_schema_evidence_class ON object_schema_evidence(class_id, schema_revision, valid, object_id); -- hubuum-compat: bounded-transactional-index
 
 CREATE TABLE schema_validation_work (
     task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
@@ -58,16 +62,17 @@ CREATE TABLE schema_validation_work (
     checkpoint JSONB NOT NULL CHECK (jsonb_typeof(checkpoint) = 'object'),
     FOREIGN KEY (class_id, schema_revision) REFERENCES public.class_schema_revisions(class_id, revision) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX schema_validation_work_dedup ON schema_validation_work(class_id, schema_revision, kind) WHERE active;
+CREATE UNIQUE INDEX schema_validation_work_dedup ON schema_validation_work(class_id, schema_revision, kind) WHERE active; -- hubuum-compat: bounded-transactional-index
 
-ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check;
-ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export', 'backup', 'reindex', 'remote_call', 'schema_validation'));
+ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check; -- hubuum-compat: widen-enum-check
+ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export', 'backup', 'reindex', 'remote_call', 'schema_validation')) NOT VALID;
+ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_check;
 
 INSERT INTO public.class_schema_revisions(class_id, revision, json_schema, validate_schema, status, activated_at, activation_policy)
 SELECT id, 1, json_schema, validate_schema, 'active', clock_timestamp(), 'reject_incompatible' FROM public.hubuumclass;
 INSERT INTO public.class_schema_state(class_id, active_revision, last_revision, object_count)
 SELECT c.id, 1, 1, (SELECT count(*) FROM public.hubuumobject o WHERE o.hubuum_class_id=c.id) FROM public.hubuumclass c;
-CREATE INDEX object_schema_scan ON public.hubuumobject(hubuum_class_id, id);
+CREATE INDEX object_schema_scan ON public.hubuumobject(hubuum_class_id, id); -- hubuum-compat: bounded-transactional-index
 -- Existing objects deliberately have no validation evidence.
 
 CREATE FUNCTION hubuum_schema_revision_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
