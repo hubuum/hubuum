@@ -22,7 +22,10 @@ use environment::{constraints, validate_configuration_bounds};
 
 mod client_network;
 mod defaults;
+mod schema_validation;
 mod secret_source;
+use hubuum_domain::JsonSchemaLimits;
+pub use schema_validation::SchemaValidationOptions;
 mod tls_backend;
 mod token_hash;
 pub use client_network::{ClientAllowlist, ClientNetworkParseError, TrustedProxies};
@@ -232,6 +235,14 @@ impl LoginRateLimitBackendKind {
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    #[command(flatten)]
+    #[serde(default)]
+    pub schema_validation: SchemaValidationOptions,
+
+    #[clap(skip)]
+    #[serde(skip)]
+    schema_limits: JsonSchemaLimits,
+
     #[command(flatten)]
     #[serde(default)]
     pub secrets: SecretSourceOptions,
@@ -1230,7 +1241,12 @@ impl AppConfig {
         )?)
     }
 
-    fn validate(self) -> Result<Self, ApiError> {
+    pub(crate) const fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
+    }
+
+    fn validate(mut self) -> Result<Self, ApiError> {
+        self.schema_limits = self.schema_validation.validate()?;
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
                 "actix_workers must be greater than 0".to_string(),
@@ -1773,6 +1789,8 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        schema_validation: SchemaValidationOptions::from_environment()?,
+        schema_limits: JsonSchemaLimits::default(),
         secrets: SecretSourceOptions::from_environment()
             .map_err(|error| ApiError::BadRequest(error.to_string()))?,
         database_url_override: None,

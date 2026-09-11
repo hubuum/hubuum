@@ -9,6 +9,7 @@ fn run(future: impl Future<Output = ()>) {
 
 fn restored(snapshot: StorageBackupSnapshot) -> MemoryStorage {
     MemoryStorage {
+        schema_limits: snapshot.schema_limits(),
         state: Arc::new(RwLock::new(restore(snapshot).unwrap())),
     }
 }
@@ -424,7 +425,7 @@ fn snapshot_with_correlation(correlation: Value) -> StorageBackupSnapshot {
         )
         .unwrap();
     edit_history(
-        capture(&state, true).unwrap(),
+        capture(&state, true, JsonSchemaLimits::default()).unwrap(),
         StorageBackupHistorySection::AuditEvents,
         |rows| {
             set_field(&mut rows[0], "correlation_id", correlation);
@@ -461,4 +462,37 @@ fn restore_preserves_valid_correlation_ids() {
 #[test]
 fn restore_rejects_malformed_correlation_field_types() {
     assert!(restore(snapshot_with_correlation(json!(123))).is_err());
+}
+
+#[test]
+fn custom_schema_budgets_survive_memory_restore() {
+    run(async {
+        let limits = JsonSchemaLimits::builder()
+            .schema_bytes(96 * 1024)
+            .build()
+            .unwrap();
+        let storage = MemoryStorage::with_schema_limits(limits);
+        storage
+            .create_class(
+                StorageClassCreate::builder(
+                    "custom schema",
+                    CollectionId::new(1).unwrap(),
+                    "budget restore",
+                )
+                .schema_policy(StorageClassSchemaPolicy::Advisory(
+                    json!({"description":"x".repeat(70_000)}),
+                ))
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let snapshot = storage.capture_backup_snapshot(true).await.unwrap();
+        let restored = restored(snapshot.clone());
+        assert_eq!(
+            restored.capture_backup_snapshot(true).await.unwrap(),
+            snapshot
+        );
+    });
 }

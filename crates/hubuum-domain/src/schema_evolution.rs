@@ -3,7 +3,7 @@ use std::{fmt, sync::Arc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::json_schema::{BudgetedSchema, compile_json_schema, validate_json_schema};
+use crate::json_schema::{BudgetedSchema, JsonSchemaLimits, compile_json_schema};
 use crate::{ClassId, JsonSchemaError, ResourceRevision, ResourceRevisionError};
 
 /// Positive immutable schema identity, allocated monotonically within a class.
@@ -108,8 +108,15 @@ pub struct CompiledSchema {
 
 impl CompiledSchema {
     pub fn try_new(document: Value) -> Result<Self, JsonSchemaError> {
-        validate_json_schema(&document)?;
-        let validator = compile_json_schema(&document)?;
+        Self::try_new_with_limits(document, JsonSchemaLimits::default())
+    }
+
+    pub fn try_new_with_limits(
+        document: Value,
+        limits: JsonSchemaLimits,
+    ) -> Result<Self, JsonSchemaError> {
+        limits.validate_schema(&document)?;
+        let validator = compile_json_schema(&document, limits)?;
         Ok(Self {
             document,
             validator,
@@ -173,7 +180,11 @@ mod tests {
 
     #[test]
     fn proven_schema_inspection_retains_instance_work_limits() {
-        let schema = CompiledSchema::try_new(json!({"type":"string"})).unwrap();
+        let limits = JsonSchemaLimits::builder()
+            .instance_work(1024)
+            .build()
+            .unwrap();
+        let schema = CompiledSchema::try_new_with_limits(json!({"type":"string"}), limits).unwrap();
         assert!(schema.inspect(&json!("small")).is_ok());
         let error = schema.inspect(&json!("x".repeat(1_048_576))).unwrap_err();
         assert_eq!(error.category(), "schema_mismatch");

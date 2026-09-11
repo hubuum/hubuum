@@ -366,8 +366,11 @@ impl ClassStorage for MemoryStorage {
         command: StorageClassCreate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
-        let policy = StorageValidatedSchemaPolicy::try_new(command.schema_policy().clone())
-            .map_err(StorageValidationError::into_request_error)?;
+        let policy = StorageValidatedSchemaPolicy::try_new_with_limits(
+            command.schema_policy().clone(),
+            self.schema_limits,
+        )
+        .map_err(StorageValidationError::into_request_error)?;
         let mut state = self.state.write().await;
         if !state
             .collections
@@ -463,8 +466,11 @@ impl ClassStorage for MemoryStorage {
                 "Stage, analyze and explicitly activate schema changes for nonempty classes",
             ));
         }
-        let policy = StorageValidatedSchemaPolicy::try_new(schema_policy.clone())
-            .map_err(StorageValidationError::into_request_error)?;
+        let policy = StorageValidatedSchemaPolicy::try_new_with_limits(
+            schema_policy.clone(),
+            self.schema_limits,
+        )
+        .map_err(StorageValidationError::into_request_error)?;
         let description = changes.description().unwrap_or(current.description());
         if name == current.name()
             && collection_id == current.collection_id()
@@ -725,7 +731,8 @@ impl ObjectStorage for MemoryStorage {
         if class.class().validates_schema()
             && let Some(schema) = class.class().json_schema()
         {
-            validate_json_value(schema, command.data())
+            self.schema_limits
+                .validate_value(schema, command.data())
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         let mut state = self.state.write().await;
@@ -834,7 +841,8 @@ impl ObjectStorage for MemoryStorage {
         if class.validates_schema()
             && let Some(schema) = class.json_schema()
         {
-            validate_json_value(schema, &data)
+            self.schema_limits
+                .validate_value(schema, &data)
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         if state.objects.values().any(|object| {
@@ -963,7 +971,8 @@ impl ObjectStorage for MemoryStorage {
         if class.validates_schema()
             && let Some(schema) = class.json_schema()
         {
-            validate_json_value(schema, object.data())
+            self.schema_limits
+                .validate_value(schema, object.data())
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         Ok(())
@@ -986,7 +995,8 @@ impl ObjectStorage for MemoryStorage {
         if class.validates_schema()
             && let Some(schema) = class.json_schema()
         {
-            validate_json_value(schema, command.data())
+            self.schema_limits
+                .validate_value(schema, command.data())
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         Ok(())
@@ -1017,7 +1027,8 @@ impl ObjectStorage for MemoryStorage {
         if class.validates_schema()
             && let Some(schema) = class.json_schema()
         {
-            validate_json_value(schema, data)
+            self.schema_limits
+                .validate_value(schema, data)
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
         Ok(())

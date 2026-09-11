@@ -45,7 +45,7 @@ def main():
     evidence = [json.loads(line.split("SCHEMA_BUDGET_EVIDENCE ", 1)[1])
                 for line in probe.stdout.splitlines()
                 if "SCHEMA_BUDGET_EVIDENCE " in line]
-    if len(evidence) != 10:
+    if len(evidence) != 19:
         sys.stderr.write(probe.stdout)
         raise RuntimeError("The resource-bounded schema probe did not run")
     for record in evidence:

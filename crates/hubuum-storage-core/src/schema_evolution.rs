@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, SubsecRound, Utc};
 use hubuum_domain::{
-    ClassId, CollectionId, CompiledSchema, ObjectId, PrincipalId, ResourceRevision,
-    SchemaReference, SchemaRevision, TaskId,
+    ClassId, CollectionId, CompiledSchema, JsonSchemaLimits, ObjectId, PrincipalId,
+    ResourceRevision, SchemaReference, SchemaRevision, TaskId,
 };
 use hubuum_events_core::EventContext;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use crate::{
 pub struct StorageValidatedSchemaPolicy {
     policy: StorageClassSchemaPolicy,
     compiled: Option<CompiledSchema>,
+    limits: JsonSchemaLimits,
 }
 
 impl std::fmt::Debug for StorageValidatedSchemaPolicy {
@@ -32,23 +33,46 @@ impl std::fmt::Debug for StorageValidatedSchemaPolicy {
 
 impl StorageValidatedSchemaPolicy {
     pub fn try_new(policy: StorageClassSchemaPolicy) -> Result<Self, StorageValidationError> {
+        Self::try_new_with_limits(policy, JsonSchemaLimits::default())
+    }
+
+    pub fn try_new_with_limits(
+        policy: StorageClassSchemaPolicy,
+        limits: JsonSchemaLimits,
+    ) -> Result<Self, StorageValidationError> {
         let compiled = match policy.json_schema() {
+            Some(document) if policy.validates_schema() => Some(
+                CompiledSchema::try_new_with_limits(document.clone(), limits)
+                    .map_err(|error| StorageValidationError::invalid(error.to_string()))?,
+            ),
             Some(document) => {
-                hubuum_domain::validate_json_schema(document)
-                    .map_err(|_| StorageValidationError::invalid("Invalid JSON Schema document"))?;
-                if policy.validates_schema() {
-                    Some(CompiledSchema::try_new(document.clone()).map_err(|_| {
-                        StorageValidationError::invalid(
-                            "Enforced schemas must compile and use only local references",
-                        )
-                    })?)
-                } else {
-                    None
-                }
+                limits
+                    .validate_schema(document)
+                    .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
+                None
             }
             None => None,
         };
-        Ok(Self { policy, compiled })
+        Ok(Self {
+            policy,
+            compiled,
+            limits,
+        })
+    }
+
+    #[must_use]
+    pub const fn limits(&self) -> JsonSchemaLimits {
+        self.limits
+    }
+
+    /// A proof from a different deployment must not bypass the adapter's policy.
+    pub fn ensure_limits(&self, limits: JsonSchemaLimits) -> Result<(), StorageValidationError> {
+        if self.limits != limits {
+            return Err(StorageValidationError::invalid(
+                "Schema policy was validated with different deployment budgets",
+            ));
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -118,6 +142,13 @@ pub struct StorageSchemaRevision {
 
 impl StorageSchemaRevision {
     pub fn from_snapshot(value: Value) -> Result<Self, StorageValidationError> {
+        Self::from_snapshot_with_limits(value, JsonSchemaLimits::default())
+    }
+
+    pub fn from_snapshot_with_limits(
+        value: Value,
+        limits: JsonSchemaLimits,
+    ) -> Result<Self, StorageValidationError> {
         #[derive(Deserialize)]
         struct Snapshot {
             class_id: ClassId,
@@ -132,8 +163,9 @@ impl StorageSchemaRevision {
         }
         let raw: Snapshot = serde_json::from_value(value)
             .map_err(|_| StorageValidationError::invalid("Invalid schema revision snapshot"))?;
-        let policy = StorageValidatedSchemaPolicy::try_new(
+        let policy = StorageValidatedSchemaPolicy::try_new_with_limits(
             StorageClassSchemaPolicy::try_from_parts(raw.json_schema, raw.validate_schema)?,
+            limits,
         )?;
         Self {
             reference: SchemaReference::new(raw.class_id, raw.revision),
@@ -862,6 +894,16 @@ pub struct StorageSchemaBatchLimits {
     object_bytes: usize,
 }
 impl StorageSchemaBatchLimits {
+    /// Keep worker materialization bounds aligned with validated deployment budgets.
+    #[must_use]
+    pub fn for_schema_limits(limits: JsonSchemaLimits) -> Self {
+        Self {
+            rows: 64,
+            bytes: (8 * 1024 * 1024).max(limits.instance_bytes()),
+            object_bytes: limits.instance_bytes(),
+        }
+    }
+
     pub fn try_new(
         rows: usize,
         bytes: usize,
@@ -896,11 +938,7 @@ impl StorageSchemaBatchLimits {
 }
 impl Default for StorageSchemaBatchLimits {
     fn default() -> Self {
-        Self {
-            rows: 64,
-            bytes: 8 * 1024 * 1024,
-            object_bytes: 1024 * 1024,
-        }
+        Self::for_schema_limits(JsonSchemaLimits::default())
     }
 }
 

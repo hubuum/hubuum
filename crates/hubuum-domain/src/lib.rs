@@ -40,7 +40,8 @@ pub use json_patch::{
     MAX_JSON_PATCH_WORK_BYTES,
 };
 pub use json_schema::{
-    JsonSchemaError, JsonSchemaErrorKind, validate_json_schema, validate_json_schema_for_instances,
+    JsonSchemaError, JsonSchemaErrorKind, JsonSchemaLimits, JsonSchemaLimitsBuilder,
+    JsonSchemaLimitsError, validate_json_schema, validate_json_schema_for_instances,
     validate_json_value,
 };
 pub use json_value::{

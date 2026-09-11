@@ -143,11 +143,13 @@ prevents later batches from publishing. Worker errors and graceful-shutdown
 interruptions atomically mark both the task and schema checkpoint as `failed`,
 preserving already committed findings. Class deletion cancels queued work.
 
-Workers default to 64 rows, 8 MiB of serialized JSON per batch, and 1 MiB per
-object. The typed storage limits allow at most 100 rows and 16 MiB per batch.
+Workers default to 64 rows, 8 MiB of serialized JSON per batch, and 2 MiB per
+object. The object ceiling follows `HUBUUM_SCHEMA_MAX_INSTANCE_BYTES`; the batch
+byte ceiling grows to fit one configured object, up to 16 MiB. The typed storage limits allow at most 100 rows and 16 MiB per batch.
 An oversized object is counted as uninspectable and remains pending under an
-enforced schema; it cannot support strict activation. These are fixed worker
-limits, not environment settings. Batch duration depends on schema complexity;
+enforced schema; it cannot support strict activation. The schema and instance
+admission budgets are [deployment settings](json_schema_validation.md), shared
+by writes, imports, workers, and restore validation. Batch duration depends on schema complexity;
 there is no claim of a hard validator execution deadline. PostgreSQL queries
 avoid returning oversized object JSON. The memory worker copies only snapshots
 within the byte budget.
@@ -257,11 +259,11 @@ new sections with both adapters.
 
 Run `cargo bench --bench schema_validation_criterion` for deterministic compiled
 validation and budget-rejection throughput without database or global config.
-Separate groups cover accepted 1/2/4 KiB payloads and rejected 16/256/1024 KiB
+Separate groups cover accepted 16/256/1024 KiB payloads and rejected 2/3/4 MiB
 payloads, each with 128 integer samples. Fixtures check their expected outcome
 before timing. Batches contain at most 64 documents and 8 MiB of serialized JSON;
-reported throughput counts documents inspected. Admission also charges conservative
-JSON escaping estimates and schema complexity, so a serialized object below the
+reported throughput counts documents inspected. Admission also charges actual
+JSON escaping with conservative punctuation estimates and schema complexity, so a serialized object below the
 worker's byte limit can still exceed the validation budget.
 The native storage regression measures the database behavior; benchmark numbers
 are hardware-dependent and do not establish a worst-case lock or CPU deadline.

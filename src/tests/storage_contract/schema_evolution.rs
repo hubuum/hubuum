@@ -1,8 +1,8 @@
 use super::*;
-use hubuum_domain::{SchemaReference, SchemaRevision, TaskId};
+use hubuum_domain::{JsonSchemaLimits, SchemaReference, SchemaRevision, TaskId};
 use hubuum_storage_core::schema_evolution::*;
 use hubuum_storage_core::{StorageAuthenticationTokenScope, StorageMutationOutcome};
-use hubuum_storage_postgres::test_support::claim_task_by_id_with_lease;
+use hubuum_storage_postgres::{PostgresStorage, test_support::claim_task_by_id_with_lease};
 use serde_json::{Value, json};
 
 struct SchemaFixture {
@@ -14,16 +14,28 @@ struct SchemaFixture {
 
 impl SchemaFixture {
     async fn new(kind: StorageBackendKind, documents: Vec<Value>) -> Self {
+        Self::with_limits(kind, documents, JsonSchemaLimits::default()).await
+    }
+    async fn with_limits(
+        kind: StorageBackendKind,
+        documents: Vec<Value>,
+        limits: JsonSchemaLimits,
+    ) -> Self {
         let permit = postgres_permit().await;
         let environment = match kind {
             StorageBackendKind::Memory => BackendTestEnvironment::Memory {
-                storage: MemoryStorage::new(),
+                storage: MemoryStorage::with_schema_limits(limits),
             },
             StorageBackendKind::Postgres => BackendTestEnvironment::Postgres {
                 pool: pool().get_ref().clone(),
             },
         };
-        let backend = environment.storage();
+        let backend = match &environment {
+            BackendTestEnvironment::Memory { .. } => environment.storage(),
+            BackendTestEnvironment::Postgres { pool } => StorageHandle::from_registered_backend(
+                PostgresStorage::unobserved(pool.clone()).with_schema_limits(limits),
+            ),
+        };
         let resources =
             create_backend_object_fixture(&backend, &prefix("schema_evolution"), documents).await;
         Self {
@@ -44,8 +56,9 @@ impl SchemaFixture {
             .stage_schema_revision(StorageSchemaStage::new(
                 self.collection_id(),
                 self.class_id(),
-                StorageValidatedSchemaPolicy::try_new(
+                StorageValidatedSchemaPolicy::try_new_with_limits(
                     StorageClassSchemaPolicy::try_from_parts(Some(schema), enforced).unwrap(),
+                    self.backend.schema_limits(),
                 )
                 .unwrap(),
                 EventContext::system(),
@@ -1329,3 +1342,5 @@ async fn generic_schema_tasks_require_administrator_report_access(
     delete_backend_user(&fixture.backend, user).await;
     fixture.cleanup().await;
 }
+
+mod budgets;

@@ -868,7 +868,7 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         let state = self.state.read().await;
-        crate::backup::capture(&state, include_history)
+        crate::backup::capture(&state, include_history, self.schema_limits)
     }
 }
 
@@ -1033,7 +1033,11 @@ impl RestoreStorage for MemoryStorage {
         let started_at = Utc::now();
         let source_includes_history = document.source_includes_history();
         let (metadata, snapshot) = document.into_parts();
-        let mut replacement = crate::backup::restore(snapshot)?;
+        let mut replacement = crate::backup::restore(
+            snapshot
+                .with_schema_limits(self.schema_limits)
+                .map_err(invalid_contract_value)?,
+        )?;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,
@@ -1457,6 +1461,7 @@ impl ImportStorage for MemoryStorage {
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
@@ -1497,6 +1502,7 @@ impl ImportStorage for MemoryStorage {
 
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
@@ -1546,6 +1552,7 @@ impl ImportStorage for MemoryStorage {
             return Err(invalid_task_lease());
         }
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(state.clone())),
         };
         scratch.record_import_results(results).await?;
@@ -1870,6 +1877,7 @@ impl MemoryStorage {
             return Err(invalid_task_lease());
         }
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(state.clone())),
         };
         let mut next_references = references.clone();

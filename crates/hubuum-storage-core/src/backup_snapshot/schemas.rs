@@ -34,7 +34,10 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
     }
     let mut revisions = BTreeMap::new();
     for row in &sections[&Section::ClassSchemaRevisions] {
-        let revision = StorageSchemaRevision::from_snapshot(row.clone().into_value())?;
+        let revision = StorageSchemaRevision::from_snapshot_with_limits(
+            row.clone().into_value(),
+            snapshot.schema_limits,
+        )?;
         let key = (
             i64::from(revision.reference().class_id().id()),
             revision.reference().revision().get(),
@@ -116,8 +119,9 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
         for row in &history[&crate::StorageBackupHistorySection::ClassSchemaHistory] {
             let id = integer(row.get("id"))?;
             let reference = (integer(row.get("class_id"))?, integer(row.get("revision"))?);
-            let revision = StorageSchemaRevision::from_snapshot(
+            let revision = StorageSchemaRevision::from_snapshot_with_limits(
                 row.get("snapshot").cloned().ok_or_else(invalid)?,
+                snapshot.schema_limits,
             )?;
             let timestamp = row
                 .get("occurred_at")

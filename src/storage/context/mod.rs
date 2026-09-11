@@ -2,8 +2,8 @@ use actix_web::web::Data;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, ComputedFieldDefinitionId, EventDeliveryId, EventSinkId,
-    EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
-    RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
+    EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, JsonSchemaLimits, ObjectId,
+    PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
 use hubuum_storage_memory::MemoryStorage;
 #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
@@ -232,8 +232,17 @@ pub use api::StorageContext;
 pub(crate) use api::storage_handle;
 
 impl StorageHandle {
+    #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn memory() -> Self {
-        Self::from_registered_backend(MemoryStorage::new())
+        Self::memory_with_schema_limits(JsonSchemaLimits::default())
+    }
+
+    pub(crate) fn memory_with_schema_limits(limits: JsonSchemaLimits) -> Self {
+        Self::from_registered_backend(MemoryStorage::with_schema_limits(limits))
+    }
+
+    pub(crate) fn schema_limits(&self) -> JsonSchemaLimits {
+        dispatch_backend!(self, |backend| backend.schema_limits())
     }
 
     #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]

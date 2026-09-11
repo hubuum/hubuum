@@ -737,6 +737,7 @@ impl MemoryState {
 /// Independent process-local implementation of the complete storage contract.
 #[derive(Clone)]
 pub struct MemoryStorage {
+    schema_limits: JsonSchemaLimits,
     state: Arc<RwLock<MemoryState>>,
 }
 
@@ -744,9 +745,23 @@ impl MemoryStorage {
     /// Creates an empty in-memory adapter with Hubuum's required bootstrap records.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_schema_limits(JsonSchemaLimits::default())
+    }
+
+    /// Creates an independent adapter with immutable deployment budgets.
+    #[must_use]
+    pub fn with_schema_limits(schema_limits: JsonSchemaLimits) -> Self {
         Self {
+            schema_limits,
             state: Arc::new(RwLock::new(MemoryState::new())),
         }
+    }
+}
+
+impl MemoryStorage {
+    #[must_use]
+    pub const fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
     }
 }
 

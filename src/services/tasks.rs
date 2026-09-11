@@ -835,12 +835,14 @@ pub async fn execute_schema_validation(
     use hubuum_storage_core::{
         SchemaEvolutionStorage, StorageSchemaBatchLimits, StorageSchemaWorkStatus,
     };
+    let limits =
+        StorageSchemaBatchLimits::for_schema_limits(storage_handle(backend).schema_limits());
     let mut previous = storage_handle(backend)
         .get_schema_work(task.lease.task_id())
         .await?;
     loop {
         let work = storage_handle(backend)
-            .process_schema_work(task.lease.clone(), StorageSchemaBatchLimits::default())
+            .process_schema_work(task.lease.clone(), limits)
             .await?;
         crate::observability::metrics::schema_work_progress(&previous, &work);
         previous = work.clone();

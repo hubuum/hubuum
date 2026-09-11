@@ -12,16 +12,16 @@ fn schema_validation(c: &mut Criterion) {
     }))
     .unwrap();
     // Admission accounts for schema work and conservatively escaped JSON size.
-    // Keep accepted validation distinct from the original oversized workloads.
+    // Exercise the original production-sized fixtures under the deployment defaults.
     for (name, payload_sizes, expected_valid) in [
         (
             "schema_validation_accepted_batches",
-            [1024, 2 * 1024, 4 * 1024],
+            [16 * 1024, 256 * 1024, 1024 * 1024],
             true,
         ),
         (
             "schema_validation_rejected_batches",
-            [16 * 1024, 256 * 1024, 1024 * 1024],
+            [2 * 1024 * 1024, 3 * 1024 * 1024, 4 * 1024 * 1024],
             false,
         ),
     ] {

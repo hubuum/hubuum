@@ -29562,6 +29562,7 @@
       "RunningConfig": {
         "type": "object",
         "required": [
+          "schema_validation",
           "server",
           "database",
           "tasks",
@@ -29607,6 +29608,9 @@
           },
           "restores": {
             "$ref": "#/components/schemas/RestoreConfig"
+          },
+          "schema_validation": {
+            "$ref": "#/components/schemas/SchemaValidationConfig"
           },
           "secrets": {
             "$ref": "#/components/schemas/SecretSourceConfig"
@@ -29835,6 +29839,33 @@
           }
         },
         "additionalProperties": false
+      },
+      "SchemaValidationConfig": {
+        "type": "object",
+        "required": [
+          "max_schema_bytes",
+          "max_expanded_work",
+          "max_instance_bytes",
+          "max_instance_work"
+        ],
+        "properties": {
+          "max_expanded_work": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_instance_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_instance_work": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_schema_bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       },
       "SchemaWorkKind": {
         "type": "string",

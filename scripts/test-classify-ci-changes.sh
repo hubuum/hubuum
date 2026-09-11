@@ -480,6 +480,7 @@ assert_flag "$batch_benchmark" benchmarks true
 for schema_input in scripts/check-json-schema-budget.py \
   crates/hubuum-domain/src/json_schema.rs \
   crates/hubuum-domain/src/json_schema/budget.rs \
+  crates/hubuum-domain/src/json_schema/limits.rs \
   benches/template_schema_concurrency/main.rs; do
   schema_budget_output="$(bash "$classifier" "$schema_input")"
   assert_flag "$schema_budget_output" code true
@@ -496,3 +497,11 @@ assert_flag "$schema_inputs_output" benchmarks true
 schema_manifests_output="$(bash "$classifier" Cargo.toml Cargo.lock crates/hubuum-storage-core/Cargo.toml)"
 assert_flag "$schema_manifests_output" code true
 assert_flag "$schema_manifests_output" container true
+
+for budget_input in src/config/schema_validation.rs src/tests/storage_contract/schema_evolution/budgets.rs; do
+  budget_output="$(bash "$classifier" "$budget_input")"
+  assert_flag "$budget_output" code true
+done
+
+budget_projection="$(bash "$classifier" src/config/running.rs)"
+assert_flag "$budget_projection" openapi true

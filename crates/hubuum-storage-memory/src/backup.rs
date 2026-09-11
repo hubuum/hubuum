@@ -81,6 +81,7 @@ impl Row<'_> {
 pub(super) fn capture(
     state: &MemoryState,
     include_history: bool,
+    schema_limits: JsonSchemaLimits,
 ) -> Result<StorageBackupSnapshot, StorageError> {
     let mut sections = StorageBackupStateSections::new();
     resources::capture(state, &mut sections)?;
@@ -90,14 +91,16 @@ pub(super) fn capture(
     let history = include_history
         .then(|| workflows::capture_history(state))
         .transpose()?;
-    StorageBackupSnapshot::try_new(sections, history).map_err(invalid_contract_value)
+    StorageBackupSnapshot::try_new_with_limits(sections, history, schema_limits)
+        .map_err(invalid_contract_value)
 }
 
 pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+    let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
     resources::restore(&sections, &mut state)?;
-    schemas::restore(&sections, &mut state)?;
+    schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;
     workflows::restore(&sections, &mut state)?;
     workflows::restore_history(

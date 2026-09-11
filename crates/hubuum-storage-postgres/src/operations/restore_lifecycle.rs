@@ -537,6 +537,9 @@ pub async fn apply_restore(
     let includes_history = document.source_includes_history();
     let (metadata, snapshot) = document.into_parts();
     let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
+    let snapshot = snapshot
+        .with_schema_limits(runtime.schema_limits())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let (state_sections, history_sections) = snapshot.into_parts();
 
     runtime

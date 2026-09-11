@@ -1,5 +1,6 @@
 //! PostgreSQL-owned connection and transaction execution.
 
+use hubuum_domain::JsonSchemaLimits;
 use std::fmt;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -84,6 +85,7 @@ impl PostgresObserver for NoopPostgresObserver {}
 /// Runtime dependencies shared by PostgreSQL operations.
 #[derive(Clone)]
 pub struct PostgresRuntime {
+    schema_limits: JsonSchemaLimits,
     pool: PostgresPool,
     task_lease_pool: PostgresPool,
     computed_reindex_batch_size: NonZeroUsize,
@@ -109,6 +111,7 @@ impl PostgresRuntime {
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
+            schema_limits: JsonSchemaLimits::default(),
             task_lease_pool: pool.clone(),
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
@@ -130,6 +133,17 @@ impl PostgresRuntime {
     /// A worker may hold a connection from the execution pool while it renews
     /// its lease. Keeping renewal on a separate pool prevents that safety path
     /// from deadlocking behind the work it is protecting.
+    #[must_use]
+    pub fn with_schema_limits(mut self, schema_limits: JsonSchemaLimits) -> Self {
+        self.schema_limits = schema_limits;
+        self
+    }
+
+    #[must_use]
+    pub const fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
+    }
+
     #[must_use]
     pub fn with_task_lease_pool(mut self, task_lease_pool: PostgresPool) -> Self {
         self.task_lease_pool = task_lease_pool;

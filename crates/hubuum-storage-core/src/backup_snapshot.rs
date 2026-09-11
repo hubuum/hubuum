@@ -1,3 +1,4 @@
+use hubuum_domain::JsonSchemaLimits;
 mod baseline;
 mod revisions;
 mod schemas;
@@ -191,13 +192,37 @@ pub type StorageBackupHistorySections =
 /// Section identities belong to the Hubuum backup format. Every selectable
 /// backend explicitly projects its durable state into these resource-oriented
 /// sections instead of exposing table names or native row values.
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct StorageBackupSnapshot {
+    schema_limits: JsonSchemaLimits,
     state_sections: StorageBackupStateSections,
     history_sections: Option<StorageBackupHistorySections>,
 }
 
+impl PartialEq for StorageBackupSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.state_sections == other.state_sections
+            && self.history_sections == other.history_sections
+    }
+}
+
 impl StorageBackupSnapshot {
+    #[must_use]
+    pub const fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
+    }
+
+    /// Validate the schema proof under a restore destination's deployment budgets.
+    pub fn with_schema_limits(
+        mut self,
+        limits: JsonSchemaLimits,
+    ) -> Result<Self, StorageValidationError> {
+        if self.schema_limits != limits {
+            self.schema_limits = limits;
+            schemas::validate(&self)?;
+        }
+        Ok(self)
+    }
     #[must_use]
     pub const fn includes_history(&self) -> bool {
         self.history_sections.is_some()
@@ -205,7 +230,19 @@ impl StorageBackupSnapshot {
 
     pub fn try_new(
         state_sections: StorageBackupStateSections,
+        history_sections: Option<StorageBackupHistorySections>,
+    ) -> Result<Self, StorageValidationError> {
+        Self::try_new_with_limits(
+            state_sections,
+            history_sections,
+            JsonSchemaLimits::default(),
+        )
+    }
+
+    pub fn try_new_with_limits(
+        state_sections: StorageBackupStateSections,
         mut history_sections: Option<StorageBackupHistorySections>,
+        schema_limits: JsonSchemaLimits,
     ) -> Result<Self, StorageValidationError> {
         let missing_state = StorageBackupStateSection::ALL
             .iter()
@@ -236,6 +273,7 @@ impl StorageBackupSnapshot {
         }
 
         let snapshot = Self {
+            schema_limits,
             state_sections,
             history_sections,
         };

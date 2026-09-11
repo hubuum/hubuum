@@ -768,6 +768,7 @@ pub async fn capture_backup_snapshot(
     runtime: &PostgresRuntime,
     include_history: bool,
 ) -> Result<StorageBackupSnapshot, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime
         .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
             let state = snapshot_state(conn).await?;
@@ -778,7 +779,7 @@ pub async fn capture_backup_snapshot(
             };
             crate::validate_persisted(
                 "backup snapshot",
-                StorageBackupSnapshot::try_new(state, history),
+                StorageBackupSnapshot::try_new_with_limits(state, history, schema_limits),
             )
         })
         .await

@@ -175,7 +175,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             .build()
             .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
         StorageBackendKind::Memory => StorageSettings::memory(),
-    };
+    }
+    .with_schema_limits(config.schema_limits());
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let readiness = storage

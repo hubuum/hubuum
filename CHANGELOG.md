@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Deployment-configurable JSON Schema document, expansion, object-size, and
+  validation-work budgets shared by API writes, imports, workers, and restore
+  tools. The administrator configuration reports effective limits. Default
+  object admission now allows 2 MiB and 268,435,456 estimated work units, and
+  ordinary string bytes are charged for actual JSON escaping. The original
+  16 KiB, 256 KiB, and 1 MiB batch fixtures pass with these defaults. Restart
+  API, worker, and restore processes together when changing the settings; see
+  [JSON Schema validation limits](docs/json_schema_validation.md).
+
 - Single-host installation and updates accept `--tag` for both application
   images and `--server-tag` (alias `--backend-tag`) / `--frontend-tag` for
   independent choices. Image selections persist across updates, including

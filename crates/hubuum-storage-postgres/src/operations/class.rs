@@ -4,7 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{CollectionId, validate_json_schema, validate_json_schema_for_instances};
+use hubuum_domain::{CollectionId, JsonSchemaLimits};
 use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageClass, StorageClassCreate, StorageClassSchemaPolicy, StorageClassSelector,
@@ -130,24 +130,27 @@ pub async fn create_class(
     command: StorageClassCreate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
-    validate_class_create(&command)?;
+    let schema_limits = runtime.schema_limits();
+    validate_class_create(schema_limits, &command)?;
     let context = context.clone();
 
     runtime
         .with_transaction(async move |connection| {
-            create_class_on(connection, command, &context).await
+            create_class_on(schema_limits, connection, command, &context).await
         })
         .await
 }
 
 pub(crate) async fn create_class_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     command: StorageClassCreate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
-    validate_class_create(&command)?;
+    validate_class_create(schema_limits, &command)?;
     let class = insert_class(connection, &command).await?;
-    super::schema_evolution::record_class_schema_on(connection, &class, context).await?;
+    super::schema_evolution::record_class_schema_on(schema_limits, connection, &class, context)
+        .await?;
     let document = AuditDocument::try_new(
         format!("Class '{}' created", class.name),
         None,
@@ -168,16 +171,18 @@ pub async fn update_class(
     changes: StorageClassUpdate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     let target = target.clone();
     let context = context.clone();
     runtime
         .with_transaction(async move |connection| {
-            update_class_on(connection, &target, changes, &context).await
+            update_class_on(schema_limits, connection, &target, changes, &context).await
         })
         .await
 }
 
 pub(crate) async fn update_class_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     target: &StorageResolvedClass,
     changes: StorageClassUpdate,
@@ -195,7 +200,7 @@ pub(crate) async fn update_class_on(
         .await?;
     }
     let before = lock_resolved_class(connection, target).await?;
-    validate_class_update(&changes, &before)?;
+    validate_class_update(schema_limits, &changes, &before)?;
     let update = UpdateClassRow::from(&changes);
     if !update.changes(&before) {
         return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
@@ -209,7 +214,13 @@ pub(crate) async fn update_class_on(
     if before.json_schema != updated.json_schema
         || before.validate_schema != updated.validate_schema
     {
-        super::schema_evolution::record_class_schema_on(connection, &updated, context).await?;
+        super::schema_evolution::record_class_schema_on(
+            schema_limits,
+            connection,
+            &updated,
+            context,
+        )
+        .await?;
     }
     let document = AuditDocument::try_new(
         format!("Class '{}' updated", updated.name),
@@ -392,18 +403,22 @@ pub(crate) async fn lock_resolved_class(
     Ok(locked)
 }
 
-fn validate_class_create(command: &StorageClassCreate) -> Result<(), PostgresStorageError> {
+fn validate_class_create(
+    schema_limits: JsonSchemaLimits,
+    command: &StorageClassCreate,
+) -> Result<(), PostgresStorageError> {
     let Some(schema) = command.json_schema() else {
         return Ok(());
     };
-    validate_json_schema(schema)?;
+    schema_limits.validate_schema(schema)?;
     if command.validates_schema() {
-        validate_json_schema_for_instances(schema)?;
+        schema_limits.validate_schema_for_instances(schema)?;
     }
     Ok(())
 }
 
 fn validate_class_update(
+    schema_limits: JsonSchemaLimits,
     changes: &StorageClassUpdate,
     current: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
@@ -419,9 +434,9 @@ fn validate_class_update(
         .resolve_schema_policy(&current_policy)
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     if let Some(schema) = schema_policy.json_schema() {
-        validate_json_schema(schema)?;
+        schema_limits.validate_schema(schema)?;
         if schema_policy.validates_schema() {
-            validate_json_schema_for_instances(schema)?;
+            schema_limits.validate_schema_for_instances(schema)?;
         }
     }
     Ok(())

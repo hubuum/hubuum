@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use hubuum_domain::JsonSchemaLimits;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -1133,6 +1134,7 @@ where
 }
 
 fn planned_class_schema_policy(
+    schema_limits: JsonSchemaLimits,
     class: &ClassResolution,
 ) -> Result<StorageClassSchemaPolicy, ApiError> {
     let schema_policy =
@@ -1142,7 +1144,9 @@ fn planned_class_schema_policy(
         .json_schema()
         .filter(|_| schema_policy.validates_schema())
     {
-        crate::utilities::json_schema::compile_json_schema(schema)?;
+        schema_limits
+            .validate_schema_for_instances(schema)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
     Ok(schema_policy)
 }
@@ -1191,8 +1195,10 @@ where
     }
 
     if let Some(schema) = input.json_schema.as_ref() {
-        crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
-            PlanningFailure {
+        storage_handle(backend)
+            .schema_limits()
+            .validate_schema(schema)
+            .map_err(|error| PlanningFailure {
                 kind: FailureKind::Validation,
                 item: planned_result(
                     "class",
@@ -1201,8 +1207,7 @@ where
                     Some(input.name.clone()),
                 ),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
     }
     if let Some(reference) = &input.ref_
         && state.classes_by_ref.contains_key(reference)
@@ -1326,16 +1331,17 @@ where
             exists_in_db: true,
         };
         let schema_policy =
-            planned_class_schema_policy(&updated).map_err(|error| PlanningFailure {
-                kind: FailureKind::Validation,
-                item: planned_result(
-                    "class",
-                    "validate",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: error.to_string(),
-            })?;
+            planned_class_schema_policy(storage_handle(backend).schema_limits(), &updated)
+                .map_err(|error| PlanningFailure {
+                    kind: FailureKind::Validation,
+                    item: planned_result(
+                        "class",
+                        "validate",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?;
         let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
             json_schema,
@@ -1414,16 +1420,17 @@ where
             exists_in_db: false,
         };
         let schema_policy =
-            planned_class_schema_policy(&created).map_err(|error| PlanningFailure {
-                kind: FailureKind::Validation,
-                item: planned_result(
-                    "class",
-                    "validate",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: error.to_string(),
-            })?;
+            planned_class_schema_policy(storage_handle(backend).schema_limits(), &created)
+                .map_err(|error| PlanningFailure {
+                    kind: FailureKind::Validation,
+                    item: planned_result(
+                        "class",
+                        "validate",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?;
         let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
             json_schema,
@@ -1490,8 +1497,10 @@ where
     if class.validate_schema
         && let Some(schema) = &class.json_schema
     {
-        crate::utilities::json_schema::validate_json_value(schema, &input.data).map_err(|err| {
-            PlanningFailure {
+        storage_handle(backend)
+            .schema_limits()
+            .validate_value(schema, &input.data)
+            .map_err(|err| PlanningFailure {
                 kind: FailureKind::Validation,
                 item: planned_result(
                     "object",
@@ -1500,8 +1509,7 @@ where
                     Some(format!("{}::{}", class.name, input.name)),
                 ),
                 message: err.to_string(),
-            }
-        })?;
+            })?;
     }
 
     let object_key = (class.id, input.name.clone());

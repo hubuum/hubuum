@@ -60,6 +60,7 @@ impl StorageBackupSnapshot {
             schema_baselines,
         );
         Self {
+            schema_limits: self.schema_limits,
             state_sections: self.state_sections,
             history_sections: Some(history),
         }

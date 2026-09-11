@@ -28,12 +28,16 @@ pub(super) fn capture(
 pub(super) fn restore(
     sections: &StorageBackupStateSections,
     state: &mut MemoryState,
+    schema_limits: JsonSchemaLimits,
 ) -> Result<(), StorageError> {
     state.schema_revisions = sections[&StorageBackupStateSection::ClassSchemaRevisions]
         .iter()
         .map(|row| {
-            let revision = StorageSchemaRevision::from_snapshot(row.clone().into_value())
-                .map_err(invalid_contract_value)?;
+            let revision = StorageSchemaRevision::from_snapshot_with_limits(
+                row.clone().into_value(),
+                schema_limits,
+            )
+            .map_err(invalid_contract_value)?;
             Ok((
                 (
                     revision.reference().class_id().id(),

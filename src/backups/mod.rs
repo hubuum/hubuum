@@ -88,7 +88,11 @@ pub async fn create_backup_document(
         history,
         manifest,
     };
-    crate::restores::validate_document_fields(&mut document).map_err(|error| {
+    crate::restores::validate_document_fields(
+        &mut document,
+        crate::storage::storage_handle(backend).schema_limits(),
+    )
+    .map_err(|error| {
         ApiError::InternalServerError(format!(
             "Captured backup violates the restore contract: {error}"
         ))

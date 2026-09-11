@@ -5,6 +5,7 @@ use diesel::{
     sql_types::{BigInt, Bool, Integer, Jsonb, Nullable, Text},
 };
 use diesel_async::RunQueryDsl;
+use hubuum_domain::JsonSchemaLimits;
 use hubuum_domain::{
     ClassId, CollectionId, ObjectId, PrincipalId, ResourceRevision, SchemaReference,
     SchemaRevision, TaskId,
@@ -124,19 +125,21 @@ async fn state_on(
     diesel::sql_query("SELECT active_revision, object_epoch, object_count FROM class_schema_state WHERE class_id=$1").bind::<Integer,_>(class_id.id()).get_result(connection).await.map_err(PostgresStorageError::from)
 }
 async fn revision_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     target: SchemaReference,
 ) -> Result<StorageSchemaRevision, PostgresStorageError> {
     let row = diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r WHERE class_id=$1 AND revision=$2").bind::<Integer,_>(target.class_id().id()).bind::<BigInt,_>(target.revision().get()).get_result::<JsonRow>(connection).await?;
-    StorageSchemaRevision::from_snapshot(row.value).map_err(invalid)
+    StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)
 }
 async fn active_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     class_id: ClassId,
 ) -> Result<StorageSchemaRevision, PostgresStorageError> {
     let row = diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r JOIN class_schema_state s ON s.class_id=r.class_id AND s.active_revision=r.revision WHERE s.class_id=$1")
         .bind::<Integer, _>(class_id.id()).get_result::<JsonRow>(connection).await?;
-    StorageSchemaRevision::from_snapshot(row.value).map_err(invalid)
+    StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)
 }
 
 pub(crate) async fn schema_event_on(
@@ -168,11 +171,12 @@ pub(crate) async fn schema_event_on(
 }
 
 pub(crate) async fn record_class_schema_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     class: &ClassRow,
     context: &EventContext,
 ) -> Result<(), PostgresStorageError> {
-    let active = active_on(connection, ClassId::new(class.id)?).await?;
+    let active = active_on(schema_limits, connection, ClassId::new(class.id)?).await?;
     let dependent_task = if active.reference().revision() > SchemaRevision::INITIAL {
         super::computed_fields::invalidate_schema_dependency_on(
             connection,
@@ -191,15 +195,17 @@ pub async fn list_schema_revisions(
     runtime: &PostgresRuntime,
     query: StorageSchemaPage,
 ) -> Result<Vec<StorageSchemaRevision>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime.with_read_connection(async move |connection| {
         state_on(connection,query.class_id()).await?;
         let rows = diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r WHERE class_id=$1 AND revision>$2 ORDER BY revision LIMIT $3")
             .bind::<Integer,_>(query.class_id().id()).bind::<BigInt,_>(query.after()).bind::<BigInt,_>(query.limit() as i64).load::<JsonRow>(connection).await?;
-        rows.into_iter().map(|row|StorageSchemaRevision::from_snapshot(row.value).map_err(invalid)).collect()
+        rows.into_iter().map(|row|StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)).collect()
     }).await
 }
 
 async fn class_state_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     class_id: ClassId,
 ) -> Result<StorageClassSchemaState, PostgresStorageError> {
@@ -215,8 +221,11 @@ async fn class_state_on(
         FROM class_schema_state s JOIN class_schema_revisions r ON r.class_id=s.class_id AND r.revision=s.active_revision
         WHERE s.class_id=$1
     "#).bind::<Integer,_>(class_id.id()).get_result::<JsonRow>(connection).await?;
-    let active =
-        StorageSchemaRevision::from_snapshot(row.value["active"].clone()).map_err(invalid)?;
+    let active = StorageSchemaRevision::from_snapshot_with_limits(
+        row.value["active"].clone(),
+        schema_limits,
+    )
+    .map_err(invalid)?;
     let counts = serde_json::from_value(row.value["counts"].clone()).map_err(invalid)?;
     let epoch = row.value["object_epoch"]
         .as_u64()
@@ -227,8 +236,11 @@ pub async fn get_schema_state(
     runtime: &PostgresRuntime,
     class_id: ClassId,
 ) -> Result<StorageClassSchemaState, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime
-        .with_read_connection(async move |connection| class_state_on(connection, class_id).await)
+        .with_read_connection(async move |connection| {
+            class_state_on(schema_limits, connection, class_id).await
+        })
         .await
 }
 
@@ -236,15 +248,20 @@ pub async fn stage_schema_revision(
     runtime: &PostgresRuntime,
     request: StorageSchemaStage,
 ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
+    request
+        .policy()
+        .ensure_limits(runtime.schema_limits())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     runtime.with_transaction(async move |connection| {
         let class=lock_class(connection,request.class_id()).await?; check_collection(&class,request.authorized_collection())?;
         let policy=request.policy().policy();
         let existing=diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r WHERE class_id=$1 AND status IN ('staged','active') AND json_schema IS NOT DISTINCT FROM $2 AND validate_schema=$3 ORDER BY revision DESC LIMIT 1")
             .bind::<Integer,_>(class.id).bind::<Nullable<Jsonb>,_>(policy.json_schema()).bind::<Bool,_>(policy.validates_schema()).get_result::<JsonRow>(connection).await.optional()?;
-        if let Some(row)=existing{return Ok::<_,PostgresStorageError>(StorageMutationOutcome::unchanged(StorageSchemaRevision::from_snapshot(row.value).map_err(invalid)?));}
+        if let Some(row)=existing{return Ok::<_,PostgresStorageError>(StorageMutationOutcome::unchanged(StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)?));}
         let row=diesel::sql_query("WITH allocated AS (UPDATE class_schema_state SET last_revision=last_revision+1 WHERE class_id=$1 RETURNING last_revision), inserted AS (INSERT INTO class_schema_revisions(class_id,revision,json_schema,validate_schema,status,created_by) SELECT $1,last_revision,$2,$3,'staged',$4 FROM allocated RETURNING *) SELECT to_jsonb(inserted) AS value FROM inserted")
             .bind::<Integer,_>(class.id).bind::<Nullable<Jsonb>,_>(policy.json_schema()).bind::<Bool,_>(policy.validates_schema()).bind::<Nullable<Integer>,_>(request.context().actor_user_id().map(PrincipalId::id)).get_result::<JsonRow>(connection).await?;
-        let revision=StorageSchemaRevision::from_snapshot(row.value).map_err(invalid)?;
+        let revision=StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)?;
         let receipt=schema_event_on(connection,&class,Action::Created,request.context(),json!({"schema":revision.reference(),"status":"staged"})).await?;
         Ok::<_,PostgresStorageError>(StorageMutationOutcome::committed(revision,receipt))
     }).await
@@ -256,13 +273,14 @@ pub async fn abandon_schema_revision(
     authorized_collection: CollectionId,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     let context = context.clone();
     runtime.with_transaction(async move |connection|{
-        let class=lock_class(connection,target.class_id()).await?; check_collection(&class,authorized_collection)?;let revision=revision_on(connection,target).await?;
+        let class=lock_class(connection,target.class_id()).await?; check_collection(&class,authorized_collection)?;let revision=revision_on(schema_limits, connection,target).await?;
         if revision.status()==StorageSchemaRevisionStatus::Abandoned{return Ok::<_,PostgresStorageError>(StorageMutationOutcome::unchanged(revision));}
         if revision.status()!=StorageSchemaRevisionStatus::Staged{return Err(PostgresStorageError::conflict("Only staged schema revisions may be abandoned"));}
         diesel::sql_query("UPDATE class_schema_revisions SET status='abandoned' WHERE class_id=$1 AND revision=$2").bind::<Integer,_>(class.id).bind::<BigInt,_>(target.revision().get()).execute(connection).await?;
-        let revision=revision_on(connection,target).await?;
+        let revision=revision_on(schema_limits, connection,target).await?;
         let receipt=schema_event_on(connection,&class,Action::Updated,&context,json!({"schema":target,"status":"abandoned"})).await?;
         Ok::<_,PostgresStorageError>(StorageMutationOutcome::committed(revision,receipt))
     }).await
@@ -378,9 +396,10 @@ pub async fn request_schema_work(
     runtime: &PostgresRuntime,
     request: StorageSchemaWorkRequest,
 ) -> Result<StorageMutationOutcome<StorageSchemaWork>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime.with_transaction(async move |connection|{
-        let class=lock_class(connection,request.target().class_id()).await?; check_collection(&class,request.authorized_collection())?;revision_on(connection,request.target()).await?;
-        if request.kind()==StorageSchemaWorkKind::Revalidation && active_on(connection,request.target().class_id()).await?.reference()!=request.target(){return Err(PostgresStorageError::conflict("Revalidation must target the active schema"));}
+        let class=lock_class(connection,request.target().class_id()).await?; check_collection(&class,request.authorized_collection())?;revision_on(schema_limits, connection,request.target()).await?;
+        if request.kind()==StorageSchemaWorkKind::Revalidation && active_on(schema_limits, connection,request.target().class_id()).await?.reference()!=request.target(){return Err(PostgresStorageError::conflict("Revalidation must target the active schema"));}
         let (work,created)=enqueue_on(connection,&request).await?;if !created{return Ok::<_,PostgresStorageError>(StorageMutationOutcome::unchanged(work));}
         let receipt=schema_event_on(connection,&class,Action::Updated,request.context(),json!({"schema":request.target(),"task_id":work.task_id(),"work_kind":request.kind()})).await?;
         Ok::<_,PostgresStorageError>(StorageMutationOutcome::committed(work,receipt))
@@ -399,14 +418,16 @@ pub async fn activate_schema_revision(
     runtime: &PostgresRuntime,
     request: StorageSchemaActivation,
 ) -> Result<StorageMutationOutcome<StorageSchemaActivationResult>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime
         .with_transaction(async move |connection| {
-            activate_schema_revision_on(connection, request).await
+            activate_schema_revision_on(schema_limits, connection, request).await
         })
         .await
 }
 
 pub(crate) async fn activate_schema_revision_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     request: StorageSchemaActivation,
 ) -> Result<StorageMutationOutcome<StorageSchemaActivationResult>, PostgresStorageError> {
@@ -429,12 +450,12 @@ pub(crate) async fn activate_schema_revision_on(
     if state.active_revision == request.target().revision().get() {
         return Ok::<_, PostgresStorageError>(StorageMutationOutcome::unchanged(
             StorageSchemaActivationResult::new(
-                active_on(connection, request.target().class_id()).await?,
+                active_on(schema_limits, connection, request.target().class_id()).await?,
                 None,
             ),
         ));
     }
-    let target = revision_on(connection, request.target()).await?;
+    let target = revision_on(schema_limits, connection, request.target()).await?;
     if target.status() != StorageSchemaRevisionStatus::Staged
         || target.reference().revision().get() <= state.active_revision
     {
@@ -497,7 +518,7 @@ pub(crate) async fn activate_schema_revision_on(
     let receipt=schema_event_on(connection,&updated,Action::Updated,request.context(),json!({"before_schema_revision":state.active_revision,"dependent_rebuild_task_id":dependent_task,"schema":request.target(),"activation_policy":request.policy(),"object_effect":if target.policy().policy().validates_schema(){"pending"}else{"not_required"},"task_id":work.task_id()})).await?;
     Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
         StorageSchemaActivationResult::new(
-            active_on(connection, request.target().class_id()).await?,
+            active_on(schema_limits, connection, request.target().class_id()).await?,
             Some(work.task_id()),
         )
         .with_dependent_rebuild(dependent_task),
@@ -515,11 +536,17 @@ async fn evidence_on(
 }
 
 pub(crate) async fn record_object_schema_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     object: &ObjectRow,
     context: &EventContext,
 ) -> Result<(), PostgresStorageError> {
-    let active = active_on(connection, ClassId::new(object.hubuum_class_id)?).await?;
+    let active = active_on(
+        schema_limits,
+        connection,
+        ClassId::new(object.hubuum_class_id)?,
+    )
+    .await?;
     let status = active.policy().inspect(&object.data);
     store_result_on(
         connection,
@@ -638,13 +665,14 @@ pub async fn process_schema_work(
     lease: StorageTaskLease,
     limits: StorageSchemaBatchLimits,
 ) -> Result<StorageSchemaWork, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     let started = Instant::now();
     let claimed = task_execution::claimed_task(&lease)?;
     let (mut work,revision,snapshots,context)=runtime.with_transaction(async move |connection|{
         let task=task_execution::live_claimed_task(connection,claimed).await?;
         if task.kind!=StorageTaskKind::SchemaValidation.as_str(){return Err(PostgresStorageError::invalid_input("Task is not schema validation"));}
         let work=work_on(connection,TaskId::new(claimed.id)?).await?;
-        let revision=revision_on(connection,work.target()).await?;
+        let revision=revision_on(schema_limits, connection,work.target()).await?;
         // Read only one bounded page. Oversized JSON is never transferred to the worker.
         let snapshots=diesel::sql_query("WITH page AS MATERIALIZED (SELECT id,revision,data,octet_length(data::text) AS bytes FROM hubuumobject WHERE hubuum_class_id=$1 AND id>$2 AND id<=$3 ORDER BY id LIMIT $4), budgeted AS (SELECT *,sum(CASE WHEN bytes<=$5 THEN bytes ELSE 0 END) OVER (ORDER BY id) AS cumulative FROM page) SELECT id,revision,CASE WHEN bytes<=$5 THEN data ELSE NULL END AS data FROM budgeted WHERE cumulative<=$6 ORDER BY id")
             .bind::<Integer,_>(work.target().class_id().id()).bind::<Integer,_>(work.cursor()).bind::<Integer,_>(work.upper_bound()).bind::<BigInt,_>(limits.rows() as i64).bind::<BigInt,_>(limits.object_bytes() as i64).bind::<BigInt,_>(limits.bytes() as i64).load::<Snapshot>(connection).await?;
@@ -667,7 +695,7 @@ pub async fn process_schema_work(
         let persisted=work_on(connection,work.task_id()).await?;
         task_execution::live_claimed_task(connection,claimed).await?;
         if persisted.cursor()!=work.cursor() || persisted.status()!=StorageSchemaWorkStatus::Running{return Err(PostgresStorageError::conflict("Schema work checkpoint changed"));}
-        if work.kind()==StorageSchemaWorkKind::Revalidation && active_on(connection,work.target().class_id()).await?.reference()!=work.target(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Superseded,&context).await?;}
+        if work.kind()==StorageSchemaWorkKind::Revalidation && active_on(schema_limits, connection,work.target().class_id()).await?.reference()!=work.target(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Superseded,&context).await?;}
         else if results.is_empty(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Complete,&context).await?;}
         else{
             use crate::schema::hubuumobject::dsl as objects;
@@ -739,6 +767,7 @@ pub async fn list_schema_compliance(
     query: StorageSchemaPage,
     status: Option<StorageComplianceStatus>,
 ) -> Result<Vec<StorageObjectCompliance>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime.with_read_connection(async move |connection|{
         let row=diesel::sql_query(r#"
             SELECT jsonb_build_object('active',to_jsonb(r),'objects',(
@@ -757,7 +786,7 @@ pub async fn list_schema_compliance(
             FROM class_schema_state s JOIN class_schema_revisions r ON r.class_id=s.class_id AND r.revision=s.active_revision
             WHERE s.class_id=$1
         "#).bind::<Integer,_>(query.class_id().id()).bind::<BigInt,_>(query.after()).bind::<Nullable<Text>,_>(status.map(StorageComplianceStatus::as_str)).bind::<BigInt,_>(query.limit() as i64).get_result::<JsonRow>(connection).await?;
-        let active=StorageSchemaRevision::from_snapshot(row.value["active"].clone()).map_err(invalid)?;
+        let active=StorageSchemaRevision::from_snapshot_with_limits(row.value["active"].clone(), schema_limits).map_err(invalid)?;
         row.value["objects"].as_array().ok_or_else(||invalid("compliance page"))?.iter().map(|value|{
             let id=ObjectId::new(i32::try_from(value["id"].as_i64().ok_or_else(||invalid("object id"))?).map_err(invalid)?)?;
             let revision=ResourceRevision::new(value["revision"].as_i64().ok_or_else(||invalid("object revision"))?).map_err(invalid)?;
@@ -795,6 +824,7 @@ pub(crate) async fn enqueue_restored_schema_work_on(
 
 /// Validate at the import write boundary while the active class is locked.
 pub(crate) async fn validate_import_object_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     class_id: ClassId,
     collection: Option<CollectionId>,
@@ -804,7 +834,7 @@ pub(crate) async fn validate_import_object_on(
     if let Some(collection) = collection {
         check_collection(&class, collection)?;
     }
-    let active = active_on(connection, class_id).await?;
+    let active = active_on(schema_limits, connection, class_id).await?;
     if active.policy().inspect(data) == StorageComplianceStatus::Invalid {
         return Err(PostgresStorageError::invalid_input(
             "Imported object does not satisfy the active schema revision",
@@ -850,6 +880,7 @@ pub async fn schema_compliance_counts(
 }
 
 pub(crate) async fn activate_import_schema_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     class: &ClassRow,
     intent: &StorageImportSchemaActivation,
@@ -860,13 +891,13 @@ pub(crate) async fn activate_import_schema_on(
         CollectionId::new(class.collection_id)?,
         crate::runtime::ambient_event_context(),
     );
-    let target = revision_on(connection, request.target()).await?;
+    let target = revision_on(schema_limits, connection, request.target()).await?;
     if target.policy().policy() != policy {
         return Err(PostgresStorageError::invalid_input(
             "Imported class policy must exactly match the selected staged schema revision",
         ));
     }
-    activate_schema_revision_on(connection, request)
+    activate_schema_revision_on(schema_limits, connection, request)
         .await?
         .into_value();
     Ok(())

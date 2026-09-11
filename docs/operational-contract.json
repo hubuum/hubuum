@@ -5132,6 +5132,98 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_SCHEMA_MAX_BYTES",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "65536"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1024,
+      "maximum": 1048576,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "16384"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 65536,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2097152"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1024,
+      "maximum": 16777216,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 1073741824,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_SECRET_FILE_ROOT",
       "owner": "operations",
       "exposure": "sensitive_metadata",
@@ -6819,6 +6911,82 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "schema_max_bytes",
+          "long": "schema-max-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "65536"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_expanded_work",
+          "long": "schema-max-expanded-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16384"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_bytes",
+          "long": "schema-max-instance-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2097152"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_work",
+          "long": "schema-max-instance-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "secret_source",
           "long": "secret-source",
@@ -9119,6 +9287,82 @@
     {
       "command": "hubuum-admin",
       "options": [
+        {
+          "id": "schema_max_bytes",
+          "long": "schema-max-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "65536"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_expanded_work",
+          "long": "schema-max-expanded-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16384"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_bytes",
+          "long": "schema-max-instance-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2097152"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_work",
+          "long": "schema-max-instance-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "secret_source",
           "long": "secret-source",

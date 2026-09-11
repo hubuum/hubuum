@@ -1,3 +1,4 @@
+use hubuum_domain::JsonSchemaLimits;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -653,6 +654,18 @@ pub fn verify_backup_document(
     document_bytes: &[u8],
     max_document_bytes: usize,
 ) -> Result<BackupVerificationReport, ApiError> {
+    verify_backup_document_with_limits(
+        document_bytes,
+        max_document_bytes,
+        JsonSchemaLimits::default(),
+    )
+}
+
+pub(crate) fn verify_backup_document_with_limits(
+    document_bytes: &[u8],
+    max_document_bytes: usize,
+    schema_limits: JsonSchemaLimits,
+) -> Result<BackupVerificationReport, ApiError> {
     if document_bytes.is_empty() {
         return Err(ApiError::BadRequest(
             "Backup document must not be empty".to_string(),
@@ -668,7 +681,7 @@ pub fn verify_backup_document(
     let mut document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
         ApiError::BadRequest(format!("Backup document is not valid backup JSON: {error}"))
     })?;
-    let (summary, _) = validation_summary(&mut document)?;
+    let (summary, _) = validation_summary(&mut document, schema_limits)?;
     let section_counts = backup_section_counts(&document)?;
     Ok(BackupVerificationReport {
         report_version: BACKUP_VERIFICATION_REPORT_VERSION,
@@ -824,14 +837,16 @@ fn invalid_restore_capability() -> ApiError {
 
 pub(crate) fn validation_summary(
     document: &mut BackupDocument,
+    schema_limits: JsonSchemaLimits,
 ) -> Result<(RestoreValidationSummary, StorageBackupSnapshot), ApiError> {
-    let summary = validate_document_fields(document)?;
-    let snapshot = StorageBackupSnapshot::try_new(
+    let summary = validate_document_fields(document, schema_limits)?;
+    let snapshot = StorageBackupSnapshot::try_new_with_limits(
         document.state.sections.clone(),
         document
             .history
             .as_ref()
             .map(|history| history.sections.clone()),
+        schema_limits,
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
     Ok((summary, snapshot))
@@ -841,6 +856,7 @@ pub(crate) fn validation_summary(
 /// revision consistency is already proved by the storage capture contract.
 pub(crate) fn validate_document_fields(
     document: &mut BackupDocument,
+    schema_limits: JsonSchemaLimits,
 ) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
     normalize_legacy_class_schema_policies(document);
@@ -849,7 +865,7 @@ pub(crate) fn validate_document_fields(
     validate_backup_timestamps(document)?;
     validate_required_seed_rows(document)?;
     validate_backup_state_references(document)?;
-    validate_backup_class_schemas(document)?;
+    validate_backup_class_schemas(document, schema_limits)?;
     validate_computed_field_definitions(document)?;
     let total_items = item_counts.values().try_fold(0_i64, |total, count| {
         total.checked_add(*count).ok_or_else(|| {
@@ -900,7 +916,10 @@ fn normalize_legacy_class_schema_policies(document: &mut BackupDocument) {
     }));
 }
 
-fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiError> {
+fn validate_backup_class_schemas(
+    document: &BackupDocument,
+    schema_limits: JsonSchemaLimits,
+) -> Result<(), ApiError> {
     let current_classes = required_state_section(document, StorageBackupStateSection::Classes)?;
     let historical_classes = document
         .history
@@ -935,9 +954,9 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
             continue;
         };
         let validation = if schema_policy.validates_schema() {
-            crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
+            schema_limits.validate_schema_for_instances(schema)
         } else {
-            crate::utilities::json_schema::validate_json_schema(schema)
+            schema_limits.validate_schema(schema)
         };
         validation.map_err(|error| {
             let class_id = row.get("id").and_then(Value::as_i64);
@@ -1172,7 +1191,7 @@ pub async fn stage_restore(
                 "Restore document is not valid backup JSON: {error}"
             ))
         })?;
-    let (validation, _) = validation_summary(&mut document)?;
+    let (validation, _) = validation_summary(&mut document, storage_handle(pool).schema_limits())?;
     let document_sha = sha256(&document_bytes);
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
@@ -1388,7 +1407,7 @@ pub async fn confirm_restore(
                 "Staged restore document became invalid: {error}"
             ))
         })?;
-    let (validation, _) = validation_summary(&mut document)?;
+    let (validation, _) = validation_summary(&mut document, storage_handle(pool).schema_limits())?;
     // Confirmation commits only the maintenance transition. A separately
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.
@@ -1515,13 +1534,14 @@ async fn reconcile_restore_from_snapshot(
             return Err(error);
         }
     };
-    let (_, snapshot) = match validation_summary(&mut document) {
-        Ok(validated) => validated,
-        Err(error) => {
-            fail_restore_and_resume(pool, job_id, &error).await?;
-            return Err(error);
-        }
-    };
+    let (_, snapshot) =
+        match validation_summary(&mut document, storage_handle(pool).schema_limits()) {
+            Ok(validated) => validated,
+            Err(error) => {
+                fail_restore_and_resume(pool, job_id, &error).await?;
+                return Err(error);
+            }
+        };
     let metadata = StorageRestoreDocumentMetadata::new(
         document.backup_version,
         document.created_at,

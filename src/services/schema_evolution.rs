@@ -37,12 +37,13 @@ pub async fn stage(
     request: SchemaStageRequest,
     event: &EventContext,
 ) -> Result<SchemaRevisionResponse, ApiError> {
-    let policy = StorageValidatedSchemaPolicy::try_new(
+    let policy = StorageValidatedSchemaPolicy::try_new_with_limits(
         hubuum_storage_core::StorageClassSchemaPolicy::try_from_parts(
             request.json_schema,
             request.validate_schema,
         )
         .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        storage_handle(context).schema_limits(),
     )
     .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     response(

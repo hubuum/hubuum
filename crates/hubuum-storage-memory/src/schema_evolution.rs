@@ -674,6 +674,10 @@ impl SchemaEvolutionStorage for MemoryStorage {
         &self,
         request: StorageSchemaStage,
     ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError> {
+        request
+            .policy()
+            .ensure_limits(self.schema_limits)
+            .map_err(StorageValidationError::into_request_error)?;
         let mut guard = self.state.write().await;
         let mut state = guard.schema_mutation_delta(request.class_id());
         state.check_schema_collection(request.class_id(), request.authorized_collection())?;

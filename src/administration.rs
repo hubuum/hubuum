@@ -1,4 +1,6 @@
+use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use hubuum_domain::JsonSchemaLimits;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -28,7 +30,7 @@ use crate::models::{
 use crate::restores::verify_restored_backup_matches;
 use crate::restores::{
     BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
-    restore_status, stage_restore, verify_backup_document,
+    restore_status, stage_restore, verify_backup_document_with_limits,
 };
 use crate::secrets::{self, DatabaseCredential};
 use crate::services::identity as identity_service;
@@ -60,6 +62,8 @@ const DEFAULT_DATABASE_RUNTIME_ROLE: &str = "hubuum_runtime";
     long_about = None
 )]
 struct AdminCli {
+    #[command(flatten)]
+    schema_validation: SchemaValidationOptions,
     #[command(flatten)]
     secrets: SecretSourceOptions,
 
@@ -269,6 +273,7 @@ enum DatabasePrivilegeRole {
 pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let matches = AdminCli::command().get_matches();
     let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let schema_limits = admin_cli.schema_validation.validate()?;
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
@@ -276,6 +281,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
+            schema_limits,
             path,
             restore_test_database_url: admin_cli.restore_test_database_url.as_deref(),
             configured_database_url: admin_cli.database_url.as_deref(),
@@ -379,7 +385,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 .build()?
         }
         StorageBackendKind::Memory => StorageSettings::memory(),
-    };
+    }.with_schema_limits(schema_limits);
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {
@@ -750,6 +756,7 @@ fn reject_configured_database_target(
 }
 
 struct BackupVerificationOptions<'a> {
+    schema_limits: JsonSchemaLimits,
     path: &'a Path,
     restore_test_database_url: Option<&'a str>,
     configured_database_url: Option<&'a str>,
@@ -766,14 +773,19 @@ async fn verify_backup_file(
     options: BackupVerificationOptions<'_>,
 ) -> Result<BackupVerificationReport, ApiError> {
     let bytes = read_backup_file(options.path, options.max_upload_bytes)?;
-    let report = verify_backup_document(&bytes, options.max_upload_bytes)?;
+    let report = verify_backup_document_with_limits(
+        &bytes,
+        options.max_upload_bytes,
+        options.schema_limits,
+    )?;
     let report = if let Some(database_url) = options.restore_test_database_url {
         if !matches!(options.storage_backend, StorageBackendKind::Postgres) {
             return Err(ApiError::BadRequest(
                 "Isolated restore verification requires the PostgreSQL storage backend".to_string(),
             ));
         }
-        let target = admin_storage_settings(database_url, options.statement_timeout_ms)?;
+        let target = admin_storage_settings(database_url, options.statement_timeout_ms)?
+            .with_schema_limits(options.schema_limits);
         reject_configured_database_target(
             &target,
             options.configured_database_url,
