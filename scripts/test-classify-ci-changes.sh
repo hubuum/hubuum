@@ -230,6 +230,14 @@ assert_flag "$treetop_output" code true
 assert_flag "$treetop_output" markdown false
 assert_flag "$treetop_output" treetop_conformance true
 
+for probe_path in src/extractors/mod.rs src/api/v1/handlers/principals.rs \
+  src/api/v1/handlers/service_accounts.rs \
+  tests/api_identity_suite/administrative_authorization.rs; do
+  probe_output="$(bash "$classifier" "$probe_path")"
+  assert_flag "$probe_output" code true
+  assert_flag "$probe_output" treetop_conformance true
+done
+
 treetop_fixture_output="$(bash "$classifier" \
   docs/treetop/schema.cedarschema \
   docs/treetop/schema.json \

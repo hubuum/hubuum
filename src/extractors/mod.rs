@@ -8,7 +8,7 @@ use crate::models::{
     PrincipalKind, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument,
     StructuredSearchRequest, TokenResourceScope, TokenScope,
 };
-use crate::permissions::{AppContext, PrincipalRef};
+use crate::permissions::AppContext;
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationHuman,
     StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
@@ -321,11 +321,6 @@ fn backend_from_req(req: &HttpRequest) -> Result<AppContext, ApiError> {
     AppContext::from_http_request(req)
 }
 
-async fn selected_backend_is_admin(context: &AppContext, user: &User) -> Result<bool, ApiError> {
-    let principal = PrincipalRef::load(context, user).await?;
-    context.permission_backend().is_admin(&principal).await
-}
-
 /// Build the full authenticated context (accepts scoped tokens).
 async fn build_authenticated(
     backend: &impl StorageContext,
@@ -583,7 +578,7 @@ impl FromRequest for AdminAccess {
                 None => human_unscoped_user(&backend, &token).await?,
             };
 
-            if selected_backend_is_admin(&backend, &user).await? {
+            if backend.is_admin(&user).await? {
                 Ok(AdminAccess { user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
@@ -615,7 +610,7 @@ impl FromRequest for AdminOrSelfAccess {
             };
             let target_id = self_target_id(&path_info)?;
 
-            if selected_backend_is_admin(&backend, &user).await? || user.id == target_id {
+            if backend.is_admin(&user).await? || user.id == target_id {
                 Ok(AdminOrSelfAccess { user })
             } else {
                 debug! {
