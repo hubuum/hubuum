@@ -25,6 +25,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Atomically throttle PostgreSQL token activity refreshes so concurrent
+  authentication with the same stale token performs one `last_used_at` update
+  per throttle window. Delayed observations cannot move activity timestamps
+  backward, and activity-recording failures remain nonfatal to authentication.
 - Capture PostgreSQL backup tables row by row so large current-state and history
   sections do not fail at PostgreSQL's single JSON-array size limit.
 
