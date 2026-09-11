@@ -45,6 +45,9 @@ for path in "$@"; do
       src/models/permissions.rs | src/models/token.rs | \
       src/models/token_scope.rs | src/models/unified_search.rs | \
       src/api/v1/handlers/search.rs | src/tests/permissions/* | \
+      src/extractors/mod.rs | src/api/v1/handlers/principals.rs | \
+      src/api/v1/handlers/service_accounts.rs | \
+      tests/api_identity_suite/administrative_authorization.rs | \
       tests/api_core_data_suite/object_aggregates/external_authorization.rs)
       treetop_conformance=true
       ;;

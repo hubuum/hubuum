@@ -23,6 +23,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   next stable release publishes the server alias, use `--tag latest` to follow
   stable releases. Existing installations retain their configured images.
 
+### Security
+
+- Principal credential, settings, and service-account management now honor the
+  selected permission backend's administrator decision. Local admin-group
+  membership no longer overrides external policy denial to access another
+  principal's credentials or settings, or manage unrelated service accounts.
+  External administrators can manage these resources without local admin-group
+  membership; self-management and human owner-group permissions are preserved.
+
 ## [0.0.14] - 2026-09-10
 
 ### Fixed

@@ -50,7 +50,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn ensure_can_manage_principal_settings(
-    context: &impl StorageContext,
+    context: &AppContext,
     requestor: &Authenticated,
     target_principal_id: i32,
 ) -> Result<(), ApiError> {
@@ -60,7 +60,7 @@ async fn ensure_can_manage_principal_settings(
 
     if requestor.scopes().is_none()
         && requestor.principal.is_human()
-        && requestor.principal.is_admin(context).await?
+        && context.is_admin(&requestor.principal).await?
     {
         return Ok(());
     }
@@ -135,11 +135,11 @@ pub(crate) fn parse_token_list_query(
 /// * human principal — self or admin;
 /// * service account — admin or a **human** member of its owner group.
 async fn ensure_can_manage_principal(
-    context: &impl StorageContext,
+    context: &AppContext,
     requestor: &ManagementAccess,
     principal: &Principal,
 ) -> Result<(), ApiError> {
-    if requestor.user.is_admin(context).await? {
+    if context.is_admin(&requestor.user).await? {
         return Ok(());
     }
     let permitted = match principal.principal_kind() {

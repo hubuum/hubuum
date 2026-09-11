@@ -1,3 +1,4 @@
+mod administrative_authorization;
 mod auth;
 mod groups;
 mod principal_settings;

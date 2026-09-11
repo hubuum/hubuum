@@ -10,8 +10,10 @@ use crate::services::{
 };
 use crate::storage::StorageContext;
 use crate::storage::StorageHandle;
+use crate::traits::PrincipalIdAccessor;
 
 use super::backend::PermissionBackend;
+use super::types::PrincipalRef;
 
 /// Authorization policy selected for one permission-aware application call.
 #[derive(Clone, Copy)]
@@ -76,6 +78,16 @@ impl AppContext {
 
     pub fn permission_backend(&self) -> &dyn PermissionBackend {
         self.permissions.as_ref()
+    }
+
+    /// Resolve administrator authority through the configured permission backend.
+    /// Callers must separately enforce token scope and human-only IAM boundaries.
+    pub(crate) async fn is_admin<S: PrincipalIdAccessor + ?Sized>(
+        &self,
+        subject: &S,
+    ) -> Result<bool, ApiError> {
+        let principal = PrincipalRef::load(self, subject).await?;
+        self.permission_backend().is_admin(&principal).await
     }
 
     pub fn collection_service(&self) -> &CollectionService {

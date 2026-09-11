@@ -21,9 +21,7 @@ use crate::services::identity::{
     get_service_account as get_service_account_record, is_human_owner_group_member,
     list_manageable_service_accounts, update_service_account as update_service_account_record,
 };
-use crate::storage::StorageContext;
 use crate::storage::with_revision_precondition;
-use crate::traits::AuthzSubject;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -37,11 +35,11 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 /// A caller may manage an SA iff they are an admin or a **human** member of the
 /// SA's owner group (a service account never manages itself; see token routes).
 async fn ensure_can_manage(
-    context: &impl StorageContext,
+    context: &AppContext,
     requestor: &ManagementAccess,
     sa: &ServiceAccount,
 ) -> Result<(), ApiError> {
-    if requestor.user.is_admin(context).await?
+    if context.is_admin(&requestor.user).await?
         || is_human_owner_group_member(context, requestor.user.id, sa.owner_group_id).await?
     {
         Ok(())
@@ -78,7 +76,7 @@ pub async fn create_service_account(
 
     // Create authz: admin may create for any group; a non-admin human may create
     // only for a group they already belong to.
-    if !requestor.user.is_admin(&context).await?
+    if !context.is_admin(&requestor.user).await?
         && !is_human_owner_group_member(&context, requestor.user.id, new_sa.owner_group_id.id())
             .await?
     {
@@ -122,7 +120,7 @@ pub async fn list_service_accounts(
     requestor: ManagementAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let is_admin = requestor.user.is_admin(&context).await?;
+    let is_admin = context.is_admin(&requestor.user).await?;
     let params = parse_query_parameter(req.query_string())?;
 
     // Authorization and the optional exact count are applied by the selected
@@ -198,7 +196,7 @@ pub async fn update_service_account(
     // rights to.
     if let Some(new_group) = update.owner_group_id
         && new_group != sa.owner_group_id
-        && !requestor.user.is_admin(&context).await?
+        && !context.is_admin(&requestor.user).await?
         && !is_human_owner_group_member(&context, requestor.user.id, new_group).await?
     {
         return Err(ApiError::Forbidden(
