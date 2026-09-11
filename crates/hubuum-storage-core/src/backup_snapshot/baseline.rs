@@ -37,8 +37,17 @@ impl StorageBackupSnapshot {
                 .collect();
             history.insert(history_section, baselines);
         }
-        let schema_baselines = self.state_sections[&super::StorageBackupStateSection::ClassSchemaRevisions]
-            .iter().enumerate().map(|(index, row)| {
+        let mut schemas = self.state_sections
+            [&super::StorageBackupStateSection::ClassSchemaRevisions]
+            .iter()
+            .collect::<Vec<_>>();
+        schemas.sort_by_key(|row| {
+            (
+                row.get("class_id").and_then(Value::as_i64),
+                row.get("revision").and_then(Value::as_i64),
+            )
+        });
+        let schema_baselines = schemas.into_iter().enumerate().map(|(index, row)| {
                 let id = i64::try_from(index + 1).expect("allocated row count fits i64");
                 StorageBackupRow::try_from_value(json!({
                     "id": id, "class_id": row.get("class_id"), "revision": row.get("revision"),
@@ -113,6 +122,57 @@ mod tests {
         }
         StorageBackupSnapshot::try_new(super::super::with_test_schema_sections(state), None)
             .unwrap()
+    }
+
+    #[test]
+    fn schema_baseline_identity_does_not_depend_on_snapshot_row_order() {
+        let (mut state, _) = state_with_resource(StorageBackupStateSection::Classes).into_parts();
+        let mut second = state[&StorageBackupStateSection::Classes][0]
+            .fields()
+            .clone();
+        second.insert("id".into(), json!(2));
+        state
+            .get_mut(&StorageBackupStateSection::Classes)
+            .unwrap()
+            .push(StorageBackupRow::try_from_value(Value::Object(second)).unwrap());
+        state
+            .get_mut(&StorageBackupStateSection::ClassSchemaRevisions)
+            .unwrap()
+            .clear();
+        state
+            .get_mut(&StorageBackupStateSection::ClassSchemaState)
+            .unwrap()
+            .clear();
+        let state = super::super::with_test_schema_sections(state);
+        let source = StorageBackupSnapshot::try_new(state.clone(), None).unwrap();
+        let mut reordered = state;
+        for rows in reordered.values_mut() {
+            rows.reverse();
+        }
+        let reordered = StorageBackupSnapshot::try_new(reordered, None).unwrap();
+        let at = Utc::now();
+        let original = source.restart_history(at).into_parts().1.unwrap();
+        let reordered = reordered.restart_history(at).into_parts().1.unwrap();
+        assert_eq!(
+            original[&StorageBackupHistorySection::ClassSchemaHistory],
+            reordered[&StorageBackupHistorySection::ClassSchemaHistory],
+        );
+    }
+
+    #[test]
+    fn schema_baselines_share_temporal_history_timestamp_precision() {
+        let at = DateTime::parse_from_rfc3339("2026-09-11T12:00:00.123456789Z")
+            .unwrap()
+            .to_utc();
+        let history = state_with_resource(StorageBackupStateSection::Classes)
+            .restart_history(at)
+            .into_parts()
+            .1
+            .unwrap();
+        assert_eq!(
+            history[&StorageBackupHistorySection::ClassSchemaHistory][0].get("occurred_at"),
+            history[&StorageBackupHistorySection::ClassHistory][0].get("valid_from"),
+        );
     }
 
     #[rstest]
