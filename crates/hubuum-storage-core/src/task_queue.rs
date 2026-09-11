@@ -820,6 +820,7 @@ impl StorageTaskAccess {
 pub struct StorageTaskListQuery {
     submitted_by: Option<PrincipalId>,
     kind: Option<StorageTaskKind>,
+    excluded_kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
     options: QueryOptions,
 }
@@ -835,9 +836,22 @@ impl StorageTaskListQuery {
         Self {
             submitted_by,
             kind,
+            excluded_kind: None,
             status,
             options,
         }
+    }
+
+    /// Exclude a restricted kind before counting or applying pagination.
+    #[must_use]
+    pub const fn excluding_kind(mut self, kind: Option<StorageTaskKind>) -> Self {
+        self.excluded_kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub const fn excluded_kind(&self) -> Option<StorageTaskKind> {
+        self.excluded_kind
     }
 
     #[must_use]
@@ -857,6 +871,7 @@ impl fmt::Debug for StorageTaskListQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StorageTaskListQuery")
+            .field("excluded_kind", &self.excluded_kind)
             .field("has_submitter", &self.submitted_by.is_some())
             .field("kind", &self.kind)
             .field("status", &self.status)

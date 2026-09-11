@@ -1,7 +1,7 @@
 //! Versioned schema lifecycle, compatibility analysis and fenced validation evidence.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, CompiledSchema, ObjectId, PrincipalId, ResourceRevision,
     SchemaReference, SchemaRevision, TaskId,
@@ -103,6 +103,8 @@ impl StorageComplianceStatus {
 }
 
 /// Immutable document and separately mutable, audited revision lifecycle metadata.
+/// Provenance uses microseconds so native columns and embedded history snapshots
+/// retain identical instants across every selectable storage backend.
 #[derive(Clone, Debug)]
 pub struct StorageSchemaRevision {
     reference: SchemaReference,
@@ -137,7 +139,7 @@ impl StorageSchemaRevision {
             reference: SchemaReference::new(raw.class_id, raw.revision),
             policy,
             status: StorageSchemaRevisionStatus::Staged,
-            created_at: raw.created_at,
+            created_at: raw.created_at.trunc_subsecs(6),
             created_by: raw.created_by,
             activated_at: None,
             activation_policy: None,
@@ -159,7 +161,7 @@ impl StorageSchemaRevision {
             reference,
             policy,
             status: StorageSchemaRevisionStatus::Staged,
-            created_at,
+            created_at: created_at.trunc_subsecs(6),
             created_by: context.actor_user_id(),
             activated_at: None,
             activation_policy: None,
@@ -182,7 +184,7 @@ impl StorageSchemaRevision {
             ));
         }
         self.status = status;
-        self.activated_at = activated_at;
+        self.activated_at = activated_at.map(|timestamp| timestamp.trunc_subsecs(6));
         self.activation_policy = activation_policy;
         Ok(self)
     }
@@ -347,7 +349,7 @@ pub struct StorageSchemaEvidence {
 
 impl StorageSchemaEvidence {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         schema: SchemaReference,
         object_revision: ResourceRevision,
         valid: bool,
@@ -357,7 +359,7 @@ impl StorageSchemaEvidence {
             schema,
             object_revision,
             valid,
-            validated_at,
+            validated_at: validated_at.trunc_subsecs(6),
         }
     }
     #[must_use]
@@ -621,6 +623,7 @@ impl StorageSchemaWorkRequest {
 #[serde(rename_all = "snake_case")]
 pub enum StorageSchemaWorkStatus {
     Running,
+    Failed,
     Complete,
     Cancelled,
     Superseded,
@@ -691,7 +694,7 @@ impl TryFrom<SchemaWorkSnapshot> for StorageSchemaWork {
             invalid_samples: raw.invalid_samples,
             elapsed_millis: raw.elapsed_millis,
             batches: raw.batches,
-            created_at: raw.created_at,
+            created_at: raw.created_at.trunc_subsecs(6),
         };
         if work.upper_bound < 0
             || work.cursor < 0
@@ -748,7 +751,7 @@ impl StorageSchemaWork {
             invalid_samples: Vec::new(),
             elapsed_millis: 0,
             batches: 0,
-            created_at: Utc::now(),
+            created_at: Utc::now().trunc_subsecs(6),
         }
     }
     #[must_use]
@@ -991,5 +994,60 @@ impl StorageImportSchemaActivation {
             context,
         )
         .with_proof_task(self.proof_task)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case("2026-09-11T12:34:56.123456789Z")]
+    #[case("2026-09-11T14:34:56.123456789+02:00")]
+    fn schema_provenance_uses_shared_microsecond_precision(#[case] timestamp: &str) {
+        let timestamp = DateTime::parse_from_rfc3339(timestamp)
+            .unwrap()
+            .with_timezone(&Utc);
+        let reference = SchemaReference::new(ClassId::new(1).unwrap(), SchemaRevision::INITIAL);
+        let revision = StorageSchemaRevision::staged(
+            reference,
+            StorageValidatedSchemaPolicy::try_new(
+                StorageClassSchemaPolicy::try_from_parts(None, false).unwrap(),
+            )
+            .unwrap(),
+            &EventContext::system(),
+            timestamp,
+        )
+        .restore_lifecycle(
+            StorageSchemaRevisionStatus::Active,
+            Some(timestamp),
+            Some(StorageSchemaActivationPolicy::RejectIncompatible),
+        )
+        .unwrap();
+        let snapshot = revision.snapshot();
+        assert_eq!(snapshot["created_at"], json!("2026-09-11T12:34:56.123456Z"));
+        assert_eq!(snapshot["activated_at"], snapshot["created_at"]);
+        assert_eq!(
+            StorageSchemaRevision::from_snapshot(snapshot)
+                .unwrap()
+                .created_at(),
+            timestamp.trunc_subsecs(6)
+        );
+    }
+
+    #[test]
+    fn schema_evidence_uses_shared_microsecond_precision() {
+        let timestamp = DateTime::parse_from_rfc3339("2026-09-11T12:34:56.123456789Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let evidence = StorageSchemaEvidence::new(
+            SchemaReference::new(ClassId::new(1).unwrap(), SchemaRevision::INITIAL),
+            ResourceRevision::INITIAL,
+            true,
+            timestamp,
+        );
+        assert_eq!(evidence.validated_at(), timestamp.trunc_subsecs(6));
     }
 }

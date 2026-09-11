@@ -38,7 +38,7 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
         }
         Some(mut values) => Some(TaskKind::from_db(values.remove(0).as_str()).map_err(|_| {
             ApiError::BadRequest(
-                "invalid kind filter; expected one of import, export, backup, reindex, remote_call"
+                "invalid kind filter; expected one of import, export, backup, reindex, remote_call, schema_validation"
                     .to_string(),
             )
         })?),
@@ -84,7 +84,7 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
     tag = "tasks",
     security(("bearer_auth" = [])),
     params(
-        ("kind" = String, Query, description = "Optional task kind filter (import|export|backup|reindex|remote_call)"),
+        ("kind" = String, Query, description = "Optional task kind filter (import|export|backup|reindex|remote_call|schema_validation; schema tasks require administrator access)"),
         ("status" = String, Query, description = "Optional task status filter"),
         ("submitted_by" = i32, Query, description = "Optional submitter user id filter (effective only for admins)"),
         ("limit" = usize, Query, description = "Cursor page size"),
@@ -124,6 +124,7 @@ pub async fn get_tasks(
             submitted_by_filter,
             filters.kind,
             filters.status,
+            (!is_admin || requestor.scopes().is_some()).then_some(TaskKind::SchemaValidation),
             search_params.clone(),
         )
         .await?
@@ -135,6 +136,7 @@ pub async fn get_tasks(
             submitted_by_filter,
             filters.kind,
             filters.status,
+            (!is_admin || requestor.scopes().is_some()).then_some(TaskKind::SchemaValidation),
             candidate_options,
         )
         .await?;
@@ -223,6 +225,9 @@ pub async fn get_task(
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
     let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    if task.kind == TaskKind::SchemaValidation.as_str() && requestor.scopes().is_some() {
+        return Err(ApiError::NotFound("Task not found".into()));
+    }
     let export_output = if task.kind == TaskKind::Export.as_str() {
         export_output_summary(&context, task_id).await?
     } else {
@@ -263,7 +268,10 @@ pub async fn get_task_events(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    load_authorized_task(&context, &requestor.principal, task_id).await?;
+    let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    if task.kind == TaskKind::SchemaValidation.as_str() && requestor.scopes().is_some() {
+        return Err(ApiError::NotFound("Task not found".into()));
+    }
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) = list_task_events(&context, task_id, search_params).await?;

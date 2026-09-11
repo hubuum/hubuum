@@ -86,6 +86,7 @@ pub enum SchemaWorkKind {
 #[serde(rename_all = "snake_case")]
 pub enum SchemaWorkStatus {
     Running,
+    Failed,
     Complete,
     Cancelled,
     Superseded,

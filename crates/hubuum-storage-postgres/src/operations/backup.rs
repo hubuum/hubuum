@@ -175,7 +175,10 @@ fn logicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresSto
     Ok(())
 }
 
-fn physicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresStorageError> {
+fn physicalize_timestamps(
+    row: &mut Map<String, Value>,
+    timezone_aware: bool,
+) -> Result<(), PostgresStorageError> {
     for (field, value) in row {
         if !is_timestamp_field(field) || value.is_null() {
             continue;
@@ -190,7 +193,7 @@ fn physicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresSt
                 "Logical timestamp field '{field}' must be RFC 3339 with an offset: {error}"
             ))
         })?;
-        if matches!(field.as_str(), "valid_from" | "valid_to") {
+        if timezone_aware || matches!(field.as_str(), "valid_from" | "valid_to") {
             *value = Value::String(
                 utc.with_timezone(&Utc)
                     .to_rfc3339_opts(SecondsFormat::AutoSi, true),
@@ -430,7 +433,15 @@ pub(crate) fn state_row_to_postgres(
     if section == StorageBackupStateSection::CollectionPermissionGrants {
         physicalize_permission_grant(object)?;
     }
-    physicalize_timestamps(object)?;
+    physicalize_timestamps(
+        object,
+        matches!(
+            section,
+            StorageBackupStateSection::ClassSchemaRevisions
+                | StorageBackupStateSection::ClassSchemaState
+                | StorageBackupStateSection::ObjectSchemaEvidence
+        ),
+    )?;
     Ok(row)
 }
 
@@ -470,7 +481,10 @@ pub(crate) fn history_row_to_postgres(
     }
     reject_physical_fields(object, history_field_mappings(section))?;
     rename_fields(object, history_field_mappings(section), false)?;
-    physicalize_timestamps(object)?;
+    physicalize_timestamps(
+        object,
+        section == StorageBackupHistorySection::ClassSchemaHistory,
+    )?;
     Ok(row)
 }
 
@@ -780,6 +794,33 @@ mod tests {
         state_row_to_logical, state_row_to_postgres, validate_snapshot_table,
     };
     use hubuum_storage_core::{StorageBackupHistorySection, StorageBackupStateSection};
+
+    #[rstest]
+    #[case::revision(StorageBackupStateSection::ClassSchemaRevisions, "created_at")]
+    #[case::activation(StorageBackupStateSection::ClassSchemaRevisions, "activated_at")]
+    #[case::evidence(StorageBackupStateSection::ObjectSchemaEvidence, "validated_at")]
+    fn schema_restore_preserves_explicit_timestamp_offsets(
+        #[case] section: StorageBackupStateSection,
+        #[case] field: &str,
+    ) {
+        let restored =
+            state_row_to_postgres(section, json!({field: "2026-09-11T14:34:56.123456+02:00"}))
+                .unwrap();
+        assert_eq!(restored[field], json!("2026-09-11T12:34:56.123456Z"));
+    }
+
+    #[test]
+    fn schema_history_restore_preserves_occurrence_offset() {
+        let restored = history_row_to_postgres(
+            StorageBackupHistorySection::ClassSchemaHistory,
+            json!({"occurred_at": "2026-09-11T14:34:56.123456+02:00"}),
+        )
+        .unwrap();
+        assert_eq!(
+            restored["occurred_at"],
+            json!("2026-09-11T12:34:56.123456Z")
+        );
+    }
 
     #[cfg(feature = "integration-test-support")]
     #[tokio::test]

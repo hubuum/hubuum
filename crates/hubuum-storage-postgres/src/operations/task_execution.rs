@@ -27,6 +27,7 @@ use uuid::Uuid;
 use crate::operations::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
+use super::schema_evolution::mark_schema_work_failed_on;
 use super::task_rows::TaskRow;
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
@@ -487,6 +488,14 @@ pub async fn fail_task(
             .await?;
         runtime.record_computed_rebuild_finished("failed", Duration::ZERO);
         row
+    } else if kind == StorageTaskKind::SchemaValidation {
+        runtime
+            .with_transaction(async move |connection| {
+                live_claimed_task(connection, claimed).await?;
+                mark_schema_work_failed_on(connection, TaskId::new(claimed.id)?).await?;
+                finalize_task_connection(connection, claimed, update, event).await
+            })
+            .await?
     } else {
         finalize_task(runtime, claimed, update, event, None).await?
     };

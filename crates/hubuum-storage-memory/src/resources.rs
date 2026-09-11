@@ -1,5 +1,6 @@
 use super::*;
 use crate::execution::enforce_memory_revision_precondition;
+use hubuum_storage_core::StorageValidatedSchemaPolicy;
 
 #[async_trait]
 impl CollectionStorage for MemoryStorage {
@@ -365,6 +366,8 @@ impl ClassStorage for MemoryStorage {
         command: StorageClassCreate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
+        let policy = StorageValidatedSchemaPolicy::try_new(command.schema_policy().clone())
+            .map_err(StorageValidationError::into_request_error)?;
         let mut state = self.state.write().await;
         if !state
             .collections
@@ -421,6 +424,7 @@ impl ClassStorage for MemoryStorage {
             Some(class.revision()),
         )?;
         state.classes.insert(id, class.clone());
+        state.schema_record_class(&class, StorageHistoryOperation::Create, context, policy)?;
         state.append_history(
             MemoryHistoryValue::Class(class.clone()),
             StorageHistoryOperation::Create,
@@ -459,6 +463,8 @@ impl ClassStorage for MemoryStorage {
                 "Stage, analyze and explicitly activate schema changes for nonempty classes",
             ));
         }
+        let policy = StorageValidatedSchemaPolicy::try_new(schema_policy.clone())
+            .map_err(StorageValidationError::into_request_error)?;
         let description = changes.description().unwrap_or(current.description());
         if name == current.name()
             && collection_id == current.collection_id()
@@ -515,6 +521,7 @@ impl ClassStorage for MemoryStorage {
             Some(updated.revision()),
         )?;
         state.classes.insert(id.id(), updated.clone());
+        state.schema_record_class(&updated, StorageHistoryOperation::Update, context, policy)?;
         state.append_history(
             MemoryHistoryValue::Class(updated.clone()),
             StorageHistoryOperation::Update,

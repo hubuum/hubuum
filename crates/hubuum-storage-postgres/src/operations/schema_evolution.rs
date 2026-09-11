@@ -280,6 +280,31 @@ async fn work_on(
     .await?;
     serde_json::from_value(row.value).map_err(invalid)
 }
+pub(super) async fn mark_schema_work_failed_on(
+    connection: &mut PostgresConnection,
+    task_id: TaskId,
+) -> Result<(), PostgresStorageError> {
+    let row = diesel::sql_query(
+        "SELECT checkpoint AS value FROM schema_validation_work WHERE task_id=$1 FOR UPDATE",
+    )
+    .bind::<Integer, _>(task_id.id())
+    .get_result::<JsonRow>(connection)
+    .await
+    .optional()?;
+    if let Some(row) = row {
+        let mut work: StorageSchemaWork = serde_json::from_value(row.value).map_err(invalid)?;
+        let epoch = state_on(connection, work.target().class_id())
+            .await?
+            .object_epoch;
+        work.finish(
+            StorageSchemaWorkStatus::Failed,
+            u64::try_from(epoch).map_err(invalid)?,
+        );
+        save_work_on(connection, &work).await?;
+    }
+    Ok(())
+}
+
 async fn save_work_on(
     connection: &mut PostgresConnection,
     work: &StorageSchemaWork,

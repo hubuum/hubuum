@@ -335,6 +335,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         query: StorageTaskListQuery,
     ) -> Result<StoragePage<StorageTask>, StorageError> {
+        let excluded_kind = query.excluded_kind();
         let (submitted_by, kind, status, options) = query.into_parts();
         let state = self.state.read().await;
         let rows = state
@@ -343,6 +344,7 @@ impl TaskQueueStorage for MemoryStorage {
             .filter(|task| task.deleted_at.is_none())
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
+            .filter(|task| excluded_kind != Some(task.kind))
             .filter(|task| status.is_none_or(|value| task.status == value))
             .map(MemoryTaskRecord::projection)
             .collect::<Result<Vec<_>, _>>()?;
@@ -822,6 +824,18 @@ impl TaskExecutionStorage for MemoryStorage {
         task.claim_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
+        if let Some(work) = state.schema_work.get(&lease.task_id().id()) {
+            let epoch = state
+                .schema_epochs
+                .get(&work.target().class_id().id())
+                .copied()
+                .unwrap_or(0);
+            state
+                .schema_work
+                .get_mut(&lease.task_id().id())
+                .expect("schema work exists")
+                .finish(StorageSchemaWorkStatus::Failed, epoch);
+        }
         state.append_task_event_record(lease.task_id(), event)?;
         Ok(projection)
     }

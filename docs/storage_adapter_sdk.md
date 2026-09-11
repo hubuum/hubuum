@@ -230,3 +230,9 @@ Run the portable conformance suite and native transaction, lease, concurrency,
 and query-budget tests. The shared implementation scenarios and exact method
 inventory are in `docs/storage_boundary/semantic-coverage.toml`; behavioral
 requirements and client migration are in [class schema evolution](schema_evolution.md).
+
+Schema work reporting also applies through generic task APIs. Adapters must honor
+`StorageTaskListQuery::excluded_kind()` before totals and pagination; task initiator
+attribution does not grant access to class-wide counts. Task failure must atomically
+persist the schema checkpoint's terminal `failed` status and release its active-work
+slot. Schema provenance timestamps use UTC microsecond precision across adapters.

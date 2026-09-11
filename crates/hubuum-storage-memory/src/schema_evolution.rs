@@ -1,4 +1,5 @@
 use super::*;
+use chrono::SubsecRound;
 use serde_json::json;
 use std::io::{self, Write};
 use std::time::Instant;
@@ -290,7 +291,43 @@ impl MemoryState {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| StorageError::internal("Schema history identity exhausted"))?;
-        self.schema_history.push(StorageBackupRow::try_from_value(json!({"id":id,"class_id":class_id,"revision":number,"snapshot":revision.snapshot(),"operation":operation,"occurred_at":Utc::now(),"actor_principal_id":context.actor_user_id(),"task_id":context.task_id()})).map_err(schema_error)?);
+        self.schema_history.push(StorageBackupRow::try_from_value(json!({"id":id,"class_id":class_id,"revision":number,"snapshot":revision.snapshot(),"operation":operation,"occurred_at":Utc::now().trunc_subsecs(6),"actor_principal_id":context.actor_user_id(),"task_id":context.task_id()})).map_err(schema_error)?);
+        Ok(())
+    }
+
+    pub(super) fn schema_delete_class(
+        &mut self,
+        class: &StorageClass,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        self.schema_event(
+            class.id(),
+            Action::Deleted,
+            context,
+            json!({"active_revision": self.schema_active.get(&class.id().id())}),
+        )?;
+        let revisions = self
+            .schema_revisions
+            .range((class.id().id(), 0)..=(class.id().id(), i64::MAX))
+            .map(|((_, number), _)| *number)
+            .collect::<Vec<_>>();
+        for number in revisions {
+            self.record_schema_history(class.id(), number, "delete", context)?;
+        }
+        self.schema_active.remove(&class.id().id());
+        self.schema_epochs.remove(&class.id().id());
+        let task_ids = self
+            .schema_work
+            .values()
+            .filter(|work| {
+                work.target().class_id() == class.id()
+                    && work.status() == StorageSchemaWorkStatus::Running
+            })
+            .map(StorageSchemaWork::task_id)
+            .collect::<Vec<_>>();
+        for task_id in task_ids {
+            self.finish_schema_task(task_id, StorageSchemaWorkStatus::Cancelled)?;
+        }
         Ok(())
     }
 
@@ -299,38 +336,8 @@ impl MemoryState {
         class: &StorageClass,
         operation: StorageHistoryOperation,
         context: &EventContext,
+        policy: StorageValidatedSchemaPolicy,
     ) -> Result<(), StorageError> {
-        if operation == StorageHistoryOperation::Delete {
-            self.schema_event(
-                class.id(),
-                Action::Deleted,
-                context,
-                json!({"active_revision": self.schema_active.get(&class.id().id())}),
-            )?;
-            let revisions = self
-                .schema_revisions
-                .range((class.id().id(), 0)..=(class.id().id(), i64::MAX))
-                .map(|((_, number), _)| *number)
-                .collect::<Vec<_>>();
-            for number in revisions {
-                self.record_schema_history(class.id(), number, "delete", context)?;
-            }
-            self.schema_active.remove(&class.id().id());
-            self.schema_epochs.remove(&class.id().id());
-            let task_ids = self
-                .schema_work
-                .values()
-                .filter(|work| {
-                    work.target().class_id() == class.id()
-                        && work.status() == StorageSchemaWorkStatus::Running
-                })
-                .map(StorageSchemaWork::task_id)
-                .collect::<Vec<_>>();
-            for task_id in task_ids {
-                self.finish_schema_task(task_id, StorageSchemaWorkStatus::Cancelled)?;
-            }
-            return Ok(());
-        }
         if self
             .schema_active
             .get(&class.id().id())
@@ -350,8 +357,6 @@ impl MemoryState {
             .transpose()
             .map_err(|error| StorageError::internal(error.to_string()))?
             .unwrap_or(SchemaRevision::INITIAL);
-        let policy = StorageValidatedSchemaPolicy::try_new(class.schema_policy().clone())
-            .map_err(schema_error)?;
         if let Some(old) = self.schema_active.get(&class.id().id()).copied() {
             let previous = self
                 .schema_revisions

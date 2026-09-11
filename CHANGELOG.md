@@ -37,6 +37,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   authentication with the same stale token performs one `last_used_at` update
   per throttle window. Delayed observations cannot move activity timestamps
   backward, and activity-recording failures remain nonfatal to authentication.
+- Memory imports resolve collection paths with the same root-relative semantics
+  as PostgreSQL, including revision-checked class and object updates.
+- Schema tasks expose reports only to unscoped administrators, including through
+  generic task details, events, listings, and counts. Worker failures terminate
+  schema checkpoints, rejected memory policies leave no persisted changes, and
+  schema provenance survives cross-backend restore with non-UTC connections.
 - Capture PostgreSQL backup tables row by row so large current-state and history
   sections do not fail at PostgreSQL's single JSON-array size limit.
 
@@ -78,11 +84,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   update unsupported validated class schemas before resuming object writes.
   See [JSON Schema validation limits](docs/json_schema_validation.md) for exact
   limits, migration guidance, and separate debug/release measurements.
-
-### Fixed
-
-- Memory imports resolve collection paths with the same root-relative semantics
-  as PostgreSQL, including revision-checked class and object updates.
 
 ### Breaking changes and upgrade notes
 

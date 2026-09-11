@@ -138,3 +138,44 @@ async fn postgres_worker_cannot_publish_evidence_for_an_object_changed_after_ins
     );
     fixture.cleanup().await;
 }
+
+#[actix_web::test]
+async fn postgres_rolls_back_schema_checkpoint_when_task_failure_cannot_commit() {
+    let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({})]).await;
+    let revision = fixture.stage(json!(true), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 60_000).await;
+    let failure = StorageTaskFailure::new(
+        lease.clone(),
+        "worker failure",
+        StorageTaskEventInput::new("failed", "worker failure"),
+    );
+    let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
+        .run(fixture.backend.fail_task(failure))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Backend);
+    let persisted = fixture
+        .backend
+        .get_schema_work(work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&persisted).unwrap(),
+        serde_json::to_value(&work).unwrap()
+    );
+    let task = fixture
+        .backend
+        .get_task_access(work.task_id())
+        .await
+        .unwrap()
+        .into_parts()
+        .0;
+    assert!(task.status().is_active());
+    fixture
+        .finish_claimed(lease, StorageSchemaBatchLimits::default())
+        .await;
+    fixture.cleanup().await;
+}

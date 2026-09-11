@@ -466,6 +466,17 @@ where
 
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
+    if task.kind == TaskKind::SchemaValidation.as_str() {
+        let is_admin = match &authorization_mode {
+            AuthorizationMode::LocalStorage => requestor.is_admin(backend).await?,
+            AuthorizationMode::Delegated(permission_backend) => {
+                permission_backend.is_admin(&principal).await?
+            }
+        };
+        if !is_admin {
+            return Err(ApiError::NotFound(format!("{label} not found")));
+        }
+    }
     let local = matches!(authorization_mode, AuthorizationMode::LocalStorage);
     let allowed = match authorization_mode {
         AuthorizationMode::LocalStorage => {
@@ -500,15 +511,19 @@ pub(crate) async fn list_tasks(
     submitted_by: Option<i32>,
     kind: Option<TaskKind>,
     status: Option<TaskStatus>,
+    excluded_kind: Option<TaskKind>,
     options: QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
     let (tasks, total) = storage_handle(backend)
-        .list_tasks(StorageTaskListQuery::new(
-            submitted_by.map(principal_id_to_storage),
-            kind.map(task_kind_to_storage),
-            status.map(task_status_to_storage),
-            options,
-        ))
+        .list_tasks(
+            StorageTaskListQuery::new(
+                submitted_by.map(principal_id_to_storage),
+                kind.map(task_kind_to_storage),
+                status.map(task_status_to_storage),
+                options,
+            )
+            .excluding_kind(excluded_kind.map(task_kind_to_storage)),
+        )
         .await?
         .into_parts();
     Ok((
@@ -832,6 +847,7 @@ pub async fn execute_schema_validation(
         match work.status() {
             StorageSchemaWorkStatus::Running => tokio::task::yield_now().await,
             StorageSchemaWorkStatus::Complete => return Ok(crate::models::TaskStatus::Succeeded),
+            StorageSchemaWorkStatus::Failed => return Ok(crate::models::TaskStatus::Failed),
             StorageSchemaWorkStatus::Cancelled | StorageSchemaWorkStatus::Superseded => {
                 return Ok(crate::models::TaskStatus::Cancelled);
             }

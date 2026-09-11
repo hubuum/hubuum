@@ -309,10 +309,10 @@ unsupported_error = "InvalidInput"
 
 [query_profiles.task]
 shape = "page"
-filters = ["typed carrier submitted_by", "typed carrier kind", "typed carrier status"]
+filters = ["typed carrier submitted_by", "typed carrier kind", "typed carrier status", "typed carrier excluded_kind"]
 sorts = ["id", "kind", "status", "submitted_by", "created_at", "started_at", "finished_at"]
 cursor = "opaque keyset over requested sorts plus id"
-visibility = "carrier submitter/kind/status scope prepared by task authorization"
+visibility = "carrier submitter/kind/status scope and excluded_kind applied before counting or pagination"
 count = "optional exact count from the same scope"
 snapshot = "count and page share one read snapshot"
 bounds = "validated QueryOptions limit and cursor-byte bounds"

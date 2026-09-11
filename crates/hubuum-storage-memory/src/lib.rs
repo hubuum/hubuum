@@ -519,8 +519,8 @@ impl MemoryState {
         context: &EventContext,
     ) -> Result<(), StorageError> {
         match &value {
-            MemoryHistoryValue::Class(class) => {
-                self.schema_record_class(class, operation, context)?
+            MemoryHistoryValue::Class(class) if operation == StorageHistoryOperation::Delete => {
+                self.schema_delete_class(class, context)?
             }
             MemoryHistoryValue::Object(object) => {
                 let previous_class =

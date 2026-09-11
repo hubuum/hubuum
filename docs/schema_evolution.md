@@ -106,7 +106,10 @@ inside the PostgreSQL activation transaction.
 Class read permission permits revision reads. Class update permission permits
 staging, abandonment, and strict activation. Class counts, impact and revalidation
 requests, progress reports, and cancellation additionally require an unscoped token and administrator
-authority because aggregate findings can reveal hidden objects. Class permission
+authority because aggregate findings can reveal hidden objects. Generic task
+read and event endpoints enforce this same report restriction; task listings
+exclude schema work before counting or pagination for other callers. Initiator
+attribution remains intact. Class permission
 checks still use the configured authorization backend. Mutations recheck the
 authorized collection at the storage boundary to reject a concurrent class move.
 
@@ -136,7 +139,9 @@ object revisions before publishing results. Evidence, progress, task completion,
 events, and audit records commit together. A superseded revalidation terminates
 without satisfying the new schema. Historical impact can finish but cannot
 satisfy another revision. Cancellation preserves already committed results and
-prevents later batches from publishing. Class deletion cancels queued work.
+prevents later batches from publishing. Worker errors and graceful-shutdown
+interruptions atomically mark both the task and schema checkpoint as `failed`,
+preserving already committed findings. Class deletion cancels queued work.
 
 Workers default to 64 rows, 8 MiB of serialized JSON per batch, and 1 MiB per
 object. The typed storage limits allow at most 100 rows and 16 MiB per batch.
@@ -209,6 +214,11 @@ impact proofs, and active leases are not restored; fresh revalidation tasks are
 queued for enforced classes. History retains documents for deleted classes.
 Reconstructed jobs are covered by the restore completion audit entry; subsequent
 validation findings emit the usual object events and audit entries.
+
+Schema provenance uses UTC timestamps at microsecond precision in live revisions,
+validation evidence, and history snapshots. Logical restore preserves timestamp
+offsets for PostgreSQL's timezone-aware schema columns, independently of the
+restore connection's configured timezone.
 
 Version 5 and older artifacts must be restored with their matching old release,
 then the database upgraded and a new format 6 backup created. No automatic

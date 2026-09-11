@@ -164,10 +164,19 @@ mod tests {
 
     #[rstest]
     #[case(json!({"type": 7}))]
+    #[case(json!({"$ref": "#"}))]
     #[case(json!({"$ref": "https://example.org/schema"}))]
     #[case(json!({"$ref": "file:///private/schema"}))]
     fn proof_rejects_unsafe_schema(#[case] schema: Value) {
         assert!(CompiledSchema::try_new(schema).is_err());
+    }
+
+    #[test]
+    fn proven_schema_inspection_retains_instance_work_limits() {
+        let schema = CompiledSchema::try_new(json!({"type":"string"})).unwrap();
+        assert!(schema.inspect(&json!("small")).is_ok());
+        let error = schema.inspect(&json!("x".repeat(1_048_576))).unwrap_err();
+        assert_eq!(error.category(), "schema_mismatch");
     }
 
     #[test]

@@ -275,6 +275,9 @@ Required trait: `SchemaEvolutionStorage`.
 Owns immutable schema revisions, explicit activation, population-fenced impact
 proofs, object compliance projections, and resumable validation checkpoints.
 Every backend atomically commits evidence, progress and audit/outbox events.
+Task failure also marks its schema checkpoint `failed` and releases its active
+work slot in the same transaction, retaining committed findings. Schema provenance
+uses UTC microsecond precision in live records and embedded history snapshots.
 The class collection used for authorization is rechecked at mutation time.
 See [schema evolution](../schema_evolution.md) for activation and recovery rules.
 
@@ -294,6 +297,9 @@ Required trait: `TaskQueueStorage`.
 Owns idempotent submission under active-task limits, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
+Task pages must honor the carrier's `excluded_kind` before counting or applying
+pagination. Generic schema task reports require unscoped administrator access;
+initiator attribution and ordinary task ownership do not grant report access.
 Projected total, processed, succeeded, failed, and attempt counters are
 nonnegative. Projected creation, update, start, finish, redaction, and deletion
 timestamps must form a non-reversed chronology. An adapter reports violations

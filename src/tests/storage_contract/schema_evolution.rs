@@ -1,7 +1,7 @@
 use super::*;
 use hubuum_domain::{SchemaReference, SchemaRevision, TaskId};
-use hubuum_storage_core::StorageMutationOutcome;
 use hubuum_storage_core::schema_evolution::*;
+use hubuum_storage_core::{StorageAuthenticationTokenScope, StorageMutationOutcome};
 use hubuum_storage_postgres::test_support::claim_task_by_id_with_lease;
 use serde_json::{Value, json};
 
@@ -1043,4 +1043,289 @@ async fn schema_activation_queues_a_fenced_shared_computed_rebuild(
     let backend = fixture.backend.clone();
     fixture.cleanup().await;
     delete_backend_user(&backend, owner).await;
+}
+
+#[rstest::rstest]
+#[case::create(false)]
+#[case::update(true)]
+#[actix_web::test]
+async fn rejected_memory_class_policy_leaves_no_persisted_changes(
+    #[case] update: bool,
+    #[values(false, true)] enforced: bool,
+) {
+    let fixture = SchemaFixture::new(StorageBackendKind::Memory, vec![]).await;
+    let before = fixture.backend.capture_backup_snapshot(true).await.unwrap();
+    let result = if update {
+        let target = fixture
+            .backend
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(fixture.class_id()))
+            .await
+            .unwrap();
+        fixture
+            .backend
+            .class_store()
+            .update_class(
+                &target,
+                StorageClassUpdate::builder()
+                    .json_schema(Some(json!({"type":7})))
+                    .validate_schema(Some(enforced))
+                    .build(),
+                &EventContext::system(),
+            )
+            .await
+    } else {
+        fixture
+            .backend
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(
+                    prefix("invalid_policy"),
+                    fixture.collection_id(),
+                    "invalid",
+                )
+                .schema_policy(
+                    StorageClassSchemaPolicy::try_from_parts(Some(json!({"type":7})), enforced)
+                        .unwrap(),
+                )
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+    };
+    assert!(result.is_err());
+    let after = fixture.backend.capture_backup_snapshot(true).await.unwrap();
+    assert_eq!(before.into_parts(), after.into_parts());
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::worker_error("Schema worker failed")]
+#[case::shutdown("Task interrupted by graceful shutdown")]
+#[actix_web::test]
+async fn failed_schema_workers_publish_terminal_checkpoints(
+    #[case] reason: &str,
+    #[values(StorageBackendKind::Memory, StorageBackendKind::Postgres)] kind: StorageBackendKind,
+    #[values(false, true)] process_batch: bool,
+) {
+    let fixture = SchemaFixture::new(kind, vec![json!({}), json!({})]).await;
+    let revision = fixture.stage(json!(true), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 60_000).await;
+    let limits = StorageSchemaBatchLimits::try_new(1, 1024, 1024).unwrap();
+    if process_batch {
+        fixture
+            .backend
+            .process_schema_work(lease.clone(), limits)
+            .await
+            .unwrap();
+    }
+    let before = fixture
+        .backend
+        .get_schema_work(work.task_id())
+        .await
+        .unwrap();
+    let failed = fixture
+        .backend
+        .fail_task(StorageTaskFailure::new(
+            lease.clone(),
+            reason,
+            StorageTaskEventInput::new("failed", reason),
+        ))
+        .await
+        .unwrap();
+    let after = fixture
+        .backend
+        .get_schema_work(work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(failed.status(), StorageTaskStatus::Failed);
+    assert_eq!(after.status(), StorageSchemaWorkStatus::Failed);
+    assert_eq!(after.examined(), before.examined());
+    assert!(
+        fixture
+            .backend
+            .process_schema_work(lease, limits)
+            .await
+            .is_err()
+    );
+    let replacement = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    assert_ne!(replacement.task_id(), work.task_id());
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::detail("detail")]
+#[case::events("events")]
+#[case::listing("list")]
+#[case::filtered_listing("filtered")]
+#[actix_web::test]
+async fn generic_schema_tasks_require_administrator_report_access(
+    #[case] endpoint: &str,
+    #[values(StorageBackendKind::Memory, StorageBackendKind::Postgres)] kind: StorageBackendKind,
+    #[values("member", "administrator", "scoped_administrator")] access: &str,
+    #[values(false, true)] delegated: bool,
+) {
+    // These read tests claim work explicitly; automatic workers would consume
+    // other tests' queued schema fixtures in the shared PostgreSQL database.
+    static WORKER_SETTINGS: std::sync::Once = std::sync::Once::new();
+    WORKER_SETTINGS.call_once(|| {
+        let mut config = crate::tests::integration_test_config().unwrap();
+        config.task_workers = 0;
+        crate::tasks::initialize_task_worker_settings(config.task_worker_settings().unwrap())
+            .unwrap();
+    });
+    let admin = access != "member";
+    let scoped = access == "scoped_administrator";
+    let allowed = admin && !scoped;
+    let fixture = SchemaFixture::new(kind, vec![json!({})]).await;
+    let user = create_backend_user(&fixture.backend, &prefix("schema_task_manager")).await;
+    fixture
+        .backend
+        .add_group_member(
+            user.principal_id,
+            fixture.resources.owned_group.as_ref().unwrap().id(),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap()
+        .into_value();
+    if admin != delegated {
+        let administrator_group = match &fixture.environment {
+            BackendTestEnvironment::Memory { .. } => group_id(1),
+            BackendTestEnvironment::Postgres { pool } => {
+                group_id(crate::tests::ensure_admin_group(pool).await.id)
+            }
+        };
+        fixture
+            .backend
+            .add_group_member(
+                user.principal_id,
+                administrator_group,
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+    }
+    let revision = fixture.stage(json!(true), true).await;
+    let proof = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let proof = fixture
+        .finish(proof, StorageSchemaBatchLimits::default())
+        .await;
+    let activation = fixture
+        .backend
+        .activate_schema_revision(
+            StorageSchemaActivation::new(
+                fixture.collection_id(),
+                revision.reference(),
+                SchemaRevision::INITIAL,
+                StorageSchemaActivationPolicy::RejectIncompatible,
+                EventContext::user(user.principal_id, None, None),
+            )
+            .with_proof_task(Some(proof.task_id())),
+        )
+        .await
+        .unwrap()
+        .into_value();
+    let task_id = activation.task_id().unwrap();
+    let bearer = if scoped {
+        let raw = prefix("scoped_schema_report_token");
+        let digest = crate::models::Token::storage_hash_from_raw(&raw);
+        fixture
+            .backend
+            .create_token(
+                StorageTokenCreate::new(
+                    user.principal_id,
+                    StorageTokenDigest::legacy_unidentified(&digest),
+                    StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+                    EventContext::system(),
+                )
+                .scope(Some(StorageAuthenticationTokenScope::new(
+                    Some(vec![StorageAuthorizationPermission::ReadClass]),
+                    None,
+                ))),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        raw
+    } else {
+        user.raw_token.clone()
+    };
+
+    let permissions: Arc<dyn crate::permissions::PermissionBackend> = if delegated {
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        let policy = MockTreetopBackend::new();
+        let group = fixture.resources.owned_group.as_ref().unwrap().id().id();
+        policy.add_task_read_rule(group, Some(task_id.id()));
+        if admin {
+            policy.add_admin_rule(group);
+        }
+        Arc::new(policy)
+    } else {
+        let config = crate::tests::integration_test_config().unwrap();
+        Arc::new(LocalPermissionBackend::new(
+            fixture.backend.clone(),
+            config.admin_groupname,
+        ))
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(Data::new(AppContext::new(
+                fixture.backend.clone(),
+                permissions,
+            )))
+            .configure(crate::api::config),
+    )
+    .await;
+    let uri = match endpoint {
+        "detail" => format!("/api/v1/tasks/{task_id}"),
+        "events" => format!("/api/v1/tasks/{task_id}/events"),
+        "filtered" => format!(
+            "/api/v1/tasks?kind=schema_validation&submitted_by={}",
+            user.principal_id
+        ),
+        _ => format!("/api/v1/tasks?submitted_by={}", user.principal_id),
+    };
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&uri)
+            .insert_header((http::header::AUTHORIZATION, format!("Bearer {bearer}")))
+            .to_request(),
+    )
+    .await;
+    if matches!(endpoint, "detail" | "events") {
+        assert_eq!(
+            response.status(),
+            if allowed {
+                http::StatusCode::OK
+            } else {
+                http::StatusCode::NOT_FOUND
+            }
+        );
+    } else {
+        assert_eq!(response.status(), http::StatusCode::OK);
+        if !allowed {
+            assert_eq!(response.headers().get("X-Total-Count").unwrap(), "0");
+            assert!(response.headers().get("X-Next-Cursor").is_none());
+        }
+        let tasks: Vec<Value> = test::read_body_json(response).await;
+        assert_eq!(
+            tasks.iter().any(|task| task["id"] == json!(task_id.id())),
+            allowed
+        );
+        if !allowed {
+            assert!(tasks.is_empty());
+        }
+    }
+    delete_backend_user(&fixture.backend, user).await;
+    fixture.cleanup().await;
 }

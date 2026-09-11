@@ -137,3 +137,52 @@ async fn memory_preserves_terminal_artifacts_across_recovery(
         .await
         .unwrap();
 }
+
+#[rstest]
+#[case::utc("UTC")]
+#[case::positive_offset("Asia/Kolkata")]
+#[case::negative_offset("America/New_York")]
+#[tokio::test]
+async fn memory_schema_provenance_survives_postgres_restore(#[case] timezone: &str) {
+    use diesel::sql_types::Text;
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    let pool = postgres_test_pool_with_timeout(&database_url(), 1, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let source = RestoreContractFixture::new(StorageBackendKind::Memory, pool.clone())
+        .await
+        .unwrap();
+    let target = RestoreContractFixture::new(StorageBackendKind::Postgres, pool.clone())
+        .await
+        .unwrap();
+    let snapshot = source.capture(true).await.unwrap();
+    with_connection(&pool, async |connection| {
+        diesel::sql_query("SELECT set_config('TimeZone', $1, false)")
+            .bind::<Text, _>(timezone)
+            .execute(connection)
+            .await
+    })
+    .await
+    .unwrap();
+    let result = async {
+        target.restore(snapshot.clone()).await?;
+        target.capture(true).await
+    }
+    .await;
+    target.restore_original().await.unwrap();
+    let restored = result.unwrap();
+    let (expected_state, expected_history) = snapshot.into_parts();
+    let (actual_state, actual_history) = restored.into_parts();
+    for section in [
+        StorageBackupStateSection::ClassSchemaRevisions,
+        StorageBackupStateSection::ClassSchemaState,
+        StorageBackupStateSection::ObjectSchemaEvidence,
+    ] {
+        assert_eq!(
+            expected_state[&section], actual_state[&section],
+            "{timezone}: {section:?}"
+        );
+    }
+    assert_eq!(
+        expected_history.unwrap()[&StorageBackupHistorySection::ClassSchemaHistory],
+        actual_history.unwrap()[&StorageBackupHistorySection::ClassSchemaHistory]
+    );
+}

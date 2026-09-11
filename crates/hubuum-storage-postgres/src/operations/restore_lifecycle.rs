@@ -365,8 +365,15 @@ pub async fn stage_restore(
     };
     runtime
         .with_connection(async |connection| {
+            // These legacy columns store UTC without an offset. Their `now()`
+            // defaults otherwise use session-local time, unlike confirmation.
+            let staged_at = sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'");
             diesel::insert_into(crate::schema::restore_jobs::table)
-                .values(input)
+                .values((
+                    input,
+                    crate::schema::restore_jobs::created_at.eq(staged_at.clone()),
+                    crate::schema::restore_jobs::updated_at.eq(staged_at),
+                ))
                 .returning(RestoreJobRow::as_returning())
                 .get_result::<RestoreJobRow>(connection)
                 .await
