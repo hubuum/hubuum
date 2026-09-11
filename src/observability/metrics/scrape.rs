@@ -82,6 +82,7 @@ async fn refresh_scrape_gauges(metrics: &Metrics, backend: &crate::storage::Stor
     login::refresh_login_limiter_gauges(metrics).await;
     if let Ok(_refresh_guard) = metrics.db_refresh_lock.try_lock() {
         inventory::refresh_inventory_gauges(metrics, backend).await;
+        super::schema::refresh_compliance(metrics, backend).await;
         task::refresh_task_gauges(metrics, backend).await;
         event::refresh_event_gauges(metrics, backend).await;
         token::refresh_token_key_gauges(metrics, backend).await;

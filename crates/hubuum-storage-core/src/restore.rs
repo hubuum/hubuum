@@ -1125,23 +1125,25 @@ mod tests {
         let document = StorageRestoreDocument::at_restore_boundary(
             StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
             StorageBackupSnapshot::try_new(
-                StorageBackupStateSection::ALL
-                    .iter()
-                    .copied()
-                    .map(|section| {
-                        let rows = if section == StorageBackupStateSection::Classes {
-                            vec![
+                crate::backup_snapshot::with_test_schema_sections(
+                    StorageBackupStateSection::ALL
+                        .iter()
+                        .copied()
+                        .map(|section| {
+                            let rows = if section == StorageBackupStateSection::Classes {
+                                vec![
                                 StorageBackupRow::try_from_value(
                                     serde_json::json!({"id": 1, "revision": 7, "secret-row": true}),
                                 )
                                 .expect("object backup row"),
                             ]
-                        } else {
-                            Vec::new()
-                        };
-                        (section, rows)
-                    })
-                    .collect(),
+                            } else {
+                                Vec::new()
+                            };
+                            (section, rows)
+                        })
+                        .collect(),
+                ),
                 None,
             )
             .expect("complete backup snapshot"),

@@ -34,6 +34,9 @@ pub(crate) const fn state_table(section: StorageBackupStateSection) -> &'static 
         StorageBackupStateSection::CollectionHierarchy => "collection_closure",
         StorageBackupStateSection::CollectionPermissionGrants => "permissions",
         StorageBackupStateSection::Classes => "hubuumclass",
+        StorageBackupStateSection::ClassSchemaRevisions => "class_schema_revisions",
+        StorageBackupStateSection::ClassSchemaState => "class_schema_state",
+        StorageBackupStateSection::ObjectSchemaEvidence => "object_schema_evidence",
         StorageBackupStateSection::ComputedFieldDefinitions => "computed_field_definitions",
         StorageBackupStateSection::ClassRelations => "hubuumclass_relation",
         StorageBackupStateSection::Objects => "hubuumobject",
@@ -49,6 +52,7 @@ pub(crate) const fn history_table(section: StorageBackupHistorySection) -> &'sta
     match section {
         StorageBackupHistorySection::CollectionHistory => "collections_history",
         StorageBackupHistorySection::ClassHistory => "hubuumclass_history",
+        StorageBackupHistorySection::ClassSchemaHistory => "class_schema_history",
         StorageBackupHistorySection::ClassRelationHistory => "hubuumclass_relation_history",
         StorageBackupHistorySection::ObjectHistory => "hubuumobject_history",
         StorageBackupHistorySection::ObjectRelationHistory => "hubuumobject_relation_history",
@@ -327,6 +331,7 @@ fn history_field_mappings(
     section: StorageBackupHistorySection,
 ) -> &'static [(&'static str, &'static str)] {
     match section {
+        StorageBackupHistorySection::ClassSchemaHistory => &[("actor_id", "actor_principal_id")],
         StorageBackupHistorySection::ClassRelationHistory => CLASS_RELATION_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectHistory => OBJECT_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectRelationHistory => OBJECT_RELATION_FIELD_MAPPINGS,
@@ -654,6 +659,7 @@ async fn snapshot_history(
     for section in [
         StorageBackupHistorySection::CollectionHistory,
         StorageBackupHistorySection::ClassHistory,
+        StorageBackupHistorySection::ClassSchemaHistory,
         StorageBackupHistorySection::ClassRelationHistory,
         StorageBackupHistorySection::ObjectHistory,
         StorageBackupHistorySection::ObjectRelationHistory,

@@ -866,6 +866,7 @@ impl StorageRemoteCallTaskArtifact {
 pub enum StorageTaskCompletionPayload {
     Import,
     Reindex,
+    SchemaValidation,
     Export(StorageExportTaskArtifact),
     Backup(StorageBackupTaskArtifact),
     RemoteCall(StorageRemoteCallTaskArtifact),
@@ -876,6 +877,7 @@ impl StorageTaskCompletionPayload {
     pub const fn task_kind(&self) -> StorageTaskKind {
         match self {
             Self::Import => StorageTaskKind::Import,
+            Self::SchemaValidation => StorageTaskKind::SchemaValidation,
             Self::Reindex => StorageTaskKind::Reindex,
             Self::Export(_) => StorageTaskKind::Export,
             Self::Backup(_) => StorageTaskKind::Backup,

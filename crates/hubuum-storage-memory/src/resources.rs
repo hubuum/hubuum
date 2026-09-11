@@ -452,6 +452,13 @@ impl ClassStorage for MemoryStorage {
         let schema_policy = changes
             .resolve_schema_policy(current.schema_policy())
             .map_err(StorageValidationError::into_request_error)?;
+        if &schema_policy != current.schema_policy()
+            && state.objects.values().any(|object| object.class_id() == id)
+        {
+            return Err(StorageError::conflict(
+                "Stage, analyze and explicitly activate schema changes for nonempty classes",
+            ));
+        }
         let description = changes.description().unwrap_or(current.description());
         if name == current.name()
             && collection_id == current.collection_id()

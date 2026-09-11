@@ -147,6 +147,7 @@ pub(crate) async fn create_class_on(
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
     validate_class_create(&command)?;
     let class = insert_class(connection, &command).await?;
+    super::schema_evolution::record_class_schema_on(connection, &class, context).await?;
     let document = AuditDocument::try_new(
         format!("Class '{}' created", class.name),
         None,
@@ -182,6 +183,17 @@ pub(crate) async fn update_class_on(
     changes: StorageClassUpdate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageClass>, PostgresStorageError> {
+    if changes
+        .resolve_schema_policy(target.class().schema_policy())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
+        != *target.class().schema_policy()
+    {
+        super::computed_materialization::acquire_computed_class_exclusive_lock(
+            connection,
+            target.class().id().id(),
+        )
+        .await?;
+    }
     let before = lock_resolved_class(connection, target).await?;
     validate_class_update(&changes, &before)?;
     let update = UpdateClassRow::from(&changes);
@@ -194,6 +206,11 @@ pub(crate) async fn update_class_on(
     .set(update)
     .get_result::<ClassRow>(connection)
     .await?;
+    if before.json_schema != updated.json_schema
+        || before.validate_schema != updated.validate_schema
+    {
+        super::schema_evolution::record_class_schema_on(connection, &updated, context).await?;
+    }
     let document = AuditDocument::try_new(
         format!("Class '{}' updated", updated.name),
         Some(before.snapshot()),
@@ -229,6 +246,14 @@ pub(crate) async fn delete_class_on(
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let before = lock_resolved_class(connection, target).await?;
+    super::schema_evolution::schema_event_on(
+        connection,
+        &before,
+        Action::Deleted,
+        context,
+        json!({"status":"deleted"}),
+    )
+    .await?;
     diesel::delete(
         crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
     )

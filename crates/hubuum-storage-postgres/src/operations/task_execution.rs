@@ -281,6 +281,18 @@ pub async fn recover_expired_task_leases(
             let mut recovered = Vec::with_capacity(stale.len());
             for stale_task in stale {
                 let kind = stored_task_kind(&stale_task)?;
+                if kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await? {
+                    append_task_lifecycle_event(connection, &stale_task,
+                        StorageTaskEventInput::new("queued", "Schema validation resumed from durable checkpoint after lease expiry"),
+                        &system_provenance(&stale_task)?).await?;
+                    let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id))).set((
+                        tasks::status.eq("queued"), tasks::lease_token.eq::<Option<Uuid>>(None),
+                        tasks::started_at.eq::<Option<NaiveDateTime>>(None),
+                        tasks::lease_expires_at.eq::<Option<NaiveDateTime>>(None), tasks::updated_at.eq(now),
+                    )).returning(TaskRow::as_returning()).get_result::<TaskRow>(connection).await?;
+                    recovered.push(row);
+                    continue;
+                }
                 let counts = recovered_counts(connection, &stale_task, kind).await?;
                 // Atomic import receipts prove all effects/results committed even
                 // if the worker died before updating the task's terminal state.
@@ -338,7 +350,11 @@ pub async fn recover_expired_task_leases(
     recovered
         .into_iter()
         .map(|row| {
-            record_task_terminal(runtime, &row);
+            if StorageTaskStatus::from_persisted(&row.status)
+                .is_some_and(StorageTaskStatus::is_terminal)
+            {
+                record_task_terminal(runtime, &row);
+            }
             row.into_storage()
         })
         .collect()
@@ -386,7 +402,9 @@ pub async fn complete_task(
         )));
     }
     let row = match payload {
-        StorageTaskCompletionPayload::Import | StorageTaskCompletionPayload::Reindex => {
+        StorageTaskCompletionPayload::Import
+        | StorageTaskCompletionPayload::Reindex
+        | StorageTaskCompletionPayload::SchemaValidation => {
             finalize_task(runtime, claimed, update, event, None).await?
         }
         StorageTaskCompletionPayload::Export(artifact) => {
@@ -449,7 +467,7 @@ pub async fn fail_task(
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
             validated_counts(1, 0, 1)?
         }
-        StorageTaskKind::Reindex => {
+        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
             validated_counts(stored.processed_items, stored.success_items, 1)?
         }
     };
@@ -820,7 +838,7 @@ async fn recovered_counts(
         StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
             validated_counts(1, 0, 1)
         }
-        StorageTaskKind::Reindex => {
+        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
             validated_counts(task.processed_items, task.success_items, task.failed_items)
         }
     }

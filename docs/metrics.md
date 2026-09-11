@@ -355,3 +355,13 @@ These thresholds are deployment starting points, not universal defaults:
 | Shared limiter degradation | Sustained non-zero login-limiter backend failure rate |
 | Remote call failures | Failure or timeout rate above the remote-call baseline |
 | Event backlog | Oldest fan-out or delivery age above the processing objective |
+
+## Schema compliance
+
+Schema mutation counters use bounded policy/result labels. Validation object
+counters distinguish valid, invalid, not-required, uninspectable, and stale
+results; duration histograms track terminal work. The compliance gauge exposes
+global valid/invalid/pending/not-required counts. Generic task metrics include
+`schema_validation` backlog and recovery. Per-class IDs, object IDs, paths, and
+schema content never become metric labels; administrator schema reports provide
+per-class detail. See [class schema evolution](schema_evolution.md).

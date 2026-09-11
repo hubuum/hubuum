@@ -1,3 +1,5 @@
+mod schema_evolution;
+
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -1533,6 +1535,7 @@ impl BackendAuditFixture for MemoryAuditContractFixture {
             timestamps: None,
         };
         let class = ImportClassInput {
+            schema_activation: None,
             ref_: None,
             name: prefix("memory_audit_contract_rollback_class"),
             description: "must fail".to_string(),
@@ -3560,6 +3563,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 1,
                 crate::services::import_boundary::import_operation_to_storage(
                     ApplicationImportOperation::CreateClass(ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:preflight".to_string()),
                         name: class_name.clone(),
                         description: "storage compatibility import class".to_string(),
@@ -3664,7 +3668,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                             collection_ref: None,
                             collection_key: Some(CollectionKey {
                                 name: preflight_name.clone(),
-                                path: Some(vec![root_name.clone()]),
+                                path: Some(vec![preflight_name.clone()]),
                             }),
                         }),
                         condition: Some(ImportWriteCondition::IfRevision {
@@ -3681,7 +3685,11 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
             .apply_import_strict(stale_update)
             .await
             .expect_err("stale import updates must be rejected");
-        assert_eq!(error.kind(), StorageErrorKind::PreconditionFailed);
+        assert_eq!(
+            error.kind(),
+            StorageErrorKind::PreconditionFailed,
+            "{error:?}"
+        );
         assert_eq!(error.current_revision(), Some(imported_object.revision()));
         assert_eq!(
             backend
@@ -3708,6 +3716,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                 1,
                 crate::services::import_boundary::import_operation_to_storage(
                     ApplicationImportOperation::CreateClass(ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:rollback_failure".to_string()),
                         name: prefix("import_rollback_class"),
                         description: "must fail".to_string(),
@@ -3750,6 +3759,7 @@ async fn every_available_storage_backend_supplies_the_complete_import_contract()
                         1,
                         crate::services::import_boundary::import_operation_to_storage(
                             ApplicationImportOperation::CreateClass(ImportClassInput {
+                                schema_activation: None,
                                 ref_: Some("class:best_effort_failure".to_string()),
                                 name: prefix("import_best_effort_class"),
                                 description: "must fail".to_string(),
@@ -4227,7 +4237,8 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 )),
                 StorageTaskKind::Import
                 | StorageTaskKind::Reindex
-                | StorageTaskKind::RemoteCall => {}
+                | StorageTaskKind::RemoteCall
+                | StorageTaskKind::SchemaValidation => {}
             }
         }
         assert_eq!(completed_kinds.len(), StorageTaskKind::ALL.len());
@@ -4369,6 +4380,7 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
     match kind {
         StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
         StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
+        StorageTaskKind::SchemaValidation => StorageTaskCompletionPayload::SchemaValidation,
         StorageTaskKind::Export => StorageTaskCompletionPayload::Export(
             StorageExportTaskArtifact::builder(
                 "application/json",

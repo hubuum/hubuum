@@ -5723,6 +5723,963 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/schema": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema.",
+        "operationId": "getApiV1ClassesByClassIdSchema",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Administrator class compliance report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassSchemaResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/objects": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema Objects",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema/objects.",
+        "operationId": "getApiV1ClassesByClassIdSchemaObjects",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Last inspected object ID",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 100 candidates",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Effective active-revision compliance",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ComplianceStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized compliance page; totals and hidden objects are omitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaCompliancePage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/revisions": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema Revisions",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema/revisions.",
+        "operationId": "getApiV1ClassesByClassIdSchemaRevisions",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Last schema revision; defaults to zero",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 100 revisions; defaults to 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded immutable schema revision list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SchemaRevisionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Schema Revisions",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/revisions.",
+        "operationId": "postApiV1ClassesByClassIdSchemaRevisions",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaStageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Stage an immutable schema revision without activation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaRevisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/revisions/{revision}": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema Revisions By Revision",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema/revisions/{revision}.",
+        "operationId": "getApiV1ClassesByClassIdSchemaRevisionsByRevision",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SchemaRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read an exact schema revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaRevisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id Schema Revisions By Revision",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/schema/revisions/{revision}.",
+        "operationId": "deleteApiV1ClassesByClassIdSchemaRevisionsByRevision",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SchemaRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Abandon a staged revision; active and retired documents remain immutable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaRevisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/revisions/{revision}/activate": {
+      "post": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Schema Revisions By Revision Activate",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/revisions/{revision}/activate.",
+        "operationId": "postApiV1ClassesByClassIdSchemaRevisionsByRevisionActivate",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SchemaRevision"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Explicit activation; reject_incompatible requires an exact current impact proof for nonempty classes; allow_pending additionally requires administrator access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaActivationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/revisions/{revision}/impact": {
+      "post": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Schema Revisions By Revision Impact",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/revisions/{revision}/impact.",
+        "operationId": "postApiV1ClassesByClassIdSchemaRevisionsByRevisionImpact",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SchemaRevision"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queue bounded impact analysis; advisory results cannot authorize strict activation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaWorkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/revisions/{revision}/revalidate": {
+      "post": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Schema Revisions By Revision Revalidate",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/revisions/{revision}/revalidate.",
+        "operationId": "postApiV1ClassesByClassIdSchemaRevisionsByRevisionRevalidate",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SchemaRevision"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queue deduplicated revalidation of the active revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaWorkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema Tasks By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema/tasks/{task_id}.",
+        "operationId": "getApiV1ClassesByClassIdSchemaTasksByTaskId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TaskID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Administrator report with bounded redacted samples and exact/advisory population boundary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaWorkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id Schema Tasks By Task Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/schema/tasks/{task_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdSchemaTasksByTaskId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Positive immutable identity",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TaskID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancel schema work atomically; completed batches remain and later batch commits are fenced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaWorkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema, policy or bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, revision or task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}": {
       "get": {
         "tags": [
@@ -19573,7 +20530,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only logical snapshots. Backup version 5 identifies\nsections by stable Hubuum resources rather than PostgreSQL tables. Each\nstorage adapter explicitly maps its persistence layout to these versioned\nsections. These are disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only logical snapshots. Backup version 6 identifies\nsections by stable Hubuum resources rather than PostgreSQL tables. Each\nstorage adapter explicitly maps its persistence layout to these versioned\nsections. These are disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -19732,6 +20689,27 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "ClassSchemaResponse": {
+        "type": "object",
+        "required": [
+          "active",
+          "counts",
+          "object_epoch"
+        ],
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/SchemaRevisionResponse"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SchemaComplianceCounts"
+          },
+          "object_epoch": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -19999,6 +20977,15 @@
             "$ref": "#/components/schemas/ResourceRevision"
           }
         }
+      },
+      "ComplianceStatus": {
+        "type": "string",
+        "enum": [
+          "valid",
+          "invalid",
+          "pending",
+          "not_required"
+        ]
       },
       "ComputedFieldDefinition": {
         "type": "object",
@@ -23821,6 +24808,17 @@
               "null"
             ]
           },
+          "schema_activation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportSchemaActivation",
+                "description": "Explicit activation of an already staged revision, committed with this import item."
+              }
+            ]
+          },
           "timestamps": {
             "oneOf": [
               {
@@ -25260,6 +26258,37 @@
           }
         }
       },
+      "ImportSchemaActivation": {
+        "type": "object",
+        "description": "Administrator-selected schema activation applied atomically during import.",
+        "required": [
+          "revision",
+          "expected_active_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_active_revision": {
+            "$ref": "#/components/schemas/SchemaRevision"
+          },
+          "impact_task_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/SchemaActivationPolicy"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/SchemaRevision"
+          }
+        },
+        "additionalProperties": false
+      },
       "ImportTaskDetails": {
         "type": "object",
         "required": [
@@ -26537,6 +27566,40 @@
           "unavailable"
         ]
       },
+      "ObjectComplianceResponse": {
+        "type": "object",
+        "required": [
+          "object_id",
+          "object_revision",
+          "active_schema",
+          "status"
+        ],
+        "properties": {
+          "active_schema": {
+            "$ref": "#/components/schemas/SchemaReference"
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectSchemaEvidence"
+              }
+            ]
+          },
+          "object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "object_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComplianceStatus"
+          }
+        }
+      },
       "ObjectDataPatchDocument": {
         "type": "array",
         "items": {
@@ -26728,6 +27791,30 @@
         "format": "int32",
         "description": "Maximum number of object relations allowed for one object on one side of a class relation.",
         "minimum": 1
+      },
+      "ObjectSchemaEvidence": {
+        "type": "object",
+        "required": [
+          "schema",
+          "object_revision",
+          "valid",
+          "validated_at"
+        ],
+        "properties": {
+          "object_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SchemaReference"
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "validated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "ObjectsByClass": {
         "type": "object",
@@ -28535,6 +29622,344 @@
           }
         }
       },
+      "SchemaActivationPolicy": {
+        "type": "string",
+        "enum": [
+          "reject_incompatible",
+          "allow_pending"
+        ]
+      },
+      "SchemaActivationRequest": {
+        "type": "object",
+        "required": [
+          "expected_active_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_active_revision": {
+            "$ref": "#/components/schemas/SchemaRevision"
+          },
+          "impact_task_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/SchemaActivationPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SchemaActivationResponse": {
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/SchemaRevisionResponse"
+          },
+          "dependent_rebuild_task_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
+          },
+          "task_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskID"
+              }
+            ]
+          }
+        }
+      },
+      "SchemaComplianceCounts": {
+        "type": "object",
+        "required": [
+          "valid",
+          "invalid",
+          "pending",
+          "not_required"
+        ],
+        "properties": {
+          "invalid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "not_required": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "valid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SchemaCompliancePage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectComplianceResponse"
+            }
+          },
+          "next_after": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Resume after the last inspected candidate, including hidden candidates."
+          }
+        }
+      },
+      "SchemaReference": {
+        "type": "object",
+        "description": "A dependency on one exact schema document; resource revisions are unrelated.",
+        "required": [
+          "class_id",
+          "revision"
+        ],
+        "properties": {
+          "class_id": {
+            "$ref": "#/components/schemas/HubuumClassID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/SchemaRevision"
+          }
+        }
+      },
+      "SchemaRevision": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Database-owned positive resource revision.",
+        "minimum": 1
+      },
+      "SchemaRevisionResponse": {
+        "type": "object",
+        "required": [
+          "class_id",
+          "revision",
+          "validate_schema",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "activated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "activation_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaActivationPolicy"
+              }
+            ]
+          },
+          "class_id": {
+            "$ref": "#/components/schemas/HubuumClassID"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "json_schema": {},
+          "revision": {
+            "$ref": "#/components/schemas/SchemaRevision"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchemaRevisionStatus"
+          },
+          "validate_schema": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SchemaRevisionStatus": {
+        "type": "string",
+        "enum": [
+          "staged",
+          "active",
+          "retired",
+          "abandoned"
+        ]
+      },
+      "SchemaStageRequest": {
+        "type": "object",
+        "required": [
+          "validate_schema"
+        ],
+        "properties": {
+          "json_schema": {},
+          "validate_schema": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SchemaWorkKind": {
+        "type": "string",
+        "enum": [
+          "impact",
+          "revalidation"
+        ]
+      },
+      "SchemaWorkResponse": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "target",
+          "kind",
+          "status",
+          "start_epoch",
+          "upper_bound",
+          "cursor",
+          "examined",
+          "valid",
+          "invalid",
+          "not_required",
+          "uninspectable",
+          "stale",
+          "invalid_samples",
+          "elapsed_millis",
+          "batches",
+          "created_at"
+        ],
+        "properties": {
+          "batches": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cursor": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "elapsed_millis": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "end_epoch": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "examined": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "invalid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "invalid_samples": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SchemaWorkKind"
+          },
+          "not_required": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stale": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "start_epoch": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchemaWorkStatus"
+          },
+          "target": {
+            "$ref": "#/components/schemas/SchemaReference"
+          },
+          "task_id": {
+            "$ref": "#/components/schemas/TaskID"
+          },
+          "uninspectable": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "upper_bound": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "valid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SchemaWorkStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "complete",
+          "cancelled",
+          "superseded"
+        ]
+      },
       "SecretSourceConfig": {
         "type": "object",
         "required": [
@@ -29696,7 +31121,8 @@
           "export",
           "backup",
           "reindex",
-          "remote_call"
+          "remote_call",
+          "schema_validation"
         ]
       },
       "TaskLinks": {

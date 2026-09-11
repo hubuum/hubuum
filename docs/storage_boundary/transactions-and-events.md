@@ -299,3 +299,12 @@ memory model. It:
 Backend-native tests remain responsible for isolation, connection loss,
 driver cancellation, commit failure, notification visibility, and native
 locking behavior.
+
+## Schema evolution
+
+`SchemaEvolutionStorage` belongs to the workflow family. Staging, abandonment,
+activation and work requests return durable audit receipts. The context-free
+`SchemaEvolutionStorage::process_schema_work` operation uses its live task lease and captured initiator
+to commit each bounded batch's evidence, checkpoint and audit/outbox together.
+Expired schema-validation tasks resume that checkpoint; other task kinds keep
+their existing recovery policy. Cancellation fences subsequent batch commits.

@@ -329,6 +329,12 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryState {
+    schema_history: Vec<StorageBackupRow>,
+    schema_revisions: BTreeMap<(i32, i64), StorageSchemaRevision>,
+    schema_active: BTreeMap<i32, SchemaRevision>,
+    schema_epochs: BTreeMap<i32, u64>,
+    schema_evidence: BTreeMap<i32, StorageSchemaEvidence>,
+    schema_work: BTreeMap<i32, StorageSchemaWork>,
     next_collection_id: i32,
     next_class_id: i32,
     next_object_id: i32,
@@ -512,6 +518,33 @@ impl MemoryState {
         operation: StorageHistoryOperation,
         context: &EventContext,
     ) -> Result<(), StorageError> {
+        match &value {
+            MemoryHistoryValue::Class(class) => {
+                self.schema_record_class(class, operation, context)?
+            }
+            MemoryHistoryValue::Object(object) => {
+                let previous_class =
+                    self.history
+                        .iter()
+                        .rev()
+                        .find_map(|entry| match &entry.value {
+                            MemoryHistoryValue::Object(previous)
+                                if previous.id() == object.id() && entry.valid_to.is_none() =>
+                            {
+                                Some(previous.class_id())
+                            }
+                            _ => None,
+                        });
+                if let Some(previous_class) = previous_class.filter(|id| *id != object.class_id()) {
+                    let epoch = self.schema_epochs.entry(previous_class.id()).or_default();
+                    *epoch = epoch
+                        .checked_add(1)
+                        .ok_or_else(|| StorageError::internal("Class object epoch exhausted"))?;
+                }
+                self.schema_record_object(object, operation, context)?
+            }
+            _ => {}
+        }
         let id = HistoryRecordId::new(self.next_history_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         self.next_history_id += 1;
@@ -734,5 +767,6 @@ mod imports;
 mod operational;
 mod queries;
 mod resources;
+mod schema_evolution;
 mod state;
 mod workflows;

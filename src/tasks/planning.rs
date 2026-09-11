@@ -1162,6 +1162,34 @@ where
     C: AuthorizationContext,
 {
     let pool = backend;
+    if input.schema_activation.is_some()
+        && (state.scopes.is_some()
+            || !is_import_admin(backend, user, state)
+                .await
+                .map_err(|message| PlanningFailure {
+                    kind: FailureKind::Permission,
+                    item: planned_result(
+                        "class",
+                        "activate_schema",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message,
+                })?)
+    {
+        return Err(PlanningFailure {
+            kind: FailureKind::Permission,
+            item: planned_result(
+                "class",
+                "activate_schema",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: "Schema activation inside imports requires an unscoped administrator token"
+                .to_string(),
+        });
+    }
+
     if let Some(schema) = input.json_schema.as_ref() {
         crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
             PlanningFailure {
@@ -1316,13 +1344,34 @@ where
         };
         remember_class(state, input.ref_.clone(), updated.clone());
 
+        let mut result = planned_result(
+            "class",
+            "update",
+            input.ref_.clone(),
+            Some(format!("{}::{}", collection.name, input.name)),
+        );
+        if let Some(activation) = &input.schema_activation {
+            let impact = if let Some(task) = activation.impact_task_id {
+                Some(
+                    hubuum_storage_core::SchemaEvolutionStorage::get_schema_work(
+                        &storage_handle(pool),
+                        task,
+                    )
+                    .await
+                    .map_err(|error| PlanningFailure {
+                        kind: FailureKind::Validation,
+                        item: result.clone(),
+                        message: error.to_string(),
+                    })?,
+                )
+            } else {
+                None
+            };
+            result.details =
+                Some(serde_json::json!({"schema_activation":activation,"impact":impact}));
+        }
         Ok(PlannedItem {
-            result: planned_result(
-                "class",
-                "update",
-                input.ref_.clone(),
-                Some(format!("{}::{}", collection.name, input.name)),
-            ),
+            result,
             execution: Some(PlannedExecution::UpdateClass {
                 class_id: class.id,
                 input: execution_input,

@@ -29,6 +29,11 @@ use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_stor
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
 const TRUNCATE_TABLES: &[&str] = &[
+    "schema_validation_work",
+    "object_schema_evidence",
+    "class_schema_history",
+    "class_schema_state",
+    "class_schema_revisions",
     "object_computed_data",
     "class_computation_state",
     "computed_field_definitions",
@@ -71,6 +76,7 @@ const TRUNCATE_TABLES: &[&str] = &[
 ];
 
 const SERIAL_ID_TABLES: &[&str] = &[
+    "class_schema_history",
     "identity_scopes",
     "groups",
     "principals",
@@ -571,6 +577,7 @@ pub async fn apply_restore(
                 replace_backend_state(connection, &state_sections, history_sections.as_ref())
                     .await?;
                 enqueue_restored_computed_rebuilds_on_connection(connection).await?;
+                super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
 
                 // Restored event rows must not fan out while they are inserted.
                 // This is the one deliberate post-restore provenance event.

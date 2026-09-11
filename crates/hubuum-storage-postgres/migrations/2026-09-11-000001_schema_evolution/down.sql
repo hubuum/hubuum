@@ -1,0 +1,17 @@
+DROP INDEX IF EXISTS public.object_schema_scan;
+DELETE FROM tasks WHERE kind='schema_validation';
+ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export', 'backup', 'reindex', 'remote_call'));
+DROP TRIGGER object_schema_epoch ON hubuumobject;
+DROP FUNCTION hubuum_object_schema_epoch();
+DROP TRIGGER class_schema_projection ON hubuumclass;
+DROP FUNCTION hubuum_class_schema_projection();
+DROP TABLE schema_validation_work;
+DROP FUNCTION hubuum_schema_work_deleted();
+ALTER FUNCTION public.record_event_related_collections() RESET search_path;
+DROP TABLE object_schema_evidence;
+DROP TABLE class_schema_state;
+DROP TABLE class_schema_revisions;
+DROP FUNCTION hubuum_schema_projection_check();
+DROP FUNCTION hubuum_schema_revision_guard();
+DROP TABLE class_schema_history;

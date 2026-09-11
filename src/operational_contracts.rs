@@ -45,6 +45,7 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
 ];
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/observed.rs"),
+    include_str!("storage/context/schema_evolution.rs"),
     include_str!("storage/context/api.rs"),
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
@@ -257,6 +258,51 @@ pub(crate) const METRICS: &[MetricDefinition] = &[
         &[],
         Process,
         "Guarded computed-field read repairs"
+    ),
+    metric!(
+        "hubuum_schema_dependency_rebuilds_total",
+        Counter,
+        None,
+        [],
+        &[],
+        Process,
+        "Dependent rebuilds queued by explicit schema activation"
+    ),
+    metric!(
+        "hubuum_schema_mutations_total",
+        Counter,
+        None,
+        ["policy", "result"],
+        &[],
+        Process,
+        "Schema staging and activation outcomes"
+    ),
+    metric!(
+        "hubuum_schema_validation_objects_total",
+        Counter,
+        None,
+        ["kind", "result"],
+        &[],
+        Process,
+        "Committed schema inspection outcomes"
+    ),
+    metric!(
+        "hubuum_schema_validation_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["kind", "status"],
+        BACKGROUND_BUCKETS_SECONDS,
+        Process,
+        "Schema validation work elapsed time"
+    ),
+    metric!(
+        "hubuum_schema_compliance_objects",
+        Gauge,
+        None,
+        ["status"],
+        &[],
+        Database,
+        "Objects by effective active schema compliance"
     ),
     metric!(
         "hubuum_computed_field_rebuild_batches_total",
@@ -1312,6 +1358,24 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             strings(&["success", "field_error"])
         }
         ("hubuum_computed_field_read_repairs_total", "outcome") => strings(&["success", "failure"]),
+        ("hubuum_schema_mutations_total", "policy") => {
+            strings(&["stage", "reject_incompatible", "allow_pending"])
+        }
+        ("hubuum_schema_mutations_total", "result") => {
+            strings(&["committed", "unchanged", "conflict", "error"])
+        }
+        ("hubuum_schema_validation_objects_total", "result") => {
+            strings(&["valid", "invalid", "not_required", "uninspectable", "stale"])
+        }
+        (name, "kind") if name.starts_with("hubuum_schema_validation_") => {
+            strings(&["impact", "revalidation"])
+        }
+        ("hubuum_schema_validation_duration_seconds", "status") => {
+            strings(&["complete", "cancelled", "superseded"])
+        }
+        ("hubuum_schema_compliance_objects", "status") => {
+            strings(&["valid", "invalid", "pending", "not_required"])
+        }
         ("hubuum_computed_field_rebuild_batches_total", "items") => {
             strings(&["empty", "non_empty"])
         }
@@ -2502,6 +2566,7 @@ mod tests {
         include_str!("observability/metrics/registry.rs"),
         include_str!("observability/metrics/remote_call.rs"),
         include_str!("observability/metrics/scrape.rs"),
+        include_str!("observability/metrics/schema.rs"),
         include_str!("observability/metrics/secret.rs"),
         include_str!("observability/metrics/security.rs"),
         include_str!("observability/metrics/storage.rs"),

@@ -45,7 +45,7 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `5` preserves authoritative resource revisions, collection
+Backup version `6` preserves authoritative resource revisions, collection
 authorization-set revisions, temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
 tables. State sections include identity scopes, groups, principals, users,
@@ -55,6 +55,14 @@ export templates, remote targets, event sinks, and event subscriptions. History
 sections describe resource history, terminal tasks and results, audit events,
 and terminal event deliveries.
 
+Schema state additionally includes retained revisions, active identities,
+allocation and population state, and object validation evidence. History includes
+schema lifecycle snapshots, including deleted classes. Restore checks these
+references and projections before replacement and rechecks current successful
+evidence against the document. It recreates enforced-schema revalidation tasks;
+active leases, checkpoints, and impact proofs are not restored. See
+[class schema evolution](schema_evolution.md).
+
 Rows use the versioned logical vocabulary: `class_id`, `from_class_id`,
 `from_object_id`, principal identifiers, permission-name arrays,
 `history_entry_id`, and the temporal operations `create`, `update`, and
@@ -63,7 +71,7 @@ privately maps these sections and fields to its tables, columns, and trigger
 operation codes; another adapter must implement the same logical projection
 without reproducing PostgreSQL names.
 
-Restore rejects version 4 and older backups, unknown or incomplete sections,
+Restore rejects version 5 and older backups, unknown or incomplete sections,
 malformed logical rows, invalid timestamps, and invalid, maximum, or
 inconsistent revisions. Create a new backup after upgrading and before relying
 on restore. Class computation state and object materializations remain excluded
@@ -215,28 +223,24 @@ the split database roles described in
 [PostgreSQL Database Roles](database_roles.md). Use this sequence:
 
 1. While the existing release is healthy, stop new backup, restore, and import
-   operations and create a version 5 backup with history. Keep the old release,
-   its database credential, and this artifact until the upgrade is accepted.
-2. Run the candidate `hubuum-admin --verify-backup` against those exact bytes.
-   If the installed release is v0.0.9 or older, first upgrade normally to
-   v0.0.10 or v0.0.11, create a version 5 backup there, and only then continue;
-   converting a version 4-or-older document in place is not supported.
-3. Restore the artifact into a newly created empty disposable database using
-   `--restore-test-database-url` and
-   `--keep-restore-test-database`. Start the candidate API and worker against
-   only that database, reset an administrator password, and verify login,
-   representative reads, background work, audit history, and computed-field
-   rebuilding. Then delete the disposable database.
-4. Confirm production maintenance is `normal` and no confirmed restore is in
-   flight. Run the one-shot schema migration, start the isolated restore
-   executor, and roll runtime-only API and worker processes. If opting into
-   split roles, complete the documented adoption before those workloads start.
-5. Keep restore confirmation blocked until the executor is healthy. In split
-   mode, also require the runtime privilege report to pass. Retain the
-   pre-upgrade deployment and backup through the observation window. After a
-   split-role adoption, application rollback uses the compatibility runtime
-   login; web restore stays blocked and the candidate one-shot admin restore
-   remains the recovery path.
+   operations and create a backup with history. Retain the old binaries,
+   credential, and artifact until the upgrade is accepted.
+2. Verify and restore the artifact into an empty disposable database using the
+   matching old release. Version 5 and older artifacts cannot be passed directly
+   to the new format 6 restore executor. Older format migrations may require
+   intermediate releases; no artifact conversion is provided.
+3. Run the candidate migration against that disposable database, then start the
+   candidate API and worker there. Verify login, representative reads, schema
+   revalidation, audit history, and computed-field rebuilding. Create and verify
+   a new format 6 backup, then remove the disposable database.
+4. Confirm production maintenance is `normal` with no confirmed restore in
+   flight. Drain old workers and run the one-shot migration before starting
+   matching new API, worker, and isolated restore-executor binaries. Complete
+   split-role adoption first if that optional topology is being introduced.
+5. Keep restore confirmation blocked until the executor is healthy and the
+   runtime privilege report passes. Create a format 6 backup after the upgrade.
+   Retain the pre-upgrade release and artifact for recovery with that release;
+   the new executor cannot restore the older artifact directly.
 
 This is an application migration path, not an automatic database downgrade.
 Older application releases are only certified against the adjacent migrated

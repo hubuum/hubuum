@@ -266,6 +266,11 @@ impl From<DieselError> for PostgresStorageError {
                 Self::not_found("Attempt to associate to a non-existent entity")
             }
             DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
+                if info.constraint_name() == Some("class_schema_activation_required") {
+                    return Self::conflict(
+                        "Stage, analyze and explicitly activate schema changes for nonempty classes",
+                    );
+                }
                 if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
                     return Self::conflict(
                         "Object relation cardinality exceeded: relation limit reached",

@@ -26,15 +26,17 @@ pub enum TaskKind {
     Backup,
     Reindex,
     RemoteCall,
+    SchemaValidation,
 }
 
 impl TaskKind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Import,
         Self::Export,
         Self::Backup,
         Self::Reindex,
         Self::RemoteCall,
+        Self::SchemaValidation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,6 +45,7 @@ impl TaskKind {
             TaskKind::Export => "export",
             TaskKind::Backup => "backup",
             TaskKind::Reindex => "reindex",
+            TaskKind::SchemaValidation => "schema_validation",
             TaskKind::RemoteCall => "remote_call",
         }
     }
@@ -53,6 +56,7 @@ impl TaskKind {
             "export" => Ok(TaskKind::Export),
             "backup" => Ok(TaskKind::Backup),
             "reindex" => Ok(TaskKind::Reindex),
+            "schema_validation" => Ok(TaskKind::SchemaValidation),
             "remote_call" => Ok(TaskKind::RemoteCall),
             _ => Err(ApiError::InternalServerError(format!(
                 "Unknown task kind '{value}'"

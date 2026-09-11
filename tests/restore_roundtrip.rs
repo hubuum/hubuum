@@ -210,6 +210,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .optional()?;
         let marker = tasks::table
             .filter(tasks::id.eq(marker_task_id))
+            // Rebuilt tasks may legitimately reuse an identifier after sequence restoration.
+            .filter(tasks::summary.eq("created after backup"))
             .select(tasks::id)
             .first::<i32>(conn)
             .await

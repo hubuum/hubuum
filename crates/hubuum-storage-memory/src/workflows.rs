@@ -578,6 +578,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .collect::<Vec<_>>();
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
+            let has_schema_work = state.schema_work.contains_key(&task_id.id());
             let results = state.import_task_results.get(&task_id.id());
             let processed = results.map_or(0, |results| results.len()) as i32;
             let failed = results.map_or(0, |results| {
@@ -590,6 +591,22 @@ impl TaskExecutionStorage for MemoryStorage {
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
+            if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
+                task.status = StorageTaskStatus::Queued;
+                task.started_at = None;
+                task.lease_expires_at = None;
+                task.claim_token = None;
+                task.updated_at = now;
+                recovered.push(task.projection()?);
+                state.append_task_event_record(
+                    task_id,
+                    StorageTaskEventInput::new(
+                        "queued",
+                        "Schema validation resumed from durable checkpoint after lease expiry",
+                    ),
+                )?;
+                continue;
+            }
             let completed_import = task.kind == StorageTaskKind::Import
                 && processed > 0
                 && processed == task.progress.total();
@@ -696,7 +713,9 @@ impl TaskExecutionStorage for MemoryStorage {
         }
         let now = Utc::now();
         match payload {
-            StorageTaskCompletionPayload::Import | StorageTaskCompletionPayload::Reindex => {}
+            StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::Reindex
+            | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
                 crate::backup::store_remote_call_result(
                     &mut state,
@@ -1237,9 +1256,16 @@ impl ImportStorage for MemoryStorage {
             .collect::<Vec<_>>();
         if let Some(path) = parts.path {
             candidates.retain(|collection| {
-                let mut names = Vec::new();
+                if collection.id().id() == ROOT_COLLECTION_ID {
+                    return path.is_empty();
+                }
+                // Import paths include the selected collection and omit root.
+                let mut names = vec![collection.name().to_string()];
                 let mut parent = collection.parent_collection_id();
                 while let Some(parent_id) = parent {
+                    if parent_id.id() == ROOT_COLLECTION_ID {
+                        break;
+                    }
                     let Some(ancestor) = state.collections.get(&parent_id.id()) else {
                         return false;
                     };
@@ -1247,7 +1273,7 @@ impl ImportStorage for MemoryStorage {
                     parent = ancestor.parent_collection_id();
                 }
                 names.reverse();
-                names == path || (collection.id().id() == ROOT_COLLECTION_ID && path.is_empty())
+                names == path
             });
         }
         match candidates.as_slice() {

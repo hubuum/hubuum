@@ -547,3 +547,6 @@ mod tests {
         );
     }
 }
+
+pub mod schema_evolution;
+pub use schema_evolution::*;

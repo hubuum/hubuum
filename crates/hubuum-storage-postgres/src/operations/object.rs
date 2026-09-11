@@ -180,6 +180,11 @@ pub(crate) async fn create_object_on(
     let class = lock_resolved_class(connection, target).await?;
     validate_object_create(&command, &class)?;
     let object = insert_object(connection, &command).await?;
+    // New objects without enforcement have an explicit derived not-required
+    // state and cannot have older evidence to clear.
+    if class.validate_schema {
+        super::schema_evolution::record_object_schema_on(connection, &object, context).await?;
+    }
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(object.id, object.hubuum_class_id, &object.data),
@@ -282,6 +287,7 @@ pub(crate) async fn patch_object_data_on(
     .set(crate::schema::hubuumobject::data.eq(patched_data))
     .get_result::<ObjectRow>(connection)
     .await?;
+    super::schema_evolution::record_object_schema_on(connection, &updated, context).await?;
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
@@ -595,6 +601,7 @@ async fn persist_object_update(
     .set(update)
     .get_result::<ObjectRow>(connection)
     .await?;
+    super::schema_evolution::record_object_schema_on(connection, &updated, context).await?;
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),

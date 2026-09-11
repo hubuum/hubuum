@@ -16,6 +16,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Older installations can use either new script without converting their
   configuration; omitting tag options preserves their saved images.
 
+- Immutable class schema revisions, staged impact analysis, explicit strict or
+  pending activation, and resumable object revalidation on both storage backends.
+  New schema endpoints expose authorized compliance pages and administrator
+  progress reports. Schema changes and object mismatches emit durable events
+  and audit entries; activation also queues dependent computed-field rebuilds.
+- Revision-aware import activation, fenced object validation evidence, schema
+  history, aggregate compliance metrics, and bounded large-object validation.
+
 ### Changed
 
 - Stable server releases now also publish the `latest` container tag. Fresh
@@ -70,6 +78,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   update unsupported validated class schemas before resuming object writes.
   See [JSON Schema validation limits](docs/json_schema_validation.md) for exact
   limits, migration guidance, and separate debug/release measurements.
+
+### Fixed
+
+- Memory imports resolve collection paths with the same root-relative semantics
+  as PostgreSQL, including revision-checked class and object updates.
+
+### Breaking changes and upgrade notes
+
+- Schema PATCH and legacy import overwrites that change policy on a nonempty
+  class now return a conflict. Clients must stage a revision, request impact,
+  and explicitly activate it. Pending activation and aggregate reports require
+  administrator authority. Imports select the staged revision with
+  `schema_activation` and must provide its exact class policy.
+- Backup format 6 replaces format 5 and adds schema revisions, state, evidence,
+  and history. Restore older artifacts with their matching old release before
+  migrating the database and creating a format 6 backup. No artifact converter
+  is provided. Install matching server, administrator, and restore-executor
+  binaries, drain old workers, and run migrations before starting new processes.
+  Existing enforced objects start pending; request revalidation after migration.
+- The seven storage SDK crates advance together from 0.2.0 to 0.3.0. External
+  adapters must implement `SchemaEvolutionStorage`, support the new task/event
+  vocabularies and import activation input, and map the new logical backup
+  sections. Update exact SDK dependencies together and rerun conformance; see
+  the storage adapter SDK upgrade guide.
 
 ## [0.0.14] - 2026-09-10
 

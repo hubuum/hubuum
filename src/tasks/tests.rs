@@ -779,6 +779,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         timestamps: Some(timestamps.clone()),
     };
     let class_inputs = [0, 1].map(|index| ImportClassInput {
+        schema_activation: None,
         ref_: Some(format!("class:{index}")),
         name: context.scoped_name(&format!("unchanged_core_import_class_{index}")),
         description: format!("Unchanged core import class {index}"),
@@ -913,11 +914,19 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         },
         CoreTemporalEntity::Class => PlannedExecution::UpdateClass {
             class_id: classes[0].id().id(),
-            input: class_inputs[0].clone(),
+            input: ImportClassInput {
+                collection_ref: None,
+                collection_key: Some(collection_key()),
+                ..class_inputs[0].clone()
+            },
         },
         CoreTemporalEntity::Object => PlannedExecution::UpdateObject {
             object_id: objects[0].id().id(),
-            input: object_inputs[0].clone(),
+            input: ImportObjectInput {
+                class_ref: None,
+                class_key: Some(class_key(0)),
+                ..object_inputs[0].clone()
+            },
         },
         CoreTemporalEntity::ClassRelation => PlannedExecution::UpdateClassRelationTimestamps {
             input: ImportClassRelationInput {
@@ -1026,6 +1035,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
         timestamps: None,
     };
     let class_inputs = [0, 1].map(|index| ImportClassInput {
+        schema_activation: None,
         ref_: Some(format!("class:{index}")),
         name: resolve_class_names[index].clone(),
         description: format!("Database timestamp class {index}"),
@@ -1609,6 +1619,7 @@ async fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 Some(class.clone()),
             ),
             execution: Some(PlannedExecution::CreateClass(ImportClassInput {
+                schema_activation: None,
                 ref_: Some("class:bad".to_string()),
                 name: class.clone(),
                 description: "Fails at runtime".to_string(),
@@ -1692,6 +1703,7 @@ async fn test_execute_import_best_effort_keeps_successful_items() {
                 Some(class_bad),
             ),
             execution: Some(PlannedExecution::CreateClass(ImportClassInput {
+                schema_activation: None,
                 ref_: Some("class:bad".to_string()),
                 name: "bad".to_string(),
                 description: "Fails at runtime".to_string(),
@@ -1793,6 +1805,7 @@ async fn test_execute_import_best_effort_continues_after_non_policy_runtime_erro
                 Some("bad".to_string()),
             ),
             execution: Some(PlannedExecution::CreateClass(ImportClassInput {
+                schema_activation: None,
                 ref_: Some("class:bad".to_string()),
                 name: "bad".to_string(),
                 description: "Fails at runtime".to_string(),
@@ -2062,6 +2075,7 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
         permission_policy: Some(ImportPermissionPolicy::Continue),
     };
     let input = ImportClassInput {
+        schema_activation: None,
         ref_: Some("class:one".to_string()),
         name: context.scoped_name("duplicate_class"),
         description: "first".to_string(),
@@ -2084,6 +2098,7 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
     .unwrap();
 
     let duplicate = ImportClassInput {
+        schema_activation: None,
         ref_: Some("class:two".to_string()),
         ..input
     };
@@ -2112,6 +2127,7 @@ async fn best_effort_planning_rejects_invalid_class_schema_policy_per_item() {
         path: None,
     };
     let class_input = |reference: &str, name: &str, validate_schema| ImportClassInput {
+        schema_activation: None,
         ref_: Some(reference.to_string()),
         name: context.scoped_name(name),
         description: name.to_string(),
@@ -2259,6 +2275,7 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         permission_policy: Some(ImportPermissionPolicy::Continue),
     };
     let input = ImportClassInput {
+        schema_activation: None,
         ref_: Some("class:shared".to_string()),
         name: context.scoped_name("duplicate_class_ref_one"),
         description: "first".to_string(),
@@ -2281,6 +2298,7 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     .unwrap();
 
     let duplicate = ImportClassInput {
+        schema_activation: None,
         name: context.scoped_name("duplicate_class_ref_two"),
         collection_ref: Some("collection:two".to_string()),
         ..input
@@ -2658,6 +2676,7 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     };
 
     let class_input = ImportClassInput {
+        schema_activation: None,
         ref_: Some("class:child".to_string()),
         name: context.scoped_name("class_after_collection_update"),
         description: "child".to_string(),
@@ -2712,6 +2731,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
     let execution = PlannedExecution::UpdateClass {
         class_id: class.id,
         input: ImportClassInput {
+            schema_activation: None,
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated class".to_string(),
@@ -2811,6 +2831,7 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
         &mode,
         &mut state,
         &ImportClassInput {
+            schema_activation: None,
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated description".to_string(),
@@ -2891,13 +2912,17 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
         &mode,
         &mut state,
         &ImportClassInput {
+            schema_activation: None,
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated class".to_string(),
             json_schema: None,
             validate_schema: None,
-            collection_ref: Some("collection:existing".to_string()),
-            collection_key: None,
+            collection_ref: None,
+            collection_key: Some(CollectionKey {
+                name: fixture.collection.name.clone(),
+                path: None,
+            }),
             condition: None,
             timestamps: None,
         },

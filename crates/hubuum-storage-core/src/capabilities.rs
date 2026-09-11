@@ -66,6 +66,7 @@ pub mod workflows {
     pub use crate::import_workflow::*;
     pub use crate::remote_target::*;
     pub use crate::restore::*;
+    pub use crate::schema_evolution::*;
     pub use crate::task_execution::*;
     pub use crate::task_queue::*;
     pub use crate::{

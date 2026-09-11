@@ -2,6 +2,7 @@ use super::*;
 
 use diesel::sql_types::{BigInt, Bool, Integer};
 
+use hubuum_storage_core::{StorageError, StorageErrorKind};
 use hubuum_storage_postgres::PostgresPool;
 
 async fn load_computed_object_data(
@@ -597,6 +598,10 @@ async fn object_data_patch_holds_the_class_schema_lock_until_commit(
     .unwrap();
 
     patch_task.await.unwrap().unwrap();
-    schema_task.await.unwrap().unwrap();
+    let error = schema_task
+        .await
+        .unwrap()
+        .expect_err("nonempty classes require explicit schema activation after the lock releases");
+    assert_eq!(StorageError::from(error).kind(), StorageErrorKind::Conflict);
     fixture.cleanup().await.unwrap();
 }

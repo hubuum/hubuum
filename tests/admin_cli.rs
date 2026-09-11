@@ -372,7 +372,7 @@ fn backup_files_are_owner_only_and_atomically_replaced() {
     let report: serde_json::Value = serde_json::from_slice(&verification.stdout).unwrap();
     assert_eq!(report["result"], "passed");
     assert_eq!(report["mode"], "format_only");
-    assert_eq!(report["backup_version"], 5);
+    assert_eq!(report["backup_version"], 6);
     assert!(report["total_items"].as_i64().unwrap() > 0);
 
     let unsafe_restore_test = admin_command(&database_url)
@@ -408,7 +408,7 @@ fn backup_verification_rejects_malformed_input_before_database_configuration() {
     let path = std::env::temp_dir().join(format!("{}.json", unique_name("invalid_backup")));
     std::fs::write(
         &path,
-        br#"{"backup_version":5,"secret":"verification-canary"}"#,
+        br#"{"backup_version":6,"secret":"verification-canary"}"#,
     )
     .unwrap();
 
@@ -520,7 +520,7 @@ mod restore_streams {
                     {
                         Ok(mut file) => {
                             // The verifier may close the pipe without reading.
-                            let _ = file.write_all(br#"{"backup_version":5}"#);
+                            let _ = file.write_all(br#"{"backup_version":6}"#);
                             return;
                         }
                         Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
@@ -578,7 +578,7 @@ mod restore_streams {
         let mut command = Command::new("bash");
         command.env_remove("BASH_ENV").args([
             "-c",
-            r#"exec "$1" --restore <(printf '%s' '{"backup_version":5}') "${@:2}""#,
+            r#"exec "$1" --restore <(printf '%s' '{"backup_version":6}') "${@:2}""#,
             "restore-process-substitution-test",
             admin_binary(),
             "--storage-backend",

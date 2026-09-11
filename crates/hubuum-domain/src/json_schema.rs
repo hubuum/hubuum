@@ -16,13 +16,13 @@ const JSON_SCHEMA_CACHE_MAX_ENTRIES: usize = 128;
 
 type SchemaDigest = [u8; 32];
 
-struct CompiledSchema {
+pub(crate) struct BudgetedSchema {
     validator: jsonschema::Validator,
     budget: SchemaBudget,
 }
 
-impl CompiledSchema {
-    fn validate(&self, value: &Value) -> Result<(), JsonSchemaError> {
+impl BudgetedSchema {
+    pub(crate) fn validate(&self, value: &Value) -> Result<(), JsonSchemaError> {
         self.budget.check_instance(value)?;
         self.validator
             .validate(value)
@@ -30,7 +30,7 @@ impl CompiledSchema {
     }
 }
 
-static JSON_SCHEMA_CACHE: OnceLock<RwLock<LruCache<SchemaDigest, Arc<CompiledSchema>>>> =
+static JSON_SCHEMA_CACHE: OnceLock<RwLock<LruCache<SchemaDigest, Arc<BudgetedSchema>>>> =
     OnceLock::new();
 
 /// Stable classification of a JSON Schema failure.
@@ -85,7 +85,7 @@ impl fmt::Display for JsonSchemaError {
 
 impl std::error::Error for JsonSchemaError {}
 
-fn schema_cache() -> &'static RwLock<LruCache<SchemaDigest, Arc<CompiledSchema>>> {
+fn schema_cache() -> &'static RwLock<LruCache<SchemaDigest, Arc<BudgetedSchema>>> {
     JSON_SCHEMA_CACHE.get_or_init(|| {
         let capacity = NonZeroUsize::new(JSON_SCHEMA_CACHE_MAX_ENTRIES)
             .expect("JSON_SCHEMA_CACHE_MAX_ENTRIES must be non-zero");
@@ -129,7 +129,7 @@ fn validate_reference_policy(value: &Value) -> Result<(), JsonSchemaError> {
     Ok(())
 }
 
-fn compile_json_schema(schema: &Value) -> Result<Arc<CompiledSchema>, JsonSchemaError> {
+pub(crate) fn compile_json_schema(schema: &Value) -> Result<Arc<BudgetedSchema>, JsonSchemaError> {
     let budget = SchemaBudget::new(schema)?;
     validate_reference_policy(schema)?;
     let digest = schema_digest(schema)?;
@@ -156,7 +156,7 @@ fn compile_json_schema(schema: &Value) -> Result<Arc<CompiledSchema>, JsonSchema
                 "Invalid or over-budget JSON schema: {error}; simplify patterns or schema structure"
             ))
         })?;
-    let validator = Arc::new(CompiledSchema { validator, budget });
+    let validator = Arc::new(BudgetedSchema { validator, budget });
     schema_cache()
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

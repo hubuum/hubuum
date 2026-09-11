@@ -706,6 +706,9 @@ async fn process_claimed_task(
     backup_settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
     let task_kind = TaskKind::from_db(&task.kind)?;
+    if task_kind == TaskKind::SchemaValidation {
+        return crate::services::tasks::execute_schema_validation(context, task).await;
+    }
     if task_kind == TaskKind::Reindex {
         let completed =
             crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
@@ -750,7 +753,9 @@ async fn process_claimed_task(
             execute_backup_task(context, task, &principal, scopes, backup_settings).await
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
-        TaskKind::Reindex => unreachable!("reindex tasks are dispatched before principal loading"),
+        TaskKind::Reindex | TaskKind::SchemaValidation => {
+            unreachable!("reindex tasks are dispatched before principal loading")
+        }
     }
 }
 

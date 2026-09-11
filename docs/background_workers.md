@@ -47,3 +47,13 @@ joined.
 
 Workers are not started if database initialization or HTTP binding fails. This
 prevents detached workers from surviving a failed server startup path.
+
+## Schema validation work
+
+The `schema_validation` task kind handles impact and revalidation using durable
+cursor checkpoints. Default batches allow 64 rows, 8 MiB total JSON, and 1 MiB
+per object. Oversized documents are uninspectable, so they cannot authorize
+strict activation. Recovery resumes committed progress; stale leases,
+cancellation, and superseded revisions cannot publish evidence. Retrying a
+terminal task means requesting a fresh scan. See
+[class schema evolution](schema_evolution.md#bounded-work-and-recovery).

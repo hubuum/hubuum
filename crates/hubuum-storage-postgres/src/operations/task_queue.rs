@@ -766,7 +766,7 @@ fn task_capacity_lock_key(submitted_by: i32, kind: StorageTaskKind) -> i64 {
         StorageTaskKind::Export => 1,
         StorageTaskKind::RemoteCall => 2,
         StorageTaskKind::Backup => 3,
-        StorageTaskKind::Import | StorageTaskKind::Reindex => 9,
+        StorageTaskKind::Import | StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => 9,
     };
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
 }

@@ -1,5 +1,6 @@
 mod baseline;
 mod revisions;
+mod schemas;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -62,9 +63,12 @@ backup_sections! {
         CollectionHierarchy => "collection_hierarchy",
         CollectionPermissionGrants => "collection_permission_grants",
         Classes => "classes",
+        ClassSchemaRevisions => "class_schema_revisions",
+        ClassSchemaState => "class_schema_state",
         ComputedFieldDefinitions => "computed_field_definitions",
         ClassRelations => "class_relations",
         Objects => "objects",
+        ObjectSchemaEvidence => "object_schema_evidence",
         ObjectRelations => "object_relations",
         ExportTemplates => "export_templates",
         RemoteTargets => "remote_targets",
@@ -78,6 +82,7 @@ backup_sections! {
     StorageBackupHistorySection {
         CollectionHistory => "collection_history",
         ClassHistory => "class_history",
+        ClassSchemaHistory => "class_schema_history",
         ClassRelationHistory => "class_relation_history",
         ObjectHistory => "object_history",
         ObjectRelationHistory => "object_relation_history",
@@ -235,6 +240,7 @@ impl StorageBackupSnapshot {
             history_sections,
         };
         revisions::validate_backup_revisions(&snapshot)?;
+        schemas::validate(&snapshot)?;
         Ok(snapshot)
     }
 
@@ -284,6 +290,31 @@ pub trait BackupSnapshotStorage: Send + Sync {
         &self,
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError>;
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_schema_sections(
+    mut state: StorageBackupStateSections,
+) -> StorageBackupStateSections {
+    for class in state.get_mut(&StorageBackupStateSection::Classes).unwrap() {
+        class.0.insert("validate_schema".into(), Value::Bool(false));
+        class.0.insert("json_schema".into(), Value::Null);
+    }
+    let ids = state[&StorageBackupStateSection::Classes]
+        .iter()
+        .map(|class| class.get("id").unwrap().clone())
+        .collect::<Vec<_>>();
+    for id in ids {
+        state.get_mut(&StorageBackupStateSection::ClassSchemaRevisions).unwrap().push(StorageBackupRow::try_from_value(serde_json::json!({
+            "class_id": id, "revision": 1, "json_schema": null, "validate_schema": false,
+            "status": "active", "created_at": "2026-01-01T00:00:00Z", "created_by": null,
+            "activated_at": "2026-01-01T00:00:00Z", "activation_policy": "reject_incompatible"
+        })).unwrap());
+        state.get_mut(&StorageBackupStateSection::ClassSchemaState).unwrap().push(StorageBackupRow::try_from_value(serde_json::json!({
+            "class_id": id, "active_revision": 1, "last_revision": 1, "object_epoch": 0, "object_count": 0
+        })).unwrap());
+    }
+    state
 }
 
 #[cfg(test)]
@@ -404,12 +435,14 @@ mod tests {
                 StorageBackupRow::try_from_value(serde_json::json!({"id": 1, "revision": 7, "valid_to": null, "operation": "create", "secret": "history"})).unwrap(),
             ],
         );
-        let snapshot = StorageBackupSnapshot::try_new(state, Some(history)).unwrap();
+        let snapshot =
+            StorageBackupSnapshot::try_new(with_test_schema_sections(state), Some(history))
+                .unwrap();
 
         let debug = format!("{snapshot:?}");
 
         assert!(!debug.contains("secret"));
-        assert!(debug.contains("state_section_count: 20"));
+        assert!(debug.contains("state_section_count: 23"));
         assert!(debug.contains("history_row_count: Some(1)"));
     }
 }

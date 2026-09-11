@@ -506,12 +506,12 @@ async fn class_storage_query_budget_create_with_event_is_fixed() {
     let (created, queries) =
         capture_queries(services.classes().create(command, &EventContext::system())).await;
     let created = created.expect("class should save with an event");
-    assert_eq!(queries.total_queries(), 4, "{:#?}", queries.query_counts());
-    assert_eq!(queries.domain_queries(), 2);
+    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4);
     assert_eq!(queries.control_queries(), 2);
     assert_eq!(queries.connection_checkouts(), 1);
     assert_eq!(queries.queries_matching("INSERT INTO \"hubuumclass\""), 1);
-    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 2);
 
     created
         .delete_without_events(&scope.pool)

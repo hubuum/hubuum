@@ -2,7 +2,7 @@
 
 Hubuum has one application-facing storage boundary. A selectable storage backend implements that boundary in full; it is not a collection of optional features.
 
-PostgreSQL is currently the only selectable backend. The in-memory resource model is a focused test tool, not a partially implemented backend.
+PostgreSQL and the experimental process-local memory adapter are selectable complete backends. The separate focused in-memory resource model remains a test tool.
 
 ## Choose a Reading Path
 

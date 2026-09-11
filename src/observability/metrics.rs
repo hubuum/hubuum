@@ -10,10 +10,12 @@ mod login;
 mod process;
 mod registry;
 mod remote_call;
+mod schema;
 mod scrape;
 mod secret;
 mod security;
 mod storage;
+pub(crate) use schema::{schema_dependency_rebuild, schema_mutation, schema_work_progress};
 mod task;
 mod template;
 mod timer;
@@ -216,6 +218,11 @@ struct Metrics {
     task_counts: CheckedI64Gauge,
     task_oldest_age: CheckedF64Gauge,
     task_last_terminal_timestamp: CheckedF64Gauge,
+    schema_mutations: CheckedCounter,
+    schema_dependency_rebuilds: CheckedCounter,
+    schema_objects: CheckedCounter,
+    schema_duration: CheckedHistogram,
+    schema_compliance: CheckedU64Gauge,
     computed_evaluations: CheckedCounter,
     computed_evaluator_errors: CheckedCounter,
     computed_live_fallbacks: CheckedCounter,

@@ -14,6 +14,7 @@ mod json_value;
 mod maintenance;
 mod operational_constraint;
 mod revision;
+mod schema_evolution;
 mod template_alias;
 mod token;
 
@@ -51,6 +52,7 @@ pub use operational_constraint::{
     RequiredConstraint,
 };
 pub use revision::{ResourceRevision, ResourceRevisionError};
+pub use schema_evolution::{CompiledSchema, SchemaDiagnostic, SchemaReference, SchemaRevision};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{
     MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TOKEN_LIFETIME_CONSTRAINT,

@@ -563,3 +563,19 @@ On Unix, the archive directory is a real non-symlink directory restricted to
 mode `0700`. Temporary and final batch files are regular non-symlink files with
 mode `0600`. The worker flushes and synchronizes file contents before atomic
 rename, then synchronizes the directory entry before acknowledging archival.
+
+## Schema lifecycle and object validation
+
+`class_schema` events record staging, abandonment, activation, work requests,
+cancellation, and deletion. Activation metadata binds the old/new revisions,
+policy, immediate population effect, revalidation task, and dependent rebuild.
+`object_validation` uses `succeeded`, `failed`, and `updated` for committed
+valid, mismatched, and not-required findings. Impact failures are advisory and
+explicitly carry `compliance_changed: false`.
+
+These events are also audit entries in the canonical stream. Their documents
+contain schema/object identities and safe categories, without object values or
+raw validator messages. They commit with evidence and checkpoint updates;
+rolled-back writes and rejected leases publish neither. The activation event
+records immediate pending/not-required effects; per-object findings follow in
+bounded batches. See [class schema evolution](schema_evolution.md#events-audit-and-history).

@@ -480,3 +480,13 @@ for schema_input in scripts/check-json-schema-budget.py \
   assert_flag "$schema_budget_output" benchmarks true
   assert_flag "$schema_budget_output" runtime_benchmark true
 done
+schema_inputs_output="$(bash "$classifier" \
+  benches/schema_validation_criterion.rs \
+  crates/hubuum-storage-postgres/migrations/2026-09-11-000001_schema_evolution/up.sql \
+  src/tests/storage_contract/schema_evolution/native.rs)"
+assert_flag "$schema_inputs_output" code true
+assert_flag "$schema_inputs_output" benchmarks true
+
+schema_manifests_output="$(bash "$classifier" Cargo.toml Cargo.lock crates/hubuum-storage-core/Cargo.toml)"
+assert_flag "$schema_manifests_output" code true
+assert_flag "$schema_manifests_output" container true

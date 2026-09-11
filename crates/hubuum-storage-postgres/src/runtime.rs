@@ -10,7 +10,7 @@ use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel::sql_types::{BigInt, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
-use hubuum_events_core::{MutationProvenance, TraceLink};
+use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
     StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
 };
@@ -20,7 +20,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260905000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260911000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
@@ -488,6 +488,15 @@ where
     F: Future,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
+}
+
+pub(crate) fn ambient_event_context() -> EventContext {
+    AMBIENT_MUTATION_PROVENANCE
+        .try_with(Clone::clone)
+        .ok()
+        .flatten()
+        .map(EventContext::from_mutation)
+        .unwrap_or_else(EventContext::system)
 }
 
 pub(crate) fn ambient_mutation_trace_link() -> Option<TraceLink> {

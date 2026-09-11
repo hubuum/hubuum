@@ -658,6 +658,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::Backup => StorageTaskKind::Backup,
         TaskKind::Reindex => StorageTaskKind::Reindex,
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
+        TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
     }
 }
 
@@ -808,5 +809,32 @@ fn map_backup_lookup<T, U>(
             expires_at: expires_at.naive_utc(),
         },
         StorageTaskOutputLookup::Missing => BackupOutputLookup::Missing,
+    }
+}
+
+/// Resume schema validation in bounded adapter-owned batches under the existing lease.
+pub async fn execute_schema_validation(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+) -> Result<crate::models::TaskStatus, ApiError> {
+    use hubuum_storage_core::{
+        SchemaEvolutionStorage, StorageSchemaBatchLimits, StorageSchemaWorkStatus,
+    };
+    let mut previous = storage_handle(backend)
+        .get_schema_work(task.lease.task_id())
+        .await?;
+    loop {
+        let work = storage_handle(backend)
+            .process_schema_work(task.lease.clone(), StorageSchemaBatchLimits::default())
+            .await?;
+        crate::observability::metrics::schema_work_progress(&previous, &work);
+        previous = work.clone();
+        match work.status() {
+            StorageSchemaWorkStatus::Running => tokio::task::yield_now().await,
+            StorageSchemaWorkStatus::Complete => return Ok(crate::models::TaskStatus::Succeeded),
+            StorageSchemaWorkStatus::Cancelled | StorageSchemaWorkStatus::Superseded => {
+                return Ok(crate::models::TaskStatus::Cancelled);
+            }
+        }
     }
 }

@@ -40,7 +40,9 @@ use super::class::ClassRow;
 use super::collection::{CollectionRow, insert_collection_closure_rows};
 use super::computed_definition::ComputedDefinitionRow;
 use super::computed_fields::advance_revision_and_enqueue_on_connection;
-use super::computed_materialization::materialize_object_on_connection;
+use super::computed_materialization::{
+    acquire_computed_class_shared_lock, materialize_object_on_connection,
+};
 use super::group::GroupRow;
 use super::import_workflow::{
     class_by_name_on_connection, collection_by_key_on_connection, object_by_name_on_connection,
@@ -49,8 +51,12 @@ use super::import_workflow::{
 use super::object::ObjectRow;
 use super::principal::PrincipalRow;
 use super::relation::normalize_class_relation_create;
+use super::schema_evolution::{
+    record_class_schema_on, record_object_schema_on, validate_import_object_on,
+};
 use super::service_account::ServiceAccountRow;
 use super::user::UserRow;
+use crate::runtime::ambient_event_context;
 use crate::{
     PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError, SendAsyncFn,
 };
@@ -444,8 +450,17 @@ async fn execute_operation(
                 .map(|reference| ImportReferenceChange::Class(reference, created)));
         }
         StorageImportOperation::UpdateClass { class_id, input } => {
-            let reference = input.clone().into_parts().reference;
-            let updated = update_class(connection, class_id.id(), input).await?;
+            let parts = input.clone().into_parts();
+            let collection = resolve_collection(
+                connection,
+                state,
+                parts.collection_ref.as_deref(),
+                parts.collection_key.as_ref(),
+            )
+            .await?;
+            let reference = parts.reference;
+            let updated =
+                update_class(connection, class_id.id(), collection.id().id(), input).await?;
             return Ok(reference.map(|reference| ImportReferenceChange::Class(reference, updated)));
         }
         StorageImportOperation::CreateObject(input) => {
@@ -463,8 +478,16 @@ async fn execute_operation(
                 .map(|reference| ImportReferenceChange::Object(reference, created)));
         }
         StorageImportOperation::UpdateObject { object_id, input } => {
-            let reference = input.clone().into_parts().reference;
-            let updated = update_object(connection, object_id.id(), input).await?;
+            let parts = input.clone().into_parts();
+            let class = resolve_class(
+                connection,
+                state,
+                parts.class_ref.as_deref(),
+                parts.class_key.as_ref(),
+            )
+            .await?;
+            let reference = parts.reference;
+            let updated = update_object(connection, object_id.id(), class.id().id(), input).await?;
             return Ok(reference.map(|reference| ImportReferenceChange::Object(reference, updated)));
         }
         StorageImportOperation::UpsertIdentityScope { input, overwrite } => {
@@ -802,7 +825,14 @@ async fn create_class(
     collection_id: i32,
 ) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
+    if parts.schema_activation.is_some() {
+        return Err(PostgresStorageError::invalid_input(
+            "Schema activation requires an existing class",
+        ));
+    }
     assert_import_create_condition(parts.condition)?;
+    hubuum_storage_core::StorageValidatedSchemaPolicy::try_new(parts.schema_policy.clone())
+        .map_err(|_| PostgresStorageError::invalid_input("Invalid imported JSON Schema policy"))?;
     let (json_schema, validate_schema) = parts.schema_policy.into_parts();
     let row = match parts.timestamps {
         Some(timestamps) => {
@@ -833,24 +863,45 @@ async fn create_class(
                 .await?
         }
     };
+    record_class_schema_on(connection, &row, &ambient_event_context()).await?;
     row.into_storage()
 }
 
 async fn update_class(
     connection: &mut PostgresConnection,
     class_id: i32,
+    authorized_collection: i32,
     input: StorageImportClass,
 ) -> Result<StorageClass, PostgresStorageError> {
     let parts = input.into_parts();
-    let (json_schema, validate_schema) = parts.schema_policy.into_parts();
+    hubuum_storage_core::StorageValidatedSchemaPolicy::try_new(parts.schema_policy.clone())
+        .map_err(|_| PostgresStorageError::invalid_input("Invalid imported JSON Schema policy"))?;
+    super::computed_materialization::acquire_computed_class_exclusive_lock(connection, class_id)
+        .await?;
     let current = crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
-        .select(crate::schema::hubuumclass::revision)
+        .select(ClassRow::as_select())
         .for_update()
-        .first::<PostgresRevision>(connection)
+        .first::<ClassRow>(connection)
         .await
         .optional()?;
-    assert_import_revision(parts.condition, require_existing(current, parts.condition)?)?;
+    let before = require_existing(current, parts.condition)?;
+    assert_import_revision(parts.condition, before.revision)?;
+    if before.collection_id != authorized_collection {
+        return Err(PostgresStorageError::conflict(
+            "Class moved outside the import collection",
+        ));
+    }
+    if let Some(intent) = &parts.schema_activation {
+        super::schema_evolution::activate_import_schema_on(
+            connection,
+            &before,
+            intent,
+            &parts.schema_policy,
+        )
+        .await?;
+    }
+    let (json_schema, validate_schema) = parts.schema_policy.into_parts();
     let values = (
         crate::schema::hubuumclass::name.eq(parts.name),
         crate::schema::hubuumclass::json_schema.eq(json_schema),
@@ -903,6 +954,11 @@ async fn update_class(
         )
         .await?
     };
+    if parts.schema_activation.is_none()
+        && (row.json_schema != before.json_schema || row.validate_schema != before.validate_schema)
+    {
+        record_class_schema_on(connection, &row, &ambient_event_context()).await?;
+    }
     row.into_storage()
 }
 
@@ -913,6 +969,14 @@ async fn create_object(
 ) -> Result<StorageObject, PostgresStorageError> {
     let parts = input.into_parts();
     assert_import_create_condition(parts.condition)?;
+    acquire_computed_class_shared_lock(connection, class.id().id()).await?;
+    validate_import_object_on(
+        connection,
+        class.id(),
+        Some(class.collection_id()),
+        &parts.data,
+    )
+    .await?;
     let row = match parts.timestamps {
         Some(timestamps) => {
             let (created_at, updated_at) = import_timestamp_pair(timestamps);
@@ -943,23 +1007,52 @@ async fn create_object(
         }
     };
     materialize_object_on_connection(connection, row.id, row.hubuum_class_id, &row.data).await?;
+    record_object_schema_on(connection, &row, &ambient_event_context()).await?;
     row.into_storage()
 }
 
 async fn update_object(
     connection: &mut PostgresConnection,
     object_id: i32,
+    selected_class: i32,
     input: StorageImportObject,
 ) -> Result<StorageObject, PostgresStorageError> {
     let parts = input.into_parts();
+    let class_id = crate::schema::hubuumobject::table
+        .filter(crate::schema::hubuumobject::id.eq(object_id))
+        .select(crate::schema::hubuumobject::hubuum_class_id)
+        .first::<i32>(connection)
+        .await?;
+    if class_id != selected_class {
+        return Err(PostgresStorageError::not_found(
+            "Imported object no longer belongs to the selected class",
+        ));
+    }
+    acquire_computed_class_shared_lock(connection, class_id).await?;
+    validate_import_object_on(
+        connection,
+        hubuum_domain::ClassId::new(class_id)?,
+        None,
+        &parts.data,
+    )
+    .await?;
     let current = crate::schema::hubuumobject::table
         .filter(crate::schema::hubuumobject::id.eq(object_id))
-        .select(crate::schema::hubuumobject::revision)
+        .select((
+            crate::schema::hubuumobject::revision,
+            crate::schema::hubuumobject::hubuum_class_id,
+        ))
         .for_update()
-        .first::<PostgresRevision>(connection)
+        .first::<(PostgresRevision, i32)>(connection)
         .await
         .optional()?;
-    assert_import_revision(parts.condition, require_existing(current, parts.condition)?)?;
+    let (current_revision, current_class) = require_existing(current, parts.condition)?;
+    if current_class != class_id {
+        return Err(PostgresStorageError::conflict(
+            "Object class changed during import",
+        ));
+    }
+    assert_import_revision(parts.condition, current_revision)?;
     let values = (
         crate::schema::hubuumobject::name.eq(parts.name),
         crate::schema::hubuumobject::data.eq(parts.data),
@@ -1012,6 +1105,7 @@ async fn update_object(
         .await?
     };
     materialize_object_on_connection(connection, row.id, row.hubuum_class_id, &row.data).await?;
+    record_object_schema_on(connection, &row, &ambient_event_context()).await?;
     row.into_storage()
 }
 

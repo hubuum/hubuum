@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 mod identity;
 mod resources;
+mod schemas;
 mod workflows;
 
 #[cfg(test)]
@@ -83,6 +84,7 @@ pub(super) fn capture(
 ) -> Result<StorageBackupSnapshot, StorageError> {
     let mut sections = StorageBackupStateSections::new();
     resources::capture(state, &mut sections)?;
+    schemas::capture(state, &mut sections)?;
     identity::capture(state, &mut sections)?;
     workflows::capture(state, &mut sections)?;
     let history = include_history
@@ -95,6 +97,7 @@ pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, St
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
     resources::restore(&sections, &mut state)?;
+    schemas::restore(&sections, &mut state)?;
     identity::restore(&sections, &mut state)?;
     workflows::restore(&sections, &mut state)?;
     workflows::restore_history(
@@ -102,6 +105,7 @@ pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, St
         &mut state,
     )?;
     enqueue_computed_rebuilds(&mut state)?;
+    schemas::enqueue_revalidation(&mut state)?;
     Ok(state)
 }
 

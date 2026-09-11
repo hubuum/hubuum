@@ -74,3 +74,5 @@ pub use crate::models::token_retention::*;
 pub use crate::models::token_scope::*;
 pub use crate::models::unified_search::*;
 pub use crate::models::user::*;
+
+pub mod schema_evolution;

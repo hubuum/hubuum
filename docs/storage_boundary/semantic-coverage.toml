@@ -25,6 +25,7 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
+    "SchemaEvolutionStorage::process_schema_work",
     "ComputedFieldStorage::request_computed_field_rebuild",
     "ComputedFieldStorage::execute_computed_field_rebuild",
     "TaskQueueStorage::create_task",
@@ -346,7 +347,7 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 
 [enums.StorageTaskCompletionPayload]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-variants = ["Import", "Reindex", "Export", "Backup", "RemoteCall"]
+variants = ["Import", "Reindex", "Export", "Backup", "RemoteCall", "SchemaValidation"]
 scenarios = ["crates/hubuum-storage-core/src/task_execution.rs::task_completion_payload_determines_task_kind", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [enums.StorageTaskActiveStatus]
@@ -411,10 +412,27 @@ scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notificati
 
 [enums.StorageTaskKind]
 source = "crates/hubuum-storage-core/src/task_queue.rs"
-variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall"]
+variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall", "SchemaValidation"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [enums.StorageTaskStatus]
 source = "crates/hubuum-storage-core/src/task_queue.rs"
 variants = ["Queued", "Validating", "Running", "Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
+
+[traits.SchemaEvolutionStorage]
+source = "crates/hubuum-storage-core/src/schema_evolution.rs"
+methods = ["schema_compliance_counts", "list_schema_revisions", "get_schema_state", "stage_schema_revision", "abandon_schema_revision", "activate_schema_revision", "request_schema_work", "get_schema_work", "process_schema_work", "cancel_schema_work", "list_schema_compliance"]
+effects = { point_read = ["schema_compliance_counts", "get_schema_state", "get_schema_work"], page_read = ["list_schema_revisions", "list_schema_compliance"], audited_mutation = ["stage_schema_revision", "abandon_schema_revision", "activate_schema_revision", "request_schema_work", "cancel_schema_work"], workflow_mutation = ["process_schema_work"] }
+shared_scenarios = ["src/tests/storage_contract/schema_evolution.rs::immutable_schema_revisions_are_monotonic_and_equivalent_staging_is_idempotent", "src/tests/storage_contract/schema_evolution.rs::schema_mutations_preserve_the_authorized_collection_boundary", "src/tests/storage_contract/schema_evolution.rs::permissive_schema_activation_records_object_effects_without_changing_data", "src/tests/storage_contract/schema_evolution.rs::cancelled_schema_worker_cannot_commit_another_batch", "src/tests/storage_contract/schema_evolution.rs::expired_schema_lease_resumes_from_committed_checkpoint", "src/tests/storage_contract/schema_evolution.rs::schema_compliance_reports_and_filters_share_active_revision", "src/tests/storage_contract/schema_evolution.rs::stage", "src/tests/storage_contract/schema_evolution.rs::request", "src/tests/storage_contract/schema_evolution.rs::activate", "src/tests/storage_contract/schema_evolution.rs::compliance"]
+native_scenarios = ["src/tests/storage_contract/schema_evolution/native.rs::postgres_rejects_schema_revision_invariant_violations", "src/tests/storage_contract/schema_evolution/native.rs::postgres_worker_cannot_publish_evidence_for_an_object_changed_after_inspection", "src/tests/storage_contract/schema_evolution/native.rs::schema_activation_has_a_constant_query_budget_and_large_batches_bound_json"]
+
+[enums.StorageSchemaActivationPolicy]
+source = "crates/hubuum-storage-core/src/schema_evolution.rs"
+variants = ["RejectIncompatible", "AllowPending"]
+scenarios = ["src/tests/storage_contract/schema_evolution.rs::strict_activation_requires_current_complete_compatible_proof", "src/tests/storage_contract/schema_evolution.rs::permissive_schema_activation_records_object_effects_without_changing_data"]
+
+[enums.StorageComplianceStatus]
+source = "crates/hubuum-storage-core/src/schema_evolution.rs"
+variants = ["Valid", "Invalid", "Pending", "NotRequired"]
+scenarios = ["src/tests/storage_contract/schema_evolution.rs::permissive_schema_activation_records_object_effects_without_changing_data", "src/tests/storage_contract/schema_evolution.rs::superseded_schema_work_cannot_replace_not_required_object_effects"]

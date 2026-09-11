@@ -41,6 +41,26 @@ async fn load_objects(
         .collect())
 }
 
+pub(crate) async fn schema_compliance_authorization_resources(
+    backend: &impl StorageContext,
+    object_ids: impl IntoIterator<Item = i32>,
+) -> Result<HashMap<i32, ResourceRef>, ApiError> {
+    Ok(load_objects(backend, object_ids)
+        .await?
+        .into_iter()
+        .map(|(id, object)| {
+            (
+                id,
+                ResourceRef::object(
+                    id,
+                    ClassResourceEndpoint::new(object.collection_id().id(), object.class_id().id()),
+                    Some(object.name().to_string()),
+                ),
+            )
+        })
+        .collect())
+}
+
 pub(crate) async fn class_relation_authorization_resources(
     backend: &impl StorageContext,
     relations: &[HubuumClassRelation],

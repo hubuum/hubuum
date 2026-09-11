@@ -12,6 +12,9 @@ impl StorageBackupSnapshot {
         if self.history_sections.is_some() {
             return self;
         }
+        // Every history section shares the timestamp precision supported by all adapters.
+        let restored_at = DateTime::from_timestamp_micros(restored_at.timestamp_micros())
+            .expect("a UTC timestamp remains representable at microsecond precision");
         let mut history = StorageBackupHistorySection::ALL
             .iter()
             .copied()
@@ -34,6 +37,19 @@ impl StorageBackupSnapshot {
                 .collect();
             history.insert(history_section, baselines);
         }
+        let schema_baselines = self.state_sections[&super::StorageBackupStateSection::ClassSchemaRevisions]
+            .iter().enumerate().map(|(index, row)| {
+                let id = i64::try_from(index + 1).expect("allocated row count fits i64");
+                StorageBackupRow::try_from_value(json!({
+                    "id": id, "class_id": row.get("class_id"), "revision": row.get("revision"),
+                    "snapshot": row.clone().into_value(), "operation": "create", "occurred_at": restored_at,
+                    "actor_principal_id": null, "task_id": null
+                })).expect("schema baseline is an object")
+            }).collect();
+        history.insert(
+            StorageBackupHistorySection::ClassSchemaHistory,
+            schema_baselines,
+        );
         Self {
             state_sections: self.state_sections,
             history_sections: Some(history),
@@ -46,9 +62,6 @@ fn baseline(
     history_entry_id: i64,
     restored_at: DateTime<Utc>,
 ) -> StorageBackupRow {
-    // The logical restore boundary uses the precision shared by adapters.
-    let restored_at = DateTime::from_timestamp_micros(restored_at.timestamp_micros())
-        .expect("a UTC timestamp remains representable at microsecond precision");
     let mut fields = row.fields().clone();
     fields.extend(
         json!({
@@ -98,7 +111,8 @@ mod tests {
                         .unwrap(),
                 );
         }
-        StorageBackupSnapshot::try_new(state, None).unwrap()
+        StorageBackupSnapshot::try_new(super::super::with_test_schema_sections(state), None)
+            .unwrap()
     }
 
     #[rstest]
@@ -164,7 +178,10 @@ mod tests {
             history[&history_section],
             vec![StorageBackupRow::try_from_value(Value::Object(expected)).unwrap()]
         );
-        assert_eq!(history.values().map(Vec::len).sum::<usize>(), 1);
+        assert_eq!(
+            history.values().map(Vec::len).sum::<usize>(),
+            1 + expected_state[&StorageBackupStateSection::ClassSchemaRevisions].len()
+        );
 
         let repeated = StorageRestoreDocument::at_restore_boundary(
             StorageRestoreDocumentMetadata::new(5, at, "test"),

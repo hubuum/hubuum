@@ -29,6 +29,7 @@ mod imports;
 mod notifications;
 mod remote_targets;
 mod restores;
+mod schema_evolution;
 mod task_execution;
 mod task_queue;
 mod transaction;

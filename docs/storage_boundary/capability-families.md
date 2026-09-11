@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 20 detailed groups below are not a one-to-one module map. Neither form
+the 21 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -267,6 +267,16 @@ Owns shared and personal definition lifecycle, per-class computation state,
 rebuild scheduling, and rebuild execution under a task lease. Definition
 mutations and audit events are atomic. A stale worker must not commit a rebuild
 after losing its claim.
+
+### `schema_evolution`
+
+Required trait: `SchemaEvolutionStorage`.
+
+Owns immutable schema revisions, explicit activation, population-fenced impact
+proofs, object compliance projections, and resumable validation checkpoints.
+Every backend atomically commits evidence, progress and audit/outbox events.
+The class collection used for authorization is rechecked at mutation time.
+See [schema evolution](../schema_evolution.md) for activation and recovery rules.
 
 ### `remote_targets`
 
