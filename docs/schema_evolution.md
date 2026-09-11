@@ -256,6 +256,12 @@ and the aggregate byte bound. Ordinary backup/restore conformance exercises the
 new sections with both adapters.
 
 Run `cargo bench --bench schema_validation_criterion` for deterministic compiled
-validation throughput over large JSON batches without database or global config.
+validation and budget-rejection throughput without database or global config.
+Separate groups cover accepted 1/2/4 KiB payloads and rejected 16/256/1024 KiB
+payloads, each with 128 integer samples. Fixtures check their expected outcome
+before timing. Batches contain at most 64 documents and 8 MiB of serialized JSON;
+reported throughput counts documents inspected. Admission also charges conservative
+JSON escaping estimates and schema complexity, so a serialized object below the
+worker's byte limit can still exceed the validation budget.
 The native storage regression measures the database behavior; benchmark numbers
 are hardware-dependent and do not establish a worst-case lock or CPU deadline.
