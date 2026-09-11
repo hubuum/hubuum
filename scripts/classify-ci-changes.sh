@@ -37,6 +37,13 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
+    crates/hubuum-domain/src/json_schema.rs | crates/hubuum-domain/src/json_schema/* | \
+      benches/template_schema_concurrency/*)
+      runtime_benchmark=true
+      ;;
+  esac
+
+  case "$path" in
     .github/treetop-conformance.env | .github/workflows/ci.yml | \
       Cargo.toml | Cargo.lock | docs/treetop/* | \
       scripts/run-treetop-conformance.sh | scripts/serve-treetop-fixture.py | \
@@ -200,7 +207,7 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh)
+    scripts/check-json-schema-budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh)
       code=true
       benchmarks=true
       runtime_benchmark=true

@@ -136,6 +136,9 @@ PGPASSWORD=$DB_PASSWORD psql "$ADMIN_TEST_URL" \
 # migrated database is available.
 cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
 if [ "$#" -eq 0 ]; then
+    python3 scripts/check-json-schema-budget.py
+fi
+if [ "$#" -eq 0 ]; then
     cargo test -p hubuum-storage-postgres \
         --features integration-test-support \
         --test database_privileges \
