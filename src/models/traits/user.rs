@@ -422,18 +422,6 @@ pub trait Search: UserCollectionAccessors {
 
 /// Access groups and related backend-backed filters for a user.
 pub trait GroupAccessors: AuthzSubject {
-    /// Return all groups that the user is a member of.
-    #[allow(async_fn_in_trait, dead_code)]
-    async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
-    where
-        C: StorageContext,
-    {
-        let options = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
-        crate::services::identity::list_principal_groups(backend, self.principal_id(), options)
-            .await
-            .map(|(groups, _)| groups)
-    }
-
     #[allow(async_fn_in_trait)]
     async fn groups_paginated_with_total_count<C>(
         &self,
