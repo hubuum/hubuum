@@ -470,3 +470,13 @@ assert_flag "$batch_tests" container true
 batch_benchmark="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
 assert_flag "$batch_benchmark" code true
 assert_flag "$batch_benchmark" benchmarks true
+
+for schema_input in scripts/check-json-schema-budget.py \
+  crates/hubuum-domain/src/json_schema.rs \
+  crates/hubuum-domain/src/json_schema/budget.rs \
+  benches/template_schema_concurrency/main.rs; do
+  schema_budget_output="$(bash "$classifier" "$schema_input")"
+  assert_flag "$schema_budget_output" code true
+  assert_flag "$schema_budget_output" benchmarks true
+  assert_flag "$schema_budget_output" runtime_benchmark true
+done

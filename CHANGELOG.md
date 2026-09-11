@@ -52,6 +52,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `StorageRelationIdsQuery::max_results()` before materializing relation rows.
   Update class touching/between and object between queries before using delegated
   traversal. Existing query constructors and `into_parts()` remain source compatible.
+- **Breaking validation change:** JSON Schema instance validation now rejects
+  excessive reference/combinator expansion before compilation and enforces
+  document and instance-work limits, including on cached validators. Pattern
+  compilation and regex backtracking have explicit limits. This prevents small
+  schemas from triggering exponentially amplified work inside object-write
+  transactions; existing class locks and revision checks remain in place.
+  Before upgrading, simplify schemas that use recursive/dynamic or anchored
+  references, nested resource IDs, `unevaluatedProperties`, or `unevaluatedItems`;
+  use acyclic local JSON Pointer references and explicit properties/items.
+  Split oversized schemas or data and reduce excessive numeric precision,
+  exponents, or pattern complexity. Stored schemas are rechecked when used;
+  update unsupported validated class schemas before resuming object writes.
+  See [JSON Schema validation limits](docs/json_schema_validation.md) for exact
+  limits, migration guidance, and separate debug/release measurements.
 
 ## [0.0.14] - 2026-09-10
 

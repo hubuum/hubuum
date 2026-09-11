@@ -13,11 +13,19 @@ fn workload(worker: usize) -> (Value, Value) {
     (context, schema)
 }
 
+fn validate_workload(schema: &Value, context: &Value) {
+    // Keep the full template workload while each schema evaluation fits the
+    // admission budget. Measurements include all batches and their preparation.
+    for items in context["items"].as_array().unwrap().chunks(4) {
+        hubuum_domain::validate_json_value(schema, &json!({"items": items})).unwrap();
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let (context, schema) = workload(0);
     let started = Instant::now();
-    hubuum_domain::validate_json_value(&schema, &context).unwrap();
+    validate_workload(&schema, &context);
     TemplateExecution::new("cold", TEMPLATE, TemplateLimits::new(64, 500_000))
         .render(&context)
         .await
@@ -29,7 +37,7 @@ async fn main() {
     // Keep initial meta-schema and per-schema compilation out of comparisons.
     for worker in 0..8 {
         let (context, schema) = workload(worker);
-        hubuum_domain::validate_json_value(&schema, &context).unwrap();
+        validate_workload(&schema, &context);
     }
     for concurrency in [1, 4, 8] {
         let barrier = Arc::new(Barrier::new(concurrency));
@@ -44,7 +52,7 @@ async fn main() {
                     let mut samples = Vec::new();
                     for _ in 0..10 {
                         let started = Instant::now();
-                        hubuum_domain::validate_json_value(&schema, &context).unwrap();
+                        validate_workload(&schema, &context);
                         let rendered = TemplateExecution::new(
                             "concurrent",
                             TEMPLATE,

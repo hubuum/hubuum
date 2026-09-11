@@ -391,7 +391,21 @@ pub mod tests {
         collection_fixture.cleanup().await.unwrap();
     }
 
+    fn amplifying_schema() -> serde_json::Value {
+        let mut definitions = serde_json::Map::new();
+        definitions.insert("s0".into(), serde_json::json!({"type": "integer"}));
+        for level in 1..=25 {
+            let reference = serde_json::json!({"$ref": format!("#/$defs/s{}", level - 1)});
+            definitions.insert(
+                format!("s{level}"),
+                serde_json::json!({"allOf": [reference.clone(), reference]}),
+            );
+        }
+        serde_json::json!({"$defs": definitions, "$ref": "#/$defs/s25"})
+    }
+
     #[rstest]
+    #[case(amplifying_schema())]
     #[case(serde_json::json!({"type": 7}))]
     #[case(serde_json::json!({"$ref": "https://example.com/schema.json"}))]
     #[case(serde_json::json!({"$ref": "file:///etc/passwd"}))]

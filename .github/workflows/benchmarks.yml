@@ -158,7 +158,11 @@ jobs:
       - name: Build the isolated renderer
         run: cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
       - name: Measure concurrent templates and schema validation
+        shell: bash
         run: cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency | tee template-schema-evidence.jsonl
+      - name: Verify schema budgets under process resource limits
+        shell: bash
+        run: python3 scripts/check-json-schema-budget.py --release | tee -a template-schema-evidence.jsonl
       - name: Retain template and schema measurements
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
