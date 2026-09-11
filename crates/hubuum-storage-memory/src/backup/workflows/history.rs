@@ -112,6 +112,9 @@ pub(in crate::backup) fn restore_history(
         }
     }
     state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
+    state
+        .schema_history
+        .sort_by_key(|row| row.get("id").and_then(Value::as_i64));
     state.history.clear();
     for section in [
         StorageBackupHistorySection::CollectionHistory,

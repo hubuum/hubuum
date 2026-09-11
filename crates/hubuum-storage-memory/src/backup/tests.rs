@@ -24,6 +24,52 @@ fn edit_history(
     StorageBackupSnapshot::try_new(state, Some(history)).unwrap()
 }
 
+#[test]
+fn schema_history_allocation_survives_reordered_backup_rows() {
+    run(async {
+        let storage = MemoryStorage::new();
+        for name in ["first schema", "second schema"] {
+            storage
+                .create_class(
+                    StorageClassCreate::builder(name, CollectionId::new(1).unwrap(), "history")
+                        .build(),
+                    &EventContext::system(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+        }
+        let snapshot = edit_history(
+            storage.capture_backup_snapshot(true).await.unwrap(),
+            StorageBackupHistorySection::ClassSchemaHistory,
+            |rows| rows.reverse(),
+        );
+        let storage = restored(snapshot);
+        storage
+            .create_class(
+                StorageClassCreate::builder(
+                    "third schema",
+                    CollectionId::new(1).unwrap(),
+                    "history",
+                )
+                .build(),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let (_, history) = storage
+            .capture_backup_snapshot(true)
+            .await
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            history.unwrap()[&StorageBackupHistorySection::ClassSchemaHistory].len(),
+            3
+        );
+    });
+}
+
 fn set_field(row: &mut StorageBackupRow, field: &str, value: Value) {
     let mut fields = row.fields().clone();
     fields.insert(field.to_string(), value);
