@@ -10,7 +10,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_computed_fields::{
     Definition, FieldKey, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, Operation, ResultType,
 };
-use hubuum_domain::{ClassId, PrincipalId, TaskId};
+use hubuum_domain::{ClassId, PrincipalId, SchemaReference, TaskId};
 use hubuum_events_core::{
     Action, AuditDocument, EntityType, EventContext, MutationProvenance, NewEvent,
 };
@@ -1647,6 +1647,33 @@ fn validate_positive(label: &str, value: i32) -> Result<(), PostgresStorageError
     }
 }
 
+/// A schema revision invalidates the shared evaluation dependency even when the
+/// document is structurally equal to a retired revision.
+pub(crate) async fn invalidate_schema_dependency_on(
+    connection: &mut PostgresConnection,
+    target: SchemaReference,
+    actor_id: Option<i32>,
+) -> Result<Option<TaskId>, PostgresStorageError> {
+    use crate::schema::computed_field_definitions::dsl as definitions;
+    let any = definitions::computed_field_definitions
+        .filter(definitions::class_id.eq(target.class_id().id()))
+        .filter(definitions::visibility.eq(SHARED_VISIBILITY))
+        .select(definitions::id)
+        .first::<i32>(connection)
+        .await
+        .optional()?
+        .is_some();
+    if !any {
+        return Ok(None);
+    }
+    let state = advance_revision_and_enqueue(connection, target.class_id().id(), actor_id).await?;
+    state
+        .active_task_id
+        .map(TaskId::new)
+        .transpose()
+        .map_err(PostgresStorageError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use hubuum_query::{ParsedQueryParam, SearchOperator};
@@ -1744,31 +1771,4 @@ mod tests {
             hubuum_storage_core::StorageErrorKind::InvalidInput
         );
     }
-}
-
-/// A schema revision invalidates the shared evaluation dependency even when the
-/// document is structurally equal to a retired revision.
-pub(crate) async fn invalidate_schema_dependency_on(
-    connection: &mut PostgresConnection,
-    target: hubuum_domain::SchemaReference,
-    actor_id: Option<i32>,
-) -> Result<Option<hubuum_domain::TaskId>, PostgresStorageError> {
-    use crate::schema::computed_field_definitions::dsl as definitions;
-    let any = definitions::computed_field_definitions
-        .filter(definitions::class_id.eq(target.class_id().id()))
-        .filter(definitions::visibility.eq(SHARED_VISIBILITY))
-        .select(definitions::id)
-        .first::<i32>(connection)
-        .await
-        .optional()?
-        .is_some();
-    if !any {
-        return Ok(None);
-    }
-    let state = advance_revision_and_enqueue(connection, target.class_id().id(), actor_id).await?;
-    state
-        .active_task_id
-        .map(hubuum_domain::TaskId::new)
-        .transpose()
-        .map_err(PostgresStorageError::from)
 }
