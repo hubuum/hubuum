@@ -634,6 +634,7 @@ impl fmt::Debug for StorageRelationTouchingQuery {
 pub struct StorageRelationIdsQuery {
     ids: Vec<ResourceId>,
     visibility: StorageVisibility,
+    max_results: Option<u32>,
 }
 
 impl StorageRelationIdsQuery {
@@ -642,9 +643,27 @@ impl StorageRelationIdsQuery {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();
-        Self { ids, visibility }
+        Self {
+            ids,
+            visibility,
+            max_results: None,
+        }
     }
 
+    /// Limit the rows read from storage; zero requests an empty result.
+    #[must_use]
+    pub fn with_max_results(mut self, max_results: u32) -> Self {
+        self.max_results = Some(max_results);
+        self
+    }
+
+    /// Adapters must apply this bound before materializing matching rows.
+    #[must_use]
+    pub const fn max_results(&self) -> Option<u32> {
+        self.max_results
+    }
+
+    /// Read `max_results()` before consuming the query to enforce its row bound.
     #[must_use]
     pub fn into_parts(self) -> (Vec<ResourceId>, StorageVisibility) {
         (self.ids, self.visibility)
@@ -656,6 +675,7 @@ impl fmt::Debug for StorageRelationIdsQuery {
         formatter
             .debug_struct("StorageRelationIdsQuery")
             .field("id_count", &self.ids.len())
+            .field("max_results", &self.max_results)
             .field("visibility", &self.visibility)
             .finish()
     }

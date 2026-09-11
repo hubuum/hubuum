@@ -36,6 +36,12 @@ signature; `at_restore_boundary` accepts an explicit boundary timestamp.
 Adapters must persist the prepared history even when `source_includes_history`
 is false.
 
+Endpoint-set relation queries expose an optional `max_results()` bound.
+Adapters must apply that bound before materializing rows, after endpoint
+selection and visibility; zero requests no rows. `new` and `into_parts` retain
+their signatures, so read the bound before consuming the query. External
+adapters must implement the added bound before serving delegated traversal.
+
 Application composition supplies `StorageObserver`, keeping metrics exporters
 and global registries out of adapter-neutral contracts.
 

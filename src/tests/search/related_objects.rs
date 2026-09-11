@@ -7,7 +7,7 @@ use crate::models::{
     NewHubuumObjectRelation, Permissions,
 };
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::{ResourceFields, ResourceKind};
+use crate::permissions::{ResourceFields, ResourceKind, ResourceRef};
 use crate::tests::api_operations::{get_request, get_request_with_permission_backend};
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{CollectionFixture, TestContext, create_test_group};
@@ -636,4 +636,105 @@ async fn traversal_authorizes_complete_paths(
     assert_eq!(actual, expected);
     collection.cleanup().await.unwrap();
     group.delete_without_events(&context.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn traversal_class_resources_exceed_one_integer_filter_batch() {
+    use crate::services::authorization_resources::class_authorization_resources;
+
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("large_traversal_policy").await;
+    let mut classes = Vec::new();
+    // Cross the equality-filter limit with the smallest sufficient fixture.
+    for index in 0..51 {
+        classes.push(save_class(&context, &collection, &format!("vertex_{index}")).await);
+    }
+    let ids = classes.iter().map(|class| class.id).collect::<Vec<_>>();
+    let resources = class_authorization_resources(&context.pool, context.admin_user.id, &ids)
+        .await
+        .unwrap();
+    let expected = classes
+        .into_iter()
+        .map(|class| ResourceRef::class(class.id, class.collection_id, Some(class.name)))
+        .collect::<Vec<_>>();
+    assert_eq!(resources, expected);
+    collection.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[case(50, 1)]
+#[case(51, 1)]
+#[case(1_025, 1)]
+#[case(10_000, 1)]
+#[case(51, 0)]
+#[case(51, 2)]
+#[actix_web::test]
+async fn traversal_relation_queries_bound_rows_with_large_id_sets(
+    #[case] count: usize,
+    #[case] limit: u32,
+    #[values(false, true)] objects: bool,
+) {
+    use crate::services::relation_queries::{self, RelationAccess};
+
+    let context = TestContext::new().await;
+    let collection = context
+        .collection_fixture("bounded_traversal_relations")
+        .await;
+    let first = save_class(&context, &collection, "first").await;
+    let middle = save_class(&context, &collection, "middle").await;
+    let last = save_class(&context, &collection, "last").await;
+    let left = relate_classes(&context, &first, &middle).await;
+    let right = relate_classes(&context, &middle, &last).await;
+    let mut ids = if objects {
+        let first = save_object(
+            &context,
+            &collection,
+            &first,
+            "first_object",
+            serde_json::json!({}),
+        )
+        .await;
+        let middle = save_object(
+            &context,
+            &collection,
+            &middle,
+            "middle_object",
+            serde_json::json!({}),
+        )
+        .await;
+        let last = save_object(
+            &context,
+            &collection,
+            &last,
+            "last_object",
+            serde_json::json!({}),
+        )
+        .await;
+        relate_objects(&context, &first, &middle, &left).await;
+        relate_objects(&context, &middle, &last, &right).await;
+        vec![first.id, middle.id, last.id]
+    } else {
+        vec![first.id, middle.id, last.id]
+    };
+    // Absent IDs exercise query size without creating thousands of fixtures.
+    ids.extend((0..count - ids.len()).map(|index| i32::MAX - i32::try_from(index).unwrap()));
+    let access = RelationAccess::new(context.admin_user.id, true, None);
+    let returned = if objects {
+        relation_queries::list_object_relations_between_ids(
+            &context.pool,
+            access,
+            &ids,
+            Some(limit),
+        )
+        .await
+        .unwrap()
+        .len()
+    } else {
+        relation_queries::list_class_relations_between_ids(&context.pool, access, &ids, Some(limit))
+            .await
+            .unwrap()
+            .len()
+    };
+    assert_eq!(returned, usize::try_from(limit).unwrap());
+    collection.cleanup().await.unwrap();
 }

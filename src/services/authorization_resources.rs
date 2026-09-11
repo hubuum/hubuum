@@ -82,34 +82,28 @@ pub(crate) async fn class_authorization_resources(
     principal_id: i32,
     class_ids: &[i32],
 ) -> Result<Vec<ResourceRef>, ApiError> {
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let query = QueryOptions::new(
-        vec![ParsedQueryParam {
-            field: FilterField::Id,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: class_ids
-                .iter()
-                .map(i32::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-        }],
-        Vec::new(),
-        Some(class_ids.len()),
-        None,
-        false,
-    )?;
-    let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
-    let resources = classes
-        .into_iter()
-        .map(|class| {
+    let mut resources = HashMap::new();
+    // Equality filters accept at most 50 values, even for internal queries.
+    for ids in class_ids.chunks(50) {
+        let query = QueryOptions::new(
+            vec![ParsedQueryParam {
+                field: FilterField::Id,
+                operator: SearchOperator::Equals { is_negated: false },
+                value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+            }],
+            Vec::new(),
+            Some(ids.len()),
+            None,
+            false,
+        )?;
+        let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
+        resources.extend(classes.into_iter().map(|class| {
             (
                 class.id,
                 ResourceRef::class(class.id, class.collection.id, Some(class.name)),
             )
-        })
-        .collect::<HashMap<_, _>>();
+        }));
+    }
     class_ids
         .iter()
         .map(|id| {

@@ -1,9 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 
 use crate::errors::ApiError;
-use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
-};
+use crate::models::search::{QueryOptions, QueryParamsExt};
 use crate::models::{
     ClassGraphRow, HubuumClassRelation, HubuumObjectRelation, Permissions, RelatedObjectGraphRow,
     TokenScope,
@@ -11,7 +10,8 @@ use crate::models::{
 use crate::pagination::paginate_in_memory;
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    AuthorizationContext, AuthorizationMode, PermissionBackend, PrincipalRef, ResourceRef,
+    AuthorizationContext, AuthorizationMode, ClassResourceEndpoint, PermissionBackend,
+    PrincipalRef, ResourceRef,
 };
 use crate::services::authorization_resources::{
     class_authorization_resources, class_relation_authorization_resources,
@@ -63,6 +63,7 @@ impl AuthorizedGraph {
         kind: GraphKind,
         paths: &[Vec<i32>],
         permissions: &[Permissions],
+        snapshots: &HashMap<i32, ResourceRef>,
     ) -> Result<Self, ApiError> {
         ensure_candidate_count(paths.len())?;
         let mut ids = HashSet::new();
@@ -77,13 +78,21 @@ impl AuthorizedGraph {
         }
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort_unstable();
-        let resources = match kind {
+        let mut resources = match kind {
             GraphKind::Class => {
                 class_authorization_resources(storage, authorization.principal.user_id, &ids)
                     .await?
             }
             GraphKind::Object => object_authorization_resources(storage, &ids).await?,
         };
+        // A resource can move or be redacted between the row query and this
+        // lookup. Authorize returned contents against the attributes captured
+        // with those contents; only intermediate vertices need fresh metadata.
+        for (id, resource) in ids.iter().zip(&mut resources) {
+            if let Some(snapshot) = snapshots.get(id) {
+                *resource = snapshot.clone();
+            }
+        }
         let mut vertex_permissions = permissions.to_vec();
         vertex_permissions.extend([kind.read_permission(), Permissions::ReadCollection]);
         let vertices = authorization
@@ -94,13 +103,15 @@ impl AuthorizedGraph {
         let access = RelationAccess::new(authorization.principal.user_id, true, None);
         let (edges, resources) = match kind {
             GraphKind::Class => {
-                let (relations, _) = relation_queries::list_class_relations(
-                    storage,
-                    access,
-                    relation_options(GraphKind::Class, &ids)?,
-                )
+                let relations = relation_candidates(&ids, |limit| {
+                    relation_queries::list_class_relations_between_ids(
+                        storage,
+                        access,
+                        &ids,
+                        Some(limit),
+                    )
+                })
                 .await?;
-                ensure_candidate_count(relations.len())?;
                 let resources = class_relation_authorization_resources(storage, &relations).await?;
                 (
                     relations
@@ -111,13 +122,15 @@ impl AuthorizedGraph {
                 )
             }
             GraphKind::Object => {
-                let (relations, _) = relation_queries::list_object_relations(
-                    storage,
-                    access,
-                    relation_options(GraphKind::Object, &ids)?,
-                )
+                let relations = relation_candidates(&ids, |limit| {
+                    relation_queries::list_object_relations_between_ids(
+                        storage,
+                        access,
+                        &ids,
+                        Some(limit),
+                    )
+                })
                 .await?;
-                ensure_candidate_count(relations.len())?;
                 let resources =
                     object_relation_authorization_resources(storage, &relations).await?;
                 (
@@ -216,32 +229,17 @@ fn ensure_candidate_count(count: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn relation_options(kind: GraphKind, ids: &[i32]) -> Result<QueryOptions, ApiError> {
+async fn relation_candidates<T, F, Fut>(ids: &[i32], load: F) -> Result<Vec<T>, ApiError>
+where
+    F: FnOnce(u32) -> Fut,
+    Fut: Future<Output = Result<Vec<T>, ApiError>>,
+{
     ensure_candidate_count(ids.len())?;
-    let (from, to) = match kind {
-        GraphKind::Class => (FilterField::ClassFrom, FilterField::ClassTo),
-        GraphKind::Object => (FilterField::ObjectFrom, FilterField::ObjectTo),
-    };
-    // An impossible positive resource id keeps an empty vertex set empty.
-    let value = if ids.is_empty() {
-        "0".to_string()
-    } else {
-        ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
-    };
-    Ok(QueryOptions::new(
-        [from, to]
-            .into_iter()
-            .map(|field| ParsedQueryParam {
-                field,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: value.clone(),
-            })
-            .collect(),
-        Vec::new(),
-        Some(MAX_CANDIDATES + 1),
-        None,
-        false,
-    )?)
+    // The typed storage query accepts all candidate IDs and bounds rows in SQL.
+    // One extra row detects overflow without materializing the complete graph.
+    let candidates = load((MAX_CANDIDATES + 1) as u32).await?;
+    ensure_candidate_count(candidates.len())?;
+    Ok(candidates)
 }
 
 fn candidate_query(options: &QueryOptions) -> Result<QueryOptions, ApiError> {
@@ -269,6 +267,35 @@ pub(crate) async fn list_related_objects<C: AuthorizationContext, S: AuthzSubjec
             candidate_query(&options)?,
         )
         .await?;
+        let snapshots = candidates
+            .iter()
+            .flat_map(|row| {
+                [
+                    (
+                        row.ancestor_object_id,
+                        ResourceRef::object(
+                            row.ancestor_object_id,
+                            ClassResourceEndpoint::new(
+                                row.ancestor_collection_id,
+                                row.ancestor_class_id,
+                            ),
+                            Some(row.ancestor_name.clone()),
+                        ),
+                    ),
+                    (
+                        row.descendant_object_id,
+                        ResourceRef::object(
+                            row.descendant_object_id,
+                            ClassResourceEndpoint::new(
+                                row.descendant_collection_id,
+                                row.descendant_class_id,
+                            ),
+                            Some(row.descendant_name.clone()),
+                        ),
+                    ),
+                ]
+            })
+            .collect();
         let permissions = options.filters().permissions()?;
         let graph = AuthorizedGraph::load(
             context,
@@ -279,6 +306,7 @@ pub(crate) async fn list_related_objects<C: AuthorizationContext, S: AuthzSubjec
                 .map(|row| row.path.clone())
                 .collect::<Vec<_>>(),
             permissions.as_slice(),
+            &snapshots,
         )
         .await?;
         let rows = graph.retain_allowed(candidates, |row| &row.path)?;
@@ -315,6 +343,29 @@ pub(crate) async fn list_related_classes<C: AuthorizationContext, S: AuthzSubjec
             candidate_query(&options)?,
         )
         .await?;
+        let snapshots = candidates
+            .iter()
+            .flat_map(|row| {
+                [
+                    (
+                        row.ancestor_class_id,
+                        ResourceRef::class(
+                            row.ancestor_class_id,
+                            row.ancestor_collection_id,
+                            Some(row.ancestor_name.clone()),
+                        ),
+                    ),
+                    (
+                        row.descendant_class_id,
+                        ResourceRef::class(
+                            row.descendant_class_id,
+                            row.descendant_collection_id,
+                            Some(row.descendant_name.clone()),
+                        ),
+                    ),
+                ]
+            })
+            .collect();
         let permissions = options.filters().permissions()?;
         let graph = AuthorizedGraph::load(
             context,
@@ -325,6 +376,7 @@ pub(crate) async fn list_related_classes<C: AuthorizationContext, S: AuthzSubjec
                 .map(|row| row.path.clone())
                 .collect::<Vec<_>>(),
             permissions.as_slice(),
+            &snapshots,
         )
         .await?;
         let rows = graph.retain_allowed(candidates, |row| &row.path)?;
@@ -356,19 +408,29 @@ pub(crate) async fn list_class_relations_between_ids<
     if let AuthorizationMode::Delegated(backend) = context.authorization_mode() {
         let principal = PrincipalRef::load(context, subject).await?;
         let authorization = ExternalTraversal::new(backend, &principal, scopes);
-        let (candidates, _) = relation_queries::list_class_relations(
-            context,
-            RelationAccess::new(subject.principal_id(), true, None),
-            relation_options(GraphKind::Class, class_ids)?,
-        )
+        let access = RelationAccess::new(subject.principal_id(), true, None);
+        let candidates = relation_candidates(class_ids, |limit| {
+            relation_queries::list_class_relations_between_ids(
+                context,
+                access,
+                class_ids,
+                Some(limit),
+            )
+        })
         .await?;
-        ensure_candidate_count(candidates.len())?;
         let paths = candidates
             .iter()
             .map(|r| vec![r.from_hubuum_class_id, r.to_hubuum_class_id])
             .collect::<Vec<_>>();
-        let graph =
-            AuthorizedGraph::load(context, &authorization, GraphKind::Class, &paths, &[]).await?;
+        let graph = AuthorizedGraph::load(
+            context,
+            &authorization,
+            GraphKind::Class,
+            &paths,
+            &[],
+            &HashMap::new(),
+        )
+        .await?;
         let resources = class_relation_authorization_resources(context, &candidates).await?;
         let rows = authorization
             .authorize(
@@ -393,6 +455,7 @@ pub(crate) async fn list_class_relations_between_ids<
             scopes,
         ),
         class_ids,
+        None,
     )
     .await
 }
@@ -409,19 +472,29 @@ pub(crate) async fn list_object_relations_between_ids<
     if let AuthorizationMode::Delegated(backend) = context.authorization_mode() {
         let principal = PrincipalRef::load(context, subject).await?;
         let authorization = ExternalTraversal::new(backend, &principal, scopes);
-        let (candidates, _) = relation_queries::list_object_relations(
-            context,
-            RelationAccess::new(subject.principal_id(), true, None),
-            relation_options(GraphKind::Object, object_ids)?,
-        )
+        let access = RelationAccess::new(subject.principal_id(), true, None);
+        let candidates = relation_candidates(object_ids, |limit| {
+            relation_queries::list_object_relations_between_ids(
+                context,
+                access,
+                object_ids,
+                Some(limit),
+            )
+        })
         .await?;
-        ensure_candidate_count(candidates.len())?;
         let paths = candidates
             .iter()
             .map(|r| vec![r.from_hubuum_object_id, r.to_hubuum_object_id])
             .collect::<Vec<_>>();
-        let graph =
-            AuthorizedGraph::load(context, &authorization, GraphKind::Object, &paths, &[]).await?;
+        let graph = AuthorizedGraph::load(
+            context,
+            &authorization,
+            GraphKind::Object,
+            &paths,
+            &[],
+            &HashMap::new(),
+        )
+        .await?;
         let resources = object_relation_authorization_resources(context, &candidates).await?;
         let rows = authorization
             .authorize(
@@ -446,6 +519,133 @@ pub(crate) async fn list_object_relations_between_ids<
             scopes,
         ),
         object_ids,
+        None,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case(MAX_CANDIDATES, false)]
+    #[case(MAX_CANDIDATES + 1, true)]
+    #[tokio::test]
+    async fn relation_candidates_enforce_the_row_budget(
+        #[case] count: usize,
+        #[case] rejected: bool,
+    ) {
+        let result = relation_candidates(&[1, 2], |limit| async move {
+            assert_eq!(limit, (MAX_CANDIDATES + 1) as u32);
+            Ok(vec![(); count])
+        })
+        .await;
+        assert_eq!(result.is_err(), rejected);
+    }
+
+    #[rstest]
+    #[case::denied_original_collection(false)]
+    #[case::allowed_original_collection(true)]
+    #[actix_web::test]
+    async fn traversal_authorizes_the_returned_snapshot_after_a_collection_move(
+        #[case] original_allowed: bool,
+    ) {
+        use crate::events::EventContext;
+        use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
+        use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
+        use crate::permissions::{ResourceFields, ResourceKind};
+        use crate::tests::TestContext;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = TestContext::new().await;
+        let original = context.collection_fixture("snapshot_original").await;
+        let destination = context.collection_fixture("snapshot_destination").await;
+        let class = NewHubuumClass {
+            name: context.scoped_name("moved_vertex"),
+            description: "contents from the original collection".into(),
+            collection_id: original.collection.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let snapshots = HashMap::from([(
+            class.id,
+            ResourceRef::class(class.id, class.collection_id, Some(class.name.clone())),
+        )]);
+        let current = UpdateHubuumClass {
+            name: None,
+            description: Some("public replacement contents".into()),
+            collection_id: Some(destination.collection.id),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .update(
+            &context.pool,
+            HubuumClassID::new(class.id).unwrap(),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap();
+        let principal = PrincipalRef::load(&context.pool, &context.admin_user)
+            .await
+            .unwrap();
+        let policy = MockTreetopBackend::new();
+        let mut collection_ids = vec![destination.collection.id];
+        if original_allowed {
+            collection_ids.push(original.collection.id);
+        }
+        for collection_id in collection_ids {
+            policy.add_rule(MockAllowRule {
+                group_id: principal.group_ids[0],
+                action: Permissions::ReadCollection,
+                resource_kind: ResourceKind::Collection,
+                resource_id: Some(collection_id),
+                attrs: ResourceFields::default(),
+            });
+        }
+        policy.add_rule(MockAllowRule {
+            group_id: principal.group_ids[0],
+            action: Permissions::ReadClass,
+            resource_kind: ResourceKind::Class,
+            resource_id: Some(class.id),
+            attrs: ResourceFields::default(),
+        });
+        let authorization = ExternalTraversal::new(&policy, &principal, None);
+        // The live resource is readable after its contents have been replaced.
+        assert_eq!(
+            authorization
+                .authorize(
+                    vec![current.id],
+                    vec![ResourceRef::class(
+                        current.id,
+                        current.collection_id,
+                        Some(current.name)
+                    )],
+                    vec![Permissions::ReadClass, Permissions::ReadCollection],
+                )
+                .await
+                .unwrap(),
+            vec![class.id],
+        );
+        let paths = vec![vec![class.id]];
+        let graph = AuthorizedGraph::load(
+            &context.pool,
+            &authorization,
+            GraphKind::Class,
+            &paths,
+            &[],
+            &snapshots,
+        )
+        .await
+        .unwrap();
+        let allowed = graph.retain_allowed(paths, |path| path).unwrap();
+        assert_eq!(!allowed.is_empty(), original_allowed);
+        original.cleanup().await.unwrap();
+        destination.cleanup().await.unwrap();
+    }
 }

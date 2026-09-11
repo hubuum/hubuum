@@ -981,6 +981,7 @@ where
                     self.scopes,
                 ),
                 object_ids,
+                None,
             )
             .await;
         }
@@ -988,6 +989,7 @@ where
             self.pool(),
             relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
             object_ids,
+            None,
         )
         .await?;
         let resources = object_relation_authorization_resources(self.pool(), &candidates).await?;

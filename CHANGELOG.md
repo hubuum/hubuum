@@ -35,10 +35,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   backend to every returned path vertex and relation before producing contents,
   totals, or pagination cursors. Graph responses also authorize their edges.
   Local administrator membership no longer bypasses external descendant policy,
-  and token resource boundaries apply to intermediate vertices.
+  and token resource boundaries apply to intermediate vertices. Returned contents
+  retain their captured authorization attributes across concurrent collection
+  moves or edits.
 - **Breaking query-limit change:** External traversal authorization rejects queries
   exceeding 10,000 candidates. Narrow filters or reduce traversal depth for
   previously accepted larger queries before upgrading.
+- **Breaking storage-adapter contract change:** External adapters must apply
+  `StorageRelationIdsQuery::max_results()` before materializing relation rows.
+  Update class touching/between and object between queries before using delegated
+  traversal. Existing query constructors and `into_parts()` remain source compatible.
 
 ## [0.0.14] - 2026-09-10
 
