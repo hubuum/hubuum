@@ -6,6 +6,9 @@ ENGINE="auto"
 SERVICE_NAME=""
 USE_SYSTEMD="true"
 AUTH_CONFIG_HOST_PATH=""
+IMAGE_TAG=""
+BACKEND_TAG=""
+FRONTEND_TAG=""
 DEFAULT_MANAGEMENT_SCRIPT_BASE_URL="https://raw.githubusercontent.com/hubuum/hubuum/main/scripts"
 
 usage() {
@@ -16,10 +19,17 @@ Usage:
 Options:
   --dir PATH              Install directory. Default: /opt/hubuum
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
+  --tag TAG               Set and remember the tag for both app images
+  --server-tag TAG        Backend tag, overriding --tag (alias: --backend-tag)
+  --frontend-tag TAG      Frontend tag, overriding --tag
   --auth-config PATH      Replace the host auth-provider TOML path before rolling the replicas
   --service-name NAME     systemd service name. Defaults to value in .env or hubuum
   --no-systemd            Retained for compatibility; rolling updates always use Compose directly
   -h, --help              Show this help
+
+Without tag options, updates reuse the image choices saved in .env.
+Tag options keep the configured image repository and replace any tag or digest.
+Tag options apply only to published images, not source builds.
 EOF
 }
 
@@ -58,6 +68,22 @@ absolute_config_path() {
   printf '%s/%s' "$directory" "$(basename -- "$path")"
 }
 
+validate_image_tag() {
+  local option="$1" tag="$2"
+  [[ "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] ||
+    die "$option requires a valid image tag (1-128 letters, digits, underscores, dots or hyphens; must start with a letter, digit or underscore)"
+}
+
+image_with_tag() {
+  local repository="${1%%@*}"
+  local tag="$2"
+  # A colon in the final path component is a tag; a registry port is not.
+  if [[ "${repository##*/}" == *:* ]]; then
+    repository="${repository%:*}"
+  fi
+  printf '%s:%s' "$repository" "$tag"
+}
+
 set_env_value() {
   local key="$1"
   local value="$2"
@@ -87,6 +113,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
+    --tag) validate_image_tag "$1" "${2:-}"; IMAGE_TAG="$2"; shift 2 ;;
+    --server-tag|--backend-tag) validate_image_tag "$1" "${2:-}"; BACKEND_TAG="$2"; shift 2 ;;
+    --frontend-tag) validate_image_tag "$1" "${2:-}"; FRONTEND_TAG="$2"; shift 2 ;;
     --auth-config) AUTH_CONFIG_HOST_PATH="$2"; shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --no-systemd) USE_SYSTEMD="false"; shift ;;
@@ -104,12 +133,15 @@ fi
 ENV_FILE="$INSTALL_DIR/.env"
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE; run install-single-host.sh first"
 [[ -f "$INSTALL_DIR/compose.yml" ]] || die "missing $INSTALL_DIR/compose.yml; run install-single-host.sh first"
+BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
+if [[ -n "$IMAGE_TAG$BACKEND_TAG$FRONTEND_TAG" && "$BUILD_FROM_SOURCE" == "true" ]]; then
+  die "image tag options cannot be used with source builds; use --backend-ref and --frontend-ref when installing"
+fi
 if [[ -n "$AUTH_CONFIG_HOST_PATH" ]]; then
   AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
   set_env_value HUBUUM_AUTH_CONFIG_HOST_PATH "$AUTH_CONFIG_HOST_PATH"
 fi
 
-BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
 INSTALL_MODE="$(read_env_value INSTALL_MODE || printf 'all')"
 DATABASE_MANAGED="$(read_env_value DATABASE_MANAGED || printf 'true')"
 DATABASE_ROLE_MODE="$(read_env_value HUBUUM_DATABASE_ROLE_MODE || printf 'single')"
@@ -196,6 +228,19 @@ fi
 COMPOSE_CMD=("$ENGINE_PATH" compose --env-file .env -f compose.yml)
 
 cd "$INSTALL_DIR"
+
+BACKEND_TAG="${BACKEND_TAG:-$IMAGE_TAG}"
+FRONTEND_TAG="${FRONTEND_TAG:-$IMAGE_TAG}"
+if [[ -n "$BACKEND_TAG" ]]; then
+  BACKEND_IMAGE="$(read_env_value BACKEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-server:main')"
+  BACKEND_IMAGE="$(image_with_tag "$BACKEND_IMAGE" "$BACKEND_TAG")"
+  set_env_value BACKEND_IMAGE "$BACKEND_IMAGE"
+fi
+if [[ -n "$FRONTEND_TAG" ]]; then
+  FRONTEND_IMAGE="$(read_env_value FRONTEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-frontend:main')"
+  FRONTEND_IMAGE="$(image_with_tag "$FRONTEND_IMAGE" "$FRONTEND_TAG")"
+  set_env_value FRONTEND_IMAGE "$FRONTEND_IMAGE"
+fi
 
 if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   command -v git >/dev/null 2>&1 || die "git is required for source-build updates"

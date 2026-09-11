@@ -7,6 +7,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Single-host installation and updates accept `--tag` for both application
+  images and `--server-tag` (alias `--backend-tag`) / `--frontend-tag` for
+  independent choices. Image selections persist across updates, including
+  pinned release versions, and updates can override either saved choice.
+  Older installations can use either new script without converting their
+  configuration; omitting tag options preserves their saved images.
+
+### Changed
+
+- Stable server releases now also publish the `latest` container tag. Fresh
+  single-host installations retain the available `main` defaults; after the
+  next stable release publishes the server alias, use `--tag latest` to follow
+  stable releases. Existing installations retain their configured images.
+
 ## [0.0.14] - 2026-09-10
 
 ### Fixed

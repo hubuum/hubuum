@@ -109,6 +109,50 @@ Default app images:
 - Backend: `ghcr.io/hubuum/hubuum-server:main`
 - Frontend: `ghcr.io/hubuum/hubuum-frontend:main`
 
+### Choosing Image Tags
+
+Fresh installations follow `main` for both application images. Use `--tag`
+to select a shared tag, or `--server-tag` and `--frontend-tag` to choose each
+independently. `--backend-tag` is an alias for `--server-tag`.
+
+```bash
+# Follow development builds for both applications.
+sudo ./scripts/install-single-host.sh \
+  --web hubuum.example.com \
+  --api hubuum-api.example.com \
+  --email admin@example.com \
+  --tag main
+
+# Pin the server while following frontend stable releases.
+sudo ./scripts/install-single-host.sh \
+  --web hubuum.example.com \
+  --api hubuum-api.example.com \
+  --email admin@example.com \
+  --server-tag v0.0.14 \
+  --frontend-tag latest
+```
+
+Per-application tags override `--tag` regardless of argument order. Explicit
+`--backend-image` and `--frontend-image` references take precedence over tag
+options for their application. Otherwise, tag options retain the configured
+image repository, including a custom registry, and replace its tag or digest.
+
+The resulting image references are saved as `BACKEND_IMAGE` and
+`FRONTEND_IMAGE` in `.env`. Re-running either script without tag options keeps
+those choices, including installations previously configured to follow `main`.
+`latest` follows stable releases and `main` follows development builds when you
+run an update. A version tag such as `v0.0.14` stays on that version; the scripts
+still pull the tag, so an image republished under the same tag can change. Use a
+full image reference with `@sha256:...` when you need immutable image contents.
+Each selected tag must exist in its image repository; server and frontend
+release versions can differ. The server `latest` alias will first be published
+by the next stable release containing this change. Until then, use `main` or an
+existing version such as `--server-tag v0.0.14`.
+
+Image tag options do not change management-script refs (`--script-ref`) and
+cannot be used for source builds, which select code through `--backend-ref`
+and `--frontend-ref` when installing.
+
 ## Frontend BFF And Public API
 
 All-in-one installs expose both public hostnames:
@@ -177,7 +221,7 @@ Examples:
 - Commit: `REF=1a2b3c4d5e6f...`
 - Pull request head: `REF=refs/pull/123/head`
 
-For pull requests from forks, GitHub may not expose package/image changes yet; use `--build-from-source` when you need to test code from that PR rather than the published `:main` images.
+For pull requests from forks, GitHub may not expose package/image changes yet; use `--build-from-source` when you need to test code from that PR rather than published images.
 
 The script installs management helpers into the install directory:
 
@@ -344,10 +388,24 @@ cd /opt/hubuum
 sudo ./update-single-host.sh
 ```
 
+Use the same tag options to override and save the image choices for this and
+future updates:
+
+```bash
+# Switch both applications to stable releases once both latest tags exist.
+sudo ./update-single-host.sh --tag latest
+
+# Pin only the server; keep the saved frontend choice.
+sudo ./update-single-host.sh --server-tag v0.0.14
+
+# Follow server development builds while keeping the frontend on stable releases.
+sudo ./update-single-host.sh --tag main --frontend-tag latest
+```
+
 For image-based installs, the update command pulls the latest configured
 images. For source-build installs, it fetches the source checkouts and rebuilds
 the local app images. Existing `.env` values, including operator-added
-settings, are preserved; defaults introduced by a newer installer are appended
+settings, are preserved except for explicit overrides; defaults introduced by a newer installer are appended
 only when their keys are missing. On an established rolling installation, it
 then performs a rolling application update:
 
@@ -380,17 +438,26 @@ Updates use Compose directly even when the optional systemd unit exists. The
 unit remains active and continues to provide the host-boot and explicit-stop
 contract; it is not restarted during an application rollout.
 
-Installations created before rolling updates were introduced must re-run
-`install-single-host.sh` once to generate the standby services and
-readiness-aware Caddy configuration. The installer brings up the standby before
-replacing the existing primary. A subsequent `update-single-host.sh` refuses to
-fall back to a destructive restart when the installed Compose file lacks the
-rolling-update services.
+Older installations can use a current copy of either the installer or updater,
+with or without tag options. Their existing full image references need no
+conversion: omitting tag options preserves the saved images, while explicit
+tag options replace the selected tags. Both scripts refresh the installed
+management helpers and generate the current Compose and Caddy configuration,
+including standby services for installations that predate rolling updates.
 
-Installations whose updater predates automatic generated-configuration refresh
-must likewise re-run the current `install-single-host.sh` once. That one-time
-rerun installs the self-refreshing updater; later `update-single-host.sh` runs
-pick up Caddy, Compose, and management-script changes automatically.
+If the installed updater predates these options or automatic configuration
+refresh, run the current updater directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/update-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum
+```
+
+Add `--tag` or per-application tag options after `--dir /opt/hubuum` to change
+the saved choices during that upgrade. Re-running the current installer works
+the same way. Later runs of the refreshed, installed updater pick up deployment
+file and management-script changes automatically. The updater refuses to roll
+if configuration refresh fails to provide the required services.
 
 The live container contract test covers adoption from the published v0.0.1
 image: the old API remains online while the candidate applies all newer
@@ -480,8 +547,11 @@ Common optional parameters:
 - `--migration-database-url`: privileged Postgres URL required with an external database only in split mode.
 - `--auth-config`: absolute path to a host auth-provider TOML file. The API container mounts it read-only at `/etc/hubuum/auth.toml`.
 - `--engine`: `auto`, `docker`, or `podman`. Default: `auto`.
-- `--backend-image`: backend image. Default: `ghcr.io/hubuum/hubuum-server:main`.
-- `--frontend-image`: frontend image. Default: `ghcr.io/hubuum/hubuum-frontend:main`.
+- `--tag`: shared application image tag. Fresh install default: `main`; existing installs reuse saved images.
+- `--server-tag` / `--backend-tag`: backend tag, overriding `--tag`.
+- `--frontend-tag`: frontend tag, overriding `--tag`.
+- `--backend-image`: full backend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-server:main`.
+- `--frontend-image`: full frontend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-frontend:main`.
 - `--postgres-image`: managed Postgres image. Default: `docker.io/library/postgres:18-alpine`.
 - `--valkey-image`: frontend session/cache Valkey image. Default: `docker.io/valkey/valkey:9-alpine`.
 - `--caddy-image`: reverse proxy image. Default: `docker.io/library/caddy:2-alpine`.

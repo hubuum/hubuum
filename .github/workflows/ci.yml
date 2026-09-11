@@ -319,6 +319,8 @@ jobs:
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
       - name: Test deployment script refresh
         run: bash scripts/test-install-script-refresh.sh
+      - name: Test single-host image tag selection
+        run: python3 scripts/test-single-host-tags.py
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
       - name: Test health probe transport retry boundaries
@@ -2164,6 +2166,9 @@ jobs:
             "${image}:${version_tag}-full"
             "${image}:${version}-full"
           )
+          if [[ "$version_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            final_tags+=("${image}:latest")
+          fi
           
           # Create and push manifest for each tag
           for tag in "${final_tags[@]}"; do

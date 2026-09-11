@@ -50,7 +50,8 @@ assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
 assert_flag "$docs_output" treetop_conformance false
 
-for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py; do
+for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py \
+  scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py; do
   probe_output="$(bash "$classifier" "$probe_path")"
   assert_flag "$probe_output" code true
   assert_flag "$probe_output" container true

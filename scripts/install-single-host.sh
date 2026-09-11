@@ -18,6 +18,9 @@ BACKEND_REPO="https://github.com/hubuum/hubuum.git"
 FRONTEND_REPO="https://github.com/hubuum/hubuum-frontend.git"
 BACKEND_IMAGE="ghcr.io/hubuum/hubuum-server:main"
 FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:main"
+IMAGE_TAG=""
+BACKEND_TAG=""
+FRONTEND_TAG=""
 POSTGRES_IMAGE="docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
@@ -65,8 +68,13 @@ Options:
   --shared-host-routing MODE
                           Required when --web and --api are the same in all mode: bff, direct, or prefixed
   --email EMAIL           Let's Encrypt registration email. Required
-  --backend-image IMAGE   Backend image. Default: ghcr.io/hubuum/hubuum-server:main
-  --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
+  --tag TAG               Tag for both app images. Fresh install default: main
+  --server-tag TAG        Backend tag, overriding --tag (alias: --backend-tag)
+  --frontend-tag TAG      Frontend tag, overriding --tag
+  --backend-image IMAGE   Full backend image reference, overriding tag options
+                          Default: ghcr.io/hubuum/hubuum-server:main
+  --frontend-image IMAGE  Full frontend image reference, overriding tag options
+                          Default: ghcr.io/hubuum/hubuum-frontend:main
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
   --migration-database-url URL
                           Migrator Postgres URL required for split database roles
@@ -91,6 +99,10 @@ Options:
   --no-pull               Do not pull dependency/base images before starting
   --recreate              Regenerate .env secrets even if they exist
   -h, --help              Show this help
+
+Image choices are saved in .env and reused on later installs and updates.
+Tag options keep the configured image repository and replace any tag or digest.
+Tag options apply to published images; source builds use --backend-ref/--frontend-ref.
 EOF
 }
 
@@ -137,6 +149,22 @@ absolute_config_path() {
   printf '%s/%s' "$directory" "$(basename -- "$path")"
 }
 
+validate_image_tag() {
+  local option="$1" tag="$2"
+  [[ "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] ||
+    die "$option requires a valid image tag (1-128 letters, digits, underscores, dots or hyphens; must start with a letter, digit or underscore)"
+}
+
+image_with_tag() {
+  local repository="${1%%@*}"
+  local tag="$2"
+  # A colon in the final path component is a tag; a registry port is not.
+  if [[ "${repository##*/}" == *:* ]]; then
+    repository="${repository%:*}"
+  fi
+  printf '%s:%s' "$repository" "$tag"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; ARG_SET+=" MODE"; shift 2 ;;
@@ -150,6 +178,9 @@ while [[ $# -gt 0 ]]; do
     --api-port) API_PORT="$2"; ARG_SET+=" API_PORT"; shift 2 ;;
     --shared-host-routing) SHARED_HOST_ROUTING="$2"; ARG_SET+=" SHARED_HOST_ROUTING"; shift 2 ;;
     --email) LETSENCRYPT_EMAIL="$2"; ARG_SET+=" LETSENCRYPT_EMAIL"; shift 2 ;;
+    --tag) validate_image_tag "$1" "${2:-}"; IMAGE_TAG="$2"; shift 2 ;;
+    --server-tag|--backend-tag) validate_image_tag "$1" "${2:-}"; BACKEND_TAG="$2"; shift 2 ;;
+    --frontend-tag) validate_image_tag "$1" "${2:-}"; FRONTEND_TAG="$2"; shift 2 ;;
     --backend-image) BACKEND_IMAGE="$2"; ARG_SET+=" BACKEND_IMAGE"; shift 2 ;;
     --frontend-image) FRONTEND_IMAGE="$2"; ARG_SET+=" FRONTEND_IMAGE"; shift 2 ;;
     --backend-ref) BACKEND_REF="$2"; ARG_SET+=" BACKEND_REF"; shift 2 ;;
@@ -233,6 +264,18 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
     # Installations generated while split roles were mandatory predate the
     # topology setting. Preserve their established credential boundary.
     DATABASE_ROLE_MODE="split"
+  fi
+fi
+
+if [[ -n "$IMAGE_TAG$BACKEND_TAG$FRONTEND_TAG" ]]; then
+  [[ "$BUILD_FROM_SOURCE" != "true" ]] || die "image tag options cannot be used with source builds; use --backend-ref and --frontend-ref when installing"
+  if ! arg_was_set BACKEND_IMAGE && [[ -n "${BACKEND_TAG:-$IMAGE_TAG}" ]]; then
+    BACKEND_IMAGE="$(image_with_tag "$BACKEND_IMAGE" "${BACKEND_TAG:-$IMAGE_TAG}")"
+    ARG_SET+=" BACKEND_IMAGE"
+  fi
+  if ! arg_was_set FRONTEND_IMAGE && [[ -n "${FRONTEND_TAG:-$IMAGE_TAG}" ]]; then
+    FRONTEND_IMAGE="$(image_with_tag "$FRONTEND_IMAGE" "${FRONTEND_TAG:-$IMAGE_TAG}")"
+    ARG_SET+=" FRONTEND_IMAGE"
   fi
 fi
 
@@ -593,21 +636,33 @@ write_deployment_env() {
 
 merge_missing_env_values() {
   local generated_env="$1"
+  local temporary
   local key
   local line
   local wrote_header="false"
 
+  # Honor explicit app-image choices while retaining operator-managed settings.
+  temporary="$(mktemp "${ENV_FILE}.XXXXXX")"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ]] && arg_was_set "$key"; then
+      line="${key}=${!key}"
+    fi
+    printf '%s\n' "$line"
+  done < "$ENV_FILE" > "$temporary"
+
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == [A-Z0-9_]*=* ]] || continue
     key="${line%%=*}"
-    if ! grep -q "^${key}=" "$ENV_FILE"; then
+    if ! grep -q "^${key}=" "$temporary"; then
       if [[ "$wrote_header" == "false" ]]; then
-        printf '\n# Defaults added by deployment configuration refresh\n' >> "$ENV_FILE"
+        printf '\n# Defaults added by deployment configuration refresh\n' >> "$temporary"
         wrote_header="true"
       fi
-      printf '%s\n' "$line" >> "$ENV_FILE"
+      printf '%s\n' "$line" >> "$temporary"
     fi
   done < "$generated_env"
+  mv "$temporary" "$ENV_FILE"
 }
 
 if [[ "$ACTION" == "refresh-config" ]]; then
