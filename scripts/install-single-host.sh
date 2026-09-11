@@ -16,8 +16,8 @@ BACKEND_REF="main"
 FRONTEND_REF="main"
 BACKEND_REPO="https://github.com/hubuum/hubuum.git"
 FRONTEND_REPO="https://github.com/hubuum/hubuum-frontend.git"
-BACKEND_IMAGE="ghcr.io/hubuum/hubuum-server:latest"
-FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:latest"
+BACKEND_IMAGE="ghcr.io/hubuum/hubuum-server:main"
+FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:main"
 IMAGE_TAG=""
 BACKEND_TAG=""
 FRONTEND_TAG=""
@@ -68,13 +68,13 @@ Options:
   --shared-host-routing MODE
                           Required when --web and --api are the same in all mode: bff, direct, or prefixed
   --email EMAIL           Let's Encrypt registration email. Required
-  --tag TAG               Tag for both app images. Fresh install default: latest
+  --tag TAG               Tag for both app images. Fresh install default: main
   --server-tag TAG        Backend tag, overriding --tag (alias: --backend-tag)
   --frontend-tag TAG      Frontend tag, overriding --tag
   --backend-image IMAGE   Full backend image reference, overriding tag options
-                          Default: ghcr.io/hubuum/hubuum-server:latest
+                          Default: ghcr.io/hubuum/hubuum-server:main
   --frontend-image IMAGE  Full frontend image reference, overriding tag options
-                          Default: ghcr.io/hubuum/hubuum-frontend:latest
+                          Default: ghcr.io/hubuum/hubuum-frontend:main
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
   --migration-database-url URL
                           Migrator Postgres URL required for split database roles

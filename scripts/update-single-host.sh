@@ -232,12 +232,12 @@ cd "$INSTALL_DIR"
 BACKEND_TAG="${BACKEND_TAG:-$IMAGE_TAG}"
 FRONTEND_TAG="${FRONTEND_TAG:-$IMAGE_TAG}"
 if [[ -n "$BACKEND_TAG" ]]; then
-  BACKEND_IMAGE="$(read_env_value BACKEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-server:latest')"
+  BACKEND_IMAGE="$(read_env_value BACKEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-server:main')"
   BACKEND_IMAGE="$(image_with_tag "$BACKEND_IMAGE" "$BACKEND_TAG")"
   set_env_value BACKEND_IMAGE "$BACKEND_IMAGE"
 fi
 if [[ -n "$FRONTEND_TAG" ]]; then
-  FRONTEND_IMAGE="$(read_env_value FRONTEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-frontend:latest')"
+  FRONTEND_IMAGE="$(read_env_value FRONTEND_IMAGE || printf 'ghcr.io/hubuum/hubuum-frontend:main')"
   FRONTEND_IMAGE="$(image_with_tag "$FRONTEND_IMAGE" "$FRONTEND_TAG")"
   set_env_value FRONTEND_IMAGE "$FRONTEND_IMAGE"
 fi

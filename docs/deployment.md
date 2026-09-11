@@ -106,12 +106,12 @@ By default, the installer starts the stack directly with Compose. Pass `--system
 
 Default app images:
 
-- Backend: `ghcr.io/hubuum/hubuum-server:latest`
-- Frontend: `ghcr.io/hubuum/hubuum-frontend:latest`
+- Backend: `ghcr.io/hubuum/hubuum-server:main`
+- Frontend: `ghcr.io/hubuum/hubuum-frontend:main`
 
 ### Choosing Image Tags
 
-Fresh installations follow `latest` for both application images. Use `--tag`
+Fresh installations follow `main` for both application images. Use `--tag`
 to select a shared tag, or `--server-tag` and `--frontend-tag` to choose each
 independently. `--backend-tag` is an alias for `--server-tag`.
 
@@ -145,7 +145,9 @@ run an update. A version tag such as `v0.0.14` stays on that version; the script
 still pull the tag, so an image republished under the same tag can change. Use a
 full image reference with `@sha256:...` when you need immutable image contents.
 Each selected tag must exist in its image repository; server and frontend
-release versions can differ.
+release versions can differ. The server `latest` alias will first be published
+by the next stable release containing this change. Until then, use `main` or an
+existing version such as `--server-tag v0.0.14`.
 
 Image tag options do not change management-script refs (`--script-ref`) and
 cannot be used for source builds, which select code through `--backend-ref`
@@ -390,7 +392,7 @@ Use the same tag options to override and save the image choices for this and
 future updates:
 
 ```bash
-# Switch both applications to stable releases.
+# Switch both applications to stable releases once both latest tags exist.
 sudo ./update-single-host.sh --tag latest
 
 # Pin only the server; keep the saved frontend choice.
@@ -545,11 +547,11 @@ Common optional parameters:
 - `--migration-database-url`: privileged Postgres URL required with an external database only in split mode.
 - `--auth-config`: absolute path to a host auth-provider TOML file. The API container mounts it read-only at `/etc/hubuum/auth.toml`.
 - `--engine`: `auto`, `docker`, or `podman`. Default: `auto`.
-- `--tag`: shared application image tag. Fresh install default: `latest`; existing installs reuse saved images.
+- `--tag`: shared application image tag. Fresh install default: `main`; existing installs reuse saved images.
 - `--server-tag` / `--backend-tag`: backend tag, overriding `--tag`.
 - `--frontend-tag`: frontend tag, overriding `--tag`.
-- `--backend-image`: full backend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-server:latest`.
-- `--frontend-image`: full frontend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-frontend:latest`.
+- `--backend-image`: full backend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-server:main`.
+- `--frontend-image`: full frontend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-frontend:main`.
 - `--postgres-image`: managed Postgres image. Default: `docker.io/library/postgres:18-alpine`.
 - `--valkey-image`: frontend session/cache Valkey image. Default: `docker.io/valkey/valkey:9-alpine`.
 - `--caddy-image`: reverse proxy image. Default: `docker.io/library/caddy:2-alpine`.

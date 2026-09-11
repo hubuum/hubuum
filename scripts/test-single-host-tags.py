@@ -204,9 +204,9 @@ class ImageTagTests(unittest.TestCase):
                 self.run_script(str(self.installation / "update-single-host.sh"))
                 self.assert_images(f"{SERVER}:v0.0.14", f"{FRONTEND}:main")
 
-    def test_fresh_install_defaults_to_latest(self):
+    def test_fresh_install_keeps_available_main_defaults(self):
         self.install()
-        self.assert_images(f"{SERVER}:latest", f"{FRONTEND}:latest")
+        self.assert_images(f"{SERVER}:main", f"{FRONTEND}:main")
 
     def test_shared_tag_is_used_by_install_and_update(self):
         for tag in ("latest", "main", "v0.0.14", "_build.1-test", "a" * 128):
@@ -265,7 +265,7 @@ class ImageTagTests(unittest.TestCase):
                 with self.subTest(suffix=suffix, action=action.__name__):
                     self.install("--backend-image", repository + suffix)
                     action("--server-tag", "v0.0.14")
-                    self.assert_images(f"{repository}:v0.0.14", f"{FRONTEND}:latest")
+                    self.assert_images(f"{repository}:v0.0.14", f"{FRONTEND}:main")
 
     def test_refresh_config_saves_explicit_tags_and_preserves_operator_settings(self):
         self.install("--tag", "main")
