@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
@@ -348,6 +348,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
 
     let lifecycle = if options.run_lifecycle {
         run_lifecycle(
+            backend,
             &options,
             &profile,
             &backend_environment,
@@ -359,6 +360,8 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         LifecycleReport {
             dataset_generation_ms: generation_ms,
             dataset_loading_ms: loading_ms,
+            backup_preflight_ms: None,
+            backup_size_lower_bound_bytes: None,
             backup_generation_ms: None,
             backup_artifact_bytes: None,
             backup_logical_rows: None,
@@ -378,6 +381,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         lifecycle.outcome.as_str(),
         "admin_binary_not_supplied"
             | "backup_failed"
+            | "backup_size_preflight_failed"
             | "offline_verification_failed"
             | "isolated_restore_failed"
     ) {
@@ -1126,7 +1130,8 @@ fn resource_report(
     })
 }
 
-async fn run_lifecycle(
+async fn run_lifecycle<B: ScaleBenchmarkBackend>(
+    backend: &B,
     options: &MeasureOptions,
     profile: &ScaleProfile,
     backend_environment: &BTreeMap<String, String>,
@@ -1140,6 +1145,8 @@ async fn run_lifecycle(
     let mut report = LifecycleReport {
         dataset_generation_ms: generation_ms,
         dataset_loading_ms: loading_ms,
+        backup_preflight_ms: None,
+        backup_size_lower_bound_bytes: None,
         backup_generation_ms: None,
         backup_artifact_bytes: None,
         backup_logical_rows: None,
@@ -1155,6 +1162,29 @@ async fn run_lifecycle(
         report.outcome = "admin_binary_not_supplied".to_string();
         return report;
     };
+    let started = Instant::now();
+    let preflight = backend
+        .backup_size_lower_bound(supported_ceiling_bytes)
+        .await;
+    report.backup_preflight_ms = Some(elapsed_ms(started));
+    let bytes = match preflight {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let secrets = backend_environment.values().map(String::as_str);
+            eprintln!(
+                "{}",
+                redact_lifecycle_message(format!("Backup size preflight failed: {error}"), secrets)
+            );
+            report.outcome = "backup_size_preflight_failed".to_string();
+            return report;
+        }
+    };
+    report.backup_size_lower_bound_bytes = Some(bytes);
+    if bytes > supported_ceiling_bytes {
+        report.outcome = "backup_exceeds_supported_ceiling".to_string();
+        return report;
+    }
+
     let backup_path = options.artifact_directory.join("dataset-backup.json");
     let started = Instant::now();
     let backup = admin_command(admin_binary, profile, backend_environment)
@@ -1162,14 +1192,10 @@ async fn run_lifecycle(
         .arg(&backup_path)
         .output();
     report.backup_generation_ms = Some(elapsed_ms(started));
-    let backup = match backup {
-        Ok(output) if output.status.success() => output,
-        _ => {
-            report.outcome = "backup_failed".to_string();
-            return report;
-        }
-    };
-    let _ = backup;
+    if lifecycle_output("backup", backup, options, backend_environment).is_none() {
+        report.outcome = "backup_failed".to_string();
+        return report;
+    }
     report.backup_artifact_bytes = fs::metadata(&backup_path).ok().map(|meta| meta.len());
     if report
         .backup_artifact_bytes
@@ -1187,12 +1213,14 @@ async fn run_lifecycle(
         .arg(&backup_path)
         .output();
     report.offline_verification_ms = Some(elapsed_ms(started));
-    let offline = match offline {
-        Ok(output) if output.status.success() => output,
-        _ => {
-            report.outcome = "offline_verification_failed".to_string();
-            return report;
-        }
+    let Some(offline) = lifecycle_output(
+        "offline verification",
+        offline,
+        options,
+        backend_environment,
+    ) else {
+        report.outcome = "offline_verification_failed".to_string();
+        return report;
     };
     if let Ok(value) = serde_json::from_slice::<Value>(&offline.stdout) {
         report.backup_logical_rows = find_u64(&value, "total_items");
@@ -1212,12 +1240,10 @@ async fn run_lifecycle(
         .arg(restore_database_url)
         .output();
     let restore_and_verification_ms = elapsed_ms(started);
-    let restore = match restore {
-        Ok(output) if output.status.success() => output,
-        _ => {
-            report.outcome = "isolated_restore_failed".to_string();
-            return report;
-        }
+    let Some(restore) = lifecycle_output("isolated restore", restore, options, backend_environment)
+    else {
+        report.outcome = "isolated_restore_failed".to_string();
+        return report;
     };
     if let Ok(value) = serde_json::from_slice::<Value>(&restore.stdout) {
         report.restore_ms = find_u64(&value, "restore_duration_ms");
@@ -1231,6 +1257,41 @@ async fn run_lifecycle(
     report
 }
 
+fn lifecycle_output(
+    stage: &str,
+    result: std::io::Result<Output>,
+    options: &MeasureOptions,
+    backend_environment: &BTreeMap<String, String>,
+) -> Option<Output> {
+    let message = match result {
+        Ok(output) if output.status.success() => return Some(output),
+        Ok(output) => format!(
+            "{stage} failed ({})\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(error) => format!("{stage} could not start: {error}"),
+    };
+    let secrets = backend_environment
+        .values()
+        .map(String::as_str)
+        .chain(options.restore_test_database_url.as_deref())
+        .chain([TOKEN_HASH_KEY]);
+    eprintln!("{}", redact_lifecycle_message(message, secrets));
+    None
+}
+
+fn redact_lifecycle_message<'a>(
+    mut message: String,
+    secrets: impl Iterator<Item = &'a str>,
+) -> String {
+    for secret in secrets.filter(|value| !value.is_empty()) {
+        message = message.replace(secret, "[redacted]");
+    }
+    message
+}
+
 fn admin_command(
     binary: &Path,
     profile: &ScaleProfile,
@@ -1240,6 +1301,10 @@ fn admin_command(
     command
         .env_clear()
         .env("HUBUUM_TOKEN_HASH_KEY", TOKEN_HASH_KEY)
+        .env(
+            "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+            profile.provisioning.db_statement_timeout_ms.to_string(),
+        )
         .env(
             "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
             profile.provisioning.backup_max_output_bytes.to_string(),
@@ -1324,6 +1389,18 @@ fn elapsed_ms(started: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_diagnostics_redact_connection_secrets() {
+        let message = "backup failed: postgres://user:password@host/db; key=secret".to_string();
+        assert_eq!(
+            redact_lifecycle_message(
+                message,
+                ["postgres://user:password@host/db", "secret", ""].into_iter()
+            ),
+            "backup failed: [redacted]; key=[redacted]"
+        );
+    }
 
     #[test]
     fn graph_response_inspection_reports_returned_work_shape() {

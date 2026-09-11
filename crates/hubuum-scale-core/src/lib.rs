@@ -1831,6 +1831,11 @@ pub trait ScaleBenchmarkBackend: Send + Sync {
         manifest: &DatasetManifest,
     ) -> Result<()>;
 
+    /// Count a lower bound on serialized temporal state/history bytes without
+    /// retaining the corpus. May stop as soon as the supplied ceiling is exceeded.
+    /// This is a size preflight, not a substitute for backup validation.
+    async fn backup_size_lower_bound(&self, ceiling_bytes: u64) -> Result<u64>;
+
     async fn prepare_measurement(&self) -> Result<BackendPreparation>;
 
     async fn mark_computed_ready(&self) -> Result<()>;
@@ -1865,6 +1870,10 @@ pub struct ResourceReport {
 pub struct LifecycleReport {
     pub dataset_generation_ms: u64,
     pub dataset_loading_ms: u64,
+    #[serde(default)]
+    pub backup_preflight_ms: Option<u64>,
+    #[serde(default)]
+    pub backup_size_lower_bound_bytes: Option<u64>,
     pub backup_generation_ms: Option<u64>,
     pub backup_artifact_bytes: Option<u64>,
     pub backup_logical_rows: Option<u64>,
@@ -3787,6 +3796,16 @@ fn render_assessment(
         head.lifecycle.dataset_loading_ms as f64,
         |value| format!("{value:.0} ms"),
     );
+    if let Some(bytes) = head.lifecycle.backup_size_lower_bound_bytes {
+        render_comparison_row(
+            &mut output,
+            "Backup size lower bound",
+            base.and_then(|value| value.lifecycle.backup_size_lower_bound_bytes)
+                .map(|value| value as f64),
+            bytes as f64,
+            |value| format!("at least {}", format_bytes(value)),
+        );
+    }
     if let Some(head_backup_ms) = head.lifecycle.backup_generation_ms {
         render_comparison_row(
             &mut output,
@@ -4297,6 +4316,8 @@ mod tests {
             LifecycleReport {
                 dataset_generation_ms: 1,
                 dataset_loading_ms: 2,
+                backup_preflight_ms: None,
+                backup_size_lower_bound_bytes: None,
                 backup_generation_ms: None,
                 backup_artifact_bytes: None,
                 backup_logical_rows: None,
@@ -4310,6 +4331,17 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn reports_without_backup_preflight_fields_remain_readable() {
+        let expected = report("legacy");
+        let mut value = serde_json::to_value(&expected).unwrap();
+        let lifecycle = value["lifecycle"].as_object_mut().unwrap();
+        lifecycle.remove("backup_preflight_ms");
+        lifecycle.remove("backup_size_lower_bound_bytes");
+        let decoded: ScaleBenchmarkReport = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded, expected);
     }
 
     fn report_for_sensitivity(label: &str, profile: &ScaleProfile) -> ScaleBenchmarkReport {

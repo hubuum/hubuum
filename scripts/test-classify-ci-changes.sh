@@ -325,7 +325,8 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/workloads/v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
   crates/hubuum-scale-core/src/lib.rs \
-  crates/hubuum-storage-postgres/src/scale_benchmark.rs)"
+  crates/hubuum-storage-postgres/src/scale_benchmark.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
 assert_flag "$scale_benchmark_output" code true
 assert_flag "$scale_benchmark_output" benchmarks true
 assert_flag "$scale_benchmark_output" runtime_benchmark false

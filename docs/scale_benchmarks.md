@@ -329,19 +329,32 @@ database URLs, or environment dumps.
 
 ## Backup and Restore Lifecycle
 
-When `--admin-binary` is supplied, the runner creates a backup under the
-profile's declared document-size limit and invokes `hubuum-admin
---verify-backup`. Supplying `--restore-test-database-url` additionally restores
+When `--admin-binary` is supplied, the runner first streams temporal state and
+history rows to count a conservative lower bound on compact backup bytes.
+The preflight retains one row at a time and stops above the profile's declared
+document-size ceiling. Reports distinguish this lower bound from a generated
+artifact's measured size and record preflight time separately. An already
+over-limit corpus is reported as `backup_exceeds_supported_ceiling` without
+materializing the full document. Fixture revision/history invariants are checked
+independently before workloads, including when backup generation is over its ceiling.
+Otherwise the runner creates a backup and invokes `hubuum-admin --verify-backup`. Supplying `--restore-test-database-url` additionally restores
 into a separately created empty database and performs semantic verification.
 The large profile retains the ordinary 256 MiB ceiling; the huge profile
 declares an elevated 1 GiB provisioning envelope. Both values are recorded in
-the manifest and applied to the server and administrator processes.
+the manifest and applied to the server and administrator processes, along with
+the profile's database statement timeout. Bulk loading seeds
+one open temporal baseline for every live resource and preserves the additional
+revisions in the history overlay. Audit revision fields retain matching snapshots.
+Administrator failures report the failing stage, exit status, and diagnostic
+output with configured connection strings and token keys redacted.
 
 Lifecycle results distinguish a successful offline verification, a successful
 isolated restore, an unsupported backup, an artifact that exceeds the ordinary
 256 MiB ceiling, and a verification or restore failure. The measured size is
 recorded and an over-limit generated document is removed instead of uploaded;
 the runner does not silently exempt scale artifacts from production limits.
+The preflight is a size check, not proof of backup validity; generation and
+verification still run for every corpus admitted by the preflight.
 Use `--skip-lifecycle` only for focused local iteration.
 
 ## CI Policy

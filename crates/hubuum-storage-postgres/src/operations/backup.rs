@@ -2,8 +2,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use diesel::QueryableByName;
+use diesel::query_builder::SqlQuery;
 use diesel::sql_types::Jsonb;
 use diesel_async::RunQueryDsl;
+use futures_util::TryStreamExt;
 use hubuum_storage_core::{
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
     StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
@@ -13,9 +15,9 @@ use serde_json::{Map, Value};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(QueryableByName)]
-struct JsonRows {
+struct JsonRow {
     #[diesel(sql_type = Jsonb)]
-    rows: Value,
+    row: Value,
 }
 
 pub(crate) const fn state_table(section: StorageBackupStateSection) -> &'static str {
@@ -532,11 +534,7 @@ impl SnapshotFilter {
     }
 }
 
-async fn load_json_rows(
-    conn: &mut PostgresConnection,
-    table: &str,
-    filter: SnapshotFilter,
-) -> Result<Vec<Value>, PostgresStorageError> {
+fn json_rows_query(table: &str, filter: SnapshotFilter) -> Result<SqlQuery, PostgresStorageError> {
     validate_snapshot_table(table)?;
     // The only formatted components are a table identifier from the closed
     // list above and a predicate selected from fixed internal variants.
@@ -545,16 +543,81 @@ async fn load_json_rows(
         .map(|value| format!(" WHERE {value}"))
         .unwrap_or_default();
     let query = format!(
-        "SELECT COALESCE(jsonb_agg(to_jsonb(snapshot_row) ORDER BY to_jsonb(snapshot_row)::text), '[]'::jsonb) AS rows \
-         FROM {table} snapshot_row{predicate}"
+        "SELECT to_jsonb(snapshot_row) AS row FROM {table} snapshot_row{predicate} \
+         ORDER BY to_jsonb(snapshot_row)::text"
     );
-    let value = diesel::sql_query(query)
-        .get_result::<JsonRows>(conn)
-        .await?
-        .rows;
-    value.as_array().cloned().ok_or_else(|| {
-        PostgresStorageError::database(format!("Backup query for {table} did not return an array"))
-    })
+    Ok(diesel::sql_query(query))
+}
+
+async fn load_json_rows(
+    conn: &mut PostgresConnection,
+    table: &str,
+    filter: SnapshotFilter,
+) -> Result<Vec<Value>, PostgresStorageError> {
+    // A table-sized jsonb_agg hits PostgreSQL's JSON-array size limit even
+    // when every individual resource is valid. Stream rows within the same
+    // transaction snapshot and retain the existing canonical ordering.
+    let query = json_rows_query(table, filter)?;
+    let rows = query.load_stream::<JsonRow>(conn).await?;
+    rows.map_ok(|row| row.row)
+        .try_collect()
+        .await
+        .map_err(Into::into)
+}
+
+/// A strict lower bound: omit document framing and operational sections, and
+/// count compact logical rows that must occur in any history-inclusive backup.
+/// Stop above the benchmark's ceiling without retaining the whole snapshot.
+#[cfg(feature = "scale-benchmark-support")]
+pub(crate) async fn backup_size_lower_bound(
+    conn: &mut PostgresConnection,
+    ceiling_bytes: u64,
+) -> Result<u64, PostgresStorageError> {
+    use StorageBackupHistorySection as History;
+    use StorageBackupStateSection as State;
+
+    let mut bytes = 0_u64;
+    for (state, history) in [
+        (State::Collections, History::CollectionHistory),
+        (State::Classes, History::ClassHistory),
+        (State::ClassRelations, History::ClassRelationHistory),
+        (State::Objects, History::ObjectHistory),
+        (State::ObjectRelations, History::ObjectRelationHistory),
+        (State::ExportTemplates, History::ExportTemplateHistory),
+        (State::RemoteTargets, History::RemoteTargetHistory),
+    ] {
+        for is_history in [false, true] {
+            let table = if is_history {
+                history_table(history)
+            } else {
+                state_table(state)
+            };
+            let query = json_rows_query(table, SnapshotFilter::All)?;
+            let rows = query.load_stream::<JsonRow>(conn).await?;
+            futures_util::pin_mut!(rows);
+            while let Some(JsonRow { mut row }) = rows.try_next().await? {
+                if is_history {
+                    history_row_to_logical(history, &mut row)?;
+                } else {
+                    state_row_to_logical(state, &mut row)?;
+                }
+                let size = serde_json::to_vec(&row)
+                    .map_err(|error| {
+                        PostgresStorageError::database(format!(
+                            "Backup size preflight failed: {error}"
+                        ))
+                    })?
+                    .len() as u64;
+                bytes = bytes.checked_add(size).ok_or_else(|| {
+                    PostgresStorageError::database("Backup size preflight overflowed")
+                })?;
+                if bytes > ceiling_bytes {
+                    return Ok(bytes);
+                }
+            }
+        }
+    }
+    Ok(bytes)
 }
 
 async fn snapshot_state(
@@ -711,6 +774,40 @@ mod tests {
         state_row_to_logical, state_row_to_postgres, validate_snapshot_table,
     };
     use hubuum_storage_core::{StorageBackupHistorySection, StorageBackupStateSection};
+
+    #[cfg(feature = "integration-test-support")]
+    #[tokio::test]
+    async fn backup_rows_can_exceed_one_postgres_json_array() {
+        use crate::test_support::integration_test_pool;
+        use crate::with_transaction;
+        use diesel_async::SimpleAsyncConnection;
+
+        let pool = integration_test_pool(1);
+        with_transaction(
+            &pool,
+            async |connection| -> Result<(), crate::PostgresStorageError> {
+                // Payload bytes alone exceed PostgreSQL's 268,435,455-byte
+                // JSON-array element limit. Each individual row stays small.
+                connection
+                    .batch_execute(
+                        "CREATE TEMP TABLE hubuumobject (id integer, data jsonb) ON COMMIT DROP;
+                     INSERT INTO hubuumobject
+                     SELECT n, to_jsonb(repeat('x', 65536)) FROM generate_series(1, 4096) n",
+                    )
+                    .await?;
+                let rows =
+                    super::load_json_rows(connection, "hubuumobject", SnapshotFilter::All).await?;
+                let payload_bytes: usize = rows
+                    .iter()
+                    .map(|row| row["data"].as_str().expect("text payload").len())
+                    .sum();
+                assert_eq!((rows.len(), payload_bytes), (4096, 4096 * 65536));
+                Ok(())
+            },
+        )
+        .await
+        .expect("backup rows beyond one JSON array");
+    }
 
     #[rstest]
     #[case::known("collections", true)]

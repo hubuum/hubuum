@@ -115,7 +115,8 @@ for path in "$@"; do
       ;;
     .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
       crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
-      crates/hubuum-storage-postgres/src/scale_benchmark.rs)
+      crates/hubuum-storage-postgres/src/scale_benchmark.rs | \
+      crates/hubuum-storage-postgres/src/scale_benchmark/*)
       code=true
       benchmarks=true
       scale_benchmark=true
