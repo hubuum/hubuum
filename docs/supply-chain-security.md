@@ -51,7 +51,8 @@ Syft and Trivy run from digest-pinned OCI images. The pinned cosign installer
 verifies the downloaded executable before use. Workflows record the executable
 or platform-image digest and tool version in their run summary.
 
-Validate these controls locally with:
+Validate these controls locally with [Python 3.11 or newer](development.md#python-tooling)
+selected as `python3` on `PATH`:
 
 ```bash
 python3 scripts/check-supply-chain-policy.py

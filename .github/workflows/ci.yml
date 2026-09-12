@@ -68,6 +68,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Verify generated project inventory
         run: python3 scripts/generate-project-inventory.py --check
       - name: Test change classifier
@@ -189,6 +193,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Validate immutable inputs and exception metadata
         run: python3 scripts/check-supply-chain-policy.py
       - name: Test supply-chain policy validation
@@ -215,6 +223,34 @@ jobs:
         if: steps.dependency_audit.outcome != 'success'
         run: exit 1
 
+  python-tooling:
+    name: Python tooling (${{ matrix.python-version }})
+    needs: changes
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.code == 'true'
+      )
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up test Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Test Python requirements and standard-library-only checks
+        run: python3 scripts/test-python-version.py
+      - name: Test Rust API classification policy
+        run: python3 scripts/test-rust-api-policy.py
+      - name: Test supply-chain policy validation
+        run: python3 scripts/test-supply-chain-policy.py
+
   rust-api-policy:
     name: Rust API policy
     needs: changes
@@ -231,6 +267,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Validate Rust API classifications
         run: python3 scripts/check-rust-api-policy.py
       - name: Test Rust API classification policy
@@ -305,6 +345,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Install clippy
         run: rustup component add clippy
       - name: Install feature build dependencies
@@ -527,6 +571,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Prepare operational-contract report directory
@@ -713,6 +761,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -798,6 +850,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Prepare conformance report directory
@@ -856,6 +912,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-08-04
         with:
@@ -1125,6 +1185,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       - name: Build production container
@@ -1321,6 +1385,7 @@ jobs:
       - changes
       - static-checks
       - dependency-policy
+      - python-tooling
       - rust-api-policy
       - lint
       - release-metadata
@@ -1387,6 +1452,7 @@ jobs:
       startsWith(github.ref, 'refs/tags/v') &&
       needs.verify-tag-main-ci-success.result == 'success' &&
       needs.dependency-policy.result == 'success' &&
+      needs.python-tooling.result == 'success' &&
       needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
       needs.operational-contract.result == 'success' &&
@@ -1395,6 +1461,7 @@ jobs:
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
+      - python-tooling
       - rust-api-policy
       - openapi-contract
       - operational-contract
@@ -1599,6 +1666,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -1948,6 +2019,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       - name: Log in to GitHub Container Registry
@@ -2053,6 +2128,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
       - name: Make release scripts executable
         run: chmod +x scripts/*.sh
       - name: Check tagged release metadata

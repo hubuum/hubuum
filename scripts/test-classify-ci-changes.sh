@@ -50,6 +50,16 @@ assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
 assert_flag "$docs_output" treetop_conformance false
 
+python_version_output="$(bash "$classifier" .python-version)"
+for flag in code openapi operational_contract container artifacts benchmarks runtime_benchmark treetop_conformance; do
+  assert_flag "$python_version_output" "$flag" true
+done
+
+for python_tool in scripts/check-python-version.py scripts/test-python-version.py; do
+  python_tool_output="$(bash "$classifier" "$python_tool")"
+  assert_flag "$python_tool_output" code true
+done
+
 for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py \
   scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py; do
   probe_output="$(bash "$classifier" "$probe_path")"

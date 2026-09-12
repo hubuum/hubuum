@@ -268,7 +268,9 @@ Build the workspace with Cargo:
 cargo build --all-features --locked
 ```
 
-The local test environment is configured through `.env`:
+Repository tooling requires Python 3.11 or newer, selected as `python3` on `PATH`,
+with no third-party Python packages. The local test environment is configured
+through `.env`:
 
 ```sh
 source .env && ./run_tests.sh
