@@ -1,11 +1,15 @@
 use super::*;
+#[cfg(feature = "login-rate-limit-valkey")]
+use crate::config::get_config;
 use rstest::rstest;
 use std::net::Ipv4Addr;
 
 #[cfg(feature = "login-rate-limit-valkey")]
 fn valkey_test_url() -> String {
-    std::env::var("HUBUUM_TEST_VALKEY_URL")
-        .unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string())
+    get_config()
+        .expect("limiter test configuration should be valid")
+        .login_rate_limit_valkey_url
+        .unwrap_or_else(|| "redis://127.0.0.1:6379/".to_string())
 }
 
 #[cfg(feature = "login-rate-limit-valkey")]
