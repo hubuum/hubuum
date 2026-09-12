@@ -1,3 +1,4 @@
+mod event_delivery;
 mod schema_evolution;
 
 use std::collections::HashSet;

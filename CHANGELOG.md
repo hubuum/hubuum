@@ -40,6 +40,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking storage SDK change:** `EventDeliveryWorkerStorage` implementations
+  must implement `begin_event_delivery` and return a `StorageEventDeliveryLease`
+  only for an unexpired, currently owned claim. External adapters must check the
+  token and in-flight status using their authoritative clock and construct the
+  conservative monotonic deadline from a timer started before acquiring storage
+  resources. Update adapters before upgrading `hubuum-storage-core`.
+
 - **Breaking tooling requirement:** Repository Python scripts and tests now
   require Python 3.11 or newer and use standard-library `tomllib` exclusively.
   Upgrade the interpreter selected by `python3` on `PATH` before running local
@@ -52,6 +59,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   stable releases. Existing installations retain their configured images.
 
 ### Fixed
+
+- Event delivery workers claim at most their eight execution slots, preventing
+  slow sinks from expiring leases in a local batch queue. Workers check ownership
+  before sending and budget claim/dispatch delays, transport, and acknowledgment
+  within the lease. The default settings remain valid; the five-second difference
+  between lease and transport timeouts is reserved for acknowledgment. Delivery
+  remains at least once and consumers must deduplicate by `event_id`.
 
 - Canceled login requests no longer permanently consume in-memory rate-limit
   capacity, including the local fallback used during Valkey outages. Login

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
-use diesel::sql_types::{Nullable, Timestamp};
-use diesel::{Queryable, QueryableByName, SelectableHelper};
+use diesel::sql_types::{BigInt, Nullable, Timestamp};
+use diesel::{OptionalExtension, Queryable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, EventSinkId, EventSubscriptionId,
@@ -13,8 +13,8 @@ use hubuum_events_core::EventSequence;
 use hubuum_query::{FilterField, Operator, QueryOptions};
 use hubuum_storage_core::{
     StorageEventDelivery, StorageEventDeliveryBatch, StorageEventDeliveryClaim,
-    StorageEventDeliveryListQuery, StorageEventDeliverySink, StorageEventDeliverySubscription,
-    StorageEventDeliveryWorkItem, StoragePage,
+    StorageEventDeliveryLease, StorageEventDeliveryListQuery, StorageEventDeliverySink,
+    StorageEventDeliverySubscription, StorageEventDeliveryWorkItem, StoragePage,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -458,6 +458,53 @@ async fn next_wakeup_on_connection(
             .to_std()
             .unwrap_or_default()
     }))
+}
+
+/// Check ownership using the database clock without extending an expired lease.
+pub async fn begin_event_delivery(
+    runtime: &PostgresRuntime,
+    claim: &StorageEventDeliveryClaim,
+) -> Result<Option<StorageEventDeliveryLease>, PostgresStorageError> {
+    #[derive(QueryableByName)]
+    struct RemainingLease {
+        #[diesel(sql_type = BigInt)]
+        remaining_micros: i64,
+    }
+
+    let check_started = Instant::now();
+    runtime
+        .with_connection(async |connection| {
+            let remaining = diesel::sql_query(
+                "SELECT floor(extract(epoch FROM
+                    (locked_until - (clock_timestamp() AT TIME ZONE 'UTC'))) * 1000000)::bigint
+                    AS remaining_micros
+                 FROM event_deliveries
+                 WHERE id = $1 AND claim_token = $2 AND status = 'in_flight'
+                   AND locked_until > (clock_timestamp() AT TIME ZONE 'UTC')",
+            )
+            .bind::<BigInt, _>(claim.delivery_id().id())
+            .bind::<diesel::sql_types::Uuid, _>(claim.token())
+            .get_result::<RemainingLease>(connection)
+            .await
+            .optional()?;
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::EventDeliveryAfterOwnershipCheck,
+                Some(connection),
+            )
+            .await?;
+            remaining
+                .filter(|value| value.remaining_micros > 0)
+                .map(|value| {
+                    StorageEventDeliveryLease::try_new(
+                        claim.clone(),
+                        check_started,
+                        Duration::from_micros(value.remaining_micros as u64),
+                    )
+                    .map_err(|error| invalid_delivery_value("event delivery lease", error))
+                })
+                .transpose()
+        })
+        .await
 }
 
 /// Mark an in-flight claim as successfully delivered.

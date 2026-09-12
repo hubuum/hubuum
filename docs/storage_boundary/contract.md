@@ -158,7 +158,15 @@ unit of work, including its audit events.
 The external sink call is intentionally not part of the domain transaction.
 After commit, `EventFanoutStorage` atomically claims the canonical event,
 matches subscriptions, creates durable delivery rows, and releases the claim.
-Delivery workers then use opaque claims and acknowledgements. Delivery is at
+Delivery workers then use opaque claims and acknowledgements. Before transport,
+`EventDeliveryWorkerStorage::begin_event_delivery` must verify the token,
+in-flight status, and unexpired lease using the adapter's authoritative clock.
+It returns `None` for lost ownership and a `StorageEventDeliveryLease` otherwise;
+it must never renew an expired claim. Construct that lease with a monotonic timer
+started before acquiring storage resources and the remaining duration observed
+in storage, so query and dispatch delays cannot extend permission to send.
+Workers reserve the difference between lock and transport timeouts for
+acknowledgment and fence all result writes with the original claim. Delivery is at
 least once, may be unordered across events, and consumers deduplicate by event
 UUID. Worker notification is a latency optimization; durable polling remains
 the correctness path.
