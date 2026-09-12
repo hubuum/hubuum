@@ -331,7 +331,7 @@ mod tests {
     async fn external_task_list_pages_before_policy_checks(
         #[values(false, true)] include_total: bool,
     ) {
-        use crate::permissions::test_support::MockTreetopBackend;
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
         use crate::tests::api_operations::get_request_with_permission_backend;
         use std::sync::Arc;
 
