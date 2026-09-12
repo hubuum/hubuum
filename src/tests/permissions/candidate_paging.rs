@@ -27,6 +27,169 @@ enum Listing {
 
 #[rstest]
 #[actix_web::test]
+async fn external_text_pages_preserve_byte_order_through_the_last_cursor(
+    #[values(Listing::Classes, Listing::Objects)] listing: Listing,
+    #[values(false, true)] include_total: bool,
+) {
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("text_candidate_pages").await;
+    let collection_id = fixture.collection.id;
+    let backend = Arc::new(MockTreetopBackend::new());
+    let mut names = Vec::new();
+    let mut parent_class = None;
+    let prefix = context.scoped_name("text_sort");
+    for suffix in ["a", "Z", "é", "z"] {
+        let name = format!("{prefix}_{suffix}");
+        if matches!(listing, Listing::Classes) || parent_class.is_none() {
+            let class = NewHubuumClass {
+                name: name.clone(),
+                collection_id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: String::new(),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            parent_class = Some(class.id);
+        }
+        if matches!(listing, Listing::Objects) {
+            NewHubuumObject {
+                name: name.clone(),
+                collection_id,
+                hubuum_class_id: parent_class.unwrap(),
+                description: String::new(),
+                data: serde_json::json!({}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+        }
+        names.push(name);
+    }
+    names.sort();
+    backend.add_rule(MockAllowRule {
+        group_id: fixture.owner_group.id,
+        action: if matches!(listing, Listing::Classes) {
+            Permissions::ReadClass
+        } else {
+            Permissions::ReadObject
+        },
+        resource_kind: if matches!(listing, Listing::Classes) {
+            ResourceKind::Class
+        } else {
+            ResourceKind::Object
+        },
+        resource_id: None,
+        attrs: ResourceFields {
+            collection_id: Some(collection_id),
+            ..Default::default()
+        },
+    });
+    let endpoint = if matches!(listing, Listing::Classes) {
+        format!("/api/v1/classes?collections={collection_id}")
+    } else {
+        format!(
+            "/api/v1/classes/{}/?collections={collection_id}",
+            parent_class.unwrap()
+        )
+    };
+    let mut cursor = None;
+    for (index, expected) in names.iter().enumerate() {
+        let cursor_query = cursor
+            .as_ref()
+            .map(|cursor| format!("&cursor={cursor}"))
+            .unwrap_or_default();
+        let response = get_request_with_permission_backend(
+            &context.pool,
+            &context.admin_token,
+            &format!("{endpoint}&sort=name&limit=1&include_total={include_total}{cursor_query}"),
+            backend.clone(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            response
+                .headers()
+                .get(TOTAL_COUNT_HEADER)
+                .map(|value| value.to_str().unwrap()),
+            include_total.then_some("4")
+        );
+        cursor = response
+            .headers()
+            .get(NEXT_CURSOR_HEADER)
+            .map(|value| value.to_str().unwrap().to_string());
+        assert_eq!(cursor.is_some(), index + 1 < names.len());
+        let rows: Vec<Value> = test::read_body_json(response).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], *expected);
+    }
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn external_object_page_does_not_encode_its_oversized_look_ahead() {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("oversized_candidate_cursor")
+        .await;
+    let collection_id = fixture.collection.id;
+    let class = NewHubuumClass {
+        name: context.scoped_name("oversized_cursor_class"),
+        collection_id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: String::new(),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    for (index, description) in ["a".to_string(), "b".repeat(50_000), "c".to_string()]
+        .into_iter()
+        .enumerate()
+    {
+        NewHubuumObject {
+            name: context.scoped_name(&format!("oversized_cursor_{index}")),
+            collection_id,
+            hubuum_class_id: class.id,
+            description,
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+    }
+    let backend = Arc::new(MockTreetopBackend::new());
+    backend.add_rule(MockAllowRule {
+        group_id: fixture.owner_group.id,
+        action: Permissions::ReadObject,
+        resource_kind: ResourceKind::Object,
+        resource_id: None,
+        attrs: ResourceFields {
+            collection_id: Some(collection_id),
+            ..Default::default()
+        },
+    });
+    let response = get_request_with_permission_backend(
+        &context.pool,
+        &context.admin_token,
+        &format!(
+            "/api/v1/classes/{}/?sort=description&limit=1&include_total=false",
+            class.id
+        ),
+        backend,
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    assert!(response.headers().contains_key(NEXT_CURSOR_HEADER));
+    let rows: Vec<Value> = test::read_body_json(response).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["description"], "a");
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[actix_web::test]
 async fn external_list_bounds_fetched_rows_and_authorization_work(
     #[values(Listing::Classes, Listing::Objects, Listing::ClassHistory)] listing: Listing,
     #[values(false, true)] include_total: bool,
@@ -237,6 +400,146 @@ enum EquivalentListing {
     StructuredClasses,
     StructuredObjects,
     ComputedObjects,
+}
+
+#[rstest]
+#[actix_web::test]
+async fn external_computed_filter_preserves_projection_query_budget(
+    #[values(false, true)] include_total: bool,
+    #[values(false, true)] sparse: bool,
+    #[values(false, true)] include_computed: bool,
+) {
+    use crate::tests::api_operations::post_request;
+    use serde_json::json;
+
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("computed_candidate_budget")
+        .await;
+    let collection_id = fixture.collection.id;
+    let class = NewHubuumClass {
+        name: context.scoped_name("computed_budget_class"),
+        collection_id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: String::new(),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let response = post_request(&context.pool, &context.admin_token,
+        &format!("/api/v1/classes/{}/computed-fields", class.id),
+        json!({"key": "order", "label": "Order", "operation": {"type": "first_non_null", "paths": ["/order"]}, "result_type": "number"}),
+    ).await;
+    assert_response_status(response, StatusCode::CREATED).await;
+    let response = post_request(&context.pool, &context.admin_token,
+        "/api/v1/iam/me/computed-fields",
+        json!({"class_id": class.id, "key": "personal_order", "label": "Personal order", "operation": {"type": "first_non_null", "paths": ["/order"]}, "result_type": "number"}),
+    ).await;
+    assert_response_status(response, StatusCode::CREATED).await;
+    let backend = Arc::new(MockTreetopBackend::new());
+    backend.add_rule(MockAllowRule {
+        group_id: fixture.owner_group.id,
+        action: Permissions::ReadClass,
+        resource_kind: ResourceKind::Class,
+        resource_id: Some(class.id),
+        attrs: ResourceFields::default(),
+    });
+    let mut allowed = Vec::new();
+    for index in 0..140 {
+        let object = NewHubuumObject {
+            name: context.scoped_name(&format!("computed_budget_{index:03}")),
+            collection_id,
+            hubuum_class_id: class.id,
+            description: String::new(),
+            data: json!({"order": index}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        if !sparse || [130, 135, 139].contains(&index) {
+            allowed.push((object.id, index));
+            backend.add_rule(MockAllowRule {
+                group_id: fixture.owner_group.id,
+                action: Permissions::ReadObject,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(object.id),
+                attrs: ResourceFields::default(),
+            });
+        }
+    }
+    let include = if include_computed {
+        "&include=computed"
+    } else {
+        ""
+    };
+    let mut cursor = None;
+    for (page_index, (expected_id, expected_value)) in allowed.iter().take(2).enumerate() {
+        let cursor_query = cursor
+            .as_ref()
+            .map(|cursor| format!("&cursor={cursor}"))
+            .unwrap_or_default();
+        let ((response, fetched), queries) = hubuum_storage_postgres::capture_queries(capture_candidate_fetches(
+            get_request_with_permission_backend(&context.pool, &context.admin_token,
+                &format!("/api/v1/classes/{}/?computed.shared.order__gte=0&sort=id&limit=1&include_total={include_total}{include}{cursor_query}", class.id), backend.clone()),
+        )).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            response
+                .headers()
+                .get(TOTAL_COUNT_HEADER)
+                .map(|value| value.to_str().unwrap().to_string()),
+            include_total.then(|| allowed.len().to_string())
+        );
+        cursor = Some(
+            response
+                .headers()
+                .get(NEXT_CURSOR_HEADER)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
+        let rows: Vec<Value> = test::read_body_json(response).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], *expected_id);
+        if include_computed {
+            assert_eq!(
+                rows[0]["computed"]["shared"]["values"]["order"],
+                *expected_value
+            );
+            assert_eq!(
+                rows[0]["computed"]["personal"]["values"]["personal_order"],
+                *expected_value
+            );
+        } else {
+            assert!(rows[0].get("computed").is_none());
+        }
+        assert_eq!(
+            queries.queries_matching("SELECT \"object_computed_data\"."),
+            if include_computed { fetched.len() } else { 0 },
+            "{queries:?}"
+        );
+        assert_eq!(
+            queries.queries_matching("SELECT \"hubuumobject\"."),
+            fetched.len(),
+            "{queries:?}"
+        );
+        assert_eq!(
+            queries.queries_matching("SELECT \"computed_field_definitions\"."),
+            fetched.len(),
+            "{queries:?}"
+        );
+        if include_total {
+            assert_eq!(fetched, vec![129, 12]);
+        } else if sparse {
+            // After the first allow, each fetch seeks only one more allowed row.
+            assert_eq!(fetched.len(), if page_index == 0 { 70 } else { 6 });
+        } else {
+            assert_eq!(fetched, vec![3]);
+        }
+    }
+    fixture.cleanup().await.unwrap();
 }
 
 #[rstest]

@@ -199,6 +199,7 @@ async fn external_computed_page(
                 requestor.principal.id().id(),
                 requested,
                 execution,
+                include_computed,
             )
             .await
         },
@@ -260,7 +261,10 @@ async fn external_computed_page(
                 items: result
                     .items
                     .into_iter()
-                    .map(|candidate| candidate.into_value().object)
+                    .map(|candidate| match candidate.into_value() {
+                        HubuumObjectReadResponse::Raw(object) => object,
+                        HubuumObjectReadResponse::Computed(value) => value.object,
+                    })
                     .collect(),
                 next_cursor,
             },

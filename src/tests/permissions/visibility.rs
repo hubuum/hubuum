@@ -163,6 +163,71 @@ async fn storage_backed_authorization_keeps_exact_total_global_after_a_cursor() 
     );
 }
 
+#[rstest::rstest]
+#[case::unused_look_ahead(false, false)]
+#[case::needed_for_exact_total(true, true)]
+#[case::needed_after_denial(false, true)]
+#[actix_web::test]
+async fn storage_continuation_size_is_checked_only_when_fetching_again(
+    #[case] include_total: bool,
+    #[case] deny_look_ahead: bool,
+) {
+    let backend = MockTreetopBackend::new();
+    for id in [1, 2, 3] {
+        if id == 2 && deny_look_ahead {
+            continue;
+        }
+        backend.add_rule(MockAllowRule {
+            group_id: 7,
+            action: Permissions::ReadCollection,
+            resource_kind: ResourceKind::Collection,
+            resource_id: Some(id),
+            attrs: ResourceFields::default(),
+        });
+    }
+    let principal = PrincipalRef::new(1, [7]);
+    // With exact totals the continuation falls at the full batch boundary;
+    // skipped totals use just the response plus one authorized look-ahead.
+    let count = if include_total { 129 } else { 3 };
+    let boundary = count - 1;
+    let candidates = (1..=count)
+        .map(|id| {
+            let mut row = candidate_collection(id);
+            row.description = if id == boundary {
+                "b".repeat(50_000)
+            } else if id == count {
+                "c".to_string()
+            } else {
+                format!("a{id:03}")
+            };
+            row
+        })
+        .collect::<Vec<_>>();
+    let query = crate::models::search::parse_query_parameter(&format!(
+        "sort=description&limit=1&include_total={include_total}"
+    ))
+    .unwrap();
+    let result = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |query| std::future::ready(paginate_in_memory(candidates.clone(), &query)),
+        |collection| ResourceRef::collection(collection.id),
+    )
+    .await;
+    if include_total || deny_look_ahead {
+        assert!(
+            matches!(result, Err(ApiError::BadRequest(message)) if message.contains("maximum encoded size"))
+        );
+    } else {
+        let page = finalize_page(result.unwrap().rows, &query).unwrap();
+        assert_eq!(page.items[0].id, 1);
+        assert!(page.next_cursor.is_some());
+    }
+}
+
 #[actix_test]
 async fn candidate_authorization_bounds_each_expanded_permission_batch() {
     let backend = MockTreetopBackend::new();

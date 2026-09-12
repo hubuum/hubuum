@@ -68,6 +68,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   records common task completion and duration metrics.
 - Imports can activate staged schema-removal revisions without retaining the
   class's previous schema policy.
+- **Breaking string-order change on locale-collated databases:** String cursor
+  sorts now use byte ordering consistently in PostgreSQL and authorization
+  pagination. Restart in-progress string-sorted pagination after upgrading.
+  External pages no longer reject oversized look-ahead values when no further
+  storage fetch is needed, and raw computed-filter queries avoid unnecessary
+  computed enrichment.
 - Page external-authorization candidates in storage for class, object, computed
   object, direct relation, export-template, history, task, and structured-search
   lists. Skipping totals stops policy work once the response page and look-ahead are

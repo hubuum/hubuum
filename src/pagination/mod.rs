@@ -356,16 +356,38 @@ pub(crate) fn encode_cursor<T>(item: &T, sorts: &[SortParam]) -> Result<String, 
 where
     T: CursorPaginated,
 {
-    let values = sorts
-        .iter()
-        .map(|sort| item.cursor_value(&sort.field))
-        .collect::<Result<Vec<_>, _>>()?;
-    for value in &values {
-        if let CursorValue::Json(value) = value {
-            validate_postgres_jsonb_cursor_value(value)?;
-        }
+    CursorBoundary::from_item(item, sorts)?.encode()
+}
+
+/// Capture a boundary before consuming its row, but defer token size checks
+/// until a continuation is actually needed.
+pub(crate) struct CursorBoundary {
+    sorts: Vec<SortParam>,
+    values: Vec<CursorValue>,
+}
+
+impl CursorBoundary {
+    pub(crate) fn from_item<T: CursorPaginated>(
+        item: &T,
+        sorts: &[SortParam],
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            sorts: sorts.to_vec(),
+            values: sorts
+                .iter()
+                .map(|sort| item.cursor_value(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
-    hubuum_query::encode_cursor_values(sorts, values).map_err(cursor_codec_error)
+
+    pub(crate) fn encode(self) -> Result<String, ApiError> {
+        for value in &self.values {
+            if let CursorValue::Json(value) = value {
+                validate_postgres_jsonb_cursor_value(value)?;
+            }
+        }
+        hubuum_query::encode_cursor_values(&self.sorts, self.values).map_err(cursor_codec_error)
+    }
 }
 
 pub fn decode_cursor_values(

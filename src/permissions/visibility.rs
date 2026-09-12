@@ -5,7 +5,7 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Permissions, TokenScope};
 use crate::pagination::{
-    effective_page_limit, encode_cursor, item_is_after_cursor, known_count_or_skipped,
+    CursorBoundary, effective_page_limit, item_is_after_cursor, known_count_or_skipped,
     prepare_db_pagination,
 };
 use crate::traits::{CursorPaginated, scope_allows, scope_allows_resource};
@@ -240,6 +240,9 @@ where
 /// visited, but only the requested authorized page is retained. When totals are
 /// skipped, enumeration stops as soon as one response page plus look-ahead has
 /// been authorized.
+/// Storage ordering and cursor predicates must follow `CursorValue` ordering,
+/// including bytewise string comparisons, so exact totals can locate the
+/// response boundary while scanning from the beginning.
 pub async fn authorize_cursor_page_from_storage<T, Fetch, FetchFuture, ToResource>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
@@ -326,11 +329,10 @@ where
         if has_more {
             candidates.truncate(candidate_limit);
         }
-        let next_cursor = if has_more {
+        let next_boundary = if has_more {
             candidates
                 .last()
-                .map(|candidate| encode_cursor(candidate, candidate_query.sort()))
-                .transpose()?
+                .map(|candidate| CursorBoundary::from_item(candidate, candidate_query.sort()))
         } else {
             None
         };
@@ -352,7 +354,12 @@ where
         if (!query_options.include_total() && rows.len() >= response_limit) || !has_more {
             break;
         }
-        candidate_query.set_cursor(next_cursor)?;
+        candidate_query.set_cursor(
+            next_boundary
+                .transpose()?
+                .map(CursorBoundary::encode)
+                .transpose()?,
+        )?;
     }
 
     let total_count = known_count_or_skipped(query_options, authorized_count as i64);

@@ -2,7 +2,8 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{
     ComputedFieldErrorResponse, ComputedObjectScopesResponse, ComputedScopeResponse, HubuumObject,
-    HubuumObjectComputedResponse, SharedComputedScopeResponse, TokenScope,
+    HubuumObjectComputedResponse, HubuumObjectReadResponse, SharedComputedScopeResponse,
+    TokenScope,
 };
 use crate::pagination::{effective_page_limit, prepare_db_pagination};
 use crate::services::storage_boundary::{
@@ -112,15 +113,18 @@ async fn execute_computed_object_query(
 /// A computed row retains the resolved sort types from the same storage
 /// snapshot as its values, including while an external policy is consulted.
 pub(crate) struct ComputedObjectCandidate {
-    value: HubuumObjectComputedResponse,
+    value: HubuumObjectReadResponse,
     sorts: Vec<SortParam>,
 }
 
 impl ComputedObjectCandidate {
     pub(crate) fn object(&self) -> &HubuumObject {
-        &self.value.object
+        match &self.value {
+            HubuumObjectReadResponse::Raw(object) => object,
+            HubuumObjectReadResponse::Computed(value) => &value.object,
+        }
     }
-    pub(crate) fn into_value(self) -> HubuumObjectComputedResponse {
+    pub(crate) fn into_value(self) -> HubuumObjectReadResponse {
         self.value
     }
 }
@@ -140,8 +144,11 @@ impl CursorPaginated for ComputedObjectCandidate {
             .sorts
             .iter()
             .find(|sort| sort.field.to_string() == field.to_string());
-        self.value
-            .cursor_value(resolved.map_or(field, |sort| &sort.field))
+        let field = resolved.map_or(field, |sort| &sort.field);
+        match &self.value {
+            HubuumObjectReadResponse::Raw(object) => object.cursor_value(field),
+            HubuumObjectReadResponse::Computed(value) => value.cursor_value(field),
+        }
     }
 }
 
@@ -152,7 +159,20 @@ pub(crate) async fn list_computed_object_candidates(
     principal_id: i32,
     mut requested: QueryOptions,
     execution: QueryOptions,
+    include_computed: bool,
 ) -> Result<Vec<ComputedObjectCandidate>, ApiError> {
+    // Raw computed-filter requests only need SQL predicate evaluation. Keep
+    // enrichment for responses or sort keys that actually consume its values.
+    let projection = if include_computed
+        || execution
+            .sort()
+            .iter()
+            .any(|sort| sort.field.computed_query().is_some())
+    {
+        StorageComputedObjectProjection::All
+    } else {
+        StorageComputedObjectProjection::None
+    };
     let limit = execution
         .limit()
         .and_then(|limit| limit.checked_sub(1))
@@ -173,7 +193,7 @@ pub(crate) async fn list_computed_object_candidates(
             is_admin: true,
             scope: None,
         },
-        StorageComputedObjectProjection::All,
+        projection,
     )
     .await?;
     let sorts = result
@@ -182,8 +202,19 @@ pub(crate) async fn list_computed_object_candidates(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    Ok(result
-        .computed
+    let values = match projection {
+        StorageComputedObjectProjection::None => result
+            .objects
+            .into_iter()
+            .map(HubuumObjectReadResponse::Raw)
+            .collect::<Vec<_>>(),
+        _ => result
+            .computed
+            .into_iter()
+            .map(HubuumObjectReadResponse::Computed)
+            .collect(),
+    };
+    Ok(values
         .into_iter()
         .map(|value| ComputedObjectCandidate {
             value,
