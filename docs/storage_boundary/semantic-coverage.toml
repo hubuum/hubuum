@@ -304,7 +304,7 @@ native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_fin
 source = "crates/hubuum-storage-core/src/backup_snapshot.rs"
 methods = ["capture_backup_snapshot"]
 effects = { point_read = ["capture_backup_snapshot"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_enforces_backup_budgets", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_backup_snapshots", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
 
 [traits.RestoreStorage]
 source = "crates/hubuum-storage-core/src/restore.rs"

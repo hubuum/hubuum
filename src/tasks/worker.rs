@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageBackupBudget;
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -9,9 +10,10 @@ use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::backups::{BackupSettings, execute_backup_task};
 use crate::config::{
-    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
-    DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS, DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS,
-    DEFAULT_TASK_HEARTBEAT_SECONDS, DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
+    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_CAPTURE_ROWS,
+    DEFAULT_BACKUP_MAX_OUTPUT_BYTES, DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS,
+    DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS, DEFAULT_TASK_HEARTBEAT_SECONDS,
+    DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
 use crate::errors::ApiError;
@@ -203,8 +205,14 @@ fn configured_backup_settings() -> BackupSettings {
             .unwrap_or(DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER),
         config
             .as_ref()
-            .map(|value| value.backup_max_output_bytes)
-            .unwrap_or(DEFAULT_BACKUP_MAX_OUTPUT_BYTES),
+            .map(|value| value.backup_budget().expect("validated configuration"))
+            .unwrap_or_else(|| {
+                StorageBackupBudget::new(
+                    DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
+                    DEFAULT_BACKUP_MAX_CAPTURE_ROWS,
+                )
+                .expect("valid defaults")
+            }),
     )
     .expect("default backup settings are valid")
 }

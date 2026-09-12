@@ -63,8 +63,9 @@ pub use authorization::{
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
-    BackupSnapshotStorage, StorageBackupHistorySection, StorageBackupHistorySections,
-    StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
+    BackupSnapshotStorage, StorageBackupBudget, StorageBackupCaptureProgress,
+    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
+    StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
 };
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{

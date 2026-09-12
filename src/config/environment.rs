@@ -146,6 +146,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS", Backups),
     option!("HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER", Backups),
     option!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", Backups),
+    option!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", Backups),
     option!("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES", Restores),
     option!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", Restores),
     option!("HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER", Exports),
@@ -435,6 +436,7 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         backup_max_active_tasks_per_user
     ),
     configuration_bound!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", backup_max_output_bytes),
+    configuration_bound!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", backup_max_capture_rows),
     configuration_bound!(
         "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
         restore_stage_retention_minutes,

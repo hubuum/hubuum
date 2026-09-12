@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageBackupBudget;
 use hubuum_storage_core::{
     StorageImportClassKey, StorageImportClassKeyParts, StorageImportCollectionKey,
     StorageImportCollectionKeyParts, StorageImportObject, StorageImportObjectParts,
@@ -203,7 +204,14 @@ async fn configured_schema_limits_survive_backup_history_validation(
         )
         .await
         .unwrap();
-    let snapshot = fixture.backend.capture_backup_snapshot(true).await.unwrap();
+    let snapshot = fixture
+        .backend
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(snapshot.schema_limits(), limits);
     // Retained PostgreSQL history also participates in other suite backups.
     // Keep these rows readable under the suite defaults; the independent memory

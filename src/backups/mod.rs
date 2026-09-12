@@ -12,34 +12,33 @@ use crate::models::{
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::backups::capture_backup_snapshot;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
-use crate::storage::{StorageBackupTaskArtifact, StorageTaskCompletionPayload};
+use crate::storage::{
+    StorageBackupBudget, StorageBackupTaskArtifact, StorageTaskCompletionPayload,
+};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
     output_retention: FutureRetention,
     max_active_tasks_per_user: usize,
-    max_output_bytes: usize,
+    budget: StorageBackupBudget,
 }
 
 impl BackupSettings {
     pub fn new(
         output_retention_hours: i64,
         max_active_tasks_per_user: usize,
-        max_output_bytes: usize,
+        budget: StorageBackupBudget,
     ) -> Result<Self, String> {
         let output_retention =
             FutureRetention::from_hours(output_retention_hours, "backup output retention")?;
         if max_active_tasks_per_user == 0 {
             return Err("backup active-task limit must be greater than zero".to_string());
         }
-        if max_output_bytes == 0 {
-            return Err("backup output size limit must be greater than zero".to_string());
-        }
         Ok(Self {
             output_retention,
             max_active_tasks_per_user,
-            max_output_bytes,
+            budget,
         })
     }
 
@@ -60,8 +59,8 @@ impl BackupSettings {
         self.output_retention.hours()
     }
 
-    pub fn max_output_bytes(&self) -> usize {
-        self.max_output_bytes
+    pub fn budget(&self) -> StorageBackupBudget {
+        self.budget
     }
 }
 
@@ -72,9 +71,10 @@ fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> Backu
 pub async fn create_backup_document(
     backend: &impl crate::storage::StorageContext,
     request: &BackupRequest,
+    budget: StorageBackupBudget,
 ) -> Result<BackupDocument, ApiError> {
     let include_history = request.include_history;
-    let (state, history) = capture_backup_snapshot(backend, include_history)
+    let (state, history) = capture_backup_snapshot(backend, include_history, budget)
         .await?
         .into_parts();
     let state = BackupState { sections: state };
@@ -113,15 +113,8 @@ pub(crate) async fn execute_backup_task(
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
     authorize_backup_request(context, user, scopes).await?;
-    let document = create_backup_document(context, &request).await?;
-    let bytes = serde_json::to_vec(&document)?;
-    if bytes.len() > settings.max_output_bytes() {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Backup output is {} bytes, exceeding the configured {} byte limit",
-            bytes.len(),
-            settings.max_output_bytes()
-        )));
-    }
+    let document = create_backup_document(context, &request, settings.budget()).await?;
+    let bytes = settings.budget().serialize(&document)?;
     let sha256 = Sha256::digest(&bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -185,6 +178,7 @@ mod tests {
     use super::{BackupSettings, authorize_backup_request};
     use crate::errors::ApiError;
     use crate::permissions::test_support::MockTreetopBackend;
+    use crate::storage::StorageBackupBudget;
     use crate::tests::{TestContext, create_test_group};
 
     #[tokio::test]
@@ -223,18 +217,25 @@ mod tests {
     #[rstest]
     #[case::retention(0, 1, 1024)]
     #[case::active_tasks(24, 0, 1024)]
-    #[case::output_size(24, 1, 0)]
     fn backup_settings_reject_zero_limits(
         #[case] retention_hours: i64,
         #[case] active_tasks: usize,
         #[case] output_bytes: usize,
     ) {
-        assert!(BackupSettings::new(retention_hours, active_tasks, output_bytes).is_err());
+        assert!(
+            BackupSettings::new(
+                retention_hours,
+                active_tasks,
+                StorageBackupBudget::new(output_bytes, 100).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn backup_settings_reject_unrepresentable_retention() {
-        let error = BackupSettings::new(i64::MAX, 1, 1024).unwrap_err();
+        let error = BackupSettings::new(i64::MAX, 1, StorageBackupBudget::new(1024, 100).unwrap())
+            .unwrap_err();
 
         assert_eq!(
             error,
