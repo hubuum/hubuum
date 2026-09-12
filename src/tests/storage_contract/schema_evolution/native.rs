@@ -3,6 +3,85 @@ use diesel::sql_types::{Integer, Text};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{capture_queries, with_connection, with_transaction};
 
+impl SchemaFixture {
+    async fn set_worker_timezone(&mut self, timezone: &str) {
+        let config = crate::tests::integration_test_config().unwrap();
+        // A dedicated single-connection pool keeps the zone local to this fixture.
+        let pool = crate::tests::postgres_test_pool(&config.database_url, 1);
+        with_connection(&pool, async |connection| {
+            diesel::sql_query("SELECT set_config('TimeZone', $1, false)")
+                .bind::<Text, _>(timezone)
+                .execute(connection)
+                .await
+        })
+        .await
+        .unwrap();
+        self.backend =
+            StorageHandle::from_registered_backend(PostgresStorage::unobserved(pool.clone()));
+        self.environment = BackendTestEnvironment::Postgres { pool };
+    }
+}
+
+#[rstest::rstest]
+#[case::utc("UTC")]
+#[case::positive_offset("Asia/Kolkata")]
+#[case::negative_offset("America/New_York")]
+#[actix_web::test]
+async fn nonterminal_schema_task_timestamps_are_utc(
+    #[case] timezone: &str,
+    #[values(StorageSchemaWorkKind::Impact, StorageSchemaWorkKind::Revalidation)]
+    kind: StorageSchemaWorkKind,
+) {
+    let mut fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({}); 2]).await;
+    let revision = fixture.stage(json!(true), true).await;
+    let task_id = match kind {
+        StorageSchemaWorkKind::Impact => {
+            fixture.request(revision.reference(), kind).await.task_id()
+        }
+        StorageSchemaWorkKind::Revalidation => fixture
+            .activate(
+                &revision,
+                SchemaRevision::INITIAL,
+                StorageSchemaActivationPolicy::AllowPending,
+                None,
+            )
+            .await
+            .unwrap()
+            .task_id()
+            .unwrap(),
+    };
+    let lease = fixture.claim(task_id, 60_000).await;
+    fixture.set_worker_timezone(timezone).await;
+    let before = chrono::Utc::now();
+    let work = fixture
+        .backend
+        .process_schema_work(
+            lease,
+            StorageSchemaBatchLimits::try_new(1, 1024, 1024).unwrap(),
+        )
+        .await
+        .unwrap();
+    let after = chrono::Utc::now();
+    assert_eq!(work.status(), StorageSchemaWorkStatus::Running);
+    assert_eq!(work.examined(), 1);
+
+    // Read the generic task before renewal or completion can repair updated_at.
+    let access = fixture.backend.get_task_access(task_id).await;
+    fixture.cleanup().await;
+
+    let (task, _) = access
+        .expect("nonterminal task must remain readable")
+        .into_parts();
+    assert!(task.status().is_active());
+    assert_eq!(task.progress().processed(), 1);
+    assert!(task.updated_at() >= task.started_at().expect("claimed task has started"));
+    assert!(
+        task.updated_at() >= before && task.updated_at() <= after,
+        "{timezone}, {kind:?}: {}",
+        task.updated_at()
+    );
+}
+
 #[rstest::rstest]
 #[case::completed_utc("UTC", false)]
 #[case::completed_positive_offset("Asia/Kolkata", false)]
@@ -27,19 +106,7 @@ async fn terminal_schema_task_timestamps_are_utc(
         Some(fixture.claim(task_id, 60_000).await)
     };
     // Complete or delete an existing task from a worker connection in another zone.
-    let config = crate::tests::integration_test_config().unwrap();
-    let pool = crate::tests::postgres_test_pool(&config.database_url, 1);
-    with_connection(&pool, async |connection| {
-        diesel::sql_query("SELECT set_config('TimeZone', $1, false)")
-            .bind::<Text, _>(timezone)
-            .execute(connection)
-            .await
-    })
-    .await
-    .unwrap();
-    fixture.backend =
-        StorageHandle::from_registered_backend(PostgresStorage::unobserved(pool.clone()));
-    fixture.environment = BackendTestEnvironment::Postgres { pool };
+    fixture.set_worker_timezone(timezone).await;
     let backend = fixture.backend.clone();
     let before = chrono::Utc::now();
     if let Some(lease) = lease {

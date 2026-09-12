@@ -51,9 +51,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   work, and audit events. Preflight validation also isolates failed items.
 - Staging a policy superseded by a newer active schema allocates a new revision
   that can be activated, instead of reusing an obsolete staged revision.
-- Schema task completion timestamps remain in UTC on non-UTC PostgreSQL
-  connections, including cancellation after class deletion. Successful and
-  superseded schema work records common task completion and duration metrics.
+- Schema task progress and completion timestamps remain in UTC on non-UTC
+  PostgreSQL connections, keeping tasks readable between batches and after
+  cancellation following class deletion. Successful and superseded schema work
+  records common task completion and duration metrics.
 - Imports can activate staged schema-removal revisions without retaining the
   class's previous schema policy.
 - Atomically throttle PostgreSQL token activity refreshes so concurrent

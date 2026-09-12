@@ -746,7 +746,8 @@ pub async fn process_schema_work(
             work.batch_committed(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
             save_work_on(connection,&work).await?;
             let processed=i32::try_from(work.examined()).unwrap_or(i32::MAX);let failed=i32::try_from(work.invalid()+work.uninspectable()).unwrap_or(processed).min(processed);
-            diesel::sql_query("UPDATE tasks SET processed_items=$2,success_items=$2-$3,failed_items=$3,total_items=GREATEST(total_items,$2),updated_at=clock_timestamp() WHERE id=$1").bind::<Integer,_>(claimed.id).bind::<Integer,_>(processed).bind::<Integer,_>(failed).execute(connection).await?;
+            // Task timestamps are UTC timestamp without time zone values.
+            diesel::sql_query("UPDATE tasks SET processed_items=$2,success_items=$2-$3,failed_items=$3,total_items=GREATEST(total_items,$2),updated_at=clock_timestamp() AT TIME ZONE 'UTC' WHERE id=$1").bind::<Integer,_>(claimed.id).bind::<Integer,_>(processed).bind::<Integer,_>(failed).execute(connection).await?;
         }
         Ok(work)
     }).await
