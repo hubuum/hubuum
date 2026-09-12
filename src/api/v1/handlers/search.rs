@@ -6,7 +6,9 @@ use futures_util::{
     stream::{self, FuturesUnordered},
 };
 use serde::Serialize;
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::future::Future;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -26,10 +28,10 @@ use crate::models::{
     execute_unified_search_batch, parse_unified_search_query,
 };
 use crate::pagination::{
-    NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, count_query_options,
-    effective_page_limit, finalize_page, paginate_in_memory, prepare_db_pagination,
+    NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, effective_page_limit, finalize_page,
+    prepare_db_pagination,
 };
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::visibility::authorize_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use crate::services::related_filter_authorization::externally_authorized_structured_objects;
 use crate::storage::{StorageAuditEventFilters, StorageAuthenticationPrincipal};
@@ -341,15 +343,6 @@ fn ensure_external_candidate_limit(count: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn external_candidate_query(
-    query_options: &crate::models::search::QueryOptions,
-) -> Result<crate::models::search::QueryOptions, ApiError> {
-    let mut candidate_query = count_query_options(query_options);
-    candidate_query.set_limit(Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1))?;
-    candidate_query.set_include_total(false);
-    Ok(candidate_query)
-}
-
 #[derive(Clone, Copy)]
 struct StructuredAuthorizationContext<'a> {
     context: &'a AppContext,
@@ -358,9 +351,9 @@ struct StructuredAuthorizationContext<'a> {
     include_total: bool,
 }
 
-async fn authorize_structured_candidates<T, F>(
+async fn authorize_structured_candidates<T, F, Fetch, FetchFuture>(
     context: StructuredAuthorizationContext<'_>,
-    candidates: Vec<T>,
+    mut fetch: Fetch,
     query_options: &crate::models::search::QueryOptions,
     permissions: Vec<Permissions>,
     to_resource: F,
@@ -368,17 +361,29 @@ async fn authorize_structured_candidates<T, F>(
 where
     T: CursorPaginated,
     F: Fn(&T) -> ResourceRef,
+    Fetch: FnMut(crate::models::search::QueryOptions) -> FetchFuture,
+    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
 {
-    ensure_external_candidate_limit(candidates.len())?;
+    let fetched = Cell::new(0usize);
     let policy_principal = PrincipalRef::load(context.context, context.principal).await?;
-    let prepared = prepare_db_pagination::<T>(query_options)?;
-    let page = authorize_cursor_page(
+    let page = authorize_cursor_page_from_storage(
         context.context.permission_backend(),
         &policy_principal,
-        candidates,
         context.scopes,
         permissions,
-        &prepared,
+        query_options,
+        |query| {
+            let future = fetch(query);
+            let fetched = &fetched;
+            async move {
+                let candidates = future.await?;
+                // Storage look-ahead is fetched again on the next page.
+                let visited = fetched.get().saturating_add(candidates.len());
+                ensure_external_candidate_limit(visited)?;
+                fetched.set(visited.saturating_sub(1));
+                Ok(candidates)
+            }
+        },
         to_resource,
     )
     .await?;
@@ -460,17 +465,19 @@ pub(crate) async fn execute_structured_search(
             } else if !scope_allows(scopes, &[Permissions::ReadCollection]) {
                 (Vec::new(), request.include_total.then_some(0))
             } else {
-                let (candidates, _) = crate::services::catalog::list_collections(
-                    context,
-                    principal.principal_id(),
-                    true,
-                    None,
-                    external_candidate_query(&query_options)?,
-                )
-                .await?;
                 authorize_structured_candidates(
                     authorization,
-                    candidates,
+                    |candidate_query| async {
+                        crate::services::catalog::list_collections(
+                            context,
+                            principal.principal_id(),
+                            true,
+                            None,
+                            candidate_query,
+                        )
+                        .await
+                        .map(|page| page.0)
+                    },
                     &query_options,
                     vec![Permissions::ReadCollection],
                     |collection| ResourceRef::collection(collection.id),
@@ -506,17 +513,19 @@ pub(crate) async fn execute_structured_search(
             ) {
                 (Vec::new(), request.include_total.then_some(0))
             } else {
-                let (candidates, _) = crate::services::catalog::list_classes(
-                    context,
-                    principal.principal_id(),
-                    true,
-                    None,
-                    external_candidate_query(&query_options)?,
-                )
-                .await?;
                 authorize_structured_candidates(
                     authorization,
-                    candidates,
+                    |candidate_query| async {
+                        crate::services::catalog::list_classes(
+                            context,
+                            principal.principal_id(),
+                            true,
+                            None,
+                            candidate_query,
+                        )
+                        .await
+                        .map(|page| page.0)
+                    },
                     &query_options,
                     vec![Permissions::ReadClass, Permissions::ReadCollection],
                     |class| {
@@ -545,28 +554,16 @@ pub(crate) async fn execute_structured_search(
                 .await?
             } else {
                 let policy_principal = PrincipalRef::load(context, principal).await?;
-                let matched = externally_authorized_structured_objects(
+                let page = externally_authorized_structured_objects(
                     context,
                     context.permission_backend(),
                     &policy_principal,
                     scopes,
-                    count_query_options(&query_options),
+                    &query_options,
                     request.filter.as_ref(),
                 )
                 .await?;
-                let total = request
-                    .include_total
-                    .then(|| i64::try_from(matched.len()))
-                    .transpose()
-                    .map_err(|_| {
-                        ApiError::InternalServerError(
-                            "Structured search result count overflow".to_string(),
-                        )
-                    })?;
-                let prepared =
-                    prepare_db_pagination::<crate::models::HubuumObject>(&query_options)?;
-                let rows = paginate_in_memory(matched, &prepared)?;
-                (rows, total)
+                (page.rows, request.include_total.then_some(page.total_count))
             };
             finalize_structured_search(rows, total, page_context, StructuredSearchResult::Object)
         }

@@ -68,6 +68,7 @@ pub struct MockTreetopBackend {
     group_candidates: Mutex<Option<Vec<Group>>>,
     authorization_hook: Mutex<Option<DeferredAuthorizationHook>>,
     authorization_batch_sizes: Mutex<Vec<usize>>,
+    task_authorization_batch_sizes: Mutex<Vec<usize>>,
 }
 
 impl MockTreetopBackend {
@@ -78,6 +79,7 @@ impl MockTreetopBackend {
             group_candidates: Mutex::new(None),
             authorization_hook: Mutex::new(None),
             authorization_batch_sizes: Mutex::new(Vec::new()),
+            task_authorization_batch_sizes: Mutex::new(Vec::new()),
         }
     }
 
@@ -143,6 +145,10 @@ impl MockTreetopBackend {
             calls_to_skip,
             hook: Box::new(move || Box::pin(hook())),
         });
+    }
+
+    pub fn task_authorization_batch_sizes(&self) -> Vec<usize> {
+        self.task_authorization_batch_sizes.lock().unwrap().clone()
     }
 
     pub fn authorization_batch_sizes(&self) -> Vec<usize> {
@@ -302,6 +308,10 @@ impl PermissionBackend for MockTreetopBackend {
         principal: &PrincipalRef,
         tasks: &[ResourceRef],
     ) -> Result<Vec<PermissionDecision>, ApiError> {
+        self.task_authorization_batch_sizes
+            .lock()
+            .unwrap()
+            .push(tasks.len());
         let rules = self.task_read_rules.lock().unwrap();
         Ok(tasks
             .iter()

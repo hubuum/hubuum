@@ -13,21 +13,19 @@ use crate::pagination::{
     Page, SKIPPED_TOTAL_COUNT, effective_page_limit, encode_cursor, known_count_or_skipped,
     page_request,
 };
-use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
+use crate::permissions::visibility::{
+    authorize_all_candidates, filter_authorized_cursor_page_from_storage,
+};
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::catalog as catalog_service;
 use crate::services::computed_objects::{
-    ComputedObjectAccess, ComputedObjectListResult, list_computed_objects,
+    ComputedObjectAccess, ComputedObjectCandidate, ComputedObjectListResult,
+    list_computed_object_candidates, list_computed_objects,
 };
 use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
 use crate::storage::StorageComputedObjectProjection;
 use crate::traits::AuthzSubject;
 use crate::traits::scope_allows;
-
-enum ComputedListVisibility {
-    SqlPushdown,
-    Policy(AuthorizedObjectIds),
-}
 
 struct ResolvedComputedObjectQuery<'a> {
     context: &'a AppContext,
@@ -39,11 +37,7 @@ struct ResolvedComputedObjectQuery<'a> {
 }
 
 impl ResolvedComputedObjectQuery<'_> {
-    async fn search(
-        &self,
-        visibility: &ComputedListVisibility,
-        include_computed: bool,
-    ) -> Result<ComputedObjectListResult, ApiError> {
+    async fn search(&self, include_computed: bool) -> Result<ComputedObjectListResult, ApiError> {
         let projection = if include_computed {
             StorageComputedObjectProjection::All
         } else if self.sorts_by_computed {
@@ -51,18 +45,10 @@ impl ResolvedComputedObjectQuery<'_> {
         } else {
             StorageComputedObjectProjection::None
         };
-        let access = match visibility {
-            ComputedListVisibility::SqlPushdown => ComputedObjectAccess::Storage {
-                principal_id: self.requestor.principal.id().id(),
-                is_admin: AuthzSubject::is_admin(&self.requestor.principal, self.context).await?,
-                scope: self.requestor.scopes(),
-            },
-            ComputedListVisibility::Policy(object_ids) => {
-                ComputedObjectAccess::AuthorizedObjectIds {
-                    principal_id: self.requestor.principal.id().id(),
-                    object_ids,
-                }
-            }
+        let access = ComputedObjectAccess::Storage {
+            principal_id: self.requestor.principal.id().id(),
+            is_admin: AuthzSubject::is_admin(&self.requestor.principal, self.context).await?,
+            scope: self.requestor.scopes(),
         };
         list_computed_objects(
             self.context,
@@ -176,52 +162,15 @@ async fn can_list_objects_in_class(
     Ok(!visible_objects.is_empty())
 }
 
-async fn authorized_object_ids_in_class(
-    context: &AppContext,
-    requestor: &Authenticated,
-    class: &HubuumClassID,
-) -> Result<AuthorizedObjectIds, ApiError> {
-    let mut visibility_query = QueryOptions::new(Vec::new(), Vec::new(), None, None, false)?;
-    scope_object_query_to_class(&mut visibility_query, class)?;
-    let (candidates, _) = catalog_service::list_objects(
-        context,
-        requestor.principal.id().id(),
-        true,
-        None,
-        visibility_query,
-    )
-    .await?;
-    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
-    let authorized = authorize_all_candidates(
-        context.permission_backend(),
-        &principal,
-        candidates,
-        requestor.scopes(),
-        vec![Permissions::ReadObject],
-        HubuumObject::authorization_resource,
-    )
-    .await?;
-    AuthorizedObjectIds::new(authorized.into_iter().map(|object| object.id))
-}
-
-async fn computed_list_visibility(
+async fn external_computed_page(
     context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
-    class_id: &HubuumClassID,
     params: &QueryOptions,
-) -> Result<Option<ComputedListVisibility>, ApiError> {
-    if context
-        .permission_backend()
-        .supports_storage_visibility_filtering()
-    {
-        return can_list_objects_in_class(context, requestor, class)
-            .await
-            .map(|allowed| allowed.then_some(ComputedListVisibility::SqlPushdown));
-    }
-
-    let authorized_ids = authorized_object_ids_in_class(context, requestor, class_id).await?;
-    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
+    personal_owner: Option<i32>,
+    include_computed: bool,
+) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
+    let principal = PrincipalRef::load(context, &requestor.principal).await?;
     let related_ids = externally_authorized_related_object_ids(
         context,
         context.permission_backend(),
@@ -230,11 +179,75 @@ async fn computed_list_visibility(
         params.filters(),
     )
     .await?;
-    let authorized_ids = match related_ids {
-        Some(related_ids) => authorized_ids.intersection(&related_ids),
-        None => authorized_ids,
-    };
-    Ok((!authorized_ids.is_empty()).then_some(ComputedListVisibility::Policy(authorized_ids)))
+    let page = filter_authorized_cursor_page_from_storage(
+        context.permission_backend(),
+        params,
+        |mut execution: QueryOptions| async {
+            execution
+                .filters_mut()
+                .try_retain(|filter| filter.field.related_query().is_none())
+                .expect("removing every related filter preserves query invariants");
+            let mut requested = execution.clone();
+            requested.set_sort(params.sort().clone());
+            if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
+                return Ok(Vec::new());
+            }
+            list_computed_object_candidates(
+                context,
+                class.id,
+                personal_owner,
+                requestor.principal.id().id(),
+                requested,
+                execution,
+            )
+            .await
+        },
+        |mut candidates: Vec<ComputedObjectCandidate>| {
+            if let Some(ids) = &related_ids {
+                candidates.retain(|candidate| ids.contains(candidate.object().id));
+            }
+            authorize_all_candidates(
+                context.permission_backend(),
+                &principal,
+                candidates,
+                requestor.scopes(),
+                vec![Permissions::ReadObject],
+                |candidate| candidate.object().authorization_resource(),
+            )
+        },
+    )
+    .await?;
+    let result = crate::pagination::finalize_page(page.rows, params)?;
+    let next_cursor = result.next_cursor;
+    if include_computed {
+        object_read_page(
+            Page {
+                items: result
+                    .items
+                    .into_iter()
+                    .map(ComputedObjectCandidate::into_value)
+                    .collect(),
+                next_cursor,
+            },
+            page.total_count,
+            effective_page_limit(params)?,
+            true,
+        )
+    } else {
+        object_read_page(
+            Page {
+                items: result
+                    .items
+                    .into_iter()
+                    .map(|candidate| candidate.into_value().object)
+                    .collect(),
+                next_cursor,
+            },
+            page.total_count,
+            effective_page_limit(params)?,
+            true,
+        )
+    }
 }
 
 fn empty_computed_page(
@@ -262,14 +275,24 @@ pub(super) async fn list_objects(
         return empty_computed_page(&params);
     }
 
-    let class_id = HubuumClassID::new(class.id)?;
-    let Some(visibility) =
-        computed_list_visibility(context, requestor, class, &class_id, &params).await?
-    else {
-        return empty_computed_page(&params);
-    };
-
     let personal_owner = computed_personal_owner(context, requestor, class).await?;
+    if !context
+        .permission_backend()
+        .supports_storage_visibility_filtering()
+    {
+        return external_computed_page(
+            context,
+            requestor,
+            class,
+            &params,
+            personal_owner,
+            include_computed,
+        )
+        .await;
+    }
+    if !can_list_objects_in_class(context, requestor, class).await? {
+        return empty_computed_page(&params);
+    }
     let computed_sorting = params
         .sort()
         .iter()
@@ -282,7 +305,7 @@ pub(super) async fn list_objects(
         personal_owner,
         sorts_by_computed: computed_sorting,
     };
-    let result = query.search(&visibility, include_computed).await?;
+    let result = query.search(include_computed).await?;
     query.response(result, include_computed).await
 }
 

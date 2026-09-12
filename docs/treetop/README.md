@@ -118,29 +118,42 @@ not add a Treetop call or a group-membership lookup to local list requests. A
 cursor list normally performs one row query, plus one count query when
 `include_total=true`, as before.
 
-Treetop cannot be joined into a PostgreSQL query. Its authoritative list path
-therefore has three stages:
+Treetop cannot be joined into a PostgreSQL query. Collection, class, object
+(including computed filtering and sorting), export-template, and direct
+class/object-relation and task lists enumerate storage candidates in stable cursor order.
+This also applies to the five resource history lists and structured collection,
+class, and object search, including its streaming endpoint.
 
-1. Load at most 128 rows matching the non-permission filters from PostgreSQL
-   in stable cursor order.
-2. Load the caller's group ids once.
-3. Send the candidate resources to Treetop in batches of at most 512 Cedar
-   decisions, retain only the allowed response page plus one look-ahead row,
-   and continue from the storage cursor only when more candidates are needed.
+1. Load the caller's group ids once for candidate authorization.
+2. Fetch at most 128 candidates plus one storage look-ahead row. When totals are
+   skipped, reduce the batch to the remaining response slots plus the authorized
+   look-ahead. For `limit=1` with abundant allowed rows, fetch three rows and
+   authorize two candidates.
+3. Send candidate resources in batches of at most 512 Cedar decisions. Retain
+   only the allowed response page plus one authorized look-ahead row. Advance
+   using the last raw candidate, even when authorization or token scope rejects
+   every row in a storage page.
 
-When `include_total=true`, Hubuum visits every bounded candidate page to compute
-the exact authorized total, but it does not retain the complete candidate or
-authorized set. When totals are skipped, enumeration stops as soon as the
-requested response page and its look-ahead row are authorized. Class and object
-relation lists add one bulk endpoint-metadata query per candidate batch; they do
-not perform endpoint queries per relation. Permission-grid lists use the same
-bounded group-page protocol.
+With `include_total=true`, Hubuum visits every candidate page to compute the
+exact authorized total, including rows preceding a response cursor. Candidate
+and result memory remains bounded by the batch and response limits. With
+`include_total=false`, enumeration stops when the page and its look-ahead are
+allowed, and the total is omitted. History authorizes each stored snapshot's
+attributes. Direct relation lists resolve endpoint metadata once per candidate
+batch. Computed-sort candidates retain their resolved types and values for
+cursor generation. Permission-grid lists use their existing bounded group-page
+protocol. Unified text search uses bounded batches sized to the remaining
+response slots and adapter-owned ranking cursors.
 
-Exact totals still make Treetop work proportional to the number of rows matching
-the ordinary filters, while skipped totals make work proportional to the rows
-needed to fill the response. Unified search uses the same bounded protocol and
-uses adapter-owned ranking cursors, so extended JSON search can advance without
-reconstructing database ordering in the application.
+Sparse policies or token scopes may still require a complete scan to fill a
+page or prove exhaustion, even without totals. These ordinary cursor lists have
+no new total-work rejection threshold; adding one would reject previously valid
+queries. Exact totals also remain proportional to all matching candidates.
+Structured search retains its 10,000-candidate work limit per request, with
+bounded pages and early termination when totals are skipped. Related predicates
+and graph traversal retain their separate existing safety limits; planning them
+can require more work than filling the final object page. See
+[structured-search limits](../search_api.md#bounds-and-query-planning).
 
 Two event and remote-target visibility paths require a complete authorized
 collection-id set. Those callers must explicitly request a validated total

@@ -1,14 +1,13 @@
 use crate::errors::ApiError;
-use crate::models::search::QueryOptions;
+use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{
     ComputedFieldErrorResponse, ComputedObjectScopesResponse, ComputedScopeResponse, HubuumObject,
     HubuumObjectComputedResponse, SharedComputedScopeResponse, TokenScope,
 };
 use crate::pagination::{effective_page_limit, prepare_db_pagination};
-use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::services::storage_boundary::{
-    class_id_to_storage, object_from_storage, object_id_to_storage, object_to_storage,
-    principal_id_to_storage, visibility as storage_visibility,
+    class_id_to_storage, object_from_storage, object_to_storage, principal_id_to_storage,
+    visibility as storage_visibility,
 };
 use crate::storage::{
     ComputedObjectStorage, StorageComputedFieldError, StorageComputedObject,
@@ -16,16 +15,13 @@ use crate::storage::{
     StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
     StorageComputedObjectVisibility, StorageComputedScope, StorageContext, storage_handle,
 };
+use crate::traits::{CursorPaginated, CursorValue};
 
 pub(crate) enum ComputedObjectAccess<'a> {
     Storage {
         principal_id: i32,
         is_admin: bool,
         scope: Option<&'a TokenScope>,
-    },
-    AuthorizedObjectIds {
-        principal_id: i32,
-        object_ids: &'a AuthorizedObjectIds,
     },
 }
 
@@ -38,17 +34,6 @@ impl ComputedObjectAccess<'_> {
                 scope,
             } => Ok(StorageComputedObjectVisibility::storage(
                 storage_visibility(principal_id, is_admin, scope)?,
-            )),
-            Self::AuthorizedObjectIds {
-                principal_id,
-                object_ids,
-            } => Ok(StorageComputedObjectVisibility::authorized_object_ids(
-                principal_id_to_storage(principal_id),
-                object_ids
-                    .as_slice()
-                    .iter()
-                    .copied()
-                    .map(object_id_to_storage),
             )),
         }
     }
@@ -81,6 +66,25 @@ pub(crate) async fn list_computed_objects(
     };
     let prepared_options =
         StorageComputedObjectQueryOptions::try_new(options, execution_options, page_limit)?;
+    execute_computed_object_query(
+        backend,
+        class_id,
+        personal_owner_id,
+        prepared_options,
+        access,
+        projection,
+    )
+    .await
+}
+
+async fn execute_computed_object_query(
+    backend: &impl StorageContext,
+    class_id: i32,
+    personal_owner_id: Option<i32>,
+    prepared_options: StorageComputedObjectQueryOptions,
+    access: ComputedObjectAccess<'_>,
+    projection: StorageComputedObjectProjection,
+) -> Result<ComputedObjectListResult, ApiError> {
     let (objects, total, computed, resolved_options) = storage_handle(backend)
         .list_computed_objects(StorageComputedObjectListQuery::new(
             class_id_to_storage(class_id),
@@ -103,6 +107,89 @@ pub(crate) async fn list_computed_objects(
             .collect::<Result<Vec<_>, _>>()?,
         resolved_options,
     })
+}
+
+/// A computed row retains the resolved sort types from the same storage
+/// snapshot as its values, including while an external policy is consulted.
+pub(crate) struct ComputedObjectCandidate {
+    value: HubuumObjectComputedResponse,
+    sorts: Vec<SortParam>,
+}
+
+impl ComputedObjectCandidate {
+    pub(crate) fn object(&self) -> &HubuumObject {
+        &self.value.object
+    }
+    pub(crate) fn into_value(self) -> HubuumObjectComputedResponse {
+        self.value
+    }
+}
+
+impl CursorPaginated for ComputedObjectCandidate {
+    fn supports_sort(field: &FilterField) -> bool {
+        HubuumObjectComputedResponse::supports_sort(field)
+    }
+    fn default_sort() -> Vec<SortParam> {
+        HubuumObjectComputedResponse::default_sort()
+    }
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        HubuumObjectComputedResponse::tie_breaker_sort()
+    }
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        let resolved = self
+            .sorts
+            .iter()
+            .find(|sort| sort.field.to_string() == field.to_string());
+        self.value
+            .cursor_value(resolved.map_or(field, |sort| &sort.field))
+    }
+}
+
+pub(crate) async fn list_computed_object_candidates(
+    backend: &impl StorageContext,
+    class_id: i32,
+    personal_owner_id: Option<i32>,
+    principal_id: i32,
+    mut requested: QueryOptions,
+    execution: QueryOptions,
+) -> Result<Vec<ComputedObjectCandidate>, ApiError> {
+    let limit = execution
+        .limit()
+        .and_then(|limit| limit.checked_sub(1))
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Computed candidate query requires storage look-ahead".to_string(),
+            )
+        })?;
+    requested.set_limit(Some(limit))?;
+    let prepared = StorageComputedObjectQueryOptions::try_new(requested, execution, limit)?;
+    let result = execute_computed_object_query(
+        backend,
+        class_id,
+        personal_owner_id,
+        prepared,
+        ComputedObjectAccess::Storage {
+            principal_id,
+            is_admin: true,
+            scope: None,
+        },
+        StorageComputedObjectProjection::All,
+    )
+    .await?;
+    let sorts = result
+        .resolved_options
+        .sort()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(result
+        .computed
+        .into_iter()
+        .map(|value| ComputedObjectCandidate {
+            value,
+            sorts: sorts.clone(),
+        })
+        .collect())
 }
 
 pub(crate) async fn enrich_objects_with_computed(

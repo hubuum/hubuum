@@ -16,3 +16,5 @@ pub mod live_treetop_parity;
 // Exporter round-trip tests exercise the optional Treetop integration.
 #[cfg(feature = "permissions-treetop")]
 pub mod exporter_round_trip;
+
+pub mod candidate_paging;

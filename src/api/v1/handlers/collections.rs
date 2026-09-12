@@ -1226,8 +1226,7 @@ pub async fn get_collection_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids,
-        resolve_history_principal_names,
+        readable_history_collection_ids, resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -1285,21 +1284,25 @@ pub async fn get_collection_history(
         )
         .await?
     } else {
-        let candidate_params = history_candidate_query_options(&params);
-        let (candidates, _) = collection_history_paginated_with_total_count(
-            entity_id,
-            &context,
-            &candidate_params,
-            HistoryCollectionFilter::All,
-        )
-        .await?;
         authorize_history_page(
             &context,
             user,
             requestor.scopes(),
             Permissions::ReadCollection,
-            candidates,
-            &search_params,
+            |candidate_params| {
+                let context = &context;
+                async move {
+                    collection_history_paginated_with_total_count(
+                        entity_id,
+                        &context,
+                        &candidate_params,
+                        HistoryCollectionFilter::All,
+                    )
+                    .await
+                    .map(|page| page.0)
+                }
+            },
+            &params,
             |row| HistoryAuthorizationSnapshot::from(row),
         )
         .await?

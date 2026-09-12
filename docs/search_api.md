@@ -485,7 +485,12 @@ and the `to_hubuum_object_id` index covers reverse expansion. No new index is
 required by this API.
 
 External-policy collection, class, and object searches examine at most 10,000
-candidates before authorization and pagination. External-policy object
+candidates per request, using storage batches of at most 128 candidates plus
+one look-ahead row. With `include_total=false`, authorization stops after filling
+the response page and authorized look-ahead; a cursor starts enumeration at its
+boundary. Exact totals scan from the beginning while retaining only the response
+page and a bounded candidate batch. Object field predicates within related
+boolean expressions read only the current page's authorized object IDs. External-policy object
 relations retain their separate 1,000 target, 10,000 object, and 20,000
 relation limits. Requests that exceed a work limit fail with `400` and ask the
 caller to narrow the query. PostgreSQL work is bounded by

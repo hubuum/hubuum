@@ -411,9 +411,10 @@ where
             (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
             let mut authorized = Vec::new();
             loop {
+                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
+                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
                 let page = unified_search_service::search_collections(
                     backend,
                     user.principal_id(),
@@ -497,9 +498,10 @@ where
             (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
             let mut authorized = Vec::new();
             loop {
+                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
+                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
                 let page = unified_search_service::search_classes(
                     backend,
                     user.principal_id(),
@@ -591,9 +593,10 @@ where
             (Vec::new(), false)
         } else {
             let mut candidate_spec = search_spec.clone();
-            candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE;
             let mut authorized = Vec::new();
             loop {
+                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
+                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
                 let page = unified_search_service::search_objects(
                     backend,
                     user.principal_id(),

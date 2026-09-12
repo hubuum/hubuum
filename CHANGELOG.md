@@ -68,6 +68,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   records common task completion and duration metrics.
 - Imports can activate staged schema-removal revisions without retaining the
   class's previous schema policy.
+- Page external-authorization candidates in storage for class, object, computed
+  object, direct relation, export-template, history, task, and structured-search
+  lists. Skipping totals stops policy work once the response page and look-ahead are
+  authorized; exact totals retain bounded candidate and response state. Sparse
+  policies and token scopes preserve complete pages and stable cursors. History
+  now accepts omitted totals from storage when `include_total=false`. Ranked text
+  search also limits policy checks to the remaining response slots.
 - Atomically throttle PostgreSQL token activity refreshes so concurrent
   authentication with the same stale token performs one `last_used_at` update
   per throttle window. Delayed observations cannot move activity timestamps

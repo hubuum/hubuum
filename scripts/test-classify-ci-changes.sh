@@ -43,6 +43,13 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for authorization_path in src/tests/permissions/candidate_paging.rs \
+  src/api/v1/handlers/tasks.rs tests/api_jobs_suite/tasks.rs; do
+  authorization_output="$(bash "$classifier" "$authorization_path")"
+  assert_flag "$authorization_output" code true
+  assert_flag "$authorization_output" treetop_conformance true
+done
+
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false
