@@ -164,6 +164,100 @@ async fn storage_backed_authorization_keeps_exact_total_global_after_a_cursor() 
 }
 
 #[rstest::rstest]
+#[actix_web::test]
+async fn storage_json_cursor_uses_backend_order_even_without_the_boundary_row(
+    #[values(false, true)] include_total: bool,
+    #[values(false, true)] deleted_boundary: bool,
+) {
+    use crate::models::search::{FilterField, SortParam};
+    use crate::pagination::{CursorValue, decode_cursor_values, encode_cursor};
+
+    #[derive(Clone)]
+    struct JsonRow {
+        id: i32,
+        value: &'static str,
+    }
+    impl CursorPaginated for JsonRow {
+        fn supports_sort(field: &FilterField) -> bool {
+            matches!(field, FilterField::Description | FilterField::Id)
+        }
+        fn default_sort() -> Vec<SortParam> {
+            vec![SortParam::new(FilterField::Description, false)]
+        }
+        fn tie_breaker_sort() -> Vec<SortParam> {
+            vec![SortParam::new(FilterField::Id, false)]
+        }
+        fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+            match field {
+                FilterField::Description => Ok(CursorValue::Json(serde_json::json!([self.value]))),
+                FilterField::Id => Ok(CursorValue::Integer(i64::from(self.id))),
+                _ => unreachable!("unsupported test sort"),
+            }
+        }
+    }
+
+    let backend = MockTreetopBackend::new();
+    allow_all_collection_reads(&backend);
+    let principal = PrincipalRef::new(1, [7]);
+    let boundary = JsonRow { id: 1, value: "a" };
+    let sorts = [JsonRow::default_sort(), JsonRow::tie_breaker_sort()].concat();
+    let query = QueryOptions::new(
+        vec![],
+        sorts.clone(),
+        Some(1),
+        Some(encode_cursor(&boundary, &sorts).unwrap()),
+        include_total,
+    )
+    .unwrap();
+    // The fake storage order deliberately differs from Rust on every test host,
+    // including CI databases initialized with C collation.
+    let candidates = [boundary, JsonRow { id: 2, value: "Z" }]
+        .into_iter()
+        .filter(|row| !deleted_boundary || row.id != 1)
+        .collect::<Vec<_>>();
+    let page = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |query| {
+            let after_id = query
+                .cursor()
+                .map(|cursor| {
+                    let values = decode_cursor_values(cursor, query.sort()).unwrap();
+                    let CursorValue::Integer(id) = values[1] else {
+                        panic!("missing tie breaker")
+                    };
+                    id
+                })
+                .unwrap_or(0);
+            std::future::ready(Ok(candidates
+                .iter()
+                .filter(|row| i64::from(row.id) > after_id)
+                .take(query.limit().unwrap())
+                .cloned()
+                .collect()))
+        },
+        |row: &JsonRow| ResourceRef::collection(row.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(
+        page.total_count,
+        if include_total {
+            candidates.len() as i64
+        } else {
+            crate::pagination::SKIPPED_TOTAL_COUNT
+        }
+    );
+}
+
+#[rstest::rstest]
 #[case::unused_look_ahead(false, false)]
 #[case::needed_for_exact_total(true, true)]
 #[case::needed_after_denial(false, true)]

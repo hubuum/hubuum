@@ -5,8 +5,8 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Permissions, TokenScope};
 use crate::pagination::{
-    CursorBoundary, effective_page_limit, item_is_after_cursor, known_count_or_skipped,
-    prepare_db_pagination,
+    CursorBoundary, CursorValue, decode_cursor_values, effective_page_limit, item_is_after_cursor,
+    known_count_or_skipped, prepare_db_pagination,
 };
 use crate::traits::{CursorPaginated, scope_allows, scope_allows_resource};
 
@@ -240,9 +240,9 @@ where
 /// visited, but only the requested authorized page is retained. When totals are
 /// skipped, enumeration stops as soon as one response page plus look-ahead has
 /// been authorized.
-/// Storage ordering and cursor predicates must follow `CursorValue` ordering,
-/// including bytewise string comparisons, so exact totals can locate the
-/// response boundary while scanning from the beginning.
+/// Scalar storage ordering must follow `CursorValue` ordering, including
+/// bytewise strings. JSON boundaries are located by storage itself because
+/// nested strings and object keys can use a database-specific collation.
 pub async fn authorize_cursor_page_from_storage<T, Fetch, FetchFuture, ToResource>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
@@ -282,6 +282,61 @@ pub(crate) async fn filter_authorized_cursor_page_from_storage<
     Filter,
     FilterFuture,
 >(
+    backend: &dyn PermissionBackend,
+    query_options: &QueryOptions,
+    mut fetch: Fetch,
+    mut filter: Filter,
+) -> Result<AuthorizedPage<T>, ApiError>
+where
+    T: CursorPaginated,
+    Fetch: FnMut(QueryOptions) -> FetchFuture,
+    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
+    Filter: FnMut(Vec<T>) -> FilterFuture,
+    FilterFuture: Future<Output = Result<Vec<T>, ApiError>>,
+{
+    let prepared = prepare_db_pagination::<T>(query_options)?;
+    let has_json_boundary = prepared
+        .cursor()
+        .map(|cursor| decode_cursor_values(cursor, prepared.sort()))
+        .transpose()?
+        .is_some_and(|values| {
+            values
+                .iter()
+                .any(|value| matches!(value, CursorValue::Json(_)))
+        });
+
+    if query_options.include_total() && has_json_boundary {
+        // A global count starts before the requested cursor. Rust cannot locate
+        // a JSONB boundary in that scan using its bytewise JSON comparator.
+        // Count in bounded batches, then let storage seek the response page.
+        // This also works if the object that produced the cursor was deleted.
+        let mut count_query = query_options.clone();
+        count_query.clear_cursor();
+        let total_count = scan_authorized_cursor_page_from_storage(
+            backend,
+            &count_query,
+            &mut fetch,
+            &mut filter,
+        )
+        .await?
+        .total_count;
+        let mut response_query = query_options.clone();
+        response_query.set_include_total(false);
+        let mut page = scan_authorized_cursor_page_from_storage(
+            backend,
+            &response_query,
+            &mut fetch,
+            &mut filter,
+        )
+        .await?;
+        page.total_count = total_count;
+        return Ok(page);
+    }
+
+    scan_authorized_cursor_page_from_storage(backend, query_options, fetch, filter).await
+}
+
+async fn scan_authorized_cursor_page_from_storage<T, Fetch, FetchFuture, Filter, FilterFuture>(
     backend: &dyn PermissionBackend,
     query_options: &QueryOptions,
     mut fetch: Fetch,
@@ -341,11 +396,14 @@ where
         let authorized = filter(candidates).await?;
         authorized_count = authorized_count.saturating_add(authorized.len());
         for candidate in authorized {
-            let belongs_to_response = query_options
-                .cursor()
-                .map(|cursor| item_is_after_cursor(&candidate, cursor, candidate_query.sort()))
-                .transpose()?
-                .unwrap_or(true);
+            // Without a global count, storage has already applied the caller's
+            // cursor. Rechecking here can disagree with its JSON collation.
+            let belongs_to_response = !query_options.include_total()
+                || query_options
+                    .cursor()
+                    .map(|cursor| item_is_after_cursor(&candidate, cursor, candidate_query.sort()))
+                    .transpose()?
+                    .unwrap_or(true);
             if belongs_to_response && rows.len() < response_limit {
                 rows.push(candidate);
             }

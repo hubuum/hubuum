@@ -210,8 +210,9 @@ where
     Ok(Page { items, next_cursor })
 }
 
-/// Apply the same stable ordering and cursor semantics as the SQL pagination
-/// macros to rows synthesized or authorized outside PostgreSQL. `limit` is
+/// Apply stable ordering and cursor semantics to rows synthesized or authorized
+/// in memory. JSON strings use byte ordering, which can differ from PostgreSQL's
+/// database collation; storage-backed JSON pages must seek in storage. `limit` is
 /// applied last; callers should pass the prepared `limit + 1` value so
 /// [`finalize_page`] can produce the next cursor normally.
 pub fn paginate_in_memory<T>(
@@ -283,6 +284,8 @@ fn compare_cursor_values(
     Ordering::Equal
 }
 
+/// Compare a boundary using in-memory ordering. Storage-backed callers must
+/// handle JSON boundaries in storage, where nested strings may be collated.
 pub(crate) fn item_is_after_cursor<T>(
     item: &T,
     cursor: &str,

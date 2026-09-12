@@ -53,6 +53,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- External authorization pagination preserves PostgreSQL ordering for computed
+  arrays and objects on locale-collated databases, preventing skipped results.
+  Continued JSON-sorted pages with exact totals use a separate bounded storage
+  scan to locate the response boundary.
+
 - Canceled login requests no longer permanently consume in-memory rate-limit
   capacity, including the local fallback used during Valkey outages. Login
   reservations expire within a bounded lifetime, and late or repeated completion
