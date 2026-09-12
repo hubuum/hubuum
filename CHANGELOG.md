@@ -67,6 +67,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   between lease and transport timeouts is reserved for acknowledgment. Delivery
   remains at least once and consumers must deduplicate by `event_id`.
 
+- Backups enforce byte and row-work budgets during snapshot capture and bound
+  final serialization. PostgreSQL fetches rows in primary-key order instead of
+  sorting full JSON rows; memory capture also stops before retaining an
+  oversized corpus. Failures include content-free resource accounting.
+  `HUBUUM_BACKUP_MAX_CAPTURE_ROWS` defaults to 1,000,000; the existing byte
+  ceiling remains 256 MiB. Administrator backups and verification recapture
+  honor both configurable limits and write compact JSON. Format 6 and restore
+  semantics are unchanged; see [capture limits](docs/backup-restore.md).
+
 - Canceled login requests no longer permanently consume in-memory rate-limit
   capacity, including the local fallback used during Valkey outages. Login
   reservations expire within a bounded lifetime, and late or repeated completion
@@ -135,6 +144,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   limits, migration guidance, and separate debug/release measurements.
 
 ### Breaking changes and upgrade notes
+
+- **Breaking backup resource policy:** offline backups now enforce the configured
+  byte ceiling, and all captures enforce enumerated-row limits. An individual
+  PostgreSQL source row must also fit the byte ceiling before private-field
+  removal. Deploy matching API, worker, and administrator settings; explicitly
+  raise `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` and/or `HUBUUM_BACKUP_MAX_CAPTURE_ROWS`
+  after provisioning resources for workloads that exceed the defaults.
+- **Breaking experimental storage SDK 0.3:** adapter implementations and callers
+  of `capture_backup_snapshot` must accept/pass `StorageBackupBudget` and enforce
+  it during enumeration. Update the seven SDK dependencies together and rerun
+  conformance; see the storage adapter SDK upgrade guide.
 
 - Schema PATCH and legacy import overwrites that change policy on a nonempty
   class now return a conflict. Clients must stage a revision, request impact,

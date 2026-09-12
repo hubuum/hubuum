@@ -1,6 +1,6 @@
 use super::*;
 
-fn run(future: impl Future<Output = ()>) {
+pub(super) fn run(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()
@@ -41,7 +41,13 @@ fn schema_history_allocation_survives_reordered_backup_rows() {
                 .into_value();
         }
         let snapshot = edit_history(
-            storage.capture_backup_snapshot(true).await.unwrap(),
+            storage
+                .capture_backup_snapshot(
+                    true,
+                    StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+                )
+                .await
+                .unwrap(),
             StorageBackupHistorySection::ClassSchemaHistory,
             |rows| rows.reverse(),
         );
@@ -60,7 +66,10 @@ fn schema_history_allocation_survives_reordered_backup_rows() {
             .unwrap()
             .into_value();
         let (_, history) = storage
-            .capture_backup_snapshot(true)
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
             .await
             .unwrap()
             .into_parts();
@@ -77,7 +86,7 @@ fn set_field(row: &mut StorageBackupRow, field: &str, value: Value) {
     *row = StorageBackupRow::try_from_value(Value::Object(fields)).unwrap();
 }
 
-async fn queued_task(storage: &MemoryStorage) -> TaskId {
+pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
     storage
         .create_task(
             StorageTaskCreateRequest::builder(
@@ -137,7 +146,10 @@ fn external_memberships_use_directory_revocation_provenance() {
             .await
             .unwrap();
         let (sections, _) = storage
-            .capture_backup_snapshot(false)
+            .capture_backup_snapshot(
+                false,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
             .await
             .unwrap()
             .into_parts();
@@ -180,7 +192,13 @@ fn completed_task_logs_survive_repeated_backup_restores() {
         let id = completed_task(&storage).await;
         let expected = task_events(&storage, id).await;
         assert_eq!(expected.len(), 2);
-        let snapshot = storage.capture_backup_snapshot(true).await.unwrap();
+        let snapshot = storage
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
+            .await
+            .unwrap();
         let (_, history) = snapshot.clone().into_parts();
         let audit_ids = history.unwrap()[&StorageBackupHistorySection::AuditEvents]
             .iter()
@@ -191,7 +209,15 @@ fn completed_task_logs_survive_repeated_backup_restores() {
             audit_ids.len()
         );
         let first = restored(snapshot);
-        let second = restored(first.capture_backup_snapshot(true).await.unwrap());
+        let second = restored(
+            first
+                .capture_backup_snapshot(
+                    true,
+                    StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+                )
+                .await
+                .unwrap(),
+        );
         assert!(task_events(&second, id).await == expected);
     });
 }
@@ -203,7 +229,10 @@ fn backups_exclude_active_task_logs() {
         let id = queued_task(&storage).await;
         assert_eq!(task_events(&storage, id).await.len(), 1);
         let (_, history) = storage
-            .capture_backup_snapshot(true)
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
             .await
             .unwrap()
             .into_parts();
@@ -218,7 +247,13 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         let id = completed_task(&storage).await;
         let now = Utc::now();
         let snapshot = edit_history(
-            storage.capture_backup_snapshot(true).await.unwrap(),
+            storage
+                .capture_backup_snapshot(
+                    true,
+                    StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+                )
+                .await
+                .unwrap(),
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 *rows = vec![row(json!({
@@ -256,7 +291,13 @@ fn task_event_sequences_continue_after_imported_history() {
         let storage = MemoryStorage::new();
         let id = completed_task(&storage).await;
         let snapshot = edit_history(
-            storage.capture_backup_snapshot(true).await.unwrap(),
+            storage
+                .capture_backup_snapshot(
+                    true,
+                    StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+                )
+                .await
+                .unwrap(),
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 set_field(&mut rows[0], "id", json!(200));
@@ -293,7 +334,13 @@ async fn updated_collection_snapshot() -> StorageBackupSnapshot {
         )
         .await
         .unwrap();
-    storage.capture_backup_snapshot(true).await.unwrap()
+    storage
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await
+        .unwrap()
 }
 
 async fn collection_as_of(storage: &MemoryStorage, at: DateTime<Utc>) -> StorageCollection {
@@ -355,7 +402,13 @@ async fn deleted_task_snapshot(
     let id = completed_task(storage).await;
     let deleted_at = Utc::now();
     let snapshot = edit_history(
-        storage.capture_backup_snapshot(true).await.unwrap(),
+        storage
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
+            .await
+            .unwrap(),
         StorageBackupHistorySection::TerminalTasks,
         |rows| {
             let row = rows
@@ -425,7 +478,13 @@ fn snapshot_with_correlation(correlation: Value) -> StorageBackupSnapshot {
         )
         .unwrap();
     edit_history(
-        capture(&state, true, JsonSchemaLimits::default()).unwrap(),
+        capture(
+            &state,
+            true,
+            JsonSchemaLimits::default(),
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .unwrap(),
         StorageBackupHistorySection::AuditEvents,
         |rows| {
             set_field(&mut rows[0], "correlation_id", correlation);
@@ -488,11 +547,67 @@ fn custom_schema_budgets_survive_memory_restore() {
             .await
             .unwrap()
             .into_value();
-        let snapshot = storage.capture_backup_snapshot(true).await.unwrap();
+        let snapshot = storage
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
+            .await
+            .unwrap();
         let restored = restored(snapshot.clone());
         assert_eq!(
-            restored.capture_backup_snapshot(true).await.unwrap(),
+            restored
+                .capture_backup_snapshot(
+                    true,
+                    StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap()
+                )
+                .await
+                .unwrap(),
             snapshot
         );
     });
+}
+
+#[test]
+fn oversized_history_stops_before_retaining_the_corpus() {
+    let mut state = MemoryState::new();
+    state.schema_history = (0..1000)
+        .map(|id| row(json!({"id": id, "payload": "x".repeat(1024)})).unwrap())
+        .collect();
+    let mut progress =
+        StorageBackupCaptureProgress::new(StorageBackupBudget::new(2500, 1000).unwrap());
+    let error = workflows::capture_history(&state, &mut progress).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
+    assert_eq!(progress.scanned_rows(), 3);
+    assert_eq!(progress.retained_rows(), 2);
+    assert!(progress.retained_bytes() <= 2500);
+}
+
+#[test]
+fn oversized_membership_sources_stop_before_building_an_index_of_the_corpus() {
+    let mut state = MemoryState::new();
+    let mut baseline =
+        StorageBackupCaptureProgress::new(StorageBackupBudget::new(1024 * 1024, 2000).unwrap());
+    identity::capture(
+        &state,
+        &mut StorageBackupStateSections::new(),
+        &mut baseline,
+    )
+    .unwrap();
+    state.membership_sources = (0..1000).map(|id| row(json!({
+        "principal_id": 1, "group_id": 1, "source": "manual", "source_scope_id": 1,
+        "source_key": format!("source-{id}"), "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+    })).unwrap()).collect();
+    let limit = baseline.retained_bytes() + 512;
+    let mut progress =
+        StorageBackupCaptureProgress::new(StorageBackupBudget::new(limit, 2000).unwrap());
+    let error = identity::capture(
+        &state,
+        &mut StorageBackupStateSections::new(),
+        &mut progress,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
+    assert!(progress.scanned_rows() < 20);
+    assert!(progress.retained_bytes() <= limit);
 }

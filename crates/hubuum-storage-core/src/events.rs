@@ -34,6 +34,18 @@ impl StorageRecordedEvent {
         }
     }
 
+    /// Inspect an event without cloning its potentially large audit payload.
+    #[must_use]
+    pub const fn as_parts(
+        &self,
+    ) -> (
+        &EventEnvelope,
+        Option<ResourceRevision>,
+        Option<ResourceRevision>,
+    ) {
+        (&self.envelope, self.before_revision, self.after_revision)
+    }
+
     #[must_use]
     pub fn into_parts(
         self,

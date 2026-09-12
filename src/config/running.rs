@@ -178,6 +178,7 @@ pub struct ExportConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct BackupConfig {
+    pub max_capture_rows: usize,
     pub output_retention_hours: i64,
     pub max_active_tasks_per_user: usize,
     pub max_output_bytes: usize,
@@ -414,6 +415,7 @@ impl RunningConfig {
                 output_retention_hours: config.backup_output_retention_hours,
                 max_active_tasks_per_user: config.backup_max_active_tasks_per_user,
                 max_output_bytes: config.backup_max_output_bytes,
+                max_capture_rows: config.backup_max_capture_rows,
             },
             restores: RestoreConfig {
                 stage_retention_minutes: config.restore_stage_retention_minutes,

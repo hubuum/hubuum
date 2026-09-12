@@ -32,7 +32,12 @@ pub struct RestoreContractFixture {
 impl RestoreContractFixture {
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
-        let original = storage.capture_backup_snapshot(true).await?;
+        let original = storage
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
+            .await?;
         let scope = TestScope::new();
         let context = EventContext::system();
         let group = storage
@@ -220,8 +225,12 @@ impl RestoreContractFixture {
         restore_snapshot(&self.storage, self.original.clone()).await
     }
     pub async fn capture(&self, include_history: bool) -> Result<StorageBackupSnapshot, ApiError> {
-        let document =
-            create_backup_document(&self.storage, &BackupRequest { include_history }).await?;
+        let document = create_backup_document(
+            &self.storage,
+            &BackupRequest { include_history },
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await?;
         Ok(StorageBackupSnapshot::try_new(
             document.state.sections,
             document.history.map(|history| history.sections),

@@ -1,15 +1,16 @@
 use crate::api as prod_api;
 use crate::backups::BackupSettings;
 use crate::config::{
-    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
-    DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS, DEFAULT_RESTORE_MAX_UPLOAD_BYTES,
-    DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
+    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_CAPTURE_ROWS,
+    DEFAULT_BACKUP_MAX_OUTPUT_BYTES, DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS,
+    DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
 };
 use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
 use crate::storage::StorageHandle;
 use actix_web::{App, http, test, web::Data};
+use hubuum_storage_core::StorageBackupBudget;
 use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings};
 use serde::Serialize;
 use std::sync::Arc;
@@ -54,7 +55,11 @@ fn backup_settings() -> BackupSettings {
     BackupSettings::new(
         DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS,
         DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
+        StorageBackupBudget::new(
+            DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
+            DEFAULT_BACKUP_MAX_CAPTURE_ROWS,
+        )
+        .unwrap(),
     )
     .expect("default backup settings must be valid")
 }

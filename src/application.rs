@@ -263,7 +263,9 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
         config.backup_max_active_tasks_per_user,
-        config.backup_max_output_bytes,
+        config
+            .backup_budget()
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
     )
     .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     let restore_settings = RestoreSettings::new(

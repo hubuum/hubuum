@@ -181,7 +181,8 @@ delivery semantics, operational health, and retention behavior.
 | -------- | ------- | ----------- |
 | `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS` | `24` | How long a successful full-system backup remains downloadable |
 | `HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER` | `1` | Maximum active backup tasks one unscoped administrator may own |
-| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum stored backup document size in bytes |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum backup artifact and individual source-row bytes, also enforced during capture |
+| `HUBUUM_BACKUP_MAX_CAPTURE_ROWS` | `1000000` | Maximum rows enumerated during backup capture, including excluded history rows |
 | `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | How long a validated restore stage remains confirmable |
 | `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum full-system restore document size accepted by the API |
 

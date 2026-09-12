@@ -28,7 +28,7 @@ use hubuum::storage::with_mutation_provenance;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
 use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
-use hubuum_storage_core::RestoreStorage;
+use hubuum_storage_core::{RestoreStorage, StorageBackupBudget};
 use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
@@ -145,6 +145,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         &BackupRequest {
             include_history: true,
         },
+        StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
     )
     .await
     .expect("full backup document");
@@ -411,6 +412,7 @@ async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_
             &BackupRequest {
                 include_history: false,
             },
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
         .expect("full backup");

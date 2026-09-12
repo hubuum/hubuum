@@ -145,7 +145,7 @@ pub(crate) use hubuum_storage_core::{
     UserStorage, WorkerNotificationProvider,
 };
 pub(crate) use hubuum_storage_core::{
-    BackupSnapshotStorage, StorageBackupHistorySection, StorageBackupOutput,
+    BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupOutput,
     StorageBackupOutputSummary, StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection,
     StorageBackupTaskArtifact, StorageExportOutput, StorageExportOutputSummary,
     StorageExportTaskArtifact, StorageExportTaskArtifactContent, StorageImportTaskResult,

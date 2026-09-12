@@ -1,6 +1,7 @@
 use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::JsonSchemaLimits;
+use hubuum_storage_core::StorageBackupBudget;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -11,7 +12,8 @@ use uuid::Uuid;
 
 use crate::backups::create_backup_document;
 use crate::config::{
-    CommandLineDatabaseUrl, DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    CommandLineDatabaseUrl, DEFAULT_BACKUP_MAX_CAPTURE_ROWS, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
+    DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_RESTORE_MAX_UPLOAD_BYTES, DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
     DEFAULT_TOKEN_LIFETIME_HOURS, DatabaseRoleMode, SecretSourceOptions, token_hash_key_ring,
@@ -70,6 +72,14 @@ struct AdminCli {
     /// Write a consistent full-system backup document to this path
     #[arg(long, value_name = "PATH")]
     backup: Option<PathBuf>,
+
+    /// Maximum bytes for backup capture and output
+    #[arg(long, env = "HUBUUM_BACKUP_MAX_OUTPUT_BYTES", default_value_t = DEFAULT_BACKUP_MAX_OUTPUT_BYTES)]
+    backup_max_output_bytes: usize,
+
+    /// Maximum rows enumerated during backup capture
+    #[arg(long, env = "HUBUUM_BACKUP_MAX_CAPTURE_ROWS", default_value_t = DEFAULT_BACKUP_MAX_CAPTURE_ROWS)]
+    backup_max_capture_rows: usize,
 
     /// Omit audit, task, delivery, and temporal history from --backup
     #[arg(long, default_value_t = false, requires = "backup")]
@@ -281,6 +291,11 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
+            capture_budget: StorageBackupBudget::new(
+                admin_cli.backup_max_output_bytes,
+                admin_cli.backup_max_capture_rows,
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
             schema_limits,
             path,
             restore_test_database_url: admin_cli.restore_test_database_url.as_deref(),
@@ -444,7 +459,17 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         }
         run_restore_executor(&storage).await?;
     } else if let Some(path) = admin_cli.backup {
-        backup_database(&storage, &path, !admin_cli.backup_without_history).await?;
+        backup_database(
+            &storage,
+            &path,
+            !admin_cli.backup_without_history,
+            StorageBackupBudget::new(
+                admin_cli.backup_max_output_bytes,
+                admin_cli.backup_max_capture_rows,
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        )
+        .await?;
     } else if let Some(path) = admin_cli.restore {
         restore_database(&storage, &path, admin_cli.restore_confirmation.as_deref()).await?;
     } else if let Some(username) = admin_cli.reset_password {
@@ -658,9 +683,11 @@ async fn backup_database(
     storage: &StorageHandle,
     path: &Path,
     include_history: bool,
+    budget: StorageBackupBudget,
 ) -> Result<(), ApiError> {
-    let document = create_backup_document(storage, &BackupRequest { include_history }).await?;
-    let bytes = serde_json::to_vec_pretty(&document)?;
+    let document =
+        create_backup_document(storage, &BackupRequest { include_history }, budget).await?;
+    let bytes = budget.serialize(&document)?;
     write_backup_file(path, &bytes).map_err(|error| {
         ApiError::InternalServerError(format!(
             "Failed to write backup to '{}': {error}",
@@ -756,6 +783,7 @@ fn reject_configured_database_target(
 }
 
 struct BackupVerificationOptions<'a> {
+    capture_budget: StorageBackupBudget,
     schema_limits: JsonSchemaLimits,
     path: &'a Path,
     restore_test_database_url: Option<&'a str>,
@@ -810,7 +838,14 @@ async fn verify_backup_file(
                 options.statement_timeout_ms,
             )?;
         }
-        verify_backup_restore(report, bytes, target, options.keep_restore_test_database).await?
+        verify_backup_restore(
+            report,
+            bytes,
+            target,
+            options.keep_restore_test_database,
+            options.capture_budget,
+        )
+        .await?
     } else {
         report
     };
@@ -839,6 +874,7 @@ async fn verify_backup_restore(
     bytes: Vec<u8>,
     target: StorageSettings,
     keep_restore_test_database: bool,
+    capture_budget: StorageBackupBudget,
 ) -> Result<BackupVerificationReport, ApiError> {
     let migrations_applied = prepare_disposable_restore_database(&target)?;
     let verification = async {
@@ -858,6 +894,7 @@ async fn verify_backup_restore(
             &BackupRequest {
                 include_history: source.history.is_some(),
             },
+            capture_budget,
         )
         .await?;
         verify_restored_backup_matches(&source, &restored)?;
@@ -889,6 +926,7 @@ async fn verify_backup_restore(
     _bytes: Vec<u8>,
     _target: StorageSettings,
     _keep_restore_test_database: bool,
+    _capture_budget: StorageBackupBudget,
 ) -> Result<BackupVerificationReport, ApiError> {
     Err(ApiError::NotImplemented(
         "This hubuum-admin build does not include embedded migrations required for isolated restore verification"
@@ -1379,6 +1417,18 @@ mod tests {
 
         assert_eq!(empty.storage_backend, StorageBackendKind::Postgres);
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[rstest::rstest]
+    #[case::bytes("--backup-max-output-bytes", 1048576)]
+    #[case::rows("--backup-max-capture-rows", 42)]
+    fn backup_capture_limits_accept_operator_overrides(#[case] flag: &str, #[case] value: usize) {
+        let cli = AdminCli::try_parse_from(["hubuum-admin", flag, &value.to_string()]).unwrap();
+        let configured = match flag {
+            "--backup-max-output-bytes" => cli.backup_max_output_bytes,
+            _ => cli.backup_max_capture_rows,
+        };
+        assert_eq!(configured, value);
     }
 
     #[test]

@@ -1619,6 +1619,7 @@ impl BackupSnapshotStorage for CompleteExternalAdapter {
     async fn capture_backup_snapshot(
         &self,
         include_history: bool,
+        _budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         fixture_result()
     }
