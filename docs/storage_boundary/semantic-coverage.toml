@@ -204,10 +204,10 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.EventDeliveryWorkerStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
-methods = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
-effects = { workflow_mutation = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"] }
-shared_scenarios = ["src/events/delivery.rs::process_event_delivery_batch_with_schedule", "src/events/delivery.rs::process_event_delivery_work_item", "src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http"]
-native_scenarios = ["src/tests/storage_contract.rs::postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recovery"]
+methods = ["claim_event_delivery_batch", "begin_event_delivery", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
+effects = { point_read = ["begin_event_delivery"], workflow_mutation = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"] }
+shared_scenarios = ["src/events/delivery.rs::process_event_delivery_batch_with_schedule", "src/events/delivery.rs::process_event_delivery_work_item", "src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http", "src/tests/storage_contract/event_delivery.rs::stale_delivery_claim_never_starts_transport", "src/tests/storage_contract/event_delivery.rs::slow_multiworker_delivery_spans_default_lease_without_duplicate_sends"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recovery", "src/tests/storage_contract/event_delivery.rs::postgres_delayed_ownership_response_cannot_start_a_reclaimed_delivery", "src/tests/storage_contract/event_delivery.rs::postgres_delivery_acknowledgement_is_bounded_by_the_lease"]
 
 [traits.EventFanoutStorage]
 source = "crates/hubuum-storage-core/src/events.rs"

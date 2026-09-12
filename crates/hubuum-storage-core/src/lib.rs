@@ -103,10 +103,11 @@ pub use event_administration::{
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
-    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliverySink,
-    StorageEventDeliverySubscription, StorageEventDeliveryWorkItem, StorageEventFanoutOutcome,
-    StorageEventRetentionBatch, StorageEventRetentionBatchId, StorageEventRetentionSummary,
-    StorageRecordedEvent, StorageRetainedEvent, execute_event_retention_batch,
+    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliveryLease,
+    StorageEventDeliverySink, StorageEventDeliverySubscription, StorageEventDeliveryWorkItem,
+    StorageEventFanoutOutcome, StorageEventRetentionBatch, StorageEventRetentionBatchId,
+    StorageEventRetentionSummary, StorageRecordedEvent, StorageRetainedEvent,
+    execute_event_retention_batch,
 };
 pub use execution::{
     ExecutionStorage, StorageCallSite, StorageExecutionScope, StorageRevisionPrecondition,

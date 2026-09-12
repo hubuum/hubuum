@@ -450,8 +450,26 @@ Keep delivery workers at `0` when the deployment uses the audit log only or
 when sink credentials are not ready. Set `HUBUUM_EVENT_DELIVERY_WORKERS` above
 zero once operators are ready for external transport delivery.
 `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` must be less than
-`HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS`; this prevents a delivery attempt from
-running past its claim window and racing with a retry worker.
+`HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS`. Each worker claims at most
+`min(HUBUUM_EVENT_DELIVERY_BATCH_SIZE, 8)` rows, starts them concurrently, and
+waits for their acknowledgements before claiming more. Larger batch settings
+remain valid upper bounds; claimed deliveries no longer wait through local
+execution waves.
+
+Immediately before transport, storage checks the claim token, in-flight status,
+and expiry. Expired or replaced claims do not start a send. The remaining lease
+is carried as a conservative monotonic deadline, including time spent waiting
+for the ownership check. Claim loading, dispatch delays, and the ownership check
+reduce the time available to transport. The difference between the lock and
+transport timeouts is reserved for recording success or failure (5 seconds with
+the defaults). Transport stops at its remaining deadline, and acknowledgment is
+bounded by lease expiry. Increase the lock timeout if database latency needs a
+larger acknowledgment allowance. No setting values or validation rules changed.
+
+Claim-token fencing still rejects acknowledgments from replaced workers. A
+process interruption or lost acknowledgment after a sink accepts an event can
+still cause a retry; cancellation cannot undo an external side effect. Consumers
+must continue to deduplicate by `event_id` under the at-least-once contract.
 
 Workers use PostgreSQL `LISTEN`/`NOTIFY` for low-latency wakeups across
 processes and fall back to the configured poll intervals for eventual progress.

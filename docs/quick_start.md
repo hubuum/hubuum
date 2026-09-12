@@ -138,10 +138,10 @@ cancellation, task interruption, and pool-drop ordering.
 | `HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for fan-out workers |
 | `HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS` | `30000` | Fan-out claim lock timeout before another worker may retry |
 | `HUBUUM_EVENT_DELIVERY_WORKERS` | `0` | Number of background workers that deliver rows to external sinks; `0` disables transport delivery |
-| `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Number of delivery rows a delivery worker claims per batch |
+| `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Upper bound on delivery rows per claim; each worker claims at most its eight execution slots |
 | `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for delivery workers |
 | `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS` | `30000` | Delivery claim lock timeout before another worker may retry |
-| `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Wall-clock timeout for one external transport attempt; must be less than the delivery lock timeout |
+| `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Maximum transport time, reduced by claim/dispatch delays; must be less than the lock timeout, with the difference reserved for acknowledgment |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS` | `1000` | Initial delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS` | `300000` | Maximum delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS` | `10` | Attempts before a delivery row moves to dead-letter status |

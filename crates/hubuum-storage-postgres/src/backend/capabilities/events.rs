@@ -180,6 +180,15 @@ impl EventDeliveryWorkerStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
+    async fn begin_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+    ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
+        crate::operations::event_delivery::begin_event_delivery(self.runtime(), claim)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn mark_event_delivery_succeeded(
         &self,
         claim: &StorageEventDeliveryClaim,

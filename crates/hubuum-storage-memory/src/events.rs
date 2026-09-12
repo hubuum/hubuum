@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 #[async_trait]
 impl AuditEventStorage for MemoryStorage {
@@ -586,11 +587,15 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .event_deliveries
             .values()
             .filter(|delivery| {
-                matches!(
+                (matches!(
                     delivery.status(),
                     EventDeliveryStatus::Pending | EventDeliveryStatus::Failed
                 ) && delivery.next_attempt_at() <= now
-                    && delivery.attempts() < settings.max_attempts()
+                    && delivery.attempts() < settings.max_attempts())
+                    || (delivery.status() == EventDeliveryStatus::InFlight
+                        && delivery
+                            .locked_until()
+                            .is_some_and(|deadline| deadline < now))
             })
             .take(settings.batch_size())
             .cloned()
@@ -651,6 +656,31 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             ));
         }
         Ok(StorageEventDeliveryBatch::new(work, None))
+    }
+
+    async fn begin_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+    ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
+        let check_started = Instant::now();
+        let state = self.state.read().await;
+        let Some(delivery) = state.event_deliveries.get(&claim.delivery_id().id()) else {
+            return Ok(None);
+        };
+        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token())
+            || delivery.status() != EventDeliveryStatus::InFlight
+        {
+            return Ok(None);
+        }
+        let Some(remaining) = delivery
+            .locked_until()
+            .and_then(|deadline| (deadline - Utc::now()).to_std().ok())
+        else {
+            return Ok(None);
+        };
+        StorageEventDeliveryLease::try_new(claim.clone(), check_started, remaining)
+            .map(Some)
+            .map_err(invalid_contract_value)
     }
 
     async fn mark_event_delivery_succeeded(
