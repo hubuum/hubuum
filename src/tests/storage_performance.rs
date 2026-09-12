@@ -1247,13 +1247,15 @@ async fn object_page_query_count_is_constant_with_page_size() {
     assert_eq!(large_total, 20);
 
     assert_same_query_shape(&small_queries, &large_queries);
+    // Unrestricted paging needs only the row and count queries, without
+    // enumerating collection IDs before applying the page limit.
     assert_eq!(
         large_queries.total_queries(),
-        6,
+        5,
         "{:#?}",
         large_queries.query_counts()
     );
-    assert_eq!(large_queries.domain_queries(), 3);
+    assert_eq!(large_queries.domain_queries(), 2);
     assert_eq!(large_queries.control_queries(), 3);
     assert_eq!(large_queries.connection_checkouts(), 1);
 
@@ -1312,11 +1314,11 @@ async fn structured_related_depth_limit_has_fixed_query_shape_and_skips_count_wo
     );
     assert_eq!(
         non_selective_queries.total_queries(),
-        7,
+        6,
         "{:#?}",
         non_selective_queries.query_counts()
     );
-    assert_eq!(non_selective_queries.domain_queries(), 4);
+    assert_eq!(non_selective_queries.domain_queries(), 3);
     assert_eq!(non_selective_queries.control_queries(), 3);
     assert_eq!(non_selective_queries.connection_checkouts(), 1);
     assert_eq!(selective_queries.queries_matching("WITH RECURSIVE"), 1);
