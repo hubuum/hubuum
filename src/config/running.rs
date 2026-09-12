@@ -10,6 +10,7 @@ use super::{AppConfig, ClientAllowlist, token_hash_key_ring};
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunningConfig {
+    pub schema_validation: SchemaValidationConfig,
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub tasks: TaskConfig,
@@ -24,6 +25,14 @@ pub struct RunningConfig {
     pub pagination: PaginationConfig,
     pub network: NetworkConfig,
     pub tracing: TracingConfig,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct SchemaValidationConfig {
+    pub max_schema_bytes: usize,
+    pub max_expanded_work: usize,
+    pub max_instance_bytes: usize,
+    pub max_instance_work: usize,
 }
 
 /// Public configuration values that API consumers need to use the service correctly.
@@ -315,6 +324,12 @@ impl RunningConfig {
             .expect("token hash key-ring configuration must be validated before serving config");
 
         Self {
+            schema_validation: SchemaValidationConfig {
+                max_schema_bytes: config.schema_limits().schema_bytes(),
+                max_expanded_work: config.schema_limits().expanded_work(),
+                max_instance_bytes: config.schema_limits().instance_bytes(),
+                max_instance_work: config.schema_limits().instance_work(),
+            },
             server: ServerConfig {
                 runtime_role: config.runtime_role.as_str().to_string(),
                 bind_ip: config.bind_ip.clone(),

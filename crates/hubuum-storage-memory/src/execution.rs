@@ -128,6 +128,7 @@ impl TransactionStorage for MemoryStorage {
         let mut committed = self.state.write().await;
         let transaction = MemoryTransaction {
             storage: Self {
+                schema_limits: self.schema_limits,
                 state: Arc::new(RwLock::new(committed.clone())),
             },
             event_context,

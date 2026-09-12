@@ -210,6 +210,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             .optional()?;
         let marker = tasks::table
             .filter(tasks::id.eq(marker_task_id))
+            // Rebuilt tasks may legitimately reuse an identifier after sequence restoration.
+            .filter(tasks::summary.eq("created after backup"))
             .select(tasks::id)
             .first::<i32>(conn)
             .await
@@ -402,10 +404,12 @@ async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_
     .expect("root collection");
 
     for cycle in 0..2 {
+        // Drain coordination is independent of history. Restoring all history left by
+        // earlier suites makes the completion deadline depend on their fixture volume.
         let document = create_backup_document(
             &pool,
             &BackupRequest {
-                include_history: true,
+                include_history: false,
             },
         )
         .await

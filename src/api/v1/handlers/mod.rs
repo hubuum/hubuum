@@ -22,3 +22,5 @@ pub mod search;
 pub mod service_accounts;
 pub mod tasks;
 pub mod users;
+
+pub mod schema_evolution;

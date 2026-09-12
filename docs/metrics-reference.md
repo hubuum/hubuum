@@ -55,6 +55,11 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_remote_call_results_total` | counter | none | process | `method`, `status_family`, `outcome` | Remote HTTP execution outcomes |
 | `hubuum_revision_conditions_total` | counter | none | process | `outcome` | Conditional-write outcomes |
 | `hubuum_runtime_info` | gauge | none | process | `role` | Runtime role for the process |
+| `hubuum_schema_compliance_objects` | gauge | none | database | `status` | Objects by effective active schema compliance |
+| `hubuum_schema_dependency_rebuilds_total` | counter | none | process | none | Dependent rebuilds queued by explicit schema activation |
+| `hubuum_schema_mutations_total` | counter | none | process | `policy`, `result` | Schema staging and activation outcomes |
+| `hubuum_schema_validation_duration_seconds` | histogram | seconds | process | `kind`, `status` | Schema validation work elapsed time |
+| `hubuum_schema_validation_objects_total` | counter | none | process | `kind`, `result` | Committed schema inspection outcomes |
 | `hubuum_secret_resolution_duration_seconds` | histogram | seconds | process | `provider`, `consumer`, `outcome` | Secret resolution duration |
 | `hubuum_secret_resolutions_total` | counter | none | process | `provider`, `consumer`, `outcome` | Secret resolution outcomes |
 | `hubuum_secret_source_info` | gauge | none | process | `provider` | Selected secret provider |

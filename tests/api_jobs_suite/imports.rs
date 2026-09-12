@@ -107,6 +107,7 @@ mod tests {
                     .iter()
                     .enumerate()
                     .map(|(index, name)| ImportClassInput {
+                        schema_activation: None,
                         ref_: Some(format!("class:timestamps:{index}")),
                         name: name.clone(),
                         description: format!("Timestamp import class {index}"),
@@ -593,6 +594,7 @@ mod tests {
                 }],
                 classes: vec![
                     ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:jack".to_string()),
                         name: jack_name.clone(),
                         description: "Jack".to_string(),
@@ -604,6 +606,7 @@ mod tests {
                         timestamps: None,
                     },
                     ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:room".to_string()),
                         name: room_name.clone(),
                         description: "Room".to_string(),
@@ -881,6 +884,7 @@ mod tests {
                     parent_collection_key: None,
                 }],
                 classes: vec![ImportClassInput {
+                    schema_activation: None,
                     ref_: Some("class:primary".to_string()),
                     name: import_class_name.clone(),
                     description: "Imported class".to_string(),
@@ -1357,6 +1361,7 @@ mod tests {
                     parent_collection_key: None,
                 }],
                 classes: vec![ImportClassInput {
+                    schema_activation: None,
                     ref_: Some("class:page".to_string()),
                     name: context.scoped_name("paged_import_class"),
                     description: "Imported class".to_string(),
@@ -1817,6 +1822,7 @@ mod tests {
             graph: ImportGraph {
                 classes: vec![
                     ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:allowed".to_string()),
                         name: allowed_class.clone(),
                         description: "allowed".to_string(),
@@ -1831,6 +1837,7 @@ mod tests {
                         }),
                     },
                     ImportClassInput {
+                        schema_activation: None,
                         ref_: Some("class:forbidden".to_string()),
                         name: forbidden_class.clone(),
                         description: "forbidden".to_string(),

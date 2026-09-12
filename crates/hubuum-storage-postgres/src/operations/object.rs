@@ -4,7 +4,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, JoinOnDsl, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{ClassId, CollectionId, ObjectId, validate_json_value};
+use hubuum_domain::{ClassId, CollectionId, JsonSchemaLimits, ObjectId};
 use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
     StorageError, StorageMutationOutcome, StorageObject, StorageObjectCreate,
@@ -176,10 +176,22 @@ pub(crate) async fn create_object_on(
     command: StorageObjectCreate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageObject>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     acquire_computed_class_shared_lock(connection, target.class().id().id()).await?;
     let class = lock_resolved_class(connection, target).await?;
-    validate_object_create(&command, &class)?;
+    validate_object_create(schema_limits, &command, &class)?;
     let object = insert_object(connection, &command).await?;
+    // New objects without enforcement have an explicit derived not-required
+    // state and cannot have older evidence to clear.
+    if class.validate_schema {
+        super::schema_evolution::record_object_schema_on(
+            schema_limits,
+            connection,
+            &object,
+            context,
+        )
+        .await?;
+    }
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(object.id, object.hubuum_class_id, &object.data),
@@ -224,10 +236,11 @@ pub(crate) async fn update_object_on(
     changes: StorageObjectUpdate,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageObject>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     validate_positive_id(target.object().id().id(), "object id")?;
     let (class, before) = lock_resolved_object(connection, target).await?;
     let (object, evaluation) =
-        persist_object_update(connection, &changes, &class, before, context).await?;
+        persist_object_update(schema_limits, connection, &changes, &class, before, context).await?;
     record_computed_evaluation(runtime, evaluation.as_ref());
     object.try_map(ObjectRow::into_storage)
 }
@@ -256,12 +269,14 @@ pub(crate) async fn patch_object_data_on(
     patch: StorageObjectDataPatch,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<StorageObject>, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     validate_positive_id(target.object().id().id(), "object id")?;
     let (class, before) = lock_resolved_object(connection, target).await?;
     let patched_data = patch
         .apply(&before.data)
         .map_err(postgres_error_from_storage)?;
     validate_object_state(
+        schema_limits,
         before.hubuum_class_id,
         before.collection_id,
         &patched_data,
@@ -282,6 +297,8 @@ pub(crate) async fn patch_object_data_on(
     .set(crate::schema::hubuumobject::data.eq(patched_data))
     .get_result::<ObjectRow>(connection)
     .await?;
+    super::schema_evolution::record_object_schema_on(schema_limits, connection, &updated, context)
+        .await?;
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
@@ -344,14 +361,18 @@ pub async fn validate_object(
     runtime: &PostgresRuntime,
     object: StorageObject,
 ) -> Result<(), PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     validate_positive_id(object.class_id().id(), "class id")?;
     validate_positive_id(object.collection_id().id(), "collection id")?;
     runtime
-        .with_read_connection(async move |connection| validate_object_on(connection, object).await)
+        .with_read_connection(async move |connection| {
+            validate_object_on(schema_limits, connection, object).await
+        })
         .await
 }
 
 pub(crate) async fn validate_object_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     object: StorageObject,
 ) -> Result<(), PostgresStorageError> {
@@ -359,6 +380,7 @@ pub(crate) async fn validate_object_on(
     validate_positive_id(object.collection_id().id(), "collection id")?;
     let class = load_class(connection, object.class_id().id()).await?;
     validate_object_state(
+        schema_limits,
         object.class_id().id(),
         object.collection_id().id(),
         object.data(),
@@ -370,19 +392,21 @@ pub async fn validate_object_create_command(
     runtime: &PostgresRuntime,
     command: StorageObjectCreate,
 ) -> Result<(), PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime
         .with_read_connection(async move |connection| {
-            validate_object_create_command_on(connection, command).await
+            validate_object_create_command_on(schema_limits, connection, command).await
         })
         .await
 }
 
 pub(crate) async fn validate_object_create_command_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     command: StorageObjectCreate,
 ) -> Result<(), PostgresStorageError> {
     let class = load_class(connection, command.class_id().id()).await?;
-    validate_object_create(&command, &class)
+    validate_object_create(schema_limits, &command, &class)
 }
 
 pub async fn validate_object_update_command(
@@ -390,15 +414,17 @@ pub async fn validate_object_update_command(
     object_id: i32,
     changes: StorageObjectUpdate,
 ) -> Result<(), PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     validate_positive_id(object_id, "object id")?;
     runtime
         .with_read_connection(async move |connection| {
-            validate_object_update_command_on(connection, object_id, changes).await
+            validate_object_update_command_on(schema_limits, connection, object_id, changes).await
         })
         .await
 }
 
 pub(crate) async fn validate_object_update_command_on(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     object_id: i32,
     changes: StorageObjectUpdate,
@@ -410,7 +436,7 @@ pub(crate) async fn validate_object_update_command_on(
         .map(ClassId::id)
         .unwrap_or(object.hubuum_class_id);
     let class = load_class(connection, class_id).await?;
-    validate_object_update(&changes, &object, &class)
+    validate_object_update(schema_limits, &changes, &object, &class)
 }
 
 async fn load_object_and_class_by_id(
@@ -567,6 +593,7 @@ async fn lock_resolved_object(
 }
 
 async fn persist_object_update(
+    schema_limits: JsonSchemaLimits,
     connection: &mut PostgresConnection,
     changes: &StorageObjectUpdate,
     class: &ClassRow,
@@ -579,7 +606,7 @@ async fn persist_object_update(
     ),
     PostgresStorageError,
 > {
-    validate_object_update(changes, &before, class)?;
+    validate_object_update(schema_limits, changes, &before, class)?;
     let update = UpdateObjectRow::from(changes);
     if !update.changes(&before) {
         let evaluation = materialize_object(
@@ -595,6 +622,8 @@ async fn persist_object_update(
     .set(update)
     .get_result::<ObjectRow>(connection)
     .await?;
+    super::schema_evolution::record_object_schema_on(schema_limits, connection, &updated, context)
+        .await?;
     let evaluation = materialize_object(
         connection,
         ObjectMaterializationInput::new(updated.id, updated.hubuum_class_id, &updated.data),
@@ -615,10 +644,12 @@ async fn persist_object_update(
 }
 
 fn validate_object_create(
+    schema_limits: JsonSchemaLimits,
     command: &StorageObjectCreate,
     class: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
     validate_object_state(
+        schema_limits,
         command.class_id().id(),
         command.collection_id().id(),
         command.data(),
@@ -627,11 +658,13 @@ fn validate_object_create(
 }
 
 fn validate_object_update(
+    schema_limits: JsonSchemaLimits,
     changes: &StorageObjectUpdate,
     current: &ObjectRow,
     class: &ClassRow,
 ) -> Result<(), PostgresStorageError> {
     validate_object_state(
+        schema_limits,
         changes
             .class_id()
             .map(ClassId::id)
@@ -646,6 +679,7 @@ fn validate_object_update(
 }
 
 fn validate_object_state(
+    schema_limits: JsonSchemaLimits,
     class_id: i32,
     collection_id: i32,
     data: &serde_json::Value,
@@ -666,7 +700,7 @@ fn validate_object_state(
     if class.validate_schema
         && let Some(schema) = class.json_schema.as_ref()
     {
-        validate_json_value(schema, data)?;
+        schema_limits.validate_value(schema, data)?;
     }
     Ok(())
 }

@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 20 detailed groups below are not a one-to-one module map. Neither form
+the 21 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -268,6 +268,23 @@ rebuild scheduling, and rebuild execution under a task lease. Definition
 mutations and audit events are atomic. A stale worker must not commit a rebuild
 after losing its claim.
 
+### `schema_evolution`
+
+Required trait: `SchemaEvolutionStorage`.
+
+Owns immutable schema revisions, explicit activation, population-fenced impact
+proofs, object compliance projections, and resumable validation checkpoints.
+Impact checkpoints retain the immutable baseline, disjoint before/after counts,
+and bounded first-failure groups. `get_schema_impact_boundary` reads current
+schema identities, target lifecycle, and population epoch without scanning
+objects, so report polling can recompute readiness at constant query cost.
+Every backend atomically commits evidence, progress and audit/outbox events.
+Task failure also marks its schema checkpoint `failed` and releases its active
+work slot in the same transaction, retaining committed findings. Schema provenance
+uses UTC microsecond precision in live records and embedded history snapshots.
+The class collection used for authorization is rechecked at mutation time.
+See [schema evolution](../schema_evolution.md) for activation and recovery rules.
+
 ### `remote_targets`
 
 Required trait: `RemoteTargetStorage`.
@@ -284,6 +301,9 @@ Required trait: `TaskQueueStorage`.
 Owns idempotent submission under active-task limits, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
+Task pages must honor the carrier's `excluded_kind` before counting or applying
+pagination. Generic schema task reports require unscoped administrator access;
+initiator attribution and ordinary task ownership do not grant report access.
 Projected total, processed, succeeded, failed, and attempt counters are
 nonnegative. Projected creation, update, start, finish, redaction, and deletion
 timestamps must form a non-reversed chronology. An adapter reports violations

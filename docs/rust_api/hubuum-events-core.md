@@ -1,6 +1,6 @@
 # `hubuum-events-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.1` release train.
+Status: experimental public API in the storage SDK `0.3` release train.
 
 ## Purpose and Callers
 

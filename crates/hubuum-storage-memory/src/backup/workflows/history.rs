@@ -10,6 +10,10 @@ pub(in crate::backup) fn capture_history(
         .copied()
         .map(|section| (section, Vec::new()))
         .collect::<StorageBackupHistorySections>();
+    sections.insert(
+        StorageBackupHistorySection::ClassSchemaHistory,
+        state.schema_history.clone(),
+    );
     for entry in &state.history {
         let (section, snapshot) = match &entry.value {
             MemoryHistoryValue::Collection(v) => (
@@ -107,6 +111,10 @@ pub(in crate::backup) fn restore_history(
             row.normalize_legacy_history(section);
         }
     }
+    state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
+    state
+        .schema_history
+        .sort_by_key(|row| row.get("id").and_then(Value::as_i64));
     state.history.clear();
     for section in [
         StorageBackupHistorySection::CollectionHistory,

@@ -67,6 +67,12 @@ for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-h
   assert_flag "$probe_output" container true
 done
 
+for migration_policy_path in scripts/check-migration-check-replacements.py \
+  scripts/test-migration-check-replacements.py; do
+  migration_policy_output="$(bash "$classifier" "$migration_policy_path")"
+  assert_flag "$migration_policy_output" code true
+done
+
 policy_fixture_root="$(mktemp -d)"
 trap 'rm -rf "$policy_fixture_root"' EXIT
 mkdir -p "$policy_fixture_root/src"
@@ -484,9 +490,35 @@ assert_flag "$batch_benchmark" benchmarks true
 for schema_input in scripts/check-json-schema-budget.py \
   crates/hubuum-domain/src/json_schema.rs \
   crates/hubuum-domain/src/json_schema/budget.rs \
+  crates/hubuum-domain/src/json_schema/limits.rs \
+  crates/hubuum-domain/src/json_schema/impact.rs \
   benches/template_schema_concurrency/main.rs; do
   schema_budget_output="$(bash "$classifier" "$schema_input")"
   assert_flag "$schema_budget_output" code true
   assert_flag "$schema_budget_output" benchmarks true
   assert_flag "$schema_budget_output" runtime_benchmark true
 done
+schema_inputs_output="$(bash "$classifier" \
+  benches/schema_validation_criterion.rs \
+  crates/hubuum-storage-postgres/migrations/2026-09-11-000001_schema_evolution/up.sql \
+  src/tests/storage_contract/schema_evolution/native.rs)"
+assert_flag "$schema_inputs_output" code true
+assert_flag "$schema_inputs_output" benchmarks true
+
+for impact_input in crates/hubuum-storage-core/src/schema_evolution/impact.rs \
+  src/tests/storage_contract/schema_evolution/impact.rs; do
+  impact_output="$(bash "$classifier" "$impact_input")"
+  assert_flag "$impact_output" code true
+done
+
+schema_manifests_output="$(bash "$classifier" Cargo.toml Cargo.lock crates/hubuum-storage-core/Cargo.toml)"
+assert_flag "$schema_manifests_output" code true
+assert_flag "$schema_manifests_output" container true
+
+for budget_input in src/config/schema_validation.rs src/tests/storage_contract/schema_evolution/budgets.rs; do
+  budget_output="$(bash "$classifier" "$budget_input")"
+  assert_flag "$budget_output" code true
+done
+
+budget_projection="$(bash "$classifier" src/config/running.rs)"
+assert_flag "$budget_projection" openapi true

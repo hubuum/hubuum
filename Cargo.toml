@@ -324,3 +324,7 @@ name = "template_schema_concurrency"
 path = "benches/template_schema_concurrency/main.rs"
 harness = false
 required-features = ["runtime-limit-bench"]
+
+[[bench]]
+name = "schema_validation_criterion"
+harness = false

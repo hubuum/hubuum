@@ -26,6 +26,43 @@ diesel::table! {
 }
 
 diesel::table! {
+    class_schema_history (id) {
+        id -> Int8,
+        class_id -> Int4,
+        revision -> Int8,
+        snapshot -> Jsonb,
+        operation -> Text,
+        occurred_at -> Timestamptz,
+        actor_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
+    }
+}
+
+diesel::table! {
+    class_schema_revisions (class_id, revision) {
+        class_id -> Int4,
+        revision -> Int8,
+        json_schema -> Nullable<Jsonb>,
+        validate_schema -> Bool,
+        status -> Text,
+        created_at -> Timestamptz,
+        created_by -> Nullable<Int4>,
+        activated_at -> Nullable<Timestamptz>,
+        activation_policy -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    class_schema_state (class_id) {
+        class_id -> Int4,
+        active_revision -> Int8,
+        last_revision -> Int8,
+        object_count -> Int8,
+        object_epoch -> Int8,
+    }
+}
+
+diesel::table! {
     collection_authorization_state (collection_id) {
         collection_id -> Int4,
         revision -> Int8,
@@ -503,6 +540,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    object_schema_evidence (object_id) {
+        object_id -> Int4,
+        class_id -> Int4,
+        schema_revision -> Int8,
+        object_revision -> Int8,
+        valid -> Bool,
+        validated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     permissions (id) {
         id -> Int4,
         collection_id -> Int4,
@@ -673,6 +721,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    schema_validation_work (task_id) {
+        task_id -> Int4,
+        class_id -> Int4,
+        schema_revision -> Int8,
+        kind -> Text,
+        active -> Bool,
+        checkpoint -> Jsonb,
+    }
+}
+
+diesel::table! {
     server_instances (instance_id) {
         instance_id -> Uuid,
         maintenance_generation -> Int8,
@@ -808,6 +867,8 @@ diesel::table! {
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
 diesel::joinable!(class_computation_state -> tasks (active_task_id));
+diesel::joinable!(class_schema_revisions -> hubuumclass (class_id));
+diesel::joinable!(class_schema_state -> hubuumclass (class_id));
 diesel::joinable!(collection_authorization_state -> collections (collection_id));
 diesel::joinable!(computed_field_definitions -> hubuumclass (class_id));
 diesel::joinable!(computed_field_definitions -> users (owner_user_id));
@@ -832,6 +893,7 @@ diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_
 diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(object_computed_data -> hubuumclass (class_id));
 diesel::joinable!(object_computed_data -> hubuumobject (object_id));
+diesel::joinable!(object_schema_evidence -> hubuumobject (object_id));
 diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(principals -> identity_scopes (identity_scope_id));
@@ -839,6 +901,8 @@ diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
+diesel::joinable!(schema_validation_work -> hubuumclass (class_id));
+diesel::joinable!(schema_validation_work -> tasks (task_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
 diesel::joinable!(system_maintenance -> restore_jobs (restore_job_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
@@ -854,6 +918,9 @@ diesel::joinable!(tokens -> principals (principal_id));
 diesel::allow_tables_to_appear_in_same_query!(
     backup_task_outputs,
     class_computation_state,
+    class_schema_history,
+    class_schema_revisions,
+    class_schema_state,
     collection_authorization_state,
     collection_closure,
     collections,
@@ -883,6 +950,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     identity_scopes,
     import_task_results,
     object_computed_data,
+    object_schema_evidence,
     permissions,
     principals,
     remote_call_results,
@@ -890,6 +958,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     remote_targets_history,
     restore_jobs,
     restore_success_receipts,
+    schema_validation_work,
     server_instances,
     service_accounts,
     system_maintenance,

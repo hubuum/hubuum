@@ -679,3 +679,18 @@ After the import reaches a terminal state, the stored payload is redacted:
 - `request_payload` is cleared internally
 - `request_redacted_at` is set on the task
 - summary state, events, and result rows remain available
+
+## Schema activation in imports
+
+Class inputs accept optional `schema_activation` with `revision`,
+`expected_active_revision`, explicit `policy`, and optional `impact_task_id`.
+The revision must already be staged for the existing class and its policy must
+exactly match the class input. Activation requires administrator authority;
+legacy schema overwrites on nonempty classes return a conflict.
+
+Strict imports roll back activation, queued jobs, objects, evidence, and events
+if an item fails. Best-effort imports retain successful class activation and
+report invalid object writes on their own items. Preflight executes this same
+logic without committing, and dry-run item details include activation intent
+and the referenced impact report. Timestamp preservation cannot forge validation
+evidence. See [class schema evolution](schema_evolution.md#imports-and-backups).

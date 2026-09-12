@@ -47,6 +47,12 @@ permits a reviewed transactional build only when positive `SET LOCAL` lock and
 statement timeouts precede it. Nontransactional migrations cannot use this
 exception.
 
+An explicit `hubuum-compat: widen-enum-check` marker permits replacement of a
+literal enum check only within the same bounded transaction. The checker reads
+the baseline migrations and proves that the replacement uses the same column
+and strictly includes every old value. It requires `NOT VALID` followed by
+validation in that transaction; unknown expressions and narrowing are rejected.
+
 The storage SDK advances as a coordinated 0.2 release. Adapter implementations
 must accept traversal budgets and implement claimed import execution. See the
 [generated inventory](generated/project_inventory.md)

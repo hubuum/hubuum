@@ -4,6 +4,7 @@
 //! an opaque [`StorageHandle`]. Adapter selection, endpoint diagnostics, and
 //! backend-specific initialization errors remain inside this module.
 
+use hubuum_domain::JsonSchemaLimits;
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -322,6 +323,7 @@ pub(in crate::storage) fn postgres_database_diagnostics(
 }
 
 pub(crate) struct StorageSettings {
+    schema_limits: JsonSchemaLimits,
     adapter: StorageAdapterSettings,
 }
 
@@ -331,8 +333,14 @@ enum StorageAdapterSettings {
 }
 
 impl StorageSettings {
+    pub(crate) fn with_schema_limits(mut self, limits: JsonSchemaLimits) -> Self {
+        self.schema_limits = limits;
+        self
+    }
+
     pub(crate) const fn memory() -> Self {
         Self {
+            schema_limits: JsonSchemaLimits::DEFAULT,
             adapter: StorageAdapterSettings::Memory,
         }
     }
@@ -436,11 +444,15 @@ impl PostgresAdapterFactory {
             .build()
             .map_err(Self::initialization_error)?;
         Ok(StorageSettings {
+            schema_limits: JsonSchemaLimits::DEFAULT,
             adapter: StorageAdapterSettings::Postgres(settings),
         })
     }
 
-    fn initialize(settings: &PostgresPoolSettings) -> Result<StorageHandle, StorageError> {
+    fn initialize(
+        settings: &PostgresPoolSettings,
+        schema_limits: JsonSchemaLimits,
+    ) -> Result<StorageHandle, StorageError> {
         let endpoint = settings.endpoint();
         info!(
             message = "storage backend configured",
@@ -463,6 +475,7 @@ impl PostgresAdapterFactory {
         let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
             .map_err(Self::initialization_error)?;
         let backend = compose_postgres(pool)
+            .with_schema_limits(schema_limits)
             .with_task_lease_pool(task_lease_pool)
             .with_notification_listener_pool(notification_listener_pool);
         Ok(StorageHandle::from_postgres_backend(backend))
@@ -544,8 +557,12 @@ pub(crate) fn initialize_storage(
     settings: &StorageSettings,
 ) -> Result<StorageHandle, StorageError> {
     match &settings.adapter {
-        StorageAdapterSettings::Postgres(settings) => PostgresAdapterFactory::initialize(settings),
-        StorageAdapterSettings::Memory => Ok(StorageHandle::memory()),
+        StorageAdapterSettings::Postgres(pool_settings) => {
+            PostgresAdapterFactory::initialize(pool_settings, settings.schema_limits)
+        }
+        StorageAdapterSettings::Memory => Ok(StorageHandle::memory_with_schema_limits(
+            settings.schema_limits,
+        )),
     }
 }
 

@@ -9,12 +9,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Schema impact reports compare proposed and active policies against the same
+  object snapshots, show changes in validity and validation requirements, and
+  group bounded, value-redacted failure examples. Readiness is recomputed as
+  compatible, incompatible, or inconclusive against current class state.
+
+- Deployment-configurable JSON Schema document, expansion, object-size, and
+  validation-work budgets shared by API writes, imports, workers, and restore
+  tools. The administrator configuration reports effective limits. Default
+  object admission now allows 2 MiB and 268,435,456 estimated work units, and
+  ordinary string bytes are charged for actual JSON escaping. The original
+  16 KiB, 256 KiB, and 1 MiB batch fixtures pass with these defaults. Restart
+  API, worker, and restore processes together when changing the settings; see
+  [JSON Schema validation limits](docs/json_schema_validation.md).
+
 - Single-host installation and updates accept `--tag` for both application
   images and `--server-tag` (alias `--backend-tag`) / `--frontend-tag` for
   independent choices. Image selections persist across updates, including
   pinned release versions, and updates can override either saved choice.
   Older installations can use either new script without converting their
   configuration; omitting tag options preserves their saved images.
+
+- Immutable class schema revisions, staged impact analysis, explicit strict or
+  pending activation, and resumable object revalidation on both storage backends.
+  New schema endpoints expose authorized compliance pages and administrator
+  progress reports. Schema changes and object mismatches emit durable events
+  and audit entries; activation also queues dependent computed-field rebuilds.
+- Revision-aware import activation, fenced object validation evidence, schema
+  history, aggregate compliance metrics, and bounded large-object validation.
 
 ### Changed
 
@@ -31,10 +53,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Failed best-effort memory import items roll back schema activation, queued
+  work, and audit events. Preflight validation also isolates failed items.
+- Staging a policy superseded by a newer active schema allocates a new revision
+  that can be activated, instead of reusing an obsolete staged revision.
+- Schema task progress and completion timestamps remain in UTC on non-UTC
+  PostgreSQL connections, keeping tasks readable between batches and after
+  cancellation following class deletion. Successful and superseded schema work
+  records common task completion and duration metrics.
+- Imports can activate staged schema-removal revisions without retaining the
+  class's previous schema policy.
 - Atomically throttle PostgreSQL token activity refreshes so concurrent
   authentication with the same stale token performs one `last_used_at` update
   per throttle window. Delayed observations cannot move activity timestamps
   backward, and activity-recording failures remain nonfatal to authentication.
+- Memory imports resolve collection paths with the same root-relative semantics
+  as PostgreSQL, including revision-checked class and object updates.
+- Schema tasks expose reports only to unscoped administrators, including through
+  generic task details, events, listings, and counts. Worker failures terminate
+  schema checkpoints, rejected memory policies leave no persisted changes, and
+  schema provenance survives cross-backend restore with non-UTC connections.
 - Capture PostgreSQL backup tables row by row so large current-state and history
   sections do not fail at PostgreSQL's single JSON-array size limit.
 
@@ -76,6 +114,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   update unsupported validated class schemas before resuming object writes.
   See [JSON Schema validation limits](docs/json_schema_validation.md) for exact
   limits, migration guidance, and separate debug/release measurements.
+
+### Breaking changes and upgrade notes
+
+- Schema PATCH and legacy import overwrites that change policy on a nonempty
+  class now return a conflict. Clients must stage a revision, request impact,
+  and explicitly activate it. Pending activation and aggregate reports require
+  administrator authority. Imports select the staged revision with
+  `schema_activation` and must provide its exact class policy.
+- Backup format 6 replaces format 5 and adds schema revisions, state, evidence,
+  and history. Restore older artifacts with their matching old release before
+  migrating the database and creating a format 6 backup. No artifact converter
+  is provided. Install matching server, administrator, and restore-executor
+  binaries, drain old workers, and run migrations before starting new processes.
+  Existing enforced objects start pending; request revalidation after migration.
+- The seven storage SDK crates advance together from 0.2.0 to 0.3.0. External
+  adapters must implement `SchemaEvolutionStorage`, support the new task/event
+  vocabularies and import activation input, and map the new logical backup
+  sections. Update exact SDK dependencies together and rerun conformance; see
+  the storage adapter SDK upgrade guide.
 
 ## [0.0.14] - 2026-09-10
 

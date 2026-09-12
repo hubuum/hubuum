@@ -37,6 +37,9 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
+    src/config/running.rs)
+      openapi=true
+      ;;
     crates/hubuum-domain/src/json_schema.rs | crates/hubuum-domain/src/json_schema/* | \
       benches/template_schema_concurrency/*)
       runtime_benchmark=true

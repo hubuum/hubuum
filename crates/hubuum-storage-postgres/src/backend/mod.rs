@@ -1,5 +1,6 @@
 //! Complete PostgreSQL implementation of the backend-neutral storage contract.
 
+use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
@@ -29,6 +30,7 @@ mod imports;
 mod notifications;
 mod remote_targets;
 mod restores;
+mod schema_evolution;
 mod task_execution;
 mod task_queue;
 mod transaction;
@@ -59,6 +61,17 @@ impl PostgresStorage {
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
         Self::new(pool, Arc::new(crate::NoopPostgresObserver))
+    }
+
+    #[must_use]
+    pub fn with_schema_limits(mut self, schema_limits: JsonSchemaLimits) -> Self {
+        self.runtime = self.runtime.with_schema_limits(schema_limits);
+        self
+    }
+
+    #[must_use]
+    pub fn schema_limits(&self) -> JsonSchemaLimits {
+        self.runtime.schema_limits()
     }
 
     #[must_use]

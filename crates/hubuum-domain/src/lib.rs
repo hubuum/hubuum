@@ -14,6 +14,7 @@ mod json_value;
 mod maintenance;
 mod operational_constraint;
 mod revision;
+mod schema_evolution;
 mod template_alias;
 mod token;
 
@@ -39,9 +40,11 @@ pub use json_patch::{
     MAX_JSON_PATCH_WORK_BYTES,
 };
 pub use json_schema::{
-    JsonSchemaError, JsonSchemaErrorKind, validate_json_schema, validate_json_schema_for_instances,
+    JsonSchemaError, JsonSchemaErrorKind, JsonSchemaLimits, JsonSchemaLimitsBuilder,
+    JsonSchemaLimitsError, validate_json_schema, validate_json_schema_for_instances,
     validate_json_value,
 };
+pub use json_schema::{SchemaFailure, SchemaImpactInspection};
 pub use json_value::{
     MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };
@@ -51,6 +54,7 @@ pub use operational_constraint::{
     RequiredConstraint,
 };
 pub use revision::{ResourceRevision, ResourceRevisionError};
+pub use schema_evolution::{CompiledSchema, SchemaDiagnostic, SchemaReference, SchemaRevision};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};
 pub use token::{
     MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TOKEN_LIFETIME_CONSTRAINT,

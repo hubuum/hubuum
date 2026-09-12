@@ -408,6 +408,7 @@ pub async fn list_tasks(
     runtime: &PostgresRuntime,
     query: StorageTaskListQuery,
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
+    let excluded_kind = query.excluded_kind();
     let (submitted_by, kind, status, options) = query.into_parts();
     let submitted_by = submitted_by.map(PrincipalId::id);
     reject_query_filters(&options, "tasks")?;
@@ -415,13 +416,29 @@ pub async fn list_tasks(
     if options.include_total() {
         runtime
             .with_read_only_snapshot(async |connection| {
-                list_tasks_on(connection, submitted_by, kind, status, &options).await
+                list_tasks_on(
+                    connection,
+                    submitted_by,
+                    kind,
+                    status,
+                    excluded_kind,
+                    &options,
+                )
+                .await
             })
             .await
     } else {
         runtime
             .with_connection(async |connection| {
-                list_tasks_on(connection, submitted_by, kind, status, &options).await
+                list_tasks_on(
+                    connection,
+                    submitted_by,
+                    kind,
+                    status,
+                    excluded_kind,
+                    &options,
+                )
+                .await
             })
             .await
     }
@@ -599,6 +616,7 @@ fn build_task_query(
     submitted_by: Option<i32>,
     kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
+    excluded_kind: Option<StorageTaskKind>,
 ) -> crate::schema::tasks::BoxedQuery<'static, diesel::pg::Pg> {
     use crate::schema::tasks::dsl as stored;
     let mut query = stored::tasks.into_boxed();
@@ -611,6 +629,9 @@ fn build_task_query(
     if let Some(status) = status {
         query = query.filter(stored::status.eq(status.as_str()));
     }
+    if let Some(excluded_kind) = excluded_kind {
+        query = query.filter(stored::kind.ne(excluded_kind.as_str()));
+    }
     query
 }
 
@@ -619,10 +640,11 @@ async fn list_tasks_on(
     submitted_by: Option<i32>,
     kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
+    excluded_kind: Option<StorageTaskKind>,
     options: &QueryOptions,
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
     let total = if options.include_total() {
-        let total = build_task_query(submitted_by, kind, status)
+        let total = build_task_query(submitted_by, kind, status, excluded_kind)
             .count()
             .get_result::<i64>(connection)
             .await?;
@@ -632,7 +654,7 @@ async fn list_tasks_on(
     } else {
         None
     };
-    let mut storage_query = build_task_query(submitted_by, kind, status);
+    let mut storage_query = build_task_query(submitted_by, kind, status, excluded_kind);
     let sql_fields = task_cursor_fields(options)?;
     crate::apply_query_options_with_fields!(
         storage_query,
@@ -766,7 +788,7 @@ fn task_capacity_lock_key(submitted_by: i32, kind: StorageTaskKind) -> i64 {
         StorageTaskKind::Export => 1,
         StorageTaskKind::RemoteCall => 2,
         StorageTaskKind::Backup => 3,
-        StorageTaskKind::Import | StorageTaskKind::Reindex => 9,
+        StorageTaskKind::Import | StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => 9,
     };
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
 }

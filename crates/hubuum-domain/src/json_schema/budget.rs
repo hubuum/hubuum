@@ -8,15 +8,11 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::JsonSchemaError;
+use super::{JsonSchemaError, JsonSchemaLimits};
 
 const MAX_DEPTH: usize = 64;
 const MAX_SCHEMA_NODES: usize = 4_096;
-const MAX_SCHEMA_BYTES: usize = 65_536;
 const MAX_INSTANCE_NODES: usize = 16_384;
-const MAX_INSTANCE_BYTES: usize = 1_048_576;
-const MAX_EXPANDED_WORK: usize = 16_384;
-const MAX_INSTANCE_WORK: usize = 16_777_216;
 
 #[derive(Clone, Copy)]
 enum Document {
@@ -39,10 +35,42 @@ struct JsonSize {
 }
 
 impl JsonSize {
-    fn measure(value: &Value, document: Document) -> Result<Self, JsonSchemaError> {
+    fn add_string(
+        &mut self,
+        text: &str,
+        document: Document,
+        max_bytes: usize,
+    ) -> Result<(), JsonSchemaError> {
+        let too_large = || {
+            document.error(format!("JSON Schema validation exceeds document limits ({max_bytes} estimated encoded bytes); reduce document size"))
+        };
+        // Reject plainly oversized input before scanning it. Only escaping that
+        // JSON serialization actually needs contributes additional bytes.
+        self.bytes = self.bytes.saturating_add(text.len());
+        if self.bytes > max_bytes {
+            return Err(too_large());
+        }
+        for byte in text.bytes() {
+            self.bytes = self.bytes.saturating_add(match byte {
+                b'"' | b'\\' | b'\n' | b'\r' | b'\t' | 8 | 12 => 1,
+                0..=31 => 5,
+                _ => 0,
+            });
+            if self.bytes > max_bytes {
+                return Err(too_large());
+            }
+        }
+        Ok(())
+    }
+
+    fn measure(
+        value: &Value,
+        document: Document,
+        limits: JsonSchemaLimits,
+    ) -> Result<Self, JsonSchemaError> {
         let (max_nodes, max_bytes) = match document {
-            Document::Schema => (MAX_SCHEMA_NODES, MAX_SCHEMA_BYTES),
-            Document::Instance => (MAX_INSTANCE_NODES, MAX_INSTANCE_BYTES),
+            Document::Schema => (MAX_SCHEMA_NODES, limits.schema_bytes()),
+            Document::Instance => (MAX_INSTANCE_NODES, limits.instance_bytes()),
         };
         let mut size = Self { nodes: 0, bytes: 0 };
         let mut pending = vec![(value, 0)];
@@ -53,7 +81,7 @@ impl JsonSize {
             size.bytes = size.bytes.saturating_add(8);
             match value {
                 Value::String(text) => {
-                    size.bytes = size.bytes.saturating_add(text.len().saturating_mul(6))
+                    size.add_string(text, document, max_bytes)?;
                 }
                 Value::Number(number) => {
                     let text = number.to_string();
@@ -80,7 +108,8 @@ impl JsonSize {
                         return Err(document.error(format!("JSON Schema validation exceeds {max_nodes} JSON nodes; reduce document size")));
                     }
                     for (key, value) in values {
-                        size.bytes = size.bytes.saturating_add(key.len().saturating_mul(6));
+                        size.bytes = size.bytes.saturating_add(4);
+                        size.add_string(key, document, max_bytes)?;
                         pending.push((value, depth + 1));
                     }
                 }
@@ -94,40 +123,47 @@ impl JsonSize {
     }
 }
 
-pub(super) fn validate_document_size(schema: &Value) -> Result<(), JsonSchemaError> {
-    JsonSize::measure(schema, Document::Schema).map(|_| ())
+pub(super) fn validate_document_size(
+    schema: &Value,
+    limits: JsonSchemaLimits,
+) -> Result<(), JsonSchemaError> {
+    JsonSize::measure(schema, Document::Schema, limits).map(|_| ())
 }
 
 /// Private proof of a finite, supported schema evaluation graph.
 pub(super) struct SchemaBudget {
+    limits: JsonSchemaLimits,
     expanded_work: usize,
     compares_array_pairs: bool,
 }
 
 impl SchemaBudget {
-    pub(super) fn new(schema: &Value) -> Result<Self, JsonSchemaError> {
-        validate_document_size(schema)?;
+    pub(super) fn new(schema: &Value, limits: JsonSchemaLimits) -> Result<Self, JsonSchemaError> {
+        validate_document_size(schema, limits)?;
         let mut inspector = Inspector {
+            limits,
             root: schema,
             active: HashSet::new(),
             compares_array_pairs: false,
         };
         let expanded_work = inspector.schema_work(schema, 0)?;
         Ok(Self {
+            limits,
             expanded_work,
             compares_array_pairs: inspector.compares_array_pairs,
         })
     }
 
     pub(super) fn check_instance(&self, value: &Value) -> Result<(), JsonSchemaError> {
-        let size = JsonSize::measure(value, Document::Instance)?;
+        let size = JsonSize::measure(value, Document::Instance, self.limits)?;
         let mut work = self.expanded_work.saturating_mul(size.bytes);
         if self.compares_array_pairs {
             work = work.saturating_mul(size.nodes);
         }
-        if work > MAX_INSTANCE_WORK {
+        let maximum = self.limits.instance_work();
+        if work > maximum {
             return Err(JsonSchemaError::invalid_value(format!(
-                "JSON Schema evaluation exceeds the {MAX_INSTANCE_WORK} work budget; simplify the schema or reduce instance size (especially uniqueItems arrays)"
+                "JSON Schema evaluation exceeds the {maximum} work budget; simplify the schema or reduce instance size (especially uniqueItems arrays)"
             )));
         }
         Ok(())
@@ -135,6 +171,7 @@ impl SchemaBudget {
 }
 
 struct Inspector<'a> {
+    limits: JsonSchemaLimits,
     root: &'a Value,
     // Addresses identify borrowed nodes in this immutable document. No pointer
     // is dereferenced or retained after inspection.
@@ -142,10 +179,11 @@ struct Inspector<'a> {
     compares_array_pairs: bool,
 }
 
-fn checked_work(work: usize) -> Result<usize, JsonSchemaError> {
-    if work > MAX_EXPANDED_WORK {
+fn checked_work(work: usize, limits: JsonSchemaLimits) -> Result<usize, JsonSchemaError> {
+    let maximum = limits.expanded_work();
+    if work > maximum {
         return Err(JsonSchemaError::invalid_schema(format!(
-            "JSON Schema reference/combinator expansion exceeds {MAX_EXPANDED_WORK} work units; remove repeated references or simplify combinators"
+            "JSON Schema reference/combinator expansion exceeds {maximum} work units; remove repeated references or simplify combinators"
         )));
     }
     Ok(work)
@@ -231,9 +269,10 @@ impl Inspector<'_> {
                                 let child_work = if child.is_object() || child.is_boolean() {
                                     self.schema_work(child, depth + 1)?
                                 } else {
-                                    JsonSize::measure(child, Document::Schema)?.bytes
+                                    JsonSize::measure(child, Document::Schema, self.limits)?.bytes
                                 };
-                                children = checked_work(children + name.len() + child_work)?;
+                                children =
+                                    checked_work(children + name.len() + child_work, self.limits)?;
                             }
                         }
                         children
@@ -242,8 +281,10 @@ impl Inspector<'_> {
                         let mut children = 1;
                         if let Value::Array(values) = value {
                             for child in values {
-                                children =
-                                    checked_work(children + self.schema_work(child, depth + 1)?)?;
+                                children = checked_work(
+                                    children + self.schema_work(child, depth + 1)?,
+                                    self.limits,
+                                )?;
                             }
                         }
                         // Failed alternatives can be revisited to build errors.
@@ -256,8 +297,10 @@ impl Inspector<'_> {
                     "items" if value.is_array() => {
                         let mut children = 1;
                         for child in value.as_array().expect("array checked") {
-                            children =
-                                checked_work(children + self.schema_work(child, depth + 1)?)?;
+                            children = checked_work(
+                                children + self.schema_work(child, depth + 1)?,
+                                self.limits,
+                            )?;
                         }
                         children
                     }
@@ -274,9 +317,9 @@ impl Inspector<'_> {
                         self.compares_array_pairs |= value == &Value::Bool(true);
                         1
                     }
-                    _ => JsonSize::measure(value, Document::Schema)?.bytes,
+                    _ => JsonSize::measure(value, Document::Schema, self.limits)?.bytes,
                 };
-                work = checked_work(work + keyword.len() + additional)?;
+                work = checked_work(work + keyword.len() + additional, self.limits)?;
             }
         } else if !schema.is_boolean() {
             return Err(JsonSchemaError::invalid_schema(
@@ -285,5 +328,41 @@ impl Inspector<'_> {
         }
         self.active.remove(&key);
         Ok(work)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case(json!({"ordinary": "x".repeat(1024)}))]
+    #[case(json!({"\n\u{0000}\"": "\n\r\t\u{0008}\u{000c}\\\"\u{0001}"}))]
+    #[case(json!({"å😀": [null, true, false, -123456789, 1.234e100]}))]
+    fn encoded_size_estimate_bounds_serialization(#[case] value: Value) {
+        let size =
+            JsonSize::measure(&value, Document::Instance, JsonSchemaLimits::default()).unwrap();
+        assert!(size.bytes >= serde_json::to_vec(&value).unwrap().len());
+    }
+
+    #[test]
+    fn ordinary_strings_are_not_charged_for_unused_escaping() {
+        let value = json!("x".repeat(1024));
+        let size =
+            JsonSize::measure(&value, Document::Instance, JsonSchemaLimits::default()).unwrap();
+        assert!(size.bytes < 1100);
+    }
+
+    #[test]
+    fn escaping_cannot_bypass_encoded_byte_limit() {
+        let limits = JsonSchemaLimits::builder()
+            .instance_bytes(1024)
+            .build()
+            .unwrap();
+        assert!(
+            JsonSize::measure(&json!("\u{0000}".repeat(200)), Document::Instance, limits).is_err()
+        );
     }
 }

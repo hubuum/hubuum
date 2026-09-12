@@ -450,6 +450,9 @@ pub fn persisted_test_task_request(
         crate::models::TaskKind::Backup => hubuum_storage_core::StorageTaskKind::Backup,
         crate::models::TaskKind::Reindex => hubuum_storage_core::StorageTaskKind::Reindex,
         crate::models::TaskKind::RemoteCall => hubuum_storage_core::StorageTaskKind::RemoteCall,
+        crate::models::TaskKind::SchemaValidation => {
+            hubuum_storage_core::StorageTaskKind::SchemaValidation
+        }
     };
     let status = match status {
         crate::models::TaskStatus::Queued => hubuum_storage_core::StorageTaskStatus::Queued,

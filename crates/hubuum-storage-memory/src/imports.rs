@@ -32,6 +32,27 @@ fn assert_import_create_condition(
 }
 
 impl MemoryStorage {
+    pub(crate) async fn commit_import_operation(
+        &self,
+        operation: StorageImportOperation,
+        references: &mut BTreeMap<String, MemoryImportReference>,
+    ) -> Result<Option<ResourceRevision>, StorageError> {
+        // Hold the live state lock until the complete item is published so
+        // concurrent writes cannot be lost when replacing the staged state.
+        let mut state = self.state.write().await;
+        let scratch = Self {
+            schema_limits: self.schema_limits,
+            state: Arc::new(RwLock::new(state.clone())),
+        };
+        let mut next_references = references.clone();
+        let revision = scratch
+            .apply_import_operation(operation, &mut next_references)
+            .await?;
+        *state = scratch.state.read().await.clone();
+        *references = next_references;
+        Ok(revision)
+    }
+
     async fn import_identity_scope_id(
         &self,
         reference: Option<&str>,
@@ -475,7 +496,7 @@ impl MemoryStorage {
                             owner_group_id,
                             parent_collection_id,
                         ),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -486,6 +507,11 @@ impl MemoryStorage {
             }
             StorageImportOperation::CreateClass(input) => {
                 let parts = input.into_parts();
+                if parts.schema_activation.is_some() {
+                    return Err(StorageError::invalid_input(
+                        "Schema activation requires an existing class",
+                    ));
+                }
                 assert_import_create_condition(parts.condition)?;
                 let collection_id = if let Some(reference) = parts.collection_ref {
                     match references.get(&reference) {
@@ -511,7 +537,7 @@ impl MemoryStorage {
                         StorageClassCreate::builder(parts.name, collection_id, parts.description)
                             .schema_policy(parts.schema_policy)
                             .build(),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -531,7 +557,7 @@ impl MemoryStorage {
                     .update_collection(
                         collection_id,
                         StorageCollectionUpdate::new(Some(parts.name), Some(parts.description)),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -542,10 +568,50 @@ impl MemoryStorage {
             }
             StorageImportOperation::UpdateClass { class_id, input } => {
                 let parts = input.into_parts();
-                let target = self
+                let mut target = self
                     .resolve_class(StorageClassSelector::Id(class_id))
                     .await?;
+                let authorized_collection = self
+                    .import_collection_id(
+                        parts.collection_ref.as_deref(),
+                        parts.collection_key.as_ref(),
+                        references,
+                    )
+                    .await?;
+                if target.class().collection_id() != authorized_collection {
+                    return Err(StorageError::not_found(
+                        "Imported class no longer belongs to the selected collection",
+                    ));
+                }
                 assert_import_revision(parts.condition, target.class().revision())?;
+                if let Some(intent) = &parts.schema_activation {
+                    let revision = self
+                        .list_schema_revisions(
+                            StorageSchemaPage::try_new(class_id, intent.revision().get() - 1, 1)
+                                .map_err(invalid_contract_value)?,
+                        )
+                        .await?
+                        .into_iter()
+                        .find(|revision| revision.reference().revision() == intent.revision())
+                        .ok_or_else(|| {
+                            StorageError::not_found("Imported schema revision was not found")
+                        })?;
+                    if revision.policy().policy() != &parts.schema_policy {
+                        return Err(StorageError::invalid_input(
+                            "Imported class policy must exactly match the selected staged schema revision",
+                        ));
+                    }
+                    self.activate_schema_revision(intent.for_class(
+                        class_id,
+                        target.class().collection_id(),
+                        memory_import_event_context(),
+                    ))
+                    .await?
+                    .into_value();
+                    target = self
+                        .resolve_class(StorageClassSelector::Id(class_id))
+                        .await?;
+                }
                 let (json_schema, validate_schema) = parts.schema_policy.into_parts();
                 let updated = self
                     .update_class(
@@ -556,7 +622,7 @@ impl MemoryStorage {
                             .validate_schema(Some(validate_schema))
                             .description(Some(parts.description))
                             .build(),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -588,7 +654,7 @@ impl MemoryStorage {
                             parts.data,
                             parts.description,
                         ),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -607,6 +673,18 @@ impl MemoryStorage {
                     .get(&object_id.id())
                     .cloned()
                     .ok_or_else(|| StorageError::not_found("Import object was not found"))?;
+                let selected_class = self
+                    .import_class_id(
+                        parts.class_ref.as_deref(),
+                        parts.class_key.as_ref(),
+                        references,
+                    )
+                    .await?;
+                if current.class_id() != selected_class {
+                    return Err(StorageError::not_found(
+                        "Imported object no longer belongs to the selected class",
+                    ));
+                }
                 assert_import_revision(parts.condition, current.revision())?;
                 let target = self
                     .resolve_object(StorageObjectSelector::Ids {
@@ -622,7 +700,7 @@ impl MemoryStorage {
                             .data(Some(parts.data))
                             .description(Some(parts.description))
                             .build(),
-                        &EventContext::system(),
+                        &memory_import_event_context(),
                     )
                     .await?
                     .into_value();
@@ -661,7 +739,7 @@ impl MemoryStorage {
                     )
                     .await?;
                 let created = self
-                    .create_class_relation(&prepared, &EventContext::system())
+                    .create_class_relation(&prepared, &memory_import_event_context())
                     .await?
                     .into_value();
                 Ok(Some(created.relation().metadata().revision()))
@@ -789,7 +867,7 @@ impl MemoryStorage {
                     ))
                     .await?;
                 let created = self
-                    .create_object_relation(&prepared, &EventContext::system())
+                    .create_object_relation(&prepared, &memory_import_event_context())
                     .await?
                     .into_value();
                 Ok(Some(created.relation().metadata().revision()))
@@ -976,7 +1054,7 @@ impl MemoryStorage {
                     StorageAuthorizationGrantKey::new(collection_id, group_id),
                     parts.permissions,
                     overwrite || parts.replace_existing,
-                    EventContext::system(),
+                    memory_import_event_context(),
                 ))
                 .await?
                 .into_value();
@@ -1527,4 +1605,13 @@ impl MemoryStorage {
         }
         Ok(Some(revision))
     }
+}
+
+fn memory_import_event_context() -> EventContext {
+    MEMORY_EXECUTION_SCOPE
+        .try_with(|scope| scope.mutation_provenance_override().cloned().flatten())
+        .ok()
+        .flatten()
+        .map(EventContext::from_mutation)
+        .unwrap_or_else(EventContext::system)
 }

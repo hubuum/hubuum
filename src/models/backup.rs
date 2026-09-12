@@ -12,7 +12,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 5;
+pub const CURRENT_BACKUP_VERSION: i32 = 6;
 pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "backup_task_outputs (backup artifacts never recursively contain prior backups)",
     "authentication tokens and token scopes (credentials must be reissued after restore)",
@@ -142,7 +142,7 @@ impl BackupManifest {
     }
 }
 
-/// Privileged, restore-only logical snapshots. Backup version 5 identifies
+/// Privileged, restore-only logical snapshots. Backup version 6 identifies
 /// sections by stable Hubuum resources rather than PostgreSQL tables. Each
 /// storage adapter explicitly maps its persistence layout to these versioned
 /// sections. These are disaster-recovery internals, not portable import data.

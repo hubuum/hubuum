@@ -309,10 +309,10 @@ unsupported_error = "InvalidInput"
 
 [query_profiles.task]
 shape = "page"
-filters = ["typed carrier submitted_by", "typed carrier kind", "typed carrier status"]
+filters = ["typed carrier submitted_by", "typed carrier kind", "typed carrier status", "typed carrier excluded_kind"]
 sorts = ["id", "kind", "status", "submitted_by", "created_at", "started_at", "finished_at"]
 cursor = "opaque keyset over requested sorts plus id"
-visibility = "carrier submitter/kind/status scope prepared by task authorization"
+visibility = "carrier submitter/kind/status scope and excluded_kind applied before counting or pagination"
 count = "optional exact count from the same scope"
 snapshot = "count and page share one read snapshot"
 bounds = "validated QueryOptions limit and cursor-byte bounds"
@@ -951,3 +951,37 @@ profile = "export_template"
 effect = "complete_read"
 carrier = "CollectionId + optional excluded ExportTemplateId"
 profile = "fixed_id_complete"
+
+[query_profiles.schema_revisions]
+shape = "page"
+filters = []
+sorts = ["revision ascending"]
+cursor = "exclusive numeric after identity; zero starts the scan"
+visibility = "authorized class readers"
+count = "totals omitted"
+snapshot = "active schema, evidence, object revisions and page share one native snapshot"
+bounds = "StorageSchemaPage validates nonnegative after and limit 1 through 100"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."SchemaEvolutionStorage::list_schema_revisions"]
+effect = "page_read"
+carrier = "StorageSchemaPage"
+profile = "schema_revisions"
+
+[query_profiles.schema_compliance]
+shape = "page"
+filters = ["valid", "invalid", "pending", "not_required"]
+sorts = ["object ID ascending"]
+cursor = "exclusive numeric after identity; zero starts the scan"
+visibility = "candidates only; application checks ReadObject before exposing rows"
+count = "totals omitted"
+snapshot = "active schema, evidence, object revisions and page share one native snapshot"
+bounds = "StorageSchemaPage validates nonnegative after and limit 1 through 100"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."SchemaEvolutionStorage::list_schema_compliance"]
+effect = "page_read"
+carrier = "StorageSchemaPage"
+profile = "schema_compliance"

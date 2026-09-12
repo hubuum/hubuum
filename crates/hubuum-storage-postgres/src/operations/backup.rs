@@ -34,6 +34,9 @@ pub(crate) const fn state_table(section: StorageBackupStateSection) -> &'static 
         StorageBackupStateSection::CollectionHierarchy => "collection_closure",
         StorageBackupStateSection::CollectionPermissionGrants => "permissions",
         StorageBackupStateSection::Classes => "hubuumclass",
+        StorageBackupStateSection::ClassSchemaRevisions => "class_schema_revisions",
+        StorageBackupStateSection::ClassSchemaState => "class_schema_state",
+        StorageBackupStateSection::ObjectSchemaEvidence => "object_schema_evidence",
         StorageBackupStateSection::ComputedFieldDefinitions => "computed_field_definitions",
         StorageBackupStateSection::ClassRelations => "hubuumclass_relation",
         StorageBackupStateSection::Objects => "hubuumobject",
@@ -49,6 +52,7 @@ pub(crate) const fn history_table(section: StorageBackupHistorySection) -> &'sta
     match section {
         StorageBackupHistorySection::CollectionHistory => "collections_history",
         StorageBackupHistorySection::ClassHistory => "hubuumclass_history",
+        StorageBackupHistorySection::ClassSchemaHistory => "class_schema_history",
         StorageBackupHistorySection::ClassRelationHistory => "hubuumclass_relation_history",
         StorageBackupHistorySection::ObjectHistory => "hubuumobject_history",
         StorageBackupHistorySection::ObjectRelationHistory => "hubuumobject_relation_history",
@@ -171,7 +175,10 @@ fn logicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresSto
     Ok(())
 }
 
-fn physicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresStorageError> {
+fn physicalize_timestamps(
+    row: &mut Map<String, Value>,
+    timezone_aware: bool,
+) -> Result<(), PostgresStorageError> {
     for (field, value) in row {
         if !is_timestamp_field(field) || value.is_null() {
             continue;
@@ -186,7 +193,7 @@ fn physicalize_timestamps(row: &mut Map<String, Value>) -> Result<(), PostgresSt
                 "Logical timestamp field '{field}' must be RFC 3339 with an offset: {error}"
             ))
         })?;
-        if matches!(field.as_str(), "valid_from" | "valid_to") {
+        if timezone_aware || matches!(field.as_str(), "valid_from" | "valid_to") {
             *value = Value::String(
                 utc.with_timezone(&Utc)
                     .to_rfc3339_opts(SecondsFormat::AutoSi, true),
@@ -327,6 +334,7 @@ fn history_field_mappings(
     section: StorageBackupHistorySection,
 ) -> &'static [(&'static str, &'static str)] {
     match section {
+        StorageBackupHistorySection::ClassSchemaHistory => &[("actor_id", "actor_principal_id")],
         StorageBackupHistorySection::ClassRelationHistory => CLASS_RELATION_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectHistory => OBJECT_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectRelationHistory => OBJECT_RELATION_FIELD_MAPPINGS,
@@ -425,7 +433,15 @@ pub(crate) fn state_row_to_postgres(
     if section == StorageBackupStateSection::CollectionPermissionGrants {
         physicalize_permission_grant(object)?;
     }
-    physicalize_timestamps(object)?;
+    physicalize_timestamps(
+        object,
+        matches!(
+            section,
+            StorageBackupStateSection::ClassSchemaRevisions
+                | StorageBackupStateSection::ClassSchemaState
+                | StorageBackupStateSection::ObjectSchemaEvidence
+        ),
+    )?;
     Ok(row)
 }
 
@@ -465,7 +481,10 @@ pub(crate) fn history_row_to_postgres(
     }
     reject_physical_fields(object, history_field_mappings(section))?;
     rename_fields(object, history_field_mappings(section), false)?;
-    physicalize_timestamps(object)?;
+    physicalize_timestamps(
+        object,
+        section == StorageBackupHistorySection::ClassSchemaHistory,
+    )?;
     Ok(row)
 }
 
@@ -654,6 +673,7 @@ async fn snapshot_history(
     for section in [
         StorageBackupHistorySection::CollectionHistory,
         StorageBackupHistorySection::ClassHistory,
+        StorageBackupHistorySection::ClassSchemaHistory,
         StorageBackupHistorySection::ClassRelationHistory,
         StorageBackupHistorySection::ObjectHistory,
         StorageBackupHistorySection::ObjectRelationHistory,
@@ -748,6 +768,7 @@ pub async fn capture_backup_snapshot(
     runtime: &PostgresRuntime,
     include_history: bool,
 ) -> Result<StorageBackupSnapshot, PostgresStorageError> {
+    let schema_limits = runtime.schema_limits();
     runtime
         .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
             let state = snapshot_state(conn).await?;
@@ -758,7 +779,7 @@ pub async fn capture_backup_snapshot(
             };
             crate::validate_persisted(
                 "backup snapshot",
-                StorageBackupSnapshot::try_new(state, history),
+                StorageBackupSnapshot::try_new_with_limits(state, history, schema_limits),
             )
         })
         .await
@@ -774,6 +795,33 @@ mod tests {
         state_row_to_logical, state_row_to_postgres, validate_snapshot_table,
     };
     use hubuum_storage_core::{StorageBackupHistorySection, StorageBackupStateSection};
+
+    #[rstest]
+    #[case::revision(StorageBackupStateSection::ClassSchemaRevisions, "created_at")]
+    #[case::activation(StorageBackupStateSection::ClassSchemaRevisions, "activated_at")]
+    #[case::evidence(StorageBackupStateSection::ObjectSchemaEvidence, "validated_at")]
+    fn schema_restore_preserves_explicit_timestamp_offsets(
+        #[case] section: StorageBackupStateSection,
+        #[case] field: &str,
+    ) {
+        let restored =
+            state_row_to_postgres(section, json!({field: "2026-09-11T14:34:56.123456+02:00"}))
+                .unwrap();
+        assert_eq!(restored[field], json!("2026-09-11T12:34:56.123456Z"));
+    }
+
+    #[test]
+    fn schema_history_restore_preserves_occurrence_offset() {
+        let restored = history_row_to_postgres(
+            StorageBackupHistorySection::ClassSchemaHistory,
+            json!({"occurred_at": "2026-09-11T14:34:56.123456+02:00"}),
+        )
+        .unwrap();
+        assert_eq!(
+            restored["occurred_at"],
+            json!("2026-09-11T12:34:56.123456Z")
+        );
+    }
 
     #[cfg(feature = "integration-test-support")]
     #[tokio::test]

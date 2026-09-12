@@ -1,5 +1,6 @@
 //! PostgreSQL-owned connection and transaction execution.
 
+use hubuum_domain::JsonSchemaLimits;
 use std::fmt;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -10,7 +11,7 @@ use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel::sql_types::{BigInt, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
-use hubuum_events_core::{MutationProvenance, TraceLink};
+use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
     StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
 };
@@ -20,7 +21,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260905000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260911000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
@@ -84,6 +85,7 @@ impl PostgresObserver for NoopPostgresObserver {}
 /// Runtime dependencies shared by PostgreSQL operations.
 #[derive(Clone)]
 pub struct PostgresRuntime {
+    schema_limits: JsonSchemaLimits,
     pool: PostgresPool,
     task_lease_pool: PostgresPool,
     computed_reindex_batch_size: NonZeroUsize,
@@ -109,6 +111,7 @@ impl PostgresRuntime {
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
+            schema_limits: JsonSchemaLimits::default(),
             task_lease_pool: pool.clone(),
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
@@ -130,6 +133,17 @@ impl PostgresRuntime {
     /// A worker may hold a connection from the execution pool while it renews
     /// its lease. Keeping renewal on a separate pool prevents that safety path
     /// from deadlocking behind the work it is protecting.
+    #[must_use]
+    pub fn with_schema_limits(mut self, schema_limits: JsonSchemaLimits) -> Self {
+        self.schema_limits = schema_limits;
+        self
+    }
+
+    #[must_use]
+    pub const fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
+    }
+
     #[must_use]
     pub fn with_task_lease_pool(mut self, task_lease_pool: PostgresPool) -> Self {
         self.task_lease_pool = task_lease_pool;
@@ -488,6 +502,15 @@ where
     F: Future,
 {
     AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
+}
+
+pub(crate) fn ambient_event_context() -> EventContext {
+    AMBIENT_MUTATION_PROVENANCE
+        .try_with(Clone::clone)
+        .ok()
+        .flatten()
+        .map(EventContext::from_mutation)
+        .unwrap_or_else(EventContext::system)
 }
 
 pub(crate) fn ambient_mutation_trace_link() -> Option<TraceLink> {

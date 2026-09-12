@@ -1,8 +1,19 @@
 use actix_web::web;
 
-use crate::api::v1::handlers::{classes, computed_fields, events};
+use crate::api::v1::handlers::{classes, computed_fields, events, schema_evolution};
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(classes::get_class_by_name)
+    cfg.service(schema_evolution::list_object_compliance)
+        .service(schema_evolution::list_schema_revisions)
+        .service(schema_evolution::get_schema_state)
+        .service(schema_evolution::stage_schema_revision)
+        .service(schema_evolution::get_schema_revision)
+        .service(schema_evolution::abandon_schema_revision)
+        .service(schema_evolution::activate_schema_revision)
+        .service(schema_evolution::analyze_schema_impact)
+        .service(schema_evolution::revalidate_schema)
+        .service(schema_evolution::get_schema_work)
+        .service(schema_evolution::cancel_schema_work)
+        .service(classes::get_class_by_name)
         .service(classes::update_class_by_name)
         .service(classes::delete_class_by_name)
         .service(classes::get_class_permissions_by_name)

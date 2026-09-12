@@ -335,6 +335,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         query: StorageTaskListQuery,
     ) -> Result<StoragePage<StorageTask>, StorageError> {
+        let excluded_kind = query.excluded_kind();
         let (submitted_by, kind, status, options) = query.into_parts();
         let state = self.state.read().await;
         let rows = state
@@ -343,6 +344,7 @@ impl TaskQueueStorage for MemoryStorage {
             .filter(|task| task.deleted_at.is_none())
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
+            .filter(|task| excluded_kind != Some(task.kind))
             .filter(|task| status.is_none_or(|value| task.status == value))
             .map(MemoryTaskRecord::projection)
             .collect::<Result<Vec<_>, _>>()?;
@@ -578,6 +580,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .collect::<Vec<_>>();
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
+            let has_schema_work = state.schema_work.contains_key(&task_id.id());
             let results = state.import_task_results.get(&task_id.id());
             let processed = results.map_or(0, |results| results.len()) as i32;
             let failed = results.map_or(0, |results| {
@@ -590,6 +593,22 @@ impl TaskExecutionStorage for MemoryStorage {
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
+            if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
+                task.status = StorageTaskStatus::Queued;
+                task.started_at = None;
+                task.lease_expires_at = None;
+                task.claim_token = None;
+                task.updated_at = now;
+                recovered.push(task.projection()?);
+                state.append_task_event_record(
+                    task_id,
+                    StorageTaskEventInput::new(
+                        "queued",
+                        "Schema validation resumed from durable checkpoint after lease expiry",
+                    ),
+                )?;
+                continue;
+            }
             let completed_import = task.kind == StorageTaskKind::Import
                 && processed > 0
                 && processed == task.progress.total();
@@ -696,7 +715,9 @@ impl TaskExecutionStorage for MemoryStorage {
         }
         let now = Utc::now();
         match payload {
-            StorageTaskCompletionPayload::Import | StorageTaskCompletionPayload::Reindex => {}
+            StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::Reindex
+            | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
                 crate::backup::store_remote_call_result(
                     &mut state,
@@ -803,6 +824,18 @@ impl TaskExecutionStorage for MemoryStorage {
         task.claim_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
+        if let Some(work) = state.schema_work.get(&lease.task_id().id()) {
+            let epoch = state
+                .schema_epochs
+                .get(&work.target().class_id().id())
+                .copied()
+                .unwrap_or(0);
+            state
+                .schema_work
+                .get_mut(&lease.task_id().id())
+                .expect("schema work exists")
+                .finish(StorageSchemaWorkStatus::Failed, epoch);
+        }
         state.append_task_event_record(lease.task_id(), event)?;
         Ok(projection)
     }
@@ -835,7 +868,7 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         let state = self.state.read().await;
-        crate::backup::capture(&state, include_history)
+        crate::backup::capture(&state, include_history, self.schema_limits)
     }
 }
 
@@ -1000,7 +1033,11 @@ impl RestoreStorage for MemoryStorage {
         let started_at = Utc::now();
         let source_includes_history = document.source_includes_history();
         let (metadata, snapshot) = document.into_parts();
-        let mut replacement = crate::backup::restore(snapshot)?;
+        let mut replacement = crate::backup::restore(
+            snapshot
+                .with_schema_limits(self.schema_limits)
+                .map_err(invalid_contract_value)?,
+        )?;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,
@@ -1237,9 +1274,16 @@ impl ImportStorage for MemoryStorage {
             .collect::<Vec<_>>();
         if let Some(path) = parts.path {
             candidates.retain(|collection| {
-                let mut names = Vec::new();
+                if collection.id().id() == ROOT_COLLECTION_ID {
+                    return path.is_empty();
+                }
+                // Import paths include the selected collection and omit root.
+                let mut names = vec![collection.name().to_string()];
                 let mut parent = collection.parent_collection_id();
                 while let Some(parent_id) = parent {
+                    if parent_id.id() == ROOT_COLLECTION_ID {
+                        break;
+                    }
                     let Some(ancestor) = state.collections.get(&parent_id.id()) else {
                         return false;
                     };
@@ -1247,7 +1291,7 @@ impl ImportStorage for MemoryStorage {
                     parent = ancestor.parent_collection_id();
                 }
                 names.reverse();
-                names == path || (collection.id().id() == ROOT_COLLECTION_ID && path.is_empty())
+                names == path
             });
         }
         match candidates.as_slice() {
@@ -1417,6 +1461,7 @@ impl ImportStorage for MemoryStorage {
         mode: StorageImportMode,
     ) -> Result<StorageImportPreflight, StorageError> {
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
@@ -1425,7 +1470,7 @@ impl ImportStorage for MemoryStorage {
         for item in plan.into_items() {
             let (index, operation) = item.into_parts();
             match scratch
-                .apply_import_operation(operation, &mut references)
+                .commit_import_operation(operation, &mut references)
                 .await
             {
                 Ok(revision) => items.push(StorageImportPreflightItem::success(index, revision)),
@@ -1457,6 +1502,7 @@ impl ImportStorage for MemoryStorage {
 
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
@@ -1479,7 +1525,7 @@ impl ImportStorage for MemoryStorage {
         for item in plan.into_items() {
             let (index, operation) = item.into_parts();
             match self
-                .apply_import_operation(operation, &mut references)
+                .commit_import_operation(operation, &mut references)
                 .await
             {
                 Ok(_) => items.push(StorageImportApplyItem::success(index)),
@@ -1506,6 +1552,7 @@ impl ImportStorage for MemoryStorage {
             return Err(invalid_task_lease());
         }
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(state.clone())),
         };
         scratch.record_import_results(results).await?;
@@ -1830,6 +1877,7 @@ impl MemoryStorage {
             return Err(invalid_task_lease());
         }
         let scratch = Self {
+            schema_limits: self.schema_limits,
             state: Arc::new(RwLock::new(state.clone())),
         };
         let mut next_references = references.clone();

@@ -430,3 +430,17 @@ query nondeterministically to the next operation.
   Mutation benchmarks run last against fresh isolated base/head databases;
   emitted audit events remain append-only, as they do in production.
 - Avoid code paths that read the global `CONFIG` (the clap-backed application configuration). Initialising it inside a benchmark binary panics on the harness's own CLI arguments (for example `--iai-run`). Where a function needs configuration values such as page limits, prefer a config-free entry point that takes them as parameters (see `parse_unified_search_query_with_limits` and `validate_page_limit_with_max`).
+
+## Schema evolution changes
+
+Schema use cases run through required `SchemaEvolutionStorage` operations and
+the observed opaque storage handle. Keep document compilation proof, exact
+schema references, object resource revision fences, and authorized collection
+coordinates across boundaries. PostgreSQL locks and triggers live in the adapter
+crate; the memory adapter must preserve the same logical semantics.
+
+Changes must retain atomic events/audit, bounded batches, lease recovery, impact
+epoch checks, import rollback, and logical backup integrity. Shared and native
+regressions live in `src/tests/storage_contract/schema_evolution/`. Run the
+config-free `schema_validation_criterion` benchmark for validation throughput.
+See [class schema evolution](schema_evolution.md) for routes and invariants.

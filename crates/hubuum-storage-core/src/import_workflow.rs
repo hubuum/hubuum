@@ -368,6 +368,7 @@ import_dto!(
 import_dto!(
     StorageImportClass,
     StorageImportClassParts {
+        schema_activation:Option<crate::StorageImportSchemaActivation>,
         reference: Option<String>,
         name: String,
         description: String,

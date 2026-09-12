@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.2`.
+Status: accepted; current experimental release train is `0.3`.
 
 ## Supported Crate Graph
 
@@ -211,3 +211,28 @@ claim at commit.
 The [generated inventory](generated/project_inventory.md) records current package
 versions and minimum Rust versions. The server's configuration and deployment
 upgrade actions are in the [runtime hardening guide](runtime_hardening.md).
+
+## Upgrading from 0.2 to 0.3
+
+Update all seven SDK dependencies to exactly 0.3.0 together. Implement all eleven
+methods of the new required `SchemaEvolutionStorage` capability in the workflow
+family. Carry `SchemaReference`, compiled policy proof, authorized collection,
+object resource revision, and task lease through the operation boundary. Publish
+schema/evidence changes and their audit/outbox records atomically.
+
+Handle the closed `schema_validation` task kind, `class_schema` and
+`object_validation` event entities, and optional `StorageImportSchemaActivation`
+in class imports. Map the three new logical schema state sections and schema
+history section for backup format 6, validate them before restore replacement,
+and recreate revalidation work without restoring active leases or impact proofs.
+
+Run the portable conformance suite and native transaction, lease, concurrency,
+and query-budget tests. The shared implementation scenarios and exact method
+inventory are in `docs/storage_boundary/semantic-coverage.toml`; behavioral
+requirements and client migration are in [class schema evolution](schema_evolution.md).
+
+Schema work reporting also applies through generic task APIs. Adapters must honor
+`StorageTaskListQuery::excluded_kind()` before totals and pagination; task initiator
+attribution does not grant access to class-wide counts. Task failure must atomically
+persist the schema checkpoint's terminal `failed` status and release its active-work
+slot. Schema provenance timestamps use UTC microsecond precision across adapters.

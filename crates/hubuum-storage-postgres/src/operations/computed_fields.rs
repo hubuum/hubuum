@@ -10,7 +10,7 @@ use diesel_async::RunQueryDsl;
 use hubuum_computed_fields::{
     Definition, FieldKey, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, Operation, ResultType,
 };
-use hubuum_domain::{ClassId, PrincipalId, TaskId};
+use hubuum_domain::{ClassId, PrincipalId, SchemaReference, TaskId};
 use hubuum_events_core::{
     Action, AuditDocument, EntityType, EventContext, MutationProvenance, NewEvent,
 };
@@ -1408,6 +1408,7 @@ async fn enqueue_rebuild(
     let total_items = i32::try_from(boundary.total_items).unwrap_or(i32::MAX);
     let task = insert_internal_task(
         connection,
+        StorageTaskKind::Reindex,
         serde_json::to_value(ComputedReindexPayload::new(
             class_id,
             revision,
@@ -1437,8 +1438,8 @@ async fn object_boundary(
     class_id: i32,
 ) -> Result<ObjectBoundary, PostgresStorageError> {
     diesel::sql_query(
-        "SELECT COALESCE(MAX(id), 0)::int AS upper_bound, COUNT(*)::bigint AS total_items \
-         FROM hubuumobject WHERE hubuum_class_id=$1",
+        "SELECT COALESCE((SELECT id FROM hubuumobject WHERE hubuum_class_id=$1 ORDER BY id DESC LIMIT 1),0)::int AS upper_bound, object_count AS total_items \
+         FROM class_schema_state WHERE class_id=$1",
     )
     .bind::<Integer, _>(class_id)
     .get_result::<ObjectBoundary>(connection)
@@ -1511,16 +1512,38 @@ async fn cancel_queued_reindex_tasks(
     Ok(())
 }
 
-async fn insert_internal_task(
+pub(crate) async fn insert_internal_task(
     connection: &mut PostgresConnection,
+    kind: StorageTaskKind,
     payload: Value,
     total_items: i32,
     actor_id: Option<i32>,
 ) -> Result<TaskRow, PostgresStorageError> {
+    insert_internal_task_with_event(connection, kind, payload, total_items, actor_id, true).await
+}
+
+/// Reconstructed work is covered by the enclosing restore provenance event.
+pub(crate) async fn insert_restored_internal_task(
+    connection: &mut PostgresConnection,
+    kind: StorageTaskKind,
+    payload: Value,
+    total_items: i32,
+) -> Result<TaskRow, PostgresStorageError> {
+    insert_internal_task_with_event(connection, kind, payload, total_items, None, false).await
+}
+
+async fn insert_internal_task_with_event(
+    connection: &mut PostgresConnection,
+    kind: StorageTaskKind,
+    payload: Value,
+    total_items: i32,
+    actor_id: Option<i32>,
+    record_queue_event: bool,
+) -> Result<TaskRow, PostgresStorageError> {
     let trace_link = crate::runtime::ambient_mutation_trace_link();
     let task = diesel::insert_into(crate::schema::tasks::table)
         .values(NewInternalTaskRow {
-            kind: StorageTaskKind::Reindex.as_str().to_string(),
+            kind: kind.as_str().to_string(),
             status: StorageTaskStatus::Queued.as_str().to_string(),
             submitted_by: actor_id,
             idempotency_key: None,
@@ -1558,11 +1581,13 @@ async fn insert_internal_task(
         ),
         None => MutationProvenance::system_for_task(initiator_user_id, task_id),
     };
-    append_event(
-        connection,
-        &task_event(&task, Action::Queued, "Internal task queued", &provenance)?,
-    )
-    .await?;
+    if record_queue_event {
+        append_event(
+            connection,
+            &task_event(&task, Action::Queued, "Internal task queued", &provenance)?,
+        )
+        .await?;
+    }
     notify_task_queue(connection, task.id).await?;
     tracing::info!(
         message = "Internal task queued",
@@ -1620,6 +1645,33 @@ fn validate_positive(label: &str, value: i32) -> Result<(), PostgresStorageError
     } else {
         Ok(())
     }
+}
+
+/// A schema revision invalidates the shared evaluation dependency even when the
+/// document is structurally equal to a retired revision.
+pub(crate) async fn invalidate_schema_dependency_on(
+    connection: &mut PostgresConnection,
+    target: SchemaReference,
+    actor_id: Option<i32>,
+) -> Result<Option<TaskId>, PostgresStorageError> {
+    use crate::schema::computed_field_definitions::dsl as definitions;
+    let any = definitions::computed_field_definitions
+        .filter(definitions::class_id.eq(target.class_id().id()))
+        .filter(definitions::visibility.eq(SHARED_VISIBILITY))
+        .select(definitions::id)
+        .first::<i32>(connection)
+        .await
+        .optional()?
+        .is_some();
+    if !any {
+        return Ok(None);
+    }
+    let state = advance_revision_and_enqueue(connection, target.class_id().id(), actor_id).await?;
+    state
+        .active_task_id
+        .map(TaskId::new)
+        .transpose()
+        .map_err(PostgresStorageError::from)
 }
 
 #[cfg(test)]

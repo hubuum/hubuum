@@ -1,6 +1,11 @@
 //! JSON Schema invariants shared by application workflows and storage adapters.
 
 mod budget;
+mod impact;
+mod limits;
+
+pub use impact::{SchemaFailure, SchemaImpactInspection};
+pub use limits::{JsonSchemaLimits, JsonSchemaLimitsBuilder, JsonSchemaLimitsError};
 
 use budget::{SchemaBudget, validate_document_size};
 use jsonschema::PatternOptions;
@@ -15,14 +20,15 @@ use sha2::{Digest, Sha256};
 const JSON_SCHEMA_CACHE_MAX_ENTRIES: usize = 128;
 
 type SchemaDigest = [u8; 32];
+type SchemaCacheKey = (SchemaDigest, JsonSchemaLimits);
 
-struct CompiledSchema {
+pub(crate) struct BudgetedSchema {
     validator: jsonschema::Validator,
     budget: SchemaBudget,
 }
 
-impl CompiledSchema {
-    fn validate(&self, value: &Value) -> Result<(), JsonSchemaError> {
+impl BudgetedSchema {
+    pub(crate) fn validate(&self, value: &Value) -> Result<(), JsonSchemaError> {
         self.budget.check_instance(value)?;
         self.validator
             .validate(value)
@@ -30,7 +36,7 @@ impl CompiledSchema {
     }
 }
 
-static JSON_SCHEMA_CACHE: OnceLock<RwLock<LruCache<SchemaDigest, Arc<CompiledSchema>>>> =
+static JSON_SCHEMA_CACHE: OnceLock<RwLock<LruCache<SchemaCacheKey, Arc<BudgetedSchema>>>> =
     OnceLock::new();
 
 /// Stable classification of a JSON Schema failure.
@@ -85,7 +91,7 @@ impl fmt::Display for JsonSchemaError {
 
 impl std::error::Error for JsonSchemaError {}
 
-fn schema_cache() -> &'static RwLock<LruCache<SchemaDigest, Arc<CompiledSchema>>> {
+fn schema_cache() -> &'static RwLock<LruCache<SchemaCacheKey, Arc<BudgetedSchema>>> {
     JSON_SCHEMA_CACHE.get_or_init(|| {
         let capacity = NonZeroUsize::new(JSON_SCHEMA_CACHE_MAX_ENTRIES)
             .expect("JSON_SCHEMA_CACHE_MAX_ENTRIES must be non-zero");
@@ -129,15 +135,18 @@ fn validate_reference_policy(value: &Value) -> Result<(), JsonSchemaError> {
     Ok(())
 }
 
-fn compile_json_schema(schema: &Value) -> Result<Arc<CompiledSchema>, JsonSchemaError> {
-    let budget = SchemaBudget::new(schema)?;
+pub(crate) fn compile_json_schema(
+    schema: &Value,
+    limits: JsonSchemaLimits,
+) -> Result<Arc<BudgetedSchema>, JsonSchemaError> {
+    let budget = SchemaBudget::new(schema, limits)?;
     validate_reference_policy(schema)?;
-    let digest = schema_digest(schema)?;
+    let key = (schema_digest(schema)?, limits);
 
     if let Some(validator) = schema_cache()
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&digest)
+        .get(&key)
         .cloned()
     {
         return Ok(validator);
@@ -156,34 +165,47 @@ fn compile_json_schema(schema: &Value) -> Result<Arc<CompiledSchema>, JsonSchema
                 "Invalid or over-budget JSON schema: {error}; simplify patterns or schema structure"
             ))
         })?;
-    let validator = Arc::new(CompiledSchema { validator, budget });
+    let validator = Arc::new(BudgetedSchema { validator, budget });
     schema_cache()
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .put(digest, validator.clone());
+        .put(key, validator.clone());
     Ok(validator)
 }
 
 /// Validate that a document is structurally valid JSON Schema.
 pub fn validate_json_schema(schema: &Value) -> Result<(), JsonSchemaError> {
-    validate_document_size(schema)?;
-    jsonschema::meta::validate(schema)
-        .map_err(|error| JsonSchemaError::invalid_schema(format!("Invalid JSON schema: {error}")))
+    JsonSchemaLimits::default().validate_schema(schema)
 }
 
-/// Validate that a schema can safely be used for instance validation.
-///
-/// Hubuum permits acyclic local JSON Pointer references and applies conservative
-/// compilation/evaluation budgets. Validation cannot resolve network or filesystem
-/// resources; unsupported structures return actionable schema errors.
+/// Compile under the default budgets and local-reference policy.
 pub fn validate_json_schema_for_instances(schema: &Value) -> Result<(), JsonSchemaError> {
-    compile_json_schema(schema).map(|_| ())
+    JsonSchemaLimits::default().validate_schema_for_instances(schema)
 }
 
-/// Validate one JSON value against a safe, compiled schema.
-/// Instance size and work budgets also apply when the validator is cached.
+/// Validate one value under the default budgets, including cache hits.
 pub fn validate_json_value(schema: &Value, value: &Value) -> Result<(), JsonSchemaError> {
-    compile_json_schema(schema)?.validate(value)
+    JsonSchemaLimits::default().validate_value(schema, value)
+}
+
+impl JsonSchemaLimits {
+    /// Validate a schema document before meta-schema evaluation.
+    pub fn validate_schema(self, schema: &Value) -> Result<(), JsonSchemaError> {
+        validate_document_size(schema, self)?;
+        jsonschema::meta::validate(schema).map_err(|error| {
+            JsonSchemaError::invalid_schema(format!("Invalid JSON schema: {error}"))
+        })
+    }
+
+    /// Compile with these budgets, retaining the fixed reference and regex guards.
+    pub fn validate_schema_for_instances(self, schema: &Value) -> Result<(), JsonSchemaError> {
+        compile_json_schema(schema, self).map(|_| ())
+    }
+
+    /// Validate using a cache entry bound to these exact deployment budgets.
+    pub fn validate_value(self, schema: &Value, value: &Value) -> Result<(), JsonSchemaError> {
+        compile_json_schema(schema, self)?.validate(value)
+    }
 }
 
 #[cfg(test)]
@@ -274,7 +296,7 @@ mod tests {
             },
             "$ref": "#/custom/properties/value"
         });
-        assert!(SchemaBudget::new(&schema).is_err());
+        assert!(SchemaBudget::new(&schema, JsonSchemaLimits::default()).is_err());
     }
 
     #[rstest]
@@ -299,10 +321,48 @@ mod tests {
     fn instance_budget_is_checked_on_cached_validators() {
         let schema = json!({"type": "array", "uniqueItems": true, "items": {"type": "string"}});
         validate_json_value(&schema, &json!(["small"])).unwrap();
-        let value = json!((0..1000).map(|i| format!("item-{i}")).collect::<Vec<_>>());
+        let value = json!((0..4000).map(|i| format!("item-{i}")).collect::<Vec<_>>());
         let error = validate_json_value(&schema, &value).unwrap_err();
         assert_eq!(error.kind(), JsonSchemaErrorKind::InvalidValue);
         assert!(error.to_string().contains("work budget"));
+    }
+
+    #[rstest]
+    #[case(16 * 1024)]
+    #[case(256 * 1024)]
+    #[case(1024 * 1024)]
+    fn original_batch_fixtures_fit_default_budgets(#[case] bytes: usize) {
+        let schema = json!({
+            "type": "object", "required": ["payload", "samples"],
+            "properties": {"payload": {"type": "string", "minLength": 1},
+                "samples": {"type": "array", "items": {"type": "integer"}}}
+        });
+        let value = json!({"payload": "x".repeat(bytes), "samples": (0..128).collect::<Vec<_>>()});
+        validate_json_value(&schema, &value).unwrap();
+    }
+
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    fn cache_separates_deployment_budgets(#[case] permissive_first: bool) {
+        let permissive = JsonSchemaLimits::default();
+        let strict = JsonSchemaLimits::builder()
+            .instance_work(1024)
+            .build()
+            .unwrap();
+        let schema = json!({"type": "string", "minLength": 1});
+        let value = json!("x".repeat(2048));
+        let budgets = if permissive_first {
+            [permissive, strict]
+        } else {
+            [strict, permissive]
+        };
+        for limits in budgets {
+            assert_eq!(
+                limits.validate_value(&schema, &value).is_ok(),
+                limits == permissive
+            );
+        }
     }
 
     #[test]
@@ -318,24 +378,33 @@ mod tests {
     fn schema_budget_resource_probe() {
         use std::time::Instant;
 
-        for combinator in ["allOf", "anyOf", "oneOf"] {
-            for depth in [15, 20, 25] {
-                let schema = repeated_reference_schema(depth, combinator);
-                let started = Instant::now();
-                validate_json_schema(&schema).unwrap();
-                let compile_error = validate_json_schema_for_instances(&schema).unwrap_err();
-                assert_eq!(compile_error.kind(), JsonSchemaErrorKind::InvalidSchema);
-                let value_error = validate_json_value(&schema, &json!(1)).unwrap_err();
-                assert_eq!(value_error.kind(), JsonSchemaErrorKind::InvalidSchema);
-                println!(
-                    "SCHEMA_BUDGET_EVIDENCE {}",
-                    json!({
-                        "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
-                        "combinator": combinator, "depth": depth,
-                        "schema_bytes": serde_json::to_vec(&schema).unwrap().len(),
-                        "rejected": true, "elapsed_us": started.elapsed().as_micros(),
-                    })
-                );
+        let maximum = JsonSchemaLimits::builder()
+            .schema_bytes(JsonSchemaLimits::MAX_SCHEMA_BYTES)
+            .expanded_work(JsonSchemaLimits::MAX_EXPANDED_WORK)
+            .instance_bytes(JsonSchemaLimits::MAX_INSTANCE_BYTES)
+            .instance_work(JsonSchemaLimits::MAX_INSTANCE_WORK)
+            .build()
+            .unwrap();
+        for limits in [JsonSchemaLimits::default(), maximum] {
+            for combinator in ["allOf", "anyOf", "oneOf"] {
+                for depth in [15, 20, 25] {
+                    let schema = repeated_reference_schema(depth, combinator);
+                    let started = Instant::now();
+                    limits.validate_schema(&schema).unwrap();
+                    let compile_error = limits.validate_schema_for_instances(&schema).unwrap_err();
+                    assert_eq!(compile_error.kind(), JsonSchemaErrorKind::InvalidSchema);
+                    let value_error = limits.validate_value(&schema, &json!(1)).unwrap_err();
+                    assert_eq!(value_error.kind(), JsonSchemaErrorKind::InvalidSchema);
+                    println!(
+                        "SCHEMA_BUDGET_EVIDENCE {}",
+                        json!({
+                            "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+                            "combinator": combinator, "depth": depth, "expanded_work_limit": limits.expanded_work(),
+                            "schema_bytes": serde_json::to_vec(&schema).unwrap().len(),
+                            "rejected": true, "elapsed_us": started.elapsed().as_micros(),
+                        })
+                    );
+                }
             }
         }
         let schema = repeated_reference_schema(3, "allOf");

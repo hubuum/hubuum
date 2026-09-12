@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use hubuum_domain::JsonSchemaLimits;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -1133,6 +1134,7 @@ where
 }
 
 fn planned_class_schema_policy(
+    schema_limits: JsonSchemaLimits,
     class: &ClassResolution,
 ) -> Result<StorageClassSchemaPolicy, ApiError> {
     let schema_policy =
@@ -1142,7 +1144,9 @@ fn planned_class_schema_policy(
         .json_schema()
         .filter(|_| schema_policy.validates_schema())
     {
-        crate::utilities::json_schema::compile_json_schema(schema)?;
+        schema_limits
+            .validate_schema_for_instances(schema)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
     Ok(schema_policy)
 }
@@ -1162,9 +1166,39 @@ where
     C: AuthorizationContext,
 {
     let pool = backend;
+    if input.schema_activation.is_some()
+        && (state.scopes.is_some()
+            || !is_import_admin(backend, user, state)
+                .await
+                .map_err(|message| PlanningFailure {
+                    kind: FailureKind::Permission,
+                    item: planned_result(
+                        "class",
+                        "activate_schema",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message,
+                })?)
+    {
+        return Err(PlanningFailure {
+            kind: FailureKind::Permission,
+            item: planned_result(
+                "class",
+                "activate_schema",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: "Schema activation inside imports requires an unscoped administrator token"
+                .to_string(),
+        });
+    }
+
     if let Some(schema) = input.json_schema.as_ref() {
-        crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
-            PlanningFailure {
+        storage_handle(backend)
+            .schema_limits()
+            .validate_schema(schema)
+            .map_err(|error| PlanningFailure {
                 kind: FailureKind::Validation,
                 item: planned_result(
                     "class",
@@ -1173,8 +1207,7 @@ where
                     Some(input.name.clone()),
                 ),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
     }
     if let Some(reference) = &input.ref_
         && state.classes_by_ref.contains_key(reference)
@@ -1290,24 +1323,33 @@ where
             id: class.id,
             name: input.name.clone(),
             collection_id: collection.id,
-            json_schema: input
-                .json_schema
-                .clone()
-                .or_else(|| class.json_schema.clone()),
-            validate_schema: input.validate_schema.unwrap_or(class.validate_schema),
+            json_schema: if input.schema_activation.is_some() {
+                input.json_schema.clone()
+            } else {
+                input
+                    .json_schema
+                    .clone()
+                    .or_else(|| class.json_schema.clone())
+            },
+            validate_schema: if input.schema_activation.is_some() {
+                input.validate_schema.unwrap_or(false)
+            } else {
+                input.validate_schema.unwrap_or(class.validate_schema)
+            },
             exists_in_db: true,
         };
         let schema_policy =
-            planned_class_schema_policy(&updated).map_err(|error| PlanningFailure {
-                kind: FailureKind::Validation,
-                item: planned_result(
-                    "class",
-                    "validate",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: error.to_string(),
-            })?;
+            planned_class_schema_policy(storage_handle(backend).schema_limits(), &updated)
+                .map_err(|error| PlanningFailure {
+                    kind: FailureKind::Validation,
+                    item: planned_result(
+                        "class",
+                        "validate",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?;
         let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
             json_schema,
@@ -1316,13 +1358,34 @@ where
         };
         remember_class(state, input.ref_.clone(), updated.clone());
 
+        let mut result = planned_result(
+            "class",
+            "update",
+            input.ref_.clone(),
+            Some(format!("{}::{}", collection.name, input.name)),
+        );
+        if let Some(activation) = &input.schema_activation {
+            let impact = if let Some(task) = activation.impact_task_id {
+                Some(
+                    hubuum_storage_core::SchemaEvolutionStorage::get_schema_work(
+                        &storage_handle(pool),
+                        task,
+                    )
+                    .await
+                    .map_err(|error| PlanningFailure {
+                        kind: FailureKind::Validation,
+                        item: result.clone(),
+                        message: error.to_string(),
+                    })?,
+                )
+            } else {
+                None
+            };
+            result.details =
+                Some(serde_json::json!({"schema_activation":activation,"impact":impact}));
+        }
         Ok(PlannedItem {
-            result: planned_result(
-                "class",
-                "update",
-                input.ref_.clone(),
-                Some(format!("{}::{}", collection.name, input.name)),
-            ),
+            result,
             execution: Some(PlannedExecution::UpdateClass {
                 class_id: class.id,
                 input: execution_input,
@@ -1365,16 +1428,17 @@ where
             exists_in_db: false,
         };
         let schema_policy =
-            planned_class_schema_policy(&created).map_err(|error| PlanningFailure {
-                kind: FailureKind::Validation,
-                item: planned_result(
-                    "class",
-                    "validate",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: error.to_string(),
-            })?;
+            planned_class_schema_policy(storage_handle(backend).schema_limits(), &created)
+                .map_err(|error| PlanningFailure {
+                    kind: FailureKind::Validation,
+                    item: planned_result(
+                        "class",
+                        "validate",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?;
         let (json_schema, validate_schema) = schema_policy.into_parts();
         let execution_input = ImportClassInput {
             json_schema,
@@ -1441,8 +1505,10 @@ where
     if class.validate_schema
         && let Some(schema) = &class.json_schema
     {
-        crate::utilities::json_schema::validate_json_value(schema, &input.data).map_err(|err| {
-            PlanningFailure {
+        storage_handle(backend)
+            .schema_limits()
+            .validate_value(schema, &input.data)
+            .map_err(|err| PlanningFailure {
                 kind: FailureKind::Validation,
                 item: planned_result(
                     "object",
@@ -1451,8 +1517,7 @@ where
                     Some(format!("{}::{}", class.name, input.name)),
                 ),
                 message: err.to_string(),
-            }
-        })?;
+            })?;
     }
 
     let object_key = (class.id, input.name.clone());

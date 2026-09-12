@@ -168,9 +168,14 @@ impl ClassStorage for PostgresTransaction<'_> {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::class::create_class_on(&mut connection, command, context)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::class::create_class_on(
+            self.runtime.schema_limits(),
+            &mut connection,
+            command,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn update_class(
@@ -180,9 +185,15 @@ impl ClassStorage for PostgresTransaction<'_> {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::class::update_class_on(&mut connection, target, changes, context)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::class::update_class_on(
+            self.runtime.schema_limits(),
+            &mut connection,
+            target,
+            changes,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class(
@@ -349,9 +360,13 @@ impl ObjectStorage for PostgresTransaction<'_> {
 
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::object::validate_object_on(&mut connection, object)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::object::validate_object_on(
+            self.runtime.schema_limits(),
+            &mut connection,
+            object,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn validate_object_create(
@@ -359,9 +374,13 @@ impl ObjectStorage for PostgresTransaction<'_> {
         command: StorageObjectCreate,
     ) -> Result<(), StorageError> {
         let mut connection = self.connection.lock().await;
-        crate::operations::object::validate_object_create_command_on(&mut connection, command)
-            .await
-            .map_err(StorageError::from)
+        crate::operations::object::validate_object_create_command_on(
+            self.runtime.schema_limits(),
+            &mut connection,
+            command,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn validate_object_update(
@@ -371,6 +390,7 @@ impl ObjectStorage for PostgresTransaction<'_> {
     ) -> Result<(), StorageError> {
         let mut connection = self.connection.lock().await;
         crate::operations::object::validate_object_update_command_on(
+            self.runtime.schema_limits(),
             &mut connection,
             object_id.id(),
             changes,

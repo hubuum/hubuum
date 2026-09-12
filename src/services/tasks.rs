@@ -466,6 +466,17 @@ where
 
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
+    if task.kind == TaskKind::SchemaValidation.as_str() {
+        let is_admin = match &authorization_mode {
+            AuthorizationMode::LocalStorage => requestor.is_admin(backend).await?,
+            AuthorizationMode::Delegated(permission_backend) => {
+                permission_backend.is_admin(&principal).await?
+            }
+        };
+        if !is_admin {
+            return Err(ApiError::NotFound(format!("{label} not found")));
+        }
+    }
     let local = matches!(authorization_mode, AuthorizationMode::LocalStorage);
     let allowed = match authorization_mode {
         AuthorizationMode::LocalStorage => {
@@ -500,15 +511,19 @@ pub(crate) async fn list_tasks(
     submitted_by: Option<i32>,
     kind: Option<TaskKind>,
     status: Option<TaskStatus>,
+    excluded_kind: Option<TaskKind>,
     options: QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
     let (tasks, total) = storage_handle(backend)
-        .list_tasks(StorageTaskListQuery::new(
-            submitted_by.map(principal_id_to_storage),
-            kind.map(task_kind_to_storage),
-            status.map(task_status_to_storage),
-            options,
-        ))
+        .list_tasks(
+            StorageTaskListQuery::new(
+                submitted_by.map(principal_id_to_storage),
+                kind.map(task_kind_to_storage),
+                status.map(task_status_to_storage),
+                options,
+            )
+            .excluding_kind(excluded_kind.map(task_kind_to_storage)),
+        )
         .await?
         .into_parts();
     Ok((
@@ -658,6 +673,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::Backup => StorageTaskKind::Backup,
         TaskKind::Reindex => StorageTaskKind::Reindex,
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
+        TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
     }
 }
 
@@ -809,4 +825,50 @@ fn map_backup_lookup<T, U>(
         },
         StorageTaskOutputLookup::Missing => BackupOutputLookup::Missing,
     }
+}
+
+/// Resume schema validation in bounded adapter-owned batches under the existing lease.
+pub async fn execute_schema_validation(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+) -> Result<crate::models::TaskStatus, ApiError> {
+    use hubuum_storage_core::{
+        SchemaEvolutionStorage, StorageSchemaBatchLimits, StorageSchemaWorkStatus,
+    };
+    let limits =
+        StorageSchemaBatchLimits::for_schema_limits(storage_handle(backend).schema_limits());
+    let mut previous = storage_handle(backend)
+        .get_schema_work(task.lease.task_id())
+        .await?;
+    let status = loop {
+        let work = storage_handle(backend)
+            .process_schema_work(task.lease.clone(), limits)
+            .await?;
+        crate::observability::metrics::schema_work_progress(&previous, &work);
+        previous = work.clone();
+        match work.status() {
+            StorageSchemaWorkStatus::Running => tokio::task::yield_now().await,
+            StorageSchemaWorkStatus::Complete => break TaskStatus::Succeeded,
+            StorageSchemaWorkStatus::Failed => break TaskStatus::Failed,
+            StorageSchemaWorkStatus::Cancelled | StorageSchemaWorkStatus::Superseded => {
+                break TaskStatus::Cancelled;
+            }
+        }
+    };
+    // The adapter commits the checkpoint and terminal task together. Observe the
+    // persisted result here so every backend records the same completion metrics.
+    let (finished, _) = storage_handle(backend)
+        .get_task_access(task.lease.task_id())
+        .await?
+        .into_parts();
+    let execution = finished
+        .started_at()
+        .zip(finished.finished_at())
+        .and_then(|(started, ended)| ended.signed_duration_since(started).to_std().ok());
+    crate::observability::metrics::task_completed(
+        finished.kind().as_str(),
+        finished.status().as_str(),
+        execution,
+    );
+    Ok(status)
 }

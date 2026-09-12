@@ -1930,6 +1930,82 @@ impl TransactionStorage for CompleteExternalAdapter {
     }
 }
 
+#[async_trait]
+impl SchemaEvolutionStorage for CompleteExternalAdapter {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError> {
+        fixture_result()
+    }
+    async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError> {
+        fixture_result()
+    }
+    async fn list_schema_revisions(
+        &self,
+        query: StorageSchemaPage,
+    ) -> Result<Vec<StorageSchemaRevision>, StorageError> {
+        fixture_result()
+    }
+    async fn get_schema_state(
+        &self,
+        class_id: ClassId,
+    ) -> Result<StorageClassSchemaState, StorageError> {
+        fixture_result()
+    }
+    async fn stage_schema_revision(
+        &self,
+        request: StorageSchemaStage,
+    ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError> {
+        fixture_result()
+    }
+    async fn abandon_schema_revision(
+        &self,
+        target: SchemaReference,
+        authorized_collection: CollectionId,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError> {
+        fixture_result()
+    }
+    async fn activate_schema_revision(
+        &self,
+        request: StorageSchemaActivation,
+    ) -> Result<StorageMutationOutcome<StorageSchemaActivationResult>, StorageError> {
+        fixture_result()
+    }
+    async fn request_schema_work(
+        &self,
+        request: StorageSchemaWorkRequest,
+    ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError> {
+        fixture_result()
+    }
+    async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError> {
+        fixture_result()
+    }
+    async fn process_schema_work(
+        &self,
+        lease: StorageTaskLease,
+        limits: StorageSchemaBatchLimits,
+    ) -> Result<StorageSchemaWork, StorageError> {
+        fixture_result()
+    }
+    async fn cancel_schema_work(
+        &self,
+        task_id: TaskId,
+        authorized_collection: CollectionId,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError> {
+        fixture_result()
+    }
+    async fn list_schema_compliance(
+        &self,
+        query: StorageSchemaPage,
+        status: Option<StorageComplianceStatus>,
+    ) -> Result<Vec<StorageObjectCompliance>, StorageError> {
+        fixture_result()
+    }
+}
+
 impl StorageBackend for CompleteExternalAdapter {}
 
 #[test]

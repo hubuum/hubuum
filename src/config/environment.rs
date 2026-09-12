@@ -6,7 +6,8 @@
 //! quietly introducing an ambiguous name such as `HUBUUM_TIMEOUT`.
 
 use hubuum_domain::{
-    MAX_EVENT_WORKER_BATCH_SIZE, OperationalConstraint, TokenLifetime, TokenRetentionBatchSize,
+    JsonSchemaLimits, MAX_EVENT_WORKER_BATCH_SIZE, OperationalConstraint, TokenLifetime,
+    TokenRetentionBatchSize,
 };
 use hubuum_query::MAX_TRAVERSAL_DEPTH;
 
@@ -18,6 +19,7 @@ use super::{AppConfig, defaults::MAX_COMPUTED_REINDEX_BATCH_SIZE};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentOwner {
     Server,
+    Schemas,
     Tracing,
     Database,
     Tasks,
@@ -74,6 +76,10 @@ macro_rules! option {
 
 /// Variables consumed by `AppConfig` through clap.
 pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
+    option!("HUBUUM_SCHEMA_MAX_BYTES", Schemas),
+    option!("HUBUUM_SCHEMA_MAX_EXPANDED_WORK", Schemas),
+    option!("HUBUUM_SCHEMA_MAX_INSTANCE_BYTES", Schemas),
+    option!("HUBUUM_SCHEMA_MAX_INSTANCE_WORK", Schemas),
     option!("HUBUUM_SECRET_SOURCE", Operations),
     option!("HUBUUM_SECRET_FILE_ROOT", Operations, metadata),
     option!("HUBUUM_BIND_IP", Server),
@@ -292,6 +298,30 @@ macro_rules! configuration_bound {
 /// Runtime validation and the generated operational contract consume these
 /// same entries, including the accessor for the value being validated.
 pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
+    ConfigurationBound {
+        name: "HUBUUM_SCHEMA_MAX_BYTES",
+        minimum: Some(1024),
+        maximum: Some(JsonSchemaLimits::MAX_SCHEMA_BYTES as i64),
+        value: |config| config.schema_validation.schema_max_bytes as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+        minimum: Some(1),
+        maximum: Some(JsonSchemaLimits::MAX_EXPANDED_WORK as i64),
+        value: |config| config.schema_validation.schema_max_expanded_work as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+        minimum: Some(1024),
+        maximum: Some(JsonSchemaLimits::MAX_INSTANCE_BYTES as i64),
+        value: |config| config.schema_validation.schema_max_instance_bytes as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+        minimum: Some(1),
+        maximum: Some(JsonSchemaLimits::MAX_INSTANCE_WORK as i64),
+        value: |config| config.schema_validation.schema_max_instance_work as i128,
+    },
     configuration_bound!(
         "HUBUUM_TRACING_CONNECT_TIMEOUT_MS",
         tracing_connect_timeout_ms,

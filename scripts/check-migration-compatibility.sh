@@ -69,6 +69,8 @@ while IFS= read -r file; do
     transactional=false
   fi
   bounded_timeout_pattern="=[[:space:]]*'[1-9][0-9]*(MS|S)'[[:space:]]*;"
+  widened_checks="$(python3 "$repository_root/scripts/check-migration-check-replacements.py" \
+    "$repository_root" "$base_ref" "$repository_root/$file")"
 
   while IFS=: read -r line_number statement; do
     [[ -n "$line_number" ]] || continue
@@ -90,7 +92,15 @@ while IFS= read -r file; do
     fi
 
     if [[ "$upper_statement" =~ DROP[[:space:]]+(TABLE|COLUMN|CONSTRAINT|INDEX) ]]; then
-      report_failure "$file" "$line_number" "dropping schema objects is not adjacent-release compatible"
+      reviewed_enum_drop='^ALTER TABLE (PUBLIC\.)?([A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: WIDEN-ENUM-CHECK[[:space:]]*$'
+      if [[ "$upper_statement" =~ $reviewed_enum_drop ]] \
+        && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
+          && "$statement_timeout_is_bounded" == true ]] \
+        && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"$'\n'* ]]; then
+        : # The replacement is validated in this transaction and preserves every baseline value.
+      else
+        report_failure "$file" "$line_number" "dropping schema objects is not adjacent-release compatible"
+      fi
     elif [[ "$upper_statement" =~ RENAME[[:space:]]+(TO|COLUMN|CONSTRAINT) ]]; then
       report_failure "$file" "$line_number" "renaming schema objects is not adjacent-release compatible"
     elif [[ "$upper_statement" =~ ALTER[[:space:]]+COLUMN.*[[:space:]]TYPE[[:space:]] ]]; then

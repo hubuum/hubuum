@@ -1462,6 +1462,143 @@
       "feature": null
     },
     {
+      "name": "hubuum_schema_compliance_objects",
+      "kind": "gauge",
+      "unit": null,
+      "labels": [
+        {
+          "name": "status",
+          "bounded_by": "enumerated values",
+          "values": [
+            "valid",
+            "invalid",
+            "pending",
+            "not_required"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "database",
+      "description": "Objects by effective active schema compliance",
+      "feature": null
+    },
+    {
+      "name": "hubuum_schema_dependency_rebuilds_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Dependent rebuilds queued by explicit schema activation",
+      "feature": null
+    },
+    {
+      "name": "hubuum_schema_mutations_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "policy",
+          "bounded_by": "enumerated values",
+          "values": [
+            "stage",
+            "reject_incompatible",
+            "allow_pending"
+          ]
+        },
+        {
+          "name": "result",
+          "bounded_by": "enumerated values",
+          "values": [
+            "committed",
+            "unchanged",
+            "conflict",
+            "error"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Schema staging and activation outcomes",
+      "feature": null
+    },
+    {
+      "name": "hubuum_schema_validation_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "impact",
+            "revalidation"
+          ]
+        },
+        {
+          "name": "status",
+          "bounded_by": "enumerated values",
+          "values": [
+            "complete",
+            "cancelled",
+            "superseded"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Schema validation work elapsed time",
+      "feature": null
+    },
+    {
+      "name": "hubuum_schema_validation_objects_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "impact",
+            "revalidation"
+          ]
+        },
+        {
+          "name": "result",
+          "bounded_by": "enumerated values",
+          "values": [
+            "valid",
+            "invalid",
+            "not_required",
+            "uninspectable",
+            "stale"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Committed schema inspection outcomes",
+      "feature": null
+    },
+    {
       "name": "hubuum_secret_resolution_duration_seconds",
       "kind": "histogram",
       "unit": "seconds",
@@ -1656,6 +1793,7 @@
             "remote_target",
             "restore",
             "service_account",
+            "schema_evolution",
             "task_execution",
             "task_queue",
             "token_retention",
@@ -1669,6 +1807,8 @@
           "name": "operation",
           "bounded_by": "enumerated values",
           "values": [
+            "abandon_schema_revision",
+            "activate_schema_revision",
             "add_group_member",
             "aggregate_objects",
             "anonymize_user",
@@ -1683,6 +1823,7 @@
             "authorize_local_collection",
             "authorize_local_collections",
             "bootstrap_default_admin",
+            "cancel_schema_work",
             "capture_backup_snapshot",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
@@ -1772,6 +1913,9 @@
             "get_restore_drain_state",
             "get_restore_job",
             "get_restore_status",
+            "get_schema_impact_boundary",
+            "get_schema_state",
+            "get_schema_work",
             "get_service_account",
             "get_service_account_details",
             "get_task_access",
@@ -1840,6 +1984,8 @@
             "list_remote_target_history",
             "list_remote_targets",
             "list_retained_tokens",
+            "list_schema_compliance",
+            "list_schema_revisions",
             "list_shared_computed_fields",
             "list_task_events",
             "list_tasks",
@@ -1863,6 +2009,7 @@
             "prepare_class_relation",
             "prepare_object_relation",
             "process_event_fanout_batch",
+            "process_schema_work",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
             "purge_expired_tokens",
@@ -1877,6 +2024,7 @@
             "renew_token",
             "replace_export_template",
             "request_computed_field_rebuild",
+            "request_schema_work",
             "reset_local_password",
             "resolve_class",
             "resolve_class_names",
@@ -1894,11 +2042,13 @@
             "revoke_local_collection_grant",
             "revoke_token",
             "revoke_token_by_hash",
+            "schema_compliance_counts",
             "search_classes",
             "search_collections",
             "search_objects",
             "set_user_password",
             "stage_restore",
+            "stage_schema_revision",
             "start_restore_draining",
             "sync_external_user",
             "tick_restore_coordinator",
@@ -2018,6 +2168,7 @@
             "remote_target",
             "restore",
             "service_account",
+            "schema_evolution",
             "task_execution",
             "task_queue",
             "token_retention",
@@ -2031,6 +2182,8 @@
           "name": "operation",
           "bounded_by": "enumerated values",
           "values": [
+            "abandon_schema_revision",
+            "activate_schema_revision",
             "add_group_member",
             "aggregate_objects",
             "anonymize_user",
@@ -2045,6 +2198,7 @@
             "authorize_local_collection",
             "authorize_local_collections",
             "bootstrap_default_admin",
+            "cancel_schema_work",
             "capture_backup_snapshot",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
@@ -2134,6 +2288,9 @@
             "get_restore_drain_state",
             "get_restore_job",
             "get_restore_status",
+            "get_schema_impact_boundary",
+            "get_schema_state",
+            "get_schema_work",
             "get_service_account",
             "get_service_account_details",
             "get_task_access",
@@ -2202,6 +2359,8 @@
             "list_remote_target_history",
             "list_remote_targets",
             "list_retained_tokens",
+            "list_schema_compliance",
+            "list_schema_revisions",
             "list_shared_computed_fields",
             "list_task_events",
             "list_tasks",
@@ -2225,6 +2384,7 @@
             "prepare_class_relation",
             "prepare_object_relation",
             "process_event_fanout_batch",
+            "process_schema_work",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
             "purge_expired_tokens",
@@ -2239,6 +2399,7 @@
             "renew_token",
             "replace_export_template",
             "request_computed_field_rebuild",
+            "request_schema_work",
             "reset_local_password",
             "resolve_class",
             "resolve_class_names",
@@ -2256,11 +2417,13 @@
             "revoke_local_collection_grant",
             "revoke_token",
             "revoke_token_by_hash",
+            "schema_compliance_counts",
             "search_classes",
             "search_collections",
             "search_objects",
             "set_user_password",
             "stage_restore",
+            "stage_schema_revision",
             "start_restore_draining",
             "sync_external_user",
             "tick_restore_coordinator",
@@ -2324,7 +2487,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         }
       ],
@@ -2346,7 +2510,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         },
         {
@@ -2378,7 +2543,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         },
         {
@@ -2428,7 +2594,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         },
         {
@@ -2460,7 +2627,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         }
       ],
@@ -2482,7 +2650,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         },
         {
@@ -2579,7 +2748,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         }
       ],
@@ -2649,7 +2819,8 @@
             "export",
             "backup",
             "reindex",
-            "remote_call"
+            "remote_call",
+            "schema_validation"
           ]
         },
         {
@@ -4963,6 +5134,98 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_SCHEMA_MAX_BYTES",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "65536"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1024,
+      "maximum": 1048576,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "16384"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 65536,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2097152"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1024,
+      "maximum": 16777216,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+      "owner": "schemas",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 1073741824,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_SECRET_FILE_ROOT",
       "owner": "operations",
       "exposure": "sensitive_metadata",
@@ -6374,6 +6637,22 @@
         ]
       },
       {
+        "name": "class_schema",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
+        "name": "object_validation",
+        "actions": [
+          "updated",
+          "succeeded",
+          "failed"
+        ]
+      },
+      {
         "name": "object",
         "actions": [
           "created",
@@ -6523,7 +6802,7 @@
   },
   "documents": {
     "backup": {
-      "version": 5,
+      "version": 6,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -6547,9 +6826,12 @@
         "collection_hierarchy",
         "collection_permission_grants",
         "classes",
+        "class_schema_revisions",
+        "class_schema_state",
         "computed_field_definitions",
         "class_relations",
         "objects",
+        "object_schema_evidence",
         "object_relations",
         "export_templates",
         "remote_targets",
@@ -6557,6 +6839,7 @@
         "event_subscriptions",
         "collection_history",
         "class_history",
+        "class_schema_history",
         "class_relation_history",
         "object_history",
         "object_relation_history",
@@ -6630,6 +6913,82 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "schema_max_bytes",
+          "long": "schema-max-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "65536"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_expanded_work",
+          "long": "schema-max-expanded-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16384"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_bytes",
+          "long": "schema-max-instance-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2097152"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_work",
+          "long": "schema-max-instance-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "secret_source",
           "long": "secret-source",
@@ -8930,6 +9289,82 @@
     {
       "command": "hubuum-admin",
       "options": [
+        {
+          "id": "schema_max_bytes",
+          "long": "schema-max-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "65536"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_expanded_work",
+          "long": "schema-max-expanded-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_EXPANDED_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16384"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_bytes",
+          "long": "schema-max-instance-bytes",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2097152"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "schema_max_instance_work",
+          "long": "schema-max-instance-work",
+          "short": null,
+          "environment": "HUBUUM_SCHEMA_MAX_INSTANCE_WORK",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "secret_source",
           "long": "secret-source",

@@ -365,6 +365,9 @@ pub struct ImportCollectionInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ImportClassInput {
+    /// Explicit activation of an already staged revision, committed with this import item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_activation: Option<ImportSchemaActivation>,
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
     pub name: String,
@@ -1403,4 +1406,14 @@ mod tests {
             assert!(!output.contains("import-target-auth-secret"));
         }
     }
+}
+
+/// Administrator-selected schema activation applied atomically during import.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSchemaActivation {
+    pub revision: hubuum_domain::SchemaRevision,
+    pub expected_active_revision: hubuum_domain::SchemaRevision,
+    pub policy: crate::models::schema_evolution::SchemaActivationPolicy,
+    pub impact_task_id: Option<hubuum_domain::TaskId>,
 }

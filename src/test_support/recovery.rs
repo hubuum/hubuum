@@ -83,6 +83,9 @@ impl RestoreContractFixture {
                     collection.id(),
                     "recovery contract",
                 )
+                .schema_policy(
+                    StorageClassSchemaPolicy::try_from_parts(Some(json!(true)), true).unwrap(),
+                )
                 .build(),
                 &context,
             )

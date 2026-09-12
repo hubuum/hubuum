@@ -82,6 +82,7 @@ GENERATED_ENV="$TEST_ROOT/generated.env"
 cat > "$ENV_FILE" <<'EOF'
 INSTALL_MODE=all
 HUBUUM_LOG_LEVEL=debug
+HUBUUM_SCHEMA_MAX_INSTANCE_BYTES=4194304
 OPERATOR_CUSTOM_SETTING=preserved
 EOF
 cat > "$GENERATED_ENV" <<'EOF'
@@ -89,6 +90,8 @@ INSTALL_MODE=backend
 HUBUUM_LOG_LEVEL=info
 MANAGEMENT_SCRIPT_BASE_URL=https://example.invalid/scripts
 NEW_GENERATED_DEFAULT=present
+HUBUUM_SCHEMA_MAX_INSTANCE_BYTES=2097152
+HUBUUM_SCHEMA_MAX_INSTANCE_WORK=268435456
 EOF
 
 merge_missing_env_values "$GENERATED_ENV"
@@ -100,6 +103,8 @@ grep -qx 'HUBUUM_LOG_LEVEL=debug' "$ENV_FILE"
 grep -qx 'OPERATOR_CUSTOM_SETTING=preserved' "$ENV_FILE"
 grep -qx 'MANAGEMENT_SCRIPT_BASE_URL=https://example.invalid/scripts' "$ENV_FILE"
 grep -qx 'NEW_GENERATED_DEFAULT=present' "$ENV_FILE"
+grep -qx 'HUBUUM_SCHEMA_MAX_INSTANCE_BYTES=4194304' "$ENV_FILE"
+grep -qx 'HUBUUM_SCHEMA_MAX_INSTANCE_WORK=268435456' "$ENV_FILE"
 
 refresh_function_source="$(
   sed -n '/^refresh_deployment_files() {$/,/^}$/p' \

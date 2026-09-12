@@ -392,6 +392,14 @@ fn class_to_storage(input: ImportClassInput) -> Result<StorageImportClass, ApiEr
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
     Ok(StorageImportClass::from_parts(StorageImportClassParts {
+        schema_activation: input.schema_activation.map(|activation| {
+            hubuum_storage_core::StorageImportSchemaActivation::new(
+                activation.revision,
+                activation.expected_active_revision,
+                activation.policy.into(),
+                activation.impact_task_id,
+            )
+        }),
         reference: input.ref_,
         name: input.name,
         description: input.description,
@@ -735,6 +743,7 @@ mod tests {
     #[test]
     fn class_import_materializes_disabled_schema_validation_by_default() {
         let class = class_to_storage(ImportClassInput {
+            schema_activation: None,
             ref_: None,
             name: "server".to_string(),
             description: "Server".to_string(),

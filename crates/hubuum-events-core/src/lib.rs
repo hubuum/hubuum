@@ -395,6 +395,11 @@ pub struct EventContext {
 }
 
 impl EventContext {
+    /// Attribution shared by durable history and the event emitted for a mutation.
+    pub fn mutation_provenance(&self) -> &MutationProvenance {
+        &self.mutation
+    }
+
     /// Build an event context from already-typed mutation provenance.
     pub fn from_mutation(mutation: MutationProvenance) -> Self {
         Self::new(mutation, None, None)
@@ -473,6 +478,8 @@ impl EventContext {
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub enum EntityType {
+    ClassSchema,
+    ObjectValidation,
     Collection,
     Class,
     Object,
@@ -498,6 +505,8 @@ impl EntityType {
     pub const ALL: &'static [Self] = &[
         Self::Collection,
         Self::Class,
+        Self::ClassSchema,
+        Self::ObjectValidation,
         Self::Object,
         Self::ClassRelation,
         Self::ObjectRelation,
@@ -520,6 +529,8 @@ impl EntityType {
     pub fn as_str(self) -> &'static str {
         match self {
             EntityType::Collection => "collection",
+            EntityType::ClassSchema => "class_schema",
+            EntityType::ObjectValidation => "object_validation",
             EntityType::Class => "class",
             EntityType::Object => "object",
             EntityType::ClassRelation => "class_relation",
@@ -545,6 +556,8 @@ impl EntityType {
         match value {
             "collection" => Ok(EntityType::Collection),
             "class" => Ok(EntityType::Class),
+            "class_schema" => Ok(EntityType::ClassSchema),
+            "object_validation" => Ok(EntityType::ObjectValidation),
             "object" => Ok(EntityType::Object),
             "class_relation" => Ok(EntityType::ClassRelation),
             "object_relation" => Ok(EntityType::ObjectRelation),
@@ -681,6 +694,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::Collection | E::Class | E::Object | E::User | E::Group | E::ExportTemplate => {
             &[A::Created, A::Updated, A::Deleted]
         }
+        E::ClassSchema => &[A::Created, A::Updated, A::Deleted],
+        E::ObjectValidation => &[A::Updated, A::Succeeded, A::Failed],
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
         E::EventSink | E::EventSubscription | E::ComputedFieldDefinition => {
             &[A::Created, A::Updated, A::Deleted]
