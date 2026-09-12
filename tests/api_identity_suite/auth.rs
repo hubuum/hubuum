@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::middlewares::ProxyTrust;
     use crate::models::user::{LoginUser, MAX_LOGIN_NAME_CHARACTERS};
     use crate::test_support::TestActiveTokens;
@@ -7,12 +9,14 @@ mod tests {
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config, postgres_test_pool,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
-    use crate::tests::{TestMutexGuard, create_test_admin, create_test_user, lock_test_mutex};
+    use crate::tests::{
+        TestMutexGuard, TestScope, create_test_admin, create_test_user, lock_test_mutex,
+    };
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
     use hubuum_storage_postgres::diesel_async_prelude::*;
-    use hubuum_storage_postgres::with_connection;
+    use hubuum_storage_postgres::{PostgresStorageError, with_connection};
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
@@ -23,6 +27,64 @@ mod tests {
 
     async fn lock_auth_test_state() -> TestMutexGuard {
         lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await
+    }
+
+    #[actix_web::test]
+    async fn test_canceled_login_futures_do_not_exhaust_admission() {
+        let _guard = lock_auth_test_state().await;
+        reset_login_rate_limit_for_tests().await;
+        let config = integration_test_config().unwrap();
+        assert!(config.login_rate_limit_enabled);
+        let scope = TestScope::new();
+        let pool = postgres_test_pool(&config.database_url, 1);
+        let app = test::init_service(
+            App::new()
+                .app_data(crate::tests::app_context(&pool))
+                .configure(api::config),
+        )
+        .await;
+        let credentials = LoginUser {
+            identity_scope: None,
+            name: scope.scoped_name("canceled-login"),
+            password: "unused-password".to_string(),
+        };
+
+        // Hold this test's only connection. Each real handler reserves admission
+        // and then waits for authentication storage, without locking shared tables.
+        let (acquired_tx, acquired_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let blocker_pool = pool.clone();
+        let blocker = tokio::spawn(async move {
+            with_connection(&blocker_pool, async |_connection| {
+                acquired_tx.send(()).unwrap();
+                let _ = release_rx.await;
+                Ok::<_, PostgresStorageError>(())
+            })
+            .await
+        });
+        acquired_rx.await.unwrap();
+        for _ in 0..config.login_rate_limit_max_attempts {
+            let request = test::TestRequest::post()
+                .uri(LOGIN_ENDPOINT)
+                .set_json(&credentials)
+                .to_request();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), test::call_service(&app, request),)
+                    .await
+                    .is_err(),
+                "authentication should remain pending until its future is canceled"
+            );
+        }
+        release_tx.send(()).unwrap();
+        blocker.await.unwrap().unwrap();
+
+        let response = test::TestRequest::post()
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&credentials)
+            .send_request(&app)
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        reset_login_rate_limit_for_tests().await;
     }
 
     #[actix_web::test]

@@ -5,7 +5,7 @@ use redis::{Client, FromRedisValue};
 
 use super::{
     LoginAttemptOutcome, LoginAttemptPermit, LoginRateLimitConfig, LoginRateLimitStore,
-    ScopeSnapshot,
+    Reservation, ScopeSnapshot,
 };
 use crate::errors::ApiError;
 
@@ -131,8 +131,10 @@ local state_ttl = tonumber(ARGV[6])
 local reservation = ARGV[7]
 local scope_count = tonumber(ARGV[8])
 local user_key = ARGV[9 + (scope_count * 2)]
+local reservation_ttl = tonumber(ARGV[10 + (scope_count * 2)])
 local index = prefix .. ':{login-rate-limit}:index'
 local lockouts = {}
+local completed_user = false
 
 local function keys(raw)
   local base = prefix .. ':{login-rate-limit}:scope:' .. raw
@@ -143,41 +145,45 @@ for i = 0, scope_count - 1 do
   local raw = ARGV[9 + (i * 2)]
   local threshold = tonumber(ARGV[10 + (i * 2)])
   local attempts, inflight, state = keys(raw)
-  redis.call('ZREM', inflight, reservation)
-  redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
-  local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
-  if locked_until > 0 and now >= locked_until and now - locked_until >= window then
-    redis.call('HDEL', state, 'locked_until', 'level')
-    locked_until = 0
-  end
-  if outcome == 'failed' then
-    redis.call('ZADD', attempts, now, reservation)
-    if redis.call('ZCARD', attempts) >= threshold then
-      local level = tonumber(redis.call('HGET', state, 'level') or '0') + 1
-      local exponent = math.min(level - 1, 62)
-      local duration = math.min(backoff_base * (2 ^ exponent), backoff_max)
-      locked_until = now + duration
-      redis.call('HSET', state, 'level', level, 'locked_until', locked_until)
-      redis.call('DEL', attempts)
-      table.insert(lockouts, raw)
+  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+  local owned = redis.call('ZREM', inflight, reservation) == 1
+  if owned then
+    if raw == user_key then completed_user = true end
+    redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
+    local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
+    if locked_until > 0 and now >= locked_until and now - locked_until >= window then
+      redis.call('HDEL', state, 'locked_until', 'level')
+      locked_until = 0
     end
-  end
+    if outcome == 'failed' then
+      redis.call('ZADD', attempts, now, reservation)
+      if redis.call('ZCARD', attempts) >= threshold then
+        local level = tonumber(redis.call('HGET', state, 'level') or '0') + 1
+        local exponent = math.min(level - 1, 62)
+        local duration = math.min(backoff_base * (2 ^ exponent), backoff_max)
+        locked_until = now + duration
+        redis.call('HSET', state, 'level', level, 'locked_until', locked_until)
+        redis.call('DEL', attempts)
+        table.insert(lockouts, raw)
+      end
+    end
 
-  local attempt_count = redis.call('ZCARD', attempts)
-  local inflight_count = redis.call('ZCARD', inflight)
-  local cooling = locked_until > 0 and now - locked_until < window
-  if attempt_count > 0 or inflight_count > 0 or locked_until > now or cooling then
-    redis.call('ZADD', index, math.max(now, locked_until), raw)
-    redis.call('PEXPIRE', attempts, state_ttl)
-    redis.call('PEXPIRE', inflight, state_ttl)
-    redis.call('PEXPIRE', state, state_ttl)
-  else
-    redis.call('ZREM', index, raw)
-    redis.call('DEL', attempts, inflight, state)
+    local attempt_count = redis.call('ZCARD', attempts)
+    local inflight_count = redis.call('ZCARD', inflight)
+    local cooling = locked_until > 0 and now - locked_until < window
+    if attempt_count > 0 or inflight_count > 0 or locked_until > now or cooling then
+      redis.call('ZADD', index, math.max(now, locked_until), raw)
+      redis.call('PEXPIRE', attempts, state_ttl)
+      redis.call('PEXPIRE', inflight, state_ttl)
+      redis.call('PEXPIRE', state, state_ttl)
+    else
+      redis.call('ZREM', index, raw)
+      redis.call('DEL', attempts, inflight, state)
+    end
   end
 end
 
-if outcome == 'succeeded' then
+if outcome == 'succeeded' and completed_user then
   local attempts, inflight, state = keys(user_key)
   redis.call('DEL', attempts, state)
   if redis.call('ZCARD', inflight) == 0 then
@@ -289,7 +295,7 @@ impl ValkeyLoginRateLimitStore {
     }
 
     fn reservation_ttl_ms(config: &LoginRateLimitConfig) -> u64 {
-        Self::window_ms(config).clamp(5_000, 60_000)
+        Reservation::lifetime(Duration::from_secs(config.window_seconds)).as_millis() as u64
     }
 
     fn state_ttl_ms(config: &LoginRateLimitConfig) -> u64 {
@@ -333,7 +339,7 @@ impl ValkeyLoginRateLimitStore {
             Self::window_ms(config).to_string(),
             Self::reservation_ttl_ms(config).to_string(),
             Self::state_ttl_ms(config).to_string(),
-            permit.reservation_id.to_string(),
+            permit.reservation.id().to_string(),
             max_keys.to_string(),
             permit.scopes.len().to_string(),
         ];
@@ -378,7 +384,7 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
                 .to_string(),
             config.backoff_max_seconds.saturating_mul(1_000).to_string(),
             Self::state_ttl_ms(config).to_string(),
-            permit.reservation_id.to_string(),
+            permit.reservation.id().to_string(),
             permit.scopes.len().to_string(),
         ];
         for (key, threshold) in &permit.scopes {
@@ -386,6 +392,7 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
             arguments.push(threshold.to_string());
         }
         arguments.push(permit.user_ip_key.clone());
+        arguments.push(Self::reservation_ttl_ms(config).to_string());
         self.eval("finish", FINISH_SCRIPT, arguments).await
     }
 
