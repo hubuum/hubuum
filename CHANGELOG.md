@@ -18,6 +18,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking tooling requirement:** Repository Python scripts and tests now
+  require Python 3.11 or newer and use standard-library `tomllib` exclusively.
+  Upgrade the interpreter selected by `python3` on `PATH` before running local
+  checks; installing `tomli` no longer enables older Python versions. No Python
+  packages or virtual environments are required.
+
 - Stable server releases now also publish the `latest` container tag. Fresh
   single-host installations retain the available `main` defaults; after the
   next stable release publishes the server alias, use `--tag latest` to follow

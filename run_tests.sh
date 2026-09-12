@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+python3 scripts/check-python-version.py
+
 # Rendering tests use the same isolated executable shipped in production.
 cargo build --locked -p hubuum-templates --bin hubuum-template-worker
 

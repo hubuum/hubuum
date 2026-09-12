@@ -3,19 +3,22 @@
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "Hubuum tooling requires Python 3.11 or newer; found "
+        + sys.version.split()[0]
+        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
+    )
+
 import argparse
 import json
 import subprocess
-import sys
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NoReturn
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10 and earlier
-    import tomli as tomllib
-
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 INTERNAL_STATUSES = {"internal-application", "workspace-internal"}

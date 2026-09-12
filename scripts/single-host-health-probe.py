@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Probe a read-only health endpoint across a bounded proxy-reload disconnect."""
 
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "Hubuum tooling requires Python 3.11 or newer; found "
+        + sys.version.split()[0]
+        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
+    )
+
 import argparse
 import math
 import subprocess
-import sys
 import time
 from typing import NamedTuple
 from urllib.parse import urlsplit

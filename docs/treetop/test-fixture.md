@@ -94,7 +94,7 @@ removes it on exit.
 ## Running locally
 
 Prepare the normal test database and install Docker, `curl`, `jq`, `openssl`,
-Python 3, and `socat`. Then run:
+[Python 3.11 or newer](../development.md#python-tooling), and `socat`. Then run:
 
 ```bash
 source .env
