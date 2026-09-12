@@ -3,7 +3,9 @@ use std::{fmt, sync::Arc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::json_schema::{BudgetedSchema, JsonSchemaLimits, compile_json_schema};
+use crate::json_schema::{
+    BudgetedSchema, JsonSchemaLimits, SchemaImpactInspection, compile_json_schema,
+};
 use crate::{ClassId, JsonSchemaError, ResourceRevision, ResourceRevisionError};
 
 /// Positive immutable schema identity, allocated monotonically within a class.
@@ -137,6 +139,11 @@ impl CompiledSchema {
                 category: "schema_mismatch".to_string(),
             })
         }
+    }
+
+    /// Inspect a planning candidate with bounded, value-redacted failure details.
+    pub fn inspect_impact(&self, value: &Value) -> SchemaImpactInspection {
+        self.validator.inspect_impact(&self.document, value)
     }
 }
 

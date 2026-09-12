@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Schema impact reports compare proposed and active policies against the same
+  object snapshots, show changes in validity and validation requirements, and
+  group bounded, value-redacted failure examples. Readiness is recomputed as
+  compatible, incompatible, or inconclusive against current class state.
+
 - Deployment-configurable JSON Schema document, expansion, object-size, and
   validation-work budgets shared by API writes, imports, workers, and restore
   tools. The administrator configuration reports effective limits. Default

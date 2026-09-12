@@ -121,6 +121,66 @@ these routes expose their schema metadata separately.
 
 ## Bounded work and recovery
 
+### Planning with an impact report
+
+Stage either a first schema or a replacement with `POST /revisions`, then request
+`POST /revisions/{revision}/impact` and poll `GET /tasks/{task_id}`. The worker
+evaluates each object snapshot against both the proposed policy and the immutable
+active revision captured when the task was queued. Existing evidence is not used
+as a substitute for evaluating the baseline. Object data and active evidence stay
+unchanged; mismatch events and audit entries still record advisory findings.
+
+The `impact.baseline` reference identifies the comparison policy. The disjoint
+`impact.counts` fields sum to `examined`:
+
+| Count | Meaning |
+| --- | --- |
+| `newly_invalid` | Previously valid or not required, now invalid |
+| `newly_valid` | Previously invalid, now valid |
+| `still_invalid` | Invalid under both policies |
+| `still_valid` | Valid under both enforced policies |
+| `newly_required_valid` | Previously not required, now valid under enforcement |
+| `no_longer_required` | Previously enforced and inspected, now not required |
+| `unchanged_not_required` | Neither policy requires validation |
+| `uninspectable` | Either comparison could not run, or the object changed before commit |
+
+`impact.failures` groups the first failing constraint per object, with at most
+20 groups and five object IDs per group. Each group includes `objects` and a
+`reason` containing the JSON Schema `keyword` (`falseSchema` for a boolean-false
+schema), a schema-owned `schema_path`,
+and, for missing required properties, `missing_property`. No instance paths,
+unexpected property names, instance values, or validator messages are included.
+Schema paths exceeding 512 bytes and property names exceeding 128 bytes are
+omitted. `ungrouped_failures` counts failures whose group did not fit the limit;
+the overall invalid count remains complete. These are first-failure counts,
+not an exhaustive list of everything that must be repaired in each object.
+
+For example, a report could show 43 `newly_invalid` objects, with one group of
+38 failures for missing `hostname` and another of five `type` failures at
+`/properties/hostname/type`. Use the sample IDs to inspect authorized objects,
+repair them under the active policy, or stage a revised proposal. Then request
+a fresh impact task before activation.
+
+The response's `readiness` is recomputed against the class state at read time:
+
+| Readiness | Meaning |
+| --- | --- |
+| `compatible` | Complete, fully inspected, current comparison with no candidate failures |
+| `incompatible` | Complete, fully inspected, current comparison with candidate failures |
+| `inconclusive` | Incomplete or failed work, changed population or baseline, unavailable candidate, or an uninspectable comparison |
+
+`current_epoch` and `current_active_schema` identify the observed state. A report
+can become outdated immediately after it is read; strict activation checks the
+population and baseline again inside its transaction. Budget or regex execution
+failures are uninspectable, not proof of a schema mismatch. Increasing admission
+budgets may allow a new task to inspect those objects. Impact checkpoints created
+before comparison metadata was available remain inconclusive and need a fresh
+task. Revalidation responses have no impact comparison or readiness.
+Polling reads only the task checkpoint and indexed schema state; it does not
+scan objects or recompute compliance totals.
+
+### Checkpoints and execution
+
 Impact and revalidation share the `schema_validation` task kind and use distinct
 work kinds. Requests deduplicate running work by class, revision, and kind.
 After completion, cancellation, or failure, another request starts a fresh scan
@@ -130,8 +190,9 @@ A checkpoint retains the target, initial population epoch, maximum object ID,
 cursor, counters, up to 20 invalid object IDs, batch count, and elapsed batch
 time. Matching start/end epochs make completed impact exact at completion;
 activation rechecks that epoch again. An analysis with population changes is
-advisory. Findings contain fixed categories rather than validator messages,
-instance values, or JSON paths.
+advisory. Impact checkpoints also retain the baseline, comparison counts, and
+bounded failure groups described above. Event and audit findings retain fixed
+categories; their payloads omit validator messages, instance values, and paths.
 
 Each batch reads snapshots in object-ID order, validates outside its write
 transaction, then rechecks the lease, checkpoint, active revision, and inspected

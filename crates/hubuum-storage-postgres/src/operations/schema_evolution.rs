@@ -267,6 +267,17 @@ pub async fn stage_schema_revision(
     }).await
 }
 
+pub async fn get_schema_impact_boundary(
+    runtime: &PostgresRuntime,
+    target: SchemaReference,
+) -> Result<StorageSchemaImpactBoundary, PostgresStorageError> {
+    runtime.with_read_connection(async move |connection| {
+        let row = diesel::sql_query("SELECT jsonb_build_object('active',jsonb_build_object('class_id',s.class_id,'revision',s.active_revision),'target',jsonb_build_object('class_id',r.class_id,'revision',r.revision),'target_status',r.status,'epoch',s.object_epoch) AS value FROM class_schema_state s JOIN class_schema_revisions r ON r.class_id=s.class_id AND r.revision=$2 WHERE s.class_id=$1")
+            .bind::<Integer,_>(target.class_id().id()).bind::<BigInt,_>(target.revision().get()).get_result::<JsonRow>(connection).await?;
+        serde_json::from_value(row.value).map_err(invalid)
+    }).await
+}
+
 pub async fn abandon_schema_revision(
     runtime: &PostgresRuntime,
     target: SchemaReference,
@@ -387,6 +398,10 @@ async fn enqueue_with_event_on(
         request,
         u64::try_from(state.object_epoch).map_err(invalid)?,
         boundary.upper_bound,
+        SchemaReference::new(
+            request.target().class_id(),
+            SchemaRevision::new(state.active_revision).map_err(invalid)?,
+        ),
     );
     diesel::sql_query("INSERT INTO schema_validation_work(task_id,class_id,schema_revision,kind,checkpoint) VALUES ($1,$2,$3,$4,$5)").bind::<Integer,_>(task.id).bind::<Integer,_>(request.target().class_id().id()).bind::<BigInt,_>(request.target().revision().get()).bind::<Text,_>(work_name(request.kind())).bind::<Jsonb,_>(serde_json::to_value(&work).map_err(invalid)?).execute(connection).await?;
     Ok((work, true))
@@ -470,9 +485,13 @@ pub(crate) async fn activate_schema_revision_on(
             Some(task) => Some(work_on(connection, task).await?),
             None => None,
         };
-        if !proof
-            .is_some_and(|work| work.proves_compatible(request.target(), state.object_epoch as u64))
-        {
+        if !proof.is_some_and(|work| {
+            work.proves_compatible(
+                request.target(),
+                SchemaReference::new(request.target().class_id(), request.expected_active()),
+                state.object_epoch as u64,
+            )
+        }) {
             return Err(PostgresStorageError::conflict(
                 "A current, completed compatible impact analysis is required",
             ));
@@ -668,25 +687,39 @@ pub async fn process_schema_work(
     let schema_limits = runtime.schema_limits();
     let started = Instant::now();
     let claimed = task_execution::claimed_task(&lease)?;
-    let (mut work,revision,snapshots,context)=runtime.with_transaction(async move |connection|{
+    let (mut work,revision,baseline,snapshots,context)=runtime.with_transaction(async move |connection|{
         let task=task_execution::live_claimed_task(connection,claimed).await?;
         if task.kind!=StorageTaskKind::SchemaValidation.as_str(){return Err(PostgresStorageError::invalid_input("Task is not schema validation"));}
         let work=work_on(connection,TaskId::new(claimed.id)?).await?;
         let revision=revision_on(schema_limits, connection,work.target()).await?;
+        let baseline = if let Some(impact) = work.impact() {
+            Some(revision_on(schema_limits, connection,impact.baseline()).await?)
+        } else { None };
         // Read only one bounded page. Oversized JSON is never transferred to the worker.
         let snapshots=diesel::sql_query("WITH page AS MATERIALIZED (SELECT id,revision,data,octet_length(data::text) AS bytes FROM hubuumobject WHERE hubuum_class_id=$1 AND id>$2 AND id<=$3 ORDER BY id LIMIT $4), budgeted AS (SELECT *,sum(CASE WHEN bytes<=$5 THEN bytes ELSE 0 END) OVER (ORDER BY id) AS cumulative FROM page) SELECT id,revision,CASE WHEN bytes<=$5 THEN data ELSE NULL END AS data FROM budgeted WHERE cumulative<=$6 ORDER BY id")
             .bind::<Integer,_>(work.target().class_id().id()).bind::<Integer,_>(work.cursor()).bind::<Integer,_>(work.upper_bound()).bind::<BigInt,_>(limits.rows() as i64).bind::<BigInt,_>(limits.object_bytes() as i64).bind::<BigInt,_>(limits.bytes() as i64).load::<Snapshot>(connection).await?;
         let context=EventContext::from_mutation(MutationProvenance::worker(task.initiator_user_id.map(PrincipalId::new).transpose()?,TaskId::new(task.id)?));
-        Ok((work,revision,snapshots,context))
+        Ok((work,revision,baseline,snapshots,context))
     }).await?;
     let results = snapshots
         .into_iter()
         .map(|snapshot| {
-            let status = snapshot
-                .data
-                .as_ref()
-                .map(|value| revision.policy().inspect(value));
-            (snapshot.id, snapshot.revision, status)
+            let inspection = (work.kind() == StorageSchemaWorkKind::Impact).then(|| {
+                StorageSchemaInspection::new(
+                    baseline.as_ref().map(|revision| revision.policy()),
+                    revision.policy(),
+                    snapshot.data.as_ref(),
+                )
+            });
+            let status = if let Some(inspection) = &inspection {
+                inspection.status()
+            } else {
+                snapshot
+                    .data
+                    .as_ref()
+                    .map(|value| revision.policy().inspect(value))
+            };
+            (snapshot.id, snapshot.revision, status, inspection)
         })
         .collect::<Vec<_>>();
     runtime.with_transaction(async move |connection|{
@@ -699,14 +732,15 @@ pub async fn process_schema_work(
         else if results.is_empty(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Complete,&context).await?;}
         else{
             use crate::schema::hubuumobject::dsl as objects;
-            for (id,resource_revision,status) in results{
+            for (id,resource_revision,status,inspection) in results{
                 let object=objects::hubuumobject.filter(objects::id.eq(id)).filter(objects::hubuum_class_id.eq(work.target().class_id().id())).filter(objects::revision.eq(resource_revision)).for_update().select(ValidationObject::as_select()).first::<ValidationObject>(connection).await.optional()?;
                 let stale=object.is_none();
                 if let Some(object)=object {
                     if work.kind()==StorageSchemaWorkKind::Revalidation && let Some(status)=status {store_result_on(connection,&object,&revision,status,&context).await?;}
                     else if status==Some(StorageComplianceStatus::Invalid) {impact_mismatch_on(connection,&object,&revision,&context).await?;}
                 }
-                work.record(ObjectId::new(id)?,status,stale);
+                if let Some(inspection) = inspection { work.record_impact(ObjectId::new(id)?,inspection,stale); }
+                else { work.record(ObjectId::new(id)?,status,stale); }
             }
             task_execution::live_claimed_task(connection,claimed).await?;
             work.batch_committed(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));

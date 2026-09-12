@@ -308,3 +308,7 @@ activation and work requests return durable audit receipts. The context-free
 to commit each bounded batch's evidence, checkpoint and audit/outbox together.
 Expired schema-validation tasks resume that checkpoint; other task kinds keep
 their existing recovery policy. Cancellation fences subsequent batch commits.
+Impact compares both policies against each captured object revision and commits
+its comparison counts and redacted failure groups with the checkpoint. It does
+not replace active evidence. Strict activation rechecks the captured baseline
+and population epoch while holding the class boundary.

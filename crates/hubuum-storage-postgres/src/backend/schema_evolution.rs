@@ -4,6 +4,14 @@ use hubuum_domain::{SchemaReference, TaskId};
 
 #[async_trait]
 impl SchemaEvolutionStorage for PostgresStorage {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError> {
+        schema_evolution::get_schema_impact_boundary(self.runtime(), target)
+            .await
+            .map_err(StorageError::from)
+    }
     async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError> {
         schema_evolution::schema_compliance_counts(self.runtime())
             .await

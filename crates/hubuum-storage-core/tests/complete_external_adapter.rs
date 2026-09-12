@@ -1932,6 +1932,12 @@ impl TransactionStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl SchemaEvolutionStorage for CompleteExternalAdapter {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError> {
+        fixture_result()
+    }
     async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError> {
         fixture_result()
     }

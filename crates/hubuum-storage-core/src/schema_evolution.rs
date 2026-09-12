@@ -1,5 +1,11 @@
 //! Versioned schema lifecycle, compatibility analysis and fenced validation evidence.
 
+mod impact;
+pub use impact::{
+    StorageSchemaImpact, StorageSchemaImpactBoundary, StorageSchemaImpactReadiness,
+    StorageSchemaInspection,
+};
+
 use async_trait::async_trait;
 use chrono::{DateTime, SubsecRound, Utc};
 use hubuum_domain::{
@@ -683,6 +689,8 @@ pub struct StorageSchemaWork {
     elapsed_millis: u64,
     batches: u64,
     created_at: DateTime<Utc>,
+    #[serde(default)]
+    impact: Option<StorageSchemaImpact>,
 }
 #[derive(Deserialize)]
 struct SchemaWorkSnapshot {
@@ -704,6 +712,8 @@ struct SchemaWorkSnapshot {
     elapsed_millis: u64,
     batches: u64,
     created_at: DateTime<Utc>,
+    #[serde(default)]
+    impact: Option<StorageSchemaImpact>,
 }
 impl TryFrom<SchemaWorkSnapshot> for StorageSchemaWork {
     type Error = StorageValidationError;
@@ -727,6 +737,7 @@ impl TryFrom<SchemaWorkSnapshot> for StorageSchemaWork {
             elapsed_millis: raw.elapsed_millis,
             batches: raw.batches,
             created_at: raw.created_at.trunc_subsecs(6),
+            impact: raw.impact,
         };
         if work.upper_bound < 0
             || work.cursor < 0
@@ -753,6 +764,9 @@ impl TryFrom<SchemaWorkSnapshot> for StorageSchemaWork {
                 "Schema work checkpoint is inconsistent",
             ));
         }
+        if let Some(impact) = &work.impact {
+            impact.validate(&work)?;
+        }
         Ok(work)
     }
 }
@@ -764,6 +778,7 @@ impl StorageSchemaWork {
         request: &StorageSchemaWorkRequest,
         epoch: u64,
         upper_bound: i32,
+        baseline: SchemaReference,
     ) -> Self {
         Self {
             task_id,
@@ -784,6 +799,8 @@ impl StorageSchemaWork {
             elapsed_millis: 0,
             batches: 0,
             created_at: Utc::now().trunc_subsecs(6),
+            impact: (request.kind == StorageSchemaWorkKind::Impact)
+                .then(|| StorageSchemaImpact::new(baseline)),
         }
     }
     #[must_use]
@@ -843,8 +860,18 @@ impl StorageSchemaWork {
         self.stale
     }
     #[must_use]
-    pub fn proves_compatible(&self, target: SchemaReference, epoch: u64) -> bool {
+    pub fn proves_compatible(
+        &self,
+        target: SchemaReference,
+        baseline: SchemaReference,
+        epoch: u64,
+    ) -> bool {
         self.target == target
+            && target.revision() >= baseline.revision()
+            && self
+                .impact
+                .as_ref()
+                .is_some_and(|impact| impact.baseline() == baseline && impact.is_inspectable())
             && self.kind == StorageSchemaWorkKind::Impact
             && self.status == StorageSchemaWorkStatus::Complete
             && self.start_epoch == epoch
@@ -944,6 +971,10 @@ impl Default for StorageSchemaBatchLimits {
 
 #[async_trait]
 pub trait SchemaEvolutionStorage: Send + Sync {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError>;
     async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError>;
     async fn list_schema_revisions(
         &self,

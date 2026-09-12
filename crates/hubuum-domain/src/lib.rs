@@ -44,6 +44,7 @@ pub use json_schema::{
     JsonSchemaLimitsError, validate_json_schema, validate_json_schema_for_instances,
     validate_json_value,
 };
+pub use json_schema::{SchemaFailure, SchemaImpactInspection};
 pub use json_value::{
     MAX_STORAGE_JSON_NESTING_DEPTH, StorageJsonValidationError, validate_storage_json_value,
 };

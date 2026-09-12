@@ -100,7 +100,8 @@ pub async fn request_work(
     kind: StorageSchemaWorkKind,
     event: &EventContext,
 ) -> Result<SchemaWorkResponse, ApiError> {
-    response(
+    work_response(
+        context,
         storage_handle(context)
             .request_schema_work(StorageSchemaWorkRequest::new(
                 authorized_collection,
@@ -111,12 +112,17 @@ pub async fn request_work(
             .await?
             .into_value(),
     )
+    .await
 }
 pub async fn get_work(
     context: &impl StorageContext,
     task_id: TaskId,
 ) -> Result<SchemaWorkResponse, ApiError> {
-    response(storage_handle(context).get_schema_work(task_id).await?)
+    work_response(
+        context,
+        storage_handle(context).get_schema_work(task_id).await?,
+    )
+    .await
 }
 pub async fn cancel_work(
     context: &impl StorageContext,
@@ -124,12 +130,14 @@ pub async fn cancel_work(
     task_id: TaskId,
     event: &EventContext,
 ) -> Result<SchemaWorkResponse, ApiError> {
-    response(
+    work_response(
+        context,
         storage_handle(context)
             .cancel_schema_work(task_id, authorized_collection, event)
             .await?
             .into_value(),
     )
+    .await
 }
 pub async fn compliance(
     context: &impl StorageContext,
@@ -158,4 +166,20 @@ pub async fn revision(
         .into_iter()
         .find(|revision| revision.revision == target.revision())
         .ok_or_else(|| ApiError::NotFound("Schema revision was not found".into()))
+}
+
+async fn work_response(
+    context: &impl StorageContext,
+    work: StorageSchemaWork,
+) -> Result<SchemaWorkResponse, ApiError> {
+    let mut result: SchemaWorkResponse = response(&work)?;
+    if work.kind() == StorageSchemaWorkKind::Impact {
+        let boundary = storage_handle(context)
+            .get_schema_impact_boundary(work.target())
+            .await?;
+        result.readiness = Some(response(work.impact_readiness(&boundary))?);
+        result.current_epoch = Some(boundary.epoch());
+        result.current_active_schema = Some(boundary.active());
+    }
+    Ok(result)
 }

@@ -29743,6 +29743,154 @@
           }
         }
       },
+      "SchemaFailure": {
+        "type": "object",
+        "description": "One failure, containing only a keyword and bounded schema-owned metadata.",
+        "required": [
+          "keyword"
+        ],
+        "properties": {
+          "keyword": {
+            "type": "string"
+          },
+          "missing_property": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SchemaFailureGroup": {
+        "type": "object",
+        "required": [
+          "reason",
+          "objects",
+          "samples"
+        ],
+        "properties": {
+          "objects": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SchemaFailure"
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "At most five object IDs per group; values and instance paths are omitted."
+          }
+        }
+      },
+      "SchemaImpactCounts": {
+        "type": "object",
+        "description": "Disjoint outcomes; counts sum to examined objects, including unknown comparisons.",
+        "required": [
+          "newly_invalid",
+          "newly_valid",
+          "still_invalid",
+          "still_valid",
+          "newly_required_valid",
+          "no_longer_required",
+          "unchanged_not_required",
+          "uninspectable"
+        ],
+        "properties": {
+          "newly_invalid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Previously valid or not required, now invalid.",
+            "minimum": 0
+          },
+          "newly_required_valid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Previously not required, now valid under enforced validation.",
+            "minimum": 0
+          },
+          "newly_valid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Previously invalid, now valid.",
+            "minimum": 0
+          },
+          "no_longer_required": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "still_invalid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "still_valid": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unchanged_not_required": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "uninspectable": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Either policy could not be inspected, or the object changed before commit.",
+            "minimum": 0
+          }
+        }
+      },
+      "SchemaImpactReadiness": {
+        "type": "string",
+        "enum": [
+          "compatible",
+          "incompatible",
+          "inconclusive"
+        ]
+      },
+      "SchemaImpactResponse": {
+        "type": "object",
+        "required": [
+          "baseline",
+          "counts",
+          "failures",
+          "ungrouped_failures"
+        ],
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/SchemaReference"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SchemaImpactCounts"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaFailureGroup"
+            },
+            "description": "At most 20 groups, counting the first failure per object."
+          },
+          "ungrouped_failures": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failures whose group did not fit the report limit.",
+            "minimum": 0
+          }
+        }
+      },
       "SchemaReference": {
         "type": "object",
         "description": "A dependency on one exact schema document; resource revisions are unrelated.",
@@ -29905,6 +30053,24 @@
             "type": "string",
             "format": "date-time"
           },
+          "current_active_schema": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaReference"
+              }
+            ]
+          },
+          "current_epoch": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
           "cursor": {
             "type": "integer",
             "format": "int32"
@@ -29927,6 +30093,16 @@
             "format": "int64",
             "minimum": 0
           },
+          "impact": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaImpactResponse"
+              }
+            ]
+          },
           "invalid": {
             "type": "integer",
             "format": "int64",
@@ -29946,6 +30122,17 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "readiness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaImpactReadiness",
+                "description": "Recomputed when this report is read; activation rechecks the same boundaries."
+              }
+            ]
           },
           "stale": {
             "type": "integer",

@@ -3,6 +3,25 @@ use diesel::sql_types::{Integer, Text};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{capture_queries, with_connection, with_transaction};
 
+#[actix_web::test]
+async fn impact_report_polling_does_not_recount_or_read_objects() {
+    let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({}); 16]).await;
+    let candidate = fixture.stage(json!({"type":"object"}), true).await;
+    let work = fixture
+        .request(candidate.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let (report, capture) = capture_queries(crate::services::schema_evolution::get_work(
+        &fixture.backend,
+        work.task_id(),
+    ))
+    .await;
+    report.unwrap();
+    assert!(capture.domain_queries() <= 2, "{capture:?}");
+    assert_eq!(capture.queries_matching("hubuumobject"), 0);
+    assert_eq!(capture.queries_matching("count("), 0);
+    fixture.cleanup().await;
+}
+
 #[rstest::rstest]
 #[case::document("UPDATE class_schema_revisions SET json_schema='false'::jsonb WHERE class_id=$1")]
 #[case::delete("DELETE FROM class_schema_revisions WHERE class_id=$1 AND revision=2")]

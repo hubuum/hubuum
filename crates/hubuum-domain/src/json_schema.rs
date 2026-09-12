@@ -1,8 +1,10 @@
 //! JSON Schema invariants shared by application workflows and storage adapters.
 
 mod budget;
+mod impact;
 mod limits;
 
+pub use impact::{SchemaFailure, SchemaImpactInspection};
 pub use limits::{JsonSchemaLimits, JsonSchemaLimitsBuilder, JsonSchemaLimitsError};
 
 use budget::{SchemaBudget, validate_document_size};

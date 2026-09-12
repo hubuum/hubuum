@@ -4,6 +4,22 @@ use hubuum_storage_core::schema_evolution::*;
 
 #[async_trait]
 impl SchemaEvolutionStorage for StorageHandle {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::SchemaEvolution,
+            "get_schema_impact_boundary",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_schema_impact_boundary(target).await
+                })
+            },
+        )
+        .await
+    }
     async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

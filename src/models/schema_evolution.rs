@@ -1,4 +1,4 @@
-use hubuum_domain::{ClassId, SchemaReference, SchemaRevision, TaskId};
+use hubuum_domain::{ClassId, SchemaFailure, SchemaReference, SchemaRevision, TaskId};
 use hubuum_storage_core::{StorageComplianceStatus, StorageSchemaActivationPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -157,6 +157,54 @@ pub struct SchemaWorkResponse {
     pub elapsed_millis: u64,
     pub batches: u64,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub impact: Option<SchemaImpactResponse>,
+    /// Recomputed when this report is read; activation rechecks the same boundaries.
+    pub readiness: Option<SchemaImpactReadiness>,
+    pub current_epoch: Option<u64>,
+    pub current_active_schema: Option<SchemaReference>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaImpactReadiness {
+    Compatible,
+    Incompatible,
+    Inconclusive,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SchemaImpactResponse {
+    pub baseline: SchemaReference,
+    pub counts: SchemaImpactCounts,
+    /// At most 20 groups, counting the first failure per object.
+    pub failures: Vec<SchemaFailureGroup>,
+    /// Failures whose group did not fit the report limit.
+    pub ungrouped_failures: u64,
+}
+
+/// Disjoint outcomes; counts sum to examined objects, including unknown comparisons.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SchemaImpactCounts {
+    /// Previously valid or not required, now invalid.
+    pub newly_invalid: u64,
+    /// Previously invalid, now valid.
+    pub newly_valid: u64,
+    pub still_invalid: u64,
+    pub still_valid: u64,
+    /// Previously not required, now valid under enforced validation.
+    pub newly_required_valid: u64,
+    pub no_longer_required: u64,
+    pub unchanged_not_required: u64,
+    /// Either policy could not be inspected, or the object changed before commit.
+    pub uninspectable: u64,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SchemaFailureGroup {
+    pub reason: SchemaFailure,
+    pub objects: u64,
+    /// At most five object IDs per group; values and instance paths are omitted.
+    pub samples: Vec<i32>,
 }
 
 #[derive(Serialize, ToSchema)]

@@ -541,6 +541,7 @@ impl MemoryState {
             request,
             self.schema_epochs.get(&class_id.id()).copied().unwrap_or(0),
             upper,
+            self.active_schema(class_id)?.reference(),
         );
         let now = Utc::now();
         let task = MemoryTaskRecord {
@@ -630,6 +631,28 @@ impl MemoryState {
 
 #[async_trait]
 impl SchemaEvolutionStorage for MemoryStorage {
+    async fn get_schema_impact_boundary(
+        &self,
+        target: SchemaReference,
+    ) -> Result<StorageSchemaImpactBoundary, StorageError> {
+        let state = self.state.read().await;
+        let active = state.active_schema(target.class_id())?.reference();
+        let revision = state
+            .schema_revisions
+            .get(&(target.class_id().id(), target.revision().get()))
+            .ok_or_else(|| StorageError::not_found("Schema revision was not found"))?;
+        StorageSchemaImpactBoundary::try_new(
+            active,
+            target,
+            revision.status(),
+            state
+                .schema_epochs
+                .get(&target.class_id().id())
+                .copied()
+                .unwrap_or(0),
+        )
+        .map_err(schema_error)
+    }
     async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError> {
         let state = self.state.read().await;
         let mut counts = StorageComplianceCounts::default();
@@ -802,7 +825,16 @@ impl SchemaEvolutionStorage for MemoryStorage {
             && !request
                 .proof_task()
                 .and_then(|id| state.schema_work.get(&id.id()))
-                .is_some_and(|work| work.proves_compatible(request.target(), epoch))
+                .is_some_and(|work| {
+                    work.proves_compatible(
+                        request.target(),
+                        SchemaReference::new(
+                            request.target().class_id(),
+                            request.expected_active(),
+                        ),
+                        epoch,
+                    )
+                })
         {
             return Err(StorageError::conflict(
                 "A current, completed compatible impact analysis is required",
@@ -939,7 +971,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         limits: StorageSchemaBatchLimits,
     ) -> Result<StorageSchemaWork, StorageError> {
         let started = Instant::now();
-        let (mut work, active, snapshots, context) = {
+        let (mut work, active, baseline, snapshots, context) = {
             let state = self.state.read().await;
             let task = state
                 .tasks
@@ -959,6 +991,19 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 ))
                 .cloned()
                 .ok_or_else(|| StorageError::not_found("Schema revision was not found"))?;
+            let baseline = work
+                .impact()
+                .map(|impact| {
+                    state
+                        .schema_revisions
+                        .get(&(
+                            impact.baseline().class_id().id(),
+                            impact.baseline().revision().get(),
+                        ))
+                        .cloned()
+                        .ok_or_else(|| StorageError::not_found("Impact baseline was not found"))
+                })
+                .transpose()?;
             let mut bytes = 0;
             let mut rows = Vec::new();
             for object in state
@@ -990,7 +1035,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 task.initiator_principal_id,
                 task.id,
             ));
-            (work, revision, rows, context)
+            (work, revision, baseline, rows, context)
         };
         let results = snapshots
             .into_iter()
@@ -998,7 +1043,20 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 (
                     id,
                     revision,
-                    object.as_ref().map(|data| active.policy().inspect(data)),
+                    if work.kind() == StorageSchemaWorkKind::Impact {
+                        Some(StorageSchemaInspection::new(
+                            baseline.as_ref().map(|revision| revision.policy()),
+                            active.policy(),
+                            object.as_ref(),
+                        ))
+                    } else {
+                        None
+                    },
+                    if work.kind() == StorageSchemaWorkKind::Revalidation {
+                        object.as_ref().map(|data| active.policy().inspect(data))
+                    } else {
+                        None
+                    },
                 )
             })
             .collect::<Vec<_>>();
@@ -1042,7 +1100,10 @@ impl SchemaEvolutionStorage for MemoryStorage {
             (class_id, current_active.reference().revision().get()),
             current_active,
         );
-        let touched = results.iter().map(|(id, _, _)| id.id()).collect::<Vec<_>>();
+        let touched = results
+            .iter()
+            .map(|(id, _, _, _)| id.id())
+            .collect::<Vec<_>>();
         for id in &touched {
             if let Some(evidence) = guard.schema_evidence.get(id) {
                 state.schema_evidence.insert(*id, evidence.clone());
@@ -1061,7 +1122,10 @@ impl SchemaEvolutionStorage for MemoryStorage {
         } else if results.is_empty() {
             state.finish_schema_task(work.task_id(), StorageSchemaWorkStatus::Complete)?;
         } else {
-            for (id, revision, status) in results {
+            for (id, revision, inspection, status) in results {
+                let status = inspection
+                    .as_ref()
+                    .map_or(status, StorageSchemaInspection::status);
                 let object = guard
                     .objects
                     .get(&id.id())
@@ -1080,7 +1144,11 @@ impl SchemaEvolutionStorage for MemoryStorage {
                         state.impact_mismatch(&object, &active, &context)?;
                     }
                 }
-                work.record(id, status, stale);
+                if let Some(inspection) = inspection {
+                    work.record_impact(id, inspection, stale);
+                } else {
+                    work.record(id, status, stale);
+                }
             }
             work.batch_committed(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
             let task = state

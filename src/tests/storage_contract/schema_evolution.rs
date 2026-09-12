@@ -421,7 +421,11 @@ async fn schema_impact_is_bounded_and_oversized_objects_cannot_prove_compatibili
     assert_eq!(complete.examined(), 26);
     assert_eq!(complete.uninspectable(), 1);
     assert_eq!(report["invalid_samples"].as_array().unwrap().len(), 20);
-    assert!(!complete.proves_compatible(revision.reference(), 0));
+    assert!(!complete.proves_compatible(
+        revision.reference(),
+        SchemaReference::new(fixture.class_id(), SchemaRevision::INITIAL),
+        0
+    ));
     fixture.cleanup().await;
 }
 
@@ -1344,3 +1348,5 @@ async fn generic_schema_tasks_require_administrator_report_access(
 }
 
 mod budgets;
+
+mod impact;

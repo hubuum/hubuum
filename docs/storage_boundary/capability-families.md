@@ -274,6 +274,10 @@ Required trait: `SchemaEvolutionStorage`.
 
 Owns immutable schema revisions, explicit activation, population-fenced impact
 proofs, object compliance projections, and resumable validation checkpoints.
+Impact checkpoints retain the immutable baseline, disjoint before/after counts,
+and bounded first-failure groups. `get_schema_impact_boundary` reads current
+schema identities, target lifecycle, and population epoch without scanning
+objects, so report polling can recompute readiness at constant query cost.
 Every backend atomically commits evidence, progress and audit/outbox events.
 Task failure also marks its schema checkpoint `failed` and releases its active
 work slot in the same transaction, retaining committed findings. Schema provenance
