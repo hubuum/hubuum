@@ -1,0 +1,61 @@
+{
+  "name": "comprehensive",
+  "description": "Synthetic inventory covering schema policies, pagination, relations, permissions, history and computed fields.",
+  "recipe_revision": 2,
+  "recipe_sha256": "a5dd6022eb378710ac6f4350492ec9c9cd8c0a6ca5e6244ef803e135608ff02f",
+  "backup_version": 6,
+  "source_version": "0.0.14",
+  "sha256": "0fba27a0688f074018bf81d723f96331009b3bc70f9625a54eb7e3b99314510e",
+  "byte_size": 25206572,
+  "state_counts": {
+    "identity_scopes": 1,
+    "groups": 4,
+    "principals": 5,
+    "users": 5,
+    "service_accounts": 0,
+    "group_memberships": 5,
+    "group_membership_sources": 5,
+    "collections": 5,
+    "collection_authorization": 5,
+    "collection_hierarchy": 13,
+    "collection_permission_grants": 6,
+    "classes": 12,
+    "class_schema_revisions": 14,
+    "class_schema_state": 12,
+    "computed_field_definitions": 46,
+    "class_relations": 3,
+    "objects": 3000,
+    "object_schema_evidence": 1000,
+    "object_relations": 300,
+    "export_templates": 0,
+    "remote_targets": 0,
+    "event_sinks": 0,
+    "event_subscriptions": 0
+  },
+  "anchors": {
+    "classes": {
+      "untyped-empty": 1,
+      "untyped-notes": 2,
+      "untyped-locations": 3,
+      "untyped-assets": 4,
+      "advisory-servers": 5,
+      "advisory-switches": 6,
+      "advisory-services": 7,
+      "advisory-applications": 8,
+      "enforced-servers": 9,
+      "enforced-switches": 10,
+      "enforced-services": 11,
+      "enforced-applications": 12
+    },
+    "collections": {
+      "inventory": 2,
+      "operations": 3,
+      "branch": 4,
+      "restricted": 5
+    },
+    "updated_object": 2001,
+    "deleted_object": 3001,
+    "visible_relation": 1,
+    "restricted_relation": 201
+  }
+}

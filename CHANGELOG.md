@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- A ready-to-restore functional test corpus containing 3,000 objects across
+  twelve classes, with schema-free, advisory and enforced policies, permission
+  scenarios, relations and retained history. Rich object data and shared and
+  personal computed-field examples cover aggregates, fallbacks, presence checks,
+  equality and field errors, with restore verification. Download the
+  corpus from the same branch or release tag as the server; see
+  [Test corpus](test-corpora/README.md).
+
 - Schema impact reports compare proposed and active policies against the same
   object snapshots, show changes in validity and validation requirements, and
   group bounded, value-redacted failure examples. Readiness is recomputed as

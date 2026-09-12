@@ -43,6 +43,14 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
+  test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py; do
+  corpus_output="$(bash "$classifier" "$corpus_path")"
+  assert_flag "$corpus_output" code true
+  assert_flag "$corpus_output" container true
+  assert_flag "$corpus_output" scale_benchmark false
+done
+
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false

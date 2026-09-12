@@ -1,3 +1,5 @@
 # Ensure hook scripts keep LF line endings (avoid CRLF breaking bash/sh)
 hooks/*.sh eol=lf diff=sh
 hooks/pre-commit eol=lf diff=sh
+# Corpus and recipe checksums must survive Windows checkouts unchanged.
+test-corpora/*.json text eol=lf

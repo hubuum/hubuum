@@ -125,6 +125,8 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Atomic RFC 6902 updates to raw object data are documented in
   [docs/object_data_json_patch.md](docs/object_data_json_patch.md).
 - Full-system disaster-recovery behavior is documented in [docs/backup-restore.md](docs/backup-restore.md).
+- A [ready-to-restore test corpus](test-corpora/README.md) provides 3,000 objects
+  across twelve classes with schemas, permissions, relations and history.
 - Optional PostgreSQL owner, migrator, and runtime privilege boundaries are
   documented in [docs/database_roles.md](docs/database_roles.md); the default
   topology retains one database login.
