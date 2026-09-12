@@ -32,6 +32,27 @@ fn assert_import_create_condition(
 }
 
 impl MemoryStorage {
+    pub(crate) async fn commit_import_operation(
+        &self,
+        operation: StorageImportOperation,
+        references: &mut BTreeMap<String, MemoryImportReference>,
+    ) -> Result<Option<ResourceRevision>, StorageError> {
+        // Hold the live state lock until the complete item is published so
+        // concurrent writes cannot be lost when replacing the staged state.
+        let mut state = self.state.write().await;
+        let scratch = Self {
+            schema_limits: self.schema_limits,
+            state: Arc::new(RwLock::new(state.clone())),
+        };
+        let mut next_references = references.clone();
+        let revision = scratch
+            .apply_import_operation(operation, &mut next_references)
+            .await?;
+        *state = scratch.state.read().await.clone();
+        *references = next_references;
+        Ok(revision)
+    }
+
     async fn import_identity_scope_id(
         &self,
         reference: Option<&str>,

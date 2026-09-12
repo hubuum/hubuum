@@ -704,9 +704,10 @@ impl SchemaEvolutionStorage for MemoryStorage {
         let mut guard = self.state.write().await;
         let mut state = guard.schema_mutation_delta(request.class_id());
         state.check_schema_collection(request.class_id(), request.authorized_collection())?;
-        state.active_schema(request.class_id())?;
-        if let Some(existing) = state.schema_revisions.values().find(|revision| {
+        let active = state.active_schema(request.class_id())?.reference();
+        if let Some(existing) = state.schema_revisions.values().rev().find(|revision| {
             revision.reference().class_id() == request.class_id()
+                && revision.reference().revision() >= active.revision()
                 && matches!(
                     revision.status(),
                     StorageSchemaRevisionStatus::Staged | StorageSchemaRevisionStatus::Active

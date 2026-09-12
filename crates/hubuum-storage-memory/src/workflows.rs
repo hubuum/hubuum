@@ -1470,7 +1470,7 @@ impl ImportStorage for MemoryStorage {
         for item in plan.into_items() {
             let (index, operation) = item.into_parts();
             match scratch
-                .apply_import_operation(operation, &mut references)
+                .commit_import_operation(operation, &mut references)
                 .await
             {
                 Ok(revision) => items.push(StorageImportPreflightItem::success(index, revision)),
@@ -1525,7 +1525,7 @@ impl ImportStorage for MemoryStorage {
         for item in plan.into_items() {
             let (index, operation) = item.into_parts();
             match self
-                .apply_import_operation(operation, &mut references)
+                .commit_import_operation(operation, &mut references)
                 .await
             {
                 Ok(_) => items.push(StorageImportApplyItem::success(index)),

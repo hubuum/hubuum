@@ -218,6 +218,56 @@ async fn immutable_schema_revisions_are_monotonic_and_equivalent_staging_is_idem
 #[case::memory(StorageBackendKind::Memory)]
 #[case::postgres(StorageBackendKind::Postgres)]
 #[actix_web::test]
+async fn staging_a_superseded_policy_allocates_an_activatable_revision(
+    #[case] backend: StorageBackendKind,
+) {
+    let fixture = SchemaFixture::new(backend, vec![]).await;
+    let superseded = fixture.stage(json!({"type":"object"}), true).await;
+    let active = fixture.stage(json!({"type":"array"}), true).await;
+    fixture
+        .activate(
+            &active,
+            SchemaRevision::INITIAL,
+            StorageSchemaActivationPolicy::AllowPending,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let restaged = fixture.stage(json!({"type":"object"}), true).await;
+    assert!(restaged.reference().revision() > active.reference().revision());
+    assert_eq!(restaged.policy().policy(), superseded.policy().policy());
+    assert_eq!(
+        fixture
+            .stage(json!({"type":"object"}), true)
+            .await
+            .reference(),
+        restaged.reference(),
+    );
+    let activation = fixture
+        .activate(
+            &restaged,
+            active.reference().revision(),
+            StorageSchemaActivationPolicy::AllowPending,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(activation.active().reference(), restaged.reference());
+    assert_eq!(
+        fixture
+            .stage(json!({"type":"object"}), true)
+            .await
+            .reference(),
+        restaged.reference(),
+    );
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::memory(StorageBackendKind::Memory)]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[actix_web::test]
 async fn permissive_schema_activation_records_object_effects_without_changing_data(
     #[case] backend: StorageBackendKind,
 ) {

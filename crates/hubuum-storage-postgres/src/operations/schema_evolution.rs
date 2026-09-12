@@ -256,7 +256,7 @@ pub async fn stage_schema_revision(
     runtime.with_transaction(async move |connection| {
         let class=lock_class(connection,request.class_id()).await?; check_collection(&class,request.authorized_collection())?;
         let policy=request.policy().policy();
-        let existing=diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r WHERE class_id=$1 AND status IN ('staged','active') AND json_schema IS NOT DISTINCT FROM $2 AND validate_schema=$3 ORDER BY revision DESC LIMIT 1")
+        let existing=diesel::sql_query("SELECT to_jsonb(r) AS value FROM class_schema_revisions r JOIN class_schema_state s ON s.class_id=r.class_id WHERE r.class_id=$1 AND r.revision>=s.active_revision AND r.status IN ('staged','active') AND r.json_schema IS NOT DISTINCT FROM $2 AND r.validate_schema=$3 ORDER BY r.revision DESC LIMIT 1")
             .bind::<Integer,_>(class.id).bind::<Nullable<Jsonb>,_>(policy.json_schema()).bind::<Bool,_>(policy.validates_schema()).get_result::<JsonRow>(connection).await.optional()?;
         if let Some(row)=existing{return Ok::<_,PostgresStorageError>(StorageMutationOutcome::unchanged(StorageSchemaRevision::from_snapshot_with_limits(row.value, schema_limits).map_err(invalid)?));}
         let row=diesel::sql_query("WITH allocated AS (UPDATE class_schema_state SET last_revision=last_revision+1 WHERE class_id=$1 RETURNING last_revision), inserted AS (INSERT INTO class_schema_revisions(class_id,revision,json_schema,validate_schema,status,created_by) SELECT $1,last_revision,$2,$3,'staged',$4 FROM allocated RETURNING *) SELECT to_jsonb(inserted) AS value FROM inserted")
