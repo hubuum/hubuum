@@ -250,6 +250,10 @@ jobs:
         run: python3 scripts/test-rust-api-policy.py
       - name: Test supply-chain policy validation
         run: python3 scripts/test-supply-chain-policy.py
+      - name: Test functional corpus tooling and committed metadata
+        run: |
+          python3 scripts/test-corpus-tooling.py
+          python3 scripts/test-corpus.py check
 
   rust-api-policy:
     name: Rust API policy
@@ -1316,6 +1320,12 @@ jobs:
             fi
             sleep 1
           done
+      - name: Verify committed functional corpus against the production image
+        run: python3 scripts/test-corpus.py verify --image hubuum-server:ci
+      - name: Verify functional corpus regeneration separately
+        run: |
+          python3 scripts/test-corpus.py generate \
+            --image hubuum-server:ci --directory target/generated-test-corpus
       - name: Test live single-host zero-downtime rollout
         env:
           HUBUUM_TEST_IMAGE: hubuum-server:ci

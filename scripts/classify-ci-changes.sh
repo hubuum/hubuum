@@ -66,6 +66,10 @@ for path in "$@"; do
   esac
 
   case "$path" in
+    test-corpora/* | scripts/test-corpus.py | scripts/test-corpus-tooling.py | .gitattributes)
+      code=true
+      container=true
+      ;;
     CHANGELOG.md | docs/operational-contract.json | docs/metrics-reference.md | \
       .github/operational-contract-breaking-exceptions.json | \
       scripts/check-operational-contract-compatibility.py | \

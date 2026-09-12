@@ -74,9 +74,16 @@ without reproducing PostgreSQL names.
 Restore rejects version 5 and older backups, unknown or incomplete sections,
 malformed logical rows, invalid timestamps, and invalid, maximum, or
 inconsistent revisions. Create a new backup after upgrading and before relying
-on restore. Class computation state and object materializations remain excluded
-as rebuildable caches; restore validates definitions and queues class rebuild
-tasks. The manifest does not carry partial-selection counts, import-planning
+on restore.
+
+Both shared and personal computed-field definitions are preserved, including
+personal ownership. Class computation state and object materializations remain
+excluded as rebuildable caches; restore validates definitions and queues shared
+class rebuild tasks. Personal values are evaluated when their owner reads an
+object. The [functional corpus](../test-corpora/README.md#object-data-and-computed-fields)
+includes verified restore examples for both scopes.
+
+The manifest does not carry partial-selection counts, import-planning
 warnings, a collection scope, or an embedded import request.
 
 Backups cannot be scoped and backup documents are not import requests. Use the
@@ -341,6 +348,13 @@ identifiers accept only identifiers from closed, compile-time lists; arbitrary
 predicates and request-provided identifiers are not accepted.
 
 ## Benchmark dataset seeding
+
+For manual and functional testing, download the committed
+[comprehensive test corpus](../test-corpora/README.md) from the same branch or
+release tag as the server. It is an ordinary full-system backup containing
+3,000 objects, twelve classes with mixed schema policies, permission scenarios,
+relations and retained history. Consumers can restore it directly without
+running the generator.
 
 The extended import graph can seed deterministic users, groups, memberships,
 permissions, collections, classes, objects, relations, templates, remote
