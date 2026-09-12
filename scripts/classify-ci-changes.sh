@@ -47,7 +47,7 @@ for path in "$@"; do
   esac
 
   case "$path" in
-    .github/treetop-conformance.env | .github/workflows/ci.yml | \
+    .github/treetop-conformance.env | .github/workflows/ci.yml | .python-version | \
       Cargo.toml | Cargo.lock | docs/treetop/* | \
       scripts/run-treetop-conformance.sh | scripts/serve-treetop-fixture.py | \
       scripts/test-serve-treetop-fixture.py | \
@@ -134,6 +134,15 @@ for path in "$@"; do
     .github/workflows/restore-drill.yml)
       code=true
       container=true
+      ;;
+    .python-version)
+      code=true
+      openapi=true
+      operational_contract=true
+      container=true
+      artifacts=true
+      benchmarks=true
+      runtime_benchmark=true
       ;;
     .github/workflows/ci.yml)
       code=true

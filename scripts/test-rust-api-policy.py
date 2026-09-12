@@ -3,8 +3,16 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "Hubuum tooling requires Python 3.11 or newer; found "
+        + sys.version.split()[0]
+        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
+    )
+
+import subprocess
 import tempfile
 import textwrap
 import unittest

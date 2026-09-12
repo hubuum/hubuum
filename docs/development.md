@@ -1,5 +1,28 @@
 # Development Guide
 
+## Python tooling
+
+Repository Python scripts and tests require **Python 3.11 or newer**, available
+as `python3` on `PATH`. They use only the standard library, including `tomllib`
+for TOML parsing. No Python packages, pip steps, or virtual environments are
+required. Older interpreters exit with an upgrade instruction before running
+the tool; the full test runner checks this before building or creating databases.
+
+Install Python 3.11+ using your operating system's packages or your existing
+Python version manager, then select it in the shell used for repository commands.
+Changing a shell alias is insufficient for scripts that launch `python3`.
+Check the selection with:
+
+```bash
+python3 scripts/check-python-version.py
+python3 scripts/test-python-version.py
+```
+
+CI selects Python 3.11 explicitly from `.python-version` in jobs that execute
+Python tooling, including shell wrappers. A separate required job exercises the
+Rust API, supply-chain, and generated inventory checks on Python 3.11 and 3.12
+without site packages, and tests the unsupported-version errors.
+
 ## Git Hooks Setup
 
 This project includes git hooks to maintain code quality standards. The hooks are stored in the `hooks/` directory and can be shared across the team.

@@ -206,7 +206,8 @@ Do not call an internal trait, model, worker, or persistence signature change a
 
 ## Local verification
 
-Run the classification policy and its fixtures with:
+Use [Python 3.11 or newer](development.md#python-tooling), with `python3` on
+`PATH` selecting that interpreter. Run the classification policy and its fixtures with:
 
 ```bash
 python3 scripts/check-rust-api-policy.py
