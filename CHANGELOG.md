@@ -47,6 +47,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Schema task completion timestamps remain in UTC on non-UTC PostgreSQL
+  connections, including cancellation after class deletion. Successful and
+  superseded schema work records common task completion and duration metrics.
+- Imports can activate staged schema-removal revisions without retaining the
+  class's previous schema policy.
 - Atomically throttle PostgreSQL token activity refreshes so concurrent
   authentication with the same stale token performs one `last_used_at` update
   per throttle window. Delayed observations cannot move activity timestamps

@@ -3,6 +3,71 @@ use diesel::sql_types::{Integer, Text};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{capture_queries, with_connection, with_transaction};
 
+#[rstest::rstest]
+#[case::completed_utc("UTC", false)]
+#[case::completed_positive_offset("Asia/Kolkata", false)]
+#[case::completed_negative_offset("America/New_York", false)]
+#[case::deleted_utc("UTC", true)]
+#[case::deleted_positive_offset("Asia/Kolkata", true)]
+#[case::deleted_negative_offset("America/New_York", true)]
+#[actix_web::test]
+async fn terminal_schema_task_timestamps_are_utc(
+    #[case] timezone: &str,
+    #[case] delete_class: bool,
+) {
+    let mut fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![]).await;
+    let revision = fixture.stage(json!(true), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let task_id = work.task_id();
+    let lease = if delete_class {
+        None
+    } else {
+        Some(fixture.claim(task_id, 60_000).await)
+    };
+    // Complete or delete an existing task from a worker connection in another zone.
+    let config = crate::tests::integration_test_config().unwrap();
+    let pool = crate::tests::postgres_test_pool(&config.database_url, 1);
+    with_connection(&pool, async |connection| {
+        diesel::sql_query("SELECT set_config('TimeZone', $1, false)")
+            .bind::<Text, _>(timezone)
+            .execute(connection)
+            .await
+    })
+    .await
+    .unwrap();
+    fixture.backend =
+        StorageHandle::from_registered_backend(PostgresStorage::unobserved(pool.clone()));
+    fixture.environment = BackendTestEnvironment::Postgres { pool };
+    let backend = fixture.backend.clone();
+    let before = chrono::Utc::now();
+    if let Some(lease) = lease {
+        fixture
+            .finish_claimed(lease, StorageSchemaBatchLimits::default())
+            .await;
+    }
+    fixture.cleanup().await;
+    let after = chrono::Utc::now();
+    // Loading validates the terminal timestamps against created_at and updated_at.
+    let (task, _) = backend.get_task_access(task_id).await.unwrap().into_parts();
+    assert_eq!(
+        task.status(),
+        if delete_class {
+            StorageTaskStatus::Cancelled
+        } else {
+            StorageTaskStatus::Succeeded
+        }
+    );
+    for timestamp in [task.finished_at(), task.request_redacted_at()] {
+        let timestamp = timestamp.expect("terminal task timestamp");
+        assert!(
+            timestamp >= before && timestamp <= after,
+            "{timezone}: {timestamp}"
+        );
+    }
+}
+
 #[actix_web::test]
 async fn impact_report_polling_does_not_recount_or_read_objects() {
     let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({}); 16]).await;

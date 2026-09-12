@@ -1323,11 +1323,19 @@ where
             id: class.id,
             name: input.name.clone(),
             collection_id: collection.id,
-            json_schema: input
-                .json_schema
-                .clone()
-                .or_else(|| class.json_schema.clone()),
-            validate_schema: input.validate_schema.unwrap_or(class.validate_schema),
+            json_schema: if input.schema_activation.is_some() {
+                input.json_schema.clone()
+            } else {
+                input
+                    .json_schema
+                    .clone()
+                    .or_else(|| class.json_schema.clone())
+            },
+            validate_schema: if input.schema_activation.is_some() {
+                input.validate_schema.unwrap_or(false)
+            } else {
+                input.validate_schema.unwrap_or(class.validate_schema)
+            },
             exists_in_db: true,
         };
         let schema_policy =

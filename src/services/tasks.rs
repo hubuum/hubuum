@@ -840,7 +840,7 @@ pub async fn execute_schema_validation(
     let mut previous = storage_handle(backend)
         .get_schema_work(task.lease.task_id())
         .await?;
-    loop {
+    let status = loop {
         let work = storage_handle(backend)
             .process_schema_work(task.lease.clone(), limits)
             .await?;
@@ -848,11 +848,27 @@ pub async fn execute_schema_validation(
         previous = work.clone();
         match work.status() {
             StorageSchemaWorkStatus::Running => tokio::task::yield_now().await,
-            StorageSchemaWorkStatus::Complete => return Ok(crate::models::TaskStatus::Succeeded),
-            StorageSchemaWorkStatus::Failed => return Ok(crate::models::TaskStatus::Failed),
+            StorageSchemaWorkStatus::Complete => break TaskStatus::Succeeded,
+            StorageSchemaWorkStatus::Failed => break TaskStatus::Failed,
             StorageSchemaWorkStatus::Cancelled | StorageSchemaWorkStatus::Superseded => {
-                return Ok(crate::models::TaskStatus::Cancelled);
+                break TaskStatus::Cancelled;
             }
         }
-    }
+    };
+    // The adapter commits the checkpoint and terminal task together. Observe the
+    // persisted result here so every backend records the same completion metrics.
+    let (finished, _) = storage_handle(backend)
+        .get_task_access(task.lease.task_id())
+        .await?
+        .into_parts();
+    let execution = finished
+        .started_at()
+        .zip(finished.finished_at())
+        .and_then(|(started, ended)| ended.signed_duration_since(started).to_std().ok());
+    crate::observability::metrics::task_completed(
+        finished.kind().as_str(),
+        finished.status().as_str(),
+        execution,
+    );
+    Ok(status)
 }

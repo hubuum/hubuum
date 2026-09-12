@@ -658,7 +658,7 @@ async fn finish_work_on(
     } else {
         "cancelled"
     };
-    diesel::sql_query("UPDATE tasks SET status=$2,finished_at=clock_timestamp(),updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,request_payload=NULL,request_redacted_at=clock_timestamp(),summary=$3 WHERE id=$1")
+    diesel::sql_query("UPDATE tasks SET status=$2,finished_at=clock_timestamp() AT TIME ZONE 'UTC',updated_at=clock_timestamp() AT TIME ZONE 'UTC',lease_token=NULL,lease_expires_at=NULL,request_payload=NULL,request_redacted_at=clock_timestamp() AT TIME ZONE 'UTC',summary=$3 WHERE id=$1")
         .bind::<Integer,_>(work.task_id().id()).bind::<Text,_>(task_status).bind::<Text,_>("Schema validation finished").execute(connection).await?;
     let action = if status == StorageSchemaWorkStatus::Complete {
         Action::Succeeded

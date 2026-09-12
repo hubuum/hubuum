@@ -178,8 +178,8 @@ CREATE FUNCTION hubuum_schema_work_deleted() RETURNS trigger LANGUAGE plpgsql SE
 DECLARE task_row public.tasks%ROWTYPE;
 BEGIN
     IF current_setting('hubuum.restore_history', true) = 'on' AND pg_has_role(session_user,current_user,'MEMBER') THEN RETURN OLD; END IF;
-    UPDATE public.tasks SET status='cancelled', finished_at=clock_timestamp(), updated_at=clock_timestamp(),
-        lease_token=NULL, lease_expires_at=NULL, request_payload=NULL, request_redacted_at=clock_timestamp(),
+    UPDATE public.tasks SET status='cancelled', finished_at=clock_timestamp() AT TIME ZONE 'UTC', updated_at=clock_timestamp() AT TIME ZONE 'UTC',
+        lease_token=NULL, lease_expires_at=NULL, request_payload=NULL, request_redacted_at=clock_timestamp() AT TIME ZONE 'UTC',
         summary='Schema validation cancelled because its class was deleted'
     WHERE id=OLD.task_id AND status IN ('queued','validating','running') RETURNING * INTO task_row;
     IF FOUND THEN

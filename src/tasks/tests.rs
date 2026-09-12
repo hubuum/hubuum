@@ -2868,8 +2868,25 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
     assert!(matches!(err.kind, FailureKind::Validation));
 }
 
+#[rstest]
+#[case::legacy_overwrite(false, None)]
+#[case::schema_removal(true, Some(false))]
+#[case::schema_removal_default_validation(true, None)]
 #[tokio::test]
-async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_settings() {
+async fn test_class_overwrite_omitting_schema_respects_activation_policy(
+    #[case] activate_removal: bool,
+    #[case] validate_schema: Option<bool>,
+) {
+    use hubuum_domain::{ClassId, CollectionId, SchemaRevision};
+    use hubuum_storage_core::{
+        SchemaEvolutionStorage, StorageClassSchemaPolicy, StorageSchemaStage,
+        StorageValidatedSchemaPolicy,
+    };
+
+    use crate::events::EventContext;
+    use crate::models::ImportSchemaActivation;
+    use crate::models::schema_evolution::SchemaActivationPolicy;
+
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("persist_class_schema_on_overwrite")).await;
     let schema = serde_json::json!({
@@ -2889,6 +2906,30 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
     .save_without_events(&context.pool)
     .await
     .unwrap();
+    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+    let activation = if activate_removal {
+        let revision = backend
+            .stage_schema_revision(StorageSchemaStage::new(
+                CollectionId::new(fixture.collection.id).unwrap(),
+                ClassId::new(class.id).unwrap(),
+                StorageValidatedSchemaPolicy::try_new(
+                    StorageClassSchemaPolicy::try_from_parts(None, false).unwrap(),
+                )
+                .unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+        Some(ImportSchemaActivation {
+            revision: revision.reference().revision(),
+            expected_active_revision: SchemaRevision::INITIAL,
+            policy: SchemaActivationPolicy::AllowPending,
+            impact_task_id: None,
+        })
+    } else {
+        None
+    };
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
@@ -2912,12 +2953,12 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
         &mode,
         &mut state,
         &ImportClassInput {
-            schema_activation: None,
+            schema_activation: activation,
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated class".to_string(),
             json_schema: None,
-            validate_schema: None,
+            validate_schema,
             collection_ref: None,
             collection_key: Some(CollectionKey {
                 name: fixture.collection.name.clone(),
@@ -2936,8 +2977,6 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
     )
     .map(|operation| StorageImportPlanItem::new(0, operation))
     .unwrap();
-    let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
-
     backend
         .apply_import_strict(StorageImportPlan::try_new(vec![operation]).unwrap())
         .await
@@ -2951,8 +2990,11 @@ async fn test_class_overwrite_omitting_schema_preserves_persisted_schema_setting
         .await
         .unwrap()
         .expect("updated class must remain available");
-    assert_eq!(updated.json_schema(), Some(&schema));
-    assert!(updated.validates_schema());
+    assert_eq!(
+        updated.json_schema(),
+        (!activate_removal).then_some(&schema)
+    );
+    assert_eq!(updated.validates_schema(), !activate_removal);
 }
 
 #[tokio::test]

@@ -1,7 +1,9 @@
 use super::*;
 use hubuum_domain::{JsonSchemaLimits, SchemaReference, SchemaRevision, TaskId};
 use hubuum_storage_core::schema_evolution::*;
-use hubuum_storage_core::{StorageAuthenticationTokenScope, StorageMutationOutcome};
+use hubuum_storage_core::{
+    StorageAuthenticationTokenScope, StorageMutationOutcome, StorageTaskClaim,
+};
 use hubuum_storage_postgres::{PostgresStorage, test_support::claim_task_by_id_with_lease};
 use serde_json::{Value, json};
 
@@ -84,6 +86,9 @@ impl SchemaFixture {
             .into_value()
     }
     async fn claim(&self, task_id: TaskId, millis: i64) -> StorageTaskLease {
+        self.claim_task(task_id, millis).await.lease().clone()
+    }
+    async fn claim_task(&self, task_id: TaskId, millis: i64) -> StorageTaskClaim {
         let duration = StorageTaskLeaseDuration::from_milliseconds(millis).unwrap();
         let claim = match &self.environment {
             BackendTestEnvironment::Memory { storage } => storage
@@ -98,7 +103,7 @@ impl SchemaFixture {
             }
         };
         assert_eq!(claim.task().id(), task_id);
-        claim.lease().clone()
+        claim
     }
     async fn finish(
         &self,
@@ -1345,6 +1350,102 @@ async fn generic_schema_tasks_require_administrator_report_access(
     }
     delete_backend_user(&fixture.backend, user).await;
     fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::memory_complete(StorageBackendKind::Memory, false)]
+#[case::postgres_complete(StorageBackendKind::Postgres, false)]
+#[case::memory_superseded(StorageBackendKind::Memory, true)]
+#[case::postgres_superseded(StorageBackendKind::Postgres, true)]
+#[actix_web::test]
+async fn schema_worker_records_terminal_metrics(
+    #[case] kind: StorageBackendKind,
+    #[case] superseded: bool,
+) {
+    use crate::observability::metrics;
+    use crate::services::tasks::{ClaimedTask, execute_schema_validation};
+
+    static LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+    let _guard = LOCK.lock().await;
+    metrics::init().unwrap();
+    let fixture = SchemaFixture::new(kind, vec![json!({})]).await;
+    let revision = fixture.stage(json!(true), true).await;
+    let activation = fixture
+        .activate(
+            &revision,
+            SchemaRevision::INITIAL,
+            StorageSchemaActivationPolicy::AllowPending,
+            None,
+        )
+        .await
+        .unwrap();
+    let claim = fixture
+        .claim_task(activation.task_id().unwrap(), 60_000)
+        .await;
+    if superseded {
+        let replacement = fixture.stage(json!({}), false).await;
+        fixture
+            .activate(
+                &replacement,
+                revision.reference().revision(),
+                StorageSchemaActivationPolicy::AllowPending,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    let status = if superseded { "cancelled" } else { "succeeded" };
+    let before = schema_task_metric_counts(&fixture.backend, status).await;
+    let claim = ClaimedTask::from_storage(claim).unwrap();
+    let result = execute_schema_validation(&fixture.backend, &claim)
+        .await
+        .unwrap();
+    assert_eq!(result.as_str(), status);
+    let after = schema_task_metric_counts(&fixture.backend, status).await;
+    assert_eq!(after, (before.0 + 1.0, before.1 + 1.0));
+    // A stale lease must not record another completion after the committed result.
+    assert!(
+        execute_schema_validation(&fixture.backend, &claim)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        schema_task_metric_counts(&fixture.backend, status).await,
+        after
+    );
+    fixture.cleanup().await;
+}
+
+async fn schema_task_metric_counts(backend: &StorageHandle, status: &str) -> (f64, f64) {
+    use crate::observability::metrics;
+
+    let context = AppContext::new(
+        backend.clone(),
+        Arc::new(LocalPermissionBackend::new(backend.clone(), "admin".into())),
+    );
+    let app = test::init_service(
+        App::new()
+            .app_data(Data::new(context))
+            .route("/metrics", actix_web::web::get().to(metrics::scrape)),
+    )
+    .await;
+    let body =
+        test::call_and_read_body(&app, test::TestRequest::get().uri("/metrics").to_request()).await;
+    let body = std::str::from_utf8(&body).unwrap();
+    let count = |name: &str| {
+        body.lines()
+            .find(|line| {
+                line.starts_with(&format!("{name}{{"))
+                    && line.contains("kind=\"schema_validation\"")
+                    && line.contains(&format!("final_status=\"{status}\""))
+            })
+            .map(|line| line.rsplit_once(' ').unwrap().1.parse::<f64>().unwrap())
+            .unwrap_or(0.0)
+    };
+    (
+        count("hubuum_task_completions_total"),
+        count("hubuum_task_execution_duration_seconds_count"),
+    )
 }
 
 mod budgets;
