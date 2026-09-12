@@ -53,6 +53,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Canceled login requests no longer permanently consume in-memory rate-limit
+  capacity, including the local fallback used during Valkey outages. Login
+  reservations expire within a bounded lifetime, and late or repeated completion
+  cannot consume another request's reservation or undo an administrative reset.
+
 - Failed best-effort memory import items roll back schema activation, queued
   work, and audit events. Preflight validation also isolates failed items.
 - Staging a policy superseded by a newer active schema allocates a new revision

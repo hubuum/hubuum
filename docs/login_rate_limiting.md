@@ -41,6 +41,17 @@ A successful login clears only the `(name, IP)` scope. The per-IP and per-subnet
 budgets are deliberately left intact, so one user's success cannot reset the spray or
 distributed counters for the whole host or network.
 
+Pending authentication reserves capacity in every applicable scope. Canceled requests
+release their memory reservations without counting as failed credentials. Reservations
+also expire after the configured window clamped to 5–60 seconds (60 seconds with the
+defaults), independently of failure-window and lockout expiry. This also bounds recovery
+when a canceled shared-store operation has already reached Valkey.
+
+Completion updates only its own live reservations. Expired reservations and reservations
+removed by an administrator cannot later consume another request's capacity or change
+its failure history. A healthy Valkey admission remains authoritative even when local
+fallback state is stale.
+
 ## Sliding window and exponential backoff
 
 Each scope keeps a sliding window of recent failure timestamps

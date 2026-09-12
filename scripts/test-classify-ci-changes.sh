@@ -233,6 +233,16 @@ assert_flag "$source_output" runtime_benchmark true
 assert_flag "$source_output" operational_contract true
 assert_flag "$source_output" treetop_conformance false
 
+for limiter_input in src/middlewares/rate_limit/reservation.rs \
+  src/middlewares/rate_limit/tests.rs \
+  src/middlewares/rate_limit/tests/cancellation.rs \
+  src/middlewares/rate_limit/tests/valkey_cancellation.rs; do
+  limiter_output="$(bash "$classifier" "$limiter_input")"
+  assert_flag "$limiter_output" code true
+  assert_flag "$limiter_output" container true
+  assert_flag "$limiter_output" operational_contract true
+done
+
 treetop_output="$(bash "$classifier" \
   .github/treetop-conformance.env \
   docs/treetop/schema.json \
