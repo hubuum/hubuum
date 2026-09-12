@@ -77,7 +77,7 @@ async fn computed_query_honors_object_specific_treetop_visibility(
             "/api/v1/classes/{}/?sort=computed.shared.display_name",
             fixture.class.id
         ),
-        backend,
+        backend.clone(),
     ))
     .await;
     let response = assert_response_status(response, StatusCode::OK).await;
@@ -85,12 +85,16 @@ async fn computed_query_honors_object_specific_treetop_visibility(
 
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["id"], fixture.objects[0].id);
-    assert_eq!(
-        queries.queries_matching("\"hubuumobject\".\"id\" = ANY"),
-        2,
-        "count and page queries must both apply the authorized object ids: {:#?}",
-        queries.query_counts()
-    );
+    let object_queries = queries
+        .query_counts()
+        .keys()
+        .filter(|sql| sql.contains("FROM \"hubuumobject\""))
+        .collect::<Vec<_>>();
+    assert_eq!(object_queries.len(), 1, "{queries:?}");
+    assert!(object_queries[0].contains(" LIMIT "), "{queries:?}");
+    // Personal-field visibility has one boundary check; the only real object
+    // is then authorized once, with no SQL count or full authorized-ID query.
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -100,12 +104,16 @@ async fn computed_query_honors_object_specific_treetop_visibility(
 }
 
 #[rstest::rstest]
-#[case::existing("display_name")]
-#[case::missing("hidden_definition")]
+#[case::existing_hidden("display_name", false, StatusCode::OK)]
+#[case::missing_hidden("hidden_definition", false, StatusCode::OK)]
+#[case::missing_visible("hidden_definition", true, StatusCode::BAD_REQUEST)]
 #[tokio::test]
-async fn computed_query_keys_are_hidden_when_only_the_synthetic_object_is_visible(
+async fn computed_query_key_errors_require_real_object_visibility(
     #[future(awt)] test_context: TestContext,
     #[case] key: &str,
+    #[case] visible: bool,
+    #[case] expected_status: StatusCode,
+    #[values(false, true)] include_total: bool,
 ) {
     let fixture = fixture(&test_context, "computed synthetic policy visibility").await;
     let group = create_test_group(&test_context.pool).await;
@@ -131,20 +139,34 @@ async fn computed_query_keys_are_hidden_when_only_the_synthetic_object_is_visibl
         resource_id: None,
         attrs: ResourceFields::default(),
     });
+    if visible {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(fixture.objects[0].id),
+            attrs: ResourceFields::default(),
+        });
+    }
     let response = get_request_with_permission_backend(
         &test_context.pool,
         &test_context.normal_token,
         &format!(
-            "/api/v1/classes/{}/?sort=computed.shared.{key}",
+            "/api/v1/classes/{}/?sort=computed.shared.{key}&include_total={include_total}",
             fixture.class.id
         ),
         backend,
     )
     .await;
-    let response = assert_response_status(response, StatusCode::OK).await;
-    let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
-
-    assert!(objects.is_empty());
+    let response = assert_response_status(response, expected_status).await;
+    if expected_status == StatusCode::OK {
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            include_total.then_some("0")
+        );
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert!(objects.is_empty());
+    }
 
     fixture.cleanup().await.unwrap();
     group

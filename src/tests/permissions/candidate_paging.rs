@@ -160,6 +160,11 @@ async fn external_list_bounds_fetched_rows_and_authorization_work(
     )
     .await;
     let response = assert_response_status(response, StatusCode::OK).await;
+    assert_eq!(
+        queries.queries_matching("SELECT \"collections\".\"id\" FROM \"collections\""),
+        0,
+        "candidate enumeration must not load all collection IDs: {queries:?}"
+    );
     let table = match listing {
         Listing::Classes => "hubuumclass",
         Listing::Objects => "hubuumobject",
@@ -404,7 +409,7 @@ async fn equivalent_external_lists_page_before_authorization(
             listing,
             EquivalentListing::StructuredClasses | EquivalentListing::StructuredObjects
         );
-        let (response, fetched) = capture_candidate_fetches(async {
+        let ((response, fetched), queries) = hubuum_storage_postgres::capture_queries(capture_candidate_fetches(async {
             if structured {
                 post_request_with_permission_backend(&context.pool, &context.admin_token, "/api/v1/search",
                     json!({"version": 1, "target": {"kind": if matches!(listing, EquivalentListing::StructuredClasses) { "class" } else { "object" }},
@@ -427,8 +432,13 @@ async fn equivalent_external_lists_page_before_authorization(
                     &format!("{endpoint}&limit=1&include_total={include_total}{cursor_query}"), backend.clone(),
                 ).await
             }
-        }).await;
+        })).await;
         let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            queries.queries_matching("SELECT \"collections\".\"id\" FROM \"collections\""),
+            0,
+            "candidate enumeration must not load all collection IDs: {queries:?}"
+        );
         assert_eq!(fetched, if include_total { vec![8] } else { vec![3] });
         assert_eq!(
             response

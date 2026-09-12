@@ -14,7 +14,7 @@ use crate::pagination::{
     page_request,
 };
 use crate::permissions::visibility::{
-    authorize_all_candidates, filter_authorized_cursor_page_from_storage,
+    AuthorizedObjectIds, authorize_all_candidates, filter_authorized_cursor_page_from_storage,
 };
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::catalog as catalog_service;
@@ -216,7 +216,28 @@ async fn external_computed_page(
             )
         },
     )
-    .await?;
+    .await;
+    let page = match page {
+        Ok(page) => page,
+        Err(error @ ApiError::BadRequest(_)) => {
+            // Definition errors must not reveal computed keys to a caller who
+            // cannot read any real object. Probe only this error path so valid
+            // small pages still authorize exactly their candidates.
+            if !has_external_object_visibility(
+                context,
+                requestor,
+                class,
+                &principal,
+                related_ids.as_ref(),
+            )
+            .await?
+            {
+                return empty_computed_page(params);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let result = crate::pagination::finalize_page(page.rows, params)?;
     let next_cursor = result.next_cursor;
     if include_computed {
@@ -248,6 +269,47 @@ async fn external_computed_page(
             true,
         )
     }
+}
+
+async fn has_external_object_visibility(
+    context: &AppContext,
+    requestor: &Authenticated,
+    class: &HubuumClass,
+    principal: &PrincipalRef,
+    related_ids: Option<&AuthorizedObjectIds>,
+) -> Result<bool, ApiError> {
+    let mut query = QueryOptions::new(Vec::new(), Vec::new(), Some(1), None, false)?;
+    scope_object_query_to_class(&mut query, &HubuumClassID::new(class.id)?)?;
+    let page = filter_authorized_cursor_page_from_storage(
+        context.permission_backend(),
+        &query,
+        |execution| async {
+            catalog_service::list_objects(
+                context,
+                requestor.principal.id().id(),
+                true,
+                None,
+                execution,
+            )
+            .await
+            .map(|(rows, _)| rows)
+        },
+        |mut candidates: Vec<HubuumObject>| {
+            if let Some(ids) = related_ids {
+                candidates.retain(|object| ids.contains(object.id));
+            }
+            authorize_all_candidates(
+                context.permission_backend(),
+                principal,
+                candidates,
+                requestor.scopes(),
+                vec![Permissions::ReadObject],
+                HubuumObject::authorization_resource,
+            )
+        },
+    )
+    .await?;
+    Ok(!page.rows.is_empty())
 }
 
 fn empty_computed_page(
