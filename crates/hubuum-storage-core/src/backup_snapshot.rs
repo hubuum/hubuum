@@ -1,5 +1,7 @@
 use hubuum_domain::JsonSchemaLimits;
 mod baseline;
+mod budget;
+pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
 mod revisions;
 mod schemas;
 
@@ -322,11 +324,15 @@ impl fmt::Debug for StorageBackupSnapshot {
 /// every live temporal resource must have exactly one matching open snapshot,
 /// including resources restored from a history-free backup. Missing or
 /// contradictory history is a contract failure, never synthesized on capture.
+/// The explicit budget applies during enumeration and retention, including
+/// excluded rows inspected to select terminal history. Abort with InputTooLarge
+/// on exhaustion; capturing everything before checking the budget is invalid.
 #[async_trait]
 pub trait BackupSnapshotStorage: Send + Sync {
     async fn capture_backup_snapshot(
         &self,
         include_history: bool,
+        budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError>;
 }
 

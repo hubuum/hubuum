@@ -357,6 +357,24 @@ The preflight is a size check, not proof of backup validity; generation and
 verification still run for every corpus admitted by the preflight.
 Use `--skip-lifecycle` only for focused local iteration.
 
+Backup generation also enforces the production byte and row-work budgets during
+capture, even when the preflight's lower bound fits. The preflight omits
+operational sections and framing, so it cannot guarantee admission. A capture
+limit failure produces no artifact and is reported as a backup-stage failure
+with the resource-limit diagnostic; it must not be claimed as successful
+verification or restore. The default work ceiling is 1,000,000 enumerated rows.
+The large and huge profiles retain their existing declared byte ceilings; this
+change does not assert that either corpus fits those ceilings or completes a
+restore. Continued lifecycle-envelope work is tracked in
+[#366](https://github.com/hubuum/hubuum/issues/366).
+
+The adapter regression `backup_rows_can_exceed_one_postgres_json_array` retains
+coverage above PostgreSQL's single JSON-array limit under an explicit 512 MiB
+budget. Small-budget capture regressions instrument database row evaluation and
+logical retained bytes to prove early termination. These tests exercise the
+resource enforcement mechanism; they do not replace a large-profile lifecycle
+assessment or peak-RSS measurement.
+
 ## CI Policy
 
 Scale jobs are expensive and never run because `ci:full`, `ci:benchmarks`, or

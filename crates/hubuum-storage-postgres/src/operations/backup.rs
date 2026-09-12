@@ -2,18 +2,24 @@ use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use diesel::QueryableByName;
+#[cfg(feature = "scale-benchmark-support")]
 use diesel::query_builder::SqlQuery;
+#[cfg(feature = "scale-benchmark-support")]
 use diesel::sql_types::Jsonb;
+use diesel::sql_types::{Nullable, Text};
 use diesel_async::RunQueryDsl;
+#[cfg(feature = "scale-benchmark-support")]
 use futures_util::TryStreamExt;
 use hubuum_storage_core::{
-    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
-    StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
+    StorageBackupBudget, StorageBackupCaptureProgress, StorageBackupHistorySection,
+    StorageBackupHistorySections, StorageBackupRow, StorageBackupSnapshot,
+    StorageBackupStateSection, StorageBackupStateSections,
 };
 use serde_json::{Map, Value};
 
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
+#[cfg(feature = "scale-benchmark-support")]
 #[derive(QueryableByName)]
 struct JsonRow {
     #[diesel(sql_type = Jsonb)]
@@ -531,20 +537,20 @@ impl SnapshotFilter {
                 ) =>
             {
                 Ok(Some(
-                    "task_id IN (SELECT id FROM tasks WHERE status IN \
-                     ('succeeded', 'partially_succeeded', 'failed', 'cancelled'))",
+                    "EXISTS (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND t.status IN \
+                     ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)",
                 ))
             }
             Self::HistoryEvents if table == "events" => Ok(Some(
-                "entity_type <> 'task' OR entity_id IN \
-                 (SELECT id FROM tasks WHERE status IN \
-                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled'))",
+                "snapshot_row.entity_type <> 'task' OR EXISTS \
+                 (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.entity_id AND t.status IN \
+                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)",
             )),
             Self::TerminalDeliveries if table == "event_deliveries" => Ok(Some(
-                "status IN ('succeeded', 'dead') AND event_id IN \
-                 (SELECT id FROM events WHERE entity_type <> 'task' OR entity_id IN \
-                 (SELECT id FROM tasks WHERE status IN \
-                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled')))",
+                "snapshot_row.status IN ('succeeded', 'dead') AND EXISTS \
+                 (SELECT 1 FROM events e WHERE e.id = snapshot_row.event_id AND (e.entity_type <> 'task' OR EXISTS \
+                 (SELECT 1 FROM tasks t WHERE t.id = e.entity_id AND t.status IN \
+                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)) OFFSET 0)",
             )),
             _ => Err(PostgresStorageError::database(
                 "Refused an invalid backup snapshot filter/table combination",
@@ -553,6 +559,7 @@ impl SnapshotFilter {
     }
 }
 
+#[cfg(feature = "scale-benchmark-support")]
 fn json_rows_query(table: &str, filter: SnapshotFilter) -> Result<SqlQuery, PostgresStorageError> {
     validate_snapshot_table(table)?;
     // The only formatted components are a table identifier from the closed
@@ -563,25 +570,97 @@ fn json_rows_query(table: &str, filter: SnapshotFilter) -> Result<SqlQuery, Post
         .unwrap_or_default();
     let query = format!(
         "SELECT to_jsonb(snapshot_row) AS row FROM {table} snapshot_row{predicate} \
-         ORDER BY to_jsonb(snapshot_row)::text"
+         ORDER BY {}",
+        snapshot_key(table)?
     );
     Ok(diesel::sql_query(query))
 }
 
-async fn load_json_rows(
+// Cursor results are text truncated on the server before transport/deserialization.
+// PostgreSQL may materialize one source row, never an entire table or JSON array.
+#[derive(QueryableByName)]
+struct CaptureRow {
+    #[diesel(sql_type = Nullable<Text>)]
+    row: Option<String>,
+}
+
+fn snapshot_key(table: &str) -> Result<&'static str, PostgresStorageError> {
+    validate_snapshot_table(table)?;
+    Ok(match table {
+        "group_memberships" => "principal_id, group_id",
+        "group_membership_sources" => "principal_id, group_id, source, source_scope_id, source_key",
+        "collection_authorization_state" => "collection_id",
+        "collection_closure" => "ancestor_collection_id, descendant_collection_id",
+        "class_schema_revisions" => "class_id, revision",
+        "class_schema_state" => "class_id",
+        "object_schema_evidence" => "object_id",
+        "collections_history"
+        | "hubuumclass_history"
+        | "hubuumclass_relation_history"
+        | "hubuumobject_history"
+        | "hubuumobject_relation_history"
+        | "export_templates_history"
+        | "remote_targets_history" => "history_id",
+        _ => "id",
+    })
+}
+
+async fn load_capture_rows(
     conn: &mut PostgresConnection,
     table: &str,
     filter: SnapshotFilter,
-) -> Result<Vec<Value>, PostgresStorageError> {
-    // A table-sized jsonb_agg hits PostgreSQL's JSON-array size limit even
-    // when every individual resource is valid. Stream rows within the same
-    // transaction snapshot and retain the existing canonical ordering.
-    let query = json_rows_query(table, filter)?;
-    let rows = query.load_stream::<JsonRow>(conn).await?;
-    rows.map_ok(|row| row.row)
-        .try_collect()
-        .await
-        .map_err(Into::into)
+    progress: &mut StorageBackupCaptureProgress,
+    logicalize: impl Fn(&mut Value) -> Result<(), PostgresStorageError>,
+) -> Result<Vec<StorageBackupRow>, PostgresStorageError> {
+    let key = snapshot_key(table)?;
+    let predicate = filter.sql(table)?.unwrap_or("TRUE");
+    // Evaluate eligibility per source row so excluded rows also consume work.
+    // A NO SCROLL, WITHOUT HOLD cursor cannot materialize a held snapshot.
+    let max_chars = progress
+        .max_bytes()
+        .saturating_add(1)
+        .min(i32::MAX as usize);
+    diesel::sql_query(format!(
+        "DECLARE hubuum_backup_rows NO SCROLL CURSOR WITHOUT HOLD FOR \
+         SELECT CASE WHEN {predicate} THEN left(to_jsonb(snapshot_row)::text, {max_chars}) \
+         ELSE NULL END AS row FROM {table} snapshot_row ORDER BY {key}"
+    ))
+    .execute(conn)
+    .await?;
+    let mut retained = Vec::new();
+    loop {
+        // FETCH 1 prevents the driver/server from running an unbounded SELECT
+        // ahead of the consumer when a small byte budget is exhausted.
+        let rows = diesel::sql_query("FETCH FORWARD 1 FROM hubuum_backup_rows")
+            .load::<CaptureRow>(conn)
+            .await?;
+        let Some(captured) = rows.into_iter().next() else {
+            break;
+        };
+        progress.scan_row().map_err(PostgresStorageError::from)?;
+        let Some(text) = captured.row else {
+            continue;
+        };
+        if text.len() > progress.max_bytes() {
+            return Err(PostgresStorageError::from(
+                progress.limit_error("source row byte"),
+            ));
+        }
+        let mut value = serde_json::from_str(&text).map_err(|error| {
+            PostgresStorageError::database(format!("Invalid backup source row: {error}"))
+        })?;
+        drop(text);
+        logicalize(&mut value)?;
+        let row = crate::validate_persisted("backup row", StorageBackupRow::try_from_value(value))?;
+        progress
+            .retain_row(&row)
+            .map_err(PostgresStorageError::from)?;
+        retained.push(row);
+    }
+    diesel::sql_query("CLOSE hubuum_backup_rows")
+        .execute(conn)
+        .await?;
+    Ok(retained)
 }
 
 /// A strict lower bound: omit document framing and operational sections, and
@@ -641,139 +720,74 @@ pub(crate) async fn backup_size_lower_bound(
 
 async fn snapshot_state(
     conn: &mut PostgresConnection,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<StorageBackupStateSections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
     for section in StorageBackupStateSection::ALL.iter().copied() {
-        let table = state_table(section);
-        let mut rows = load_json_rows(conn, table, SnapshotFilter::All).await?;
-        for row in &mut rows {
-            state_row_to_logical(section, row)?;
-        }
-        sections.insert(section, backup_rows(rows)?);
+        let rows = load_capture_rows(
+            conn,
+            state_table(section),
+            SnapshotFilter::All,
+            progress,
+            |row| state_row_to_logical(section, row),
+        )
+        .await?;
+        sections.insert(section, rows);
     }
     Ok(sections)
-}
-
-async fn load_logical_history_rows(
-    conn: &mut PostgresConnection,
-    section: StorageBackupHistorySection,
-    filter: SnapshotFilter,
-) -> Result<Vec<Value>, PostgresStorageError> {
-    let mut rows = load_json_rows(conn, history_table(section), filter).await?;
-    for row in &mut rows {
-        history_row_to_logical(section, row)?;
-    }
-    Ok(rows)
 }
 
 async fn snapshot_history(
     conn: &mut PostgresConnection,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<StorageBackupHistorySections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
-    for section in [
-        StorageBackupHistorySection::CollectionHistory,
-        StorageBackupHistorySection::ClassHistory,
-        StorageBackupHistorySection::ClassSchemaHistory,
-        StorageBackupHistorySection::ClassRelationHistory,
-        StorageBackupHistorySection::ObjectHistory,
-        StorageBackupHistorySection::ObjectRelationHistory,
-        StorageBackupHistorySection::ExportTemplateHistory,
-        StorageBackupHistorySection::RemoteTargetHistory,
-    ] {
-        let rows = load_logical_history_rows(conn, section, SnapshotFilter::All).await?;
-        sections.insert(section, backup_rows(rows)?);
-    }
-    let mut tasks = load_json_rows(conn, "tasks", SnapshotFilter::TerminalTasks).await?;
-    for task in &mut tasks {
-        history_row_to_logical(StorageBackupHistorySection::TerminalTasks, task)?;
-    }
-    sections.insert(
-        StorageBackupHistorySection::TerminalTasks,
-        backup_rows(tasks)?,
-    );
-    sections.insert(
-        StorageBackupHistorySection::ImportResults,
-        backup_rows(
-            load_logical_history_rows(
-                conn,
-                StorageBackupHistorySection::ImportResults,
-                SnapshotFilter::TerminalTaskResults,
-            )
-            .await?,
-        )?,
-    );
-    sections.insert(
-        StorageBackupHistorySection::ExportOutputs,
-        backup_rows(
-            load_logical_history_rows(
-                conn,
-                StorageBackupHistorySection::ExportOutputs,
-                SnapshotFilter::TerminalTaskResults,
-            )
-            .await?,
-        )?,
-    );
-    sections.insert(
-        StorageBackupHistorySection::RemoteCallResults,
-        backup_rows(
-            load_logical_history_rows(
-                conn,
-                StorageBackupHistorySection::RemoteCallResults,
-                SnapshotFilter::TerminalTaskResults,
-            )
-            .await?,
-        )?,
-    );
-    let mut events = load_json_rows(conn, "events", SnapshotFilter::HistoryEvents).await?;
-    for event in &mut events {
-        if let Some(object) = event.as_object_mut()
-            && object.get("dispatched_at").is_none_or(Value::is_null)
-        {
-            object.insert(
-                "dispatched_at".to_string(),
-                object.get("occurred_at").cloned().unwrap_or(Value::Null),
-            );
-        }
-    }
-    for event in &mut events {
-        history_row_to_logical(StorageBackupHistorySection::AuditEvents, event)?;
-    }
-    sections.insert(
-        StorageBackupHistorySection::AuditEvents,
-        backup_rows(events)?,
-    );
-    sections.insert(
-        StorageBackupHistorySection::TerminalEventDeliveries,
-        backup_rows(
-            load_logical_history_rows(
-                conn,
-                StorageBackupHistorySection::TerminalEventDeliveries,
-                SnapshotFilter::TerminalDeliveries,
-            )
-            .await?,
-        )?,
-    );
-    Ok(sections)
-}
-
-fn backup_rows(rows: Vec<Value>) -> Result<Vec<StorageBackupRow>, PostgresStorageError> {
-    rows.into_iter()
-        .map(|row| {
-            crate::validate_persisted("backup section row", StorageBackupRow::try_from_value(row))
+    for section in StorageBackupHistorySection::ALL.iter().copied() {
+        let filter = match section {
+            StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
+            StorageBackupHistorySection::ImportResults
+            | StorageBackupHistorySection::ExportOutputs
+            | StorageBackupHistorySection::RemoteCallResults => SnapshotFilter::TerminalTaskResults,
+            StorageBackupHistorySection::AuditEvents => SnapshotFilter::HistoryEvents,
+            StorageBackupHistorySection::TerminalEventDeliveries => {
+                SnapshotFilter::TerminalDeliveries
+            }
+            _ => SnapshotFilter::All,
+        };
+        let rows = load_capture_rows(conn, history_table(section), filter, progress, |row| {
+            if section == StorageBackupHistorySection::AuditEvents
+                && let Some(object) = row.as_object_mut()
+                && object.get("dispatched_at").is_none_or(Value::is_null)
+            {
+                object.insert(
+                    "dispatched_at".to_string(),
+                    object.get("occurred_at").cloned().unwrap_or(Value::Null),
+                );
+            }
+            history_row_to_logical(section, row)
         })
-        .collect()
+        .await?;
+        sections.insert(section, rows);
+    }
+    Ok(sections)
 }
 
 pub async fn capture_backup_snapshot(
     runtime: &PostgresRuntime,
     include_history: bool,
+    budget: StorageBackupBudget,
 ) -> Result<StorageBackupSnapshot, PostgresStorageError> {
     let schema_limits = runtime.schema_limits();
     runtime
         .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
-            let state = snapshot_state(conn).await?;
+            // Favor indexed primary-key traversal and first-row latency.
+            diesel::sql_query("SET LOCAL enable_sort = off")
+                .execute(conn)
+                .await?;
+            let mut progress = StorageBackupCaptureProgress::new(budget);
+            let state = snapshot_state(conn, &mut progress).await?;
             let history = if include_history {
-                Some(snapshot_history(conn).await?)
+                Some(snapshot_history(conn, &mut progress).await?)
             } else {
                 None
             };
@@ -794,6 +808,8 @@ mod tests {
         PERMISSION_FIELDS, SnapshotFilter, history_row_to_logical, history_row_to_postgres,
         state_row_to_logical, state_row_to_postgres, validate_snapshot_table,
     };
+    #[cfg(feature = "integration-test-support")]
+    use hubuum_storage_core::{StorageBackupBudget, StorageBackupCaptureProgress};
     use hubuum_storage_core::{StorageBackupHistorySection, StorageBackupStateSection};
 
     #[rstest]
@@ -843,11 +859,26 @@ mod tests {
                      SELECT n, to_jsonb(repeat('x', 65536)) FROM generate_series(1, 4096) n",
                     )
                     .await?;
-                let rows =
-                    super::load_json_rows(connection, "hubuumobject", SnapshotFilter::All).await?;
+                let mut progress = StorageBackupCaptureProgress::new(
+                    StorageBackupBudget::new(512 * 1024 * 1024, 5000).unwrap(),
+                );
+                let rows = super::load_capture_rows(
+                    connection,
+                    "hubuumobject",
+                    SnapshotFilter::All,
+                    &mut progress,
+                    |_| Ok(()),
+                )
+                .await?;
                 let payload_bytes: usize = rows
                     .iter()
-                    .map(|row| row["data"].as_str().expect("text payload").len())
+                    .map(|row| {
+                        row.get("data")
+                            .unwrap()
+                            .as_str()
+                            .expect("text payload")
+                            .len()
+                    })
                     .sum();
                 assert_eq!((rows.len(), payload_bytes), (4096, 4096 * 65536));
                 Ok(())
@@ -1046,3 +1077,6 @@ mod tests {
         assert_eq!(restored.get("correlation_id"), Some(&Value::Null));
     }
 }
+
+#[cfg(all(test, feature = "integration-test-support"))]
+mod capture_tests;

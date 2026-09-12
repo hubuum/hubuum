@@ -20468,12 +20468,17 @@
       "BackupConfig": {
         "type": "object",
         "required": [
+          "max_capture_rows",
           "output_retention_hours",
           "max_active_tasks_per_user",
           "max_output_bytes"
         ],
         "properties": {
           "max_active_tasks_per_user": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_capture_rows": {
             "type": "integer",
             "minimum": 0
           },

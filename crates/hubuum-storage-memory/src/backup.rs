@@ -78,18 +78,37 @@ impl Row<'_> {
     }
 }
 
+fn capture_row(
+    progress: &mut StorageBackupCaptureProgress,
+    row: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    progress.scan_row()?;
+    retain_row(progress, row)
+}
+
+fn retain_row(
+    progress: &mut StorageBackupCaptureProgress,
+    row: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    let row = row?;
+    progress.retain_row(&row)?;
+    Ok(row)
+}
+
 pub(super) fn capture(
     state: &MemoryState,
     include_history: bool,
     schema_limits: JsonSchemaLimits,
+    budget: StorageBackupBudget,
 ) -> Result<StorageBackupSnapshot, StorageError> {
+    let mut progress = StorageBackupCaptureProgress::new(budget);
     let mut sections = StorageBackupStateSections::new();
-    resources::capture(state, &mut sections)?;
-    schemas::capture(state, &mut sections)?;
-    identity::capture(state, &mut sections)?;
-    workflows::capture(state, &mut sections)?;
+    resources::capture(state, &mut sections, &mut progress)?;
+    schemas::capture(state, &mut sections, &mut progress)?;
+    identity::capture(state, &mut sections, &mut progress)?;
+    workflows::capture(state, &mut sections, &mut progress)?;
     let history = include_history
-        .then(|| workflows::capture_history(state))
+        .then(|| workflows::capture_history(state, &mut progress))
         .transpose()?;
     StorageBackupSnapshot::try_new_with_limits(sections, history, schema_limits)
         .map_err(invalid_contract_value)

@@ -2,11 +2,25 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use hubuum_storage_core::{
-    StorageBackupHistorySection, StorageBackupSnapshot, StorageRestoreDocument,
-    StorageRestoreDocumentMetadata,
+    BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupSnapshot,
+    StorageErrorKind, StorageRestoreDocument, StorageRestoreDocumentMetadata,
 };
 
 use crate::FixtureError;
+
+/// Check the shared exhaustion contract against a fixture known to exceed the
+/// supplied byte or row budget. Adapter-native probes must additionally prove
+/// early enumeration termination and bounded retained state.
+pub async fn verify_backup_budget_rejected(
+    backend: &impl BackupSnapshotStorage,
+    budget: StorageBackupBudget,
+) -> Result<(), FixtureError> {
+    match backend.capture_backup_snapshot(true, budget).await {
+        Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("Backup capture accepted a fixture exceeding its budget".into()),
+    }
+}
 
 /// Adapter/application fixture for the portable destructive recovery contract.
 /// Each fixture owns isolated storage. Mutations must observably change the

@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageBackupBudget;
 pub mod environment;
 pub mod running;
 
@@ -689,6 +690,10 @@ pub struct AppConfig {
     )]
     pub backup_max_output_bytes: usize,
 
+    /// Maximum rows enumerated during a backup, including excluded history rows.
+    #[clap(long, env = "HUBUUM_BACKUP_MAX_CAPTURE_ROWS", default_value_t = DEFAULT_BACKUP_MAX_CAPTURE_ROWS)]
+    pub backup_max_capture_rows: usize,
+
     /// Minutes a validated restore stage and its capability remain usable.
     #[clap(
         long,
@@ -1158,6 +1163,11 @@ pub(crate) fn app_command() -> clap::Command {
 }
 
 impl AppConfig {
+    pub fn backup_budget(&self) -> Result<StorageBackupBudget, ApiError> {
+        StorageBackupBudget::new(self.backup_max_output_bytes, self.backup_max_capture_rows)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))
+    }
+
     pub(crate) fn from_cli_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
         let mut config = Self::from_arg_matches(matches)?;
         config.database_url_override =
@@ -1317,6 +1327,12 @@ impl AppConfig {
         if self.backup_max_active_tasks_per_user == 0 {
             return Err(ApiError::BadRequest(
                 "backup_max_active_tasks_per_user must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.backup_max_capture_rows == 0 {
+            return Err(ApiError::BadRequest(
+                "backup_max_capture_rows must be greater than 0".to_string(),
             ));
         }
 
@@ -1995,6 +2011,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER),
+        backup_max_capture_rows: env::var("HUBUUM_BACKUP_MAX_CAPTURE_ROWS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_BACKUP_MAX_CAPTURE_ROWS),
         backup_max_output_bytes: env::var("HUBUUM_BACKUP_MAX_OUTPUT_BYTES")
             .ok()
             .and_then(|value| value.parse().ok())

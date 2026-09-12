@@ -6,9 +6,10 @@ pub(super) use history::{capture_history, restore_history};
 pub(super) fn capture(
     state: &MemoryState,
     sections: &mut StorageBackupStateSections,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "config": v.configuration(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.collection_id().id(), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "config": v.configuration(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.collection_id().id(), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::ComputedFieldDefinitions, state.computed_fields.values().map(|v| {
         let (visibility, owner) = match v.visibility() { StorageComputedFieldVisibility::Shared => ("shared", None), StorageComputedFieldVisibility::Personal { owner_id } => ("personal", Some(owner_id.id())) };
         let m = v.metadata();
@@ -16,7 +17,7 @@ pub(super) fn capture(
             "key": v.key(), "label": v.label(), "description": v.description(), "operation": v.operation(), "result_type": v.result_type(),
             "enabled": v.enabled(), "revision": m.revision().get(), "semantics_version": v.semantics_version(),
             "created_by": v.created_by().map(PrincipalId::id), "updated_by": v.updated_by().map(PrincipalId::id), "created_at": m.created_at(), "updated_at": m.updated_at()}))
-    }).collect::<Result<_, _>>()?);
+    }).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     Ok(())
 }
 
