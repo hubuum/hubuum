@@ -298,6 +298,23 @@ impl EventDeliveryWorkerStorage for StorageHandle {
         .await
     }
 
+    async fn begin_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+    ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryWorker,
+            "begin_event_delivery",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.begin_event_delivery(claim).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn mark_event_delivery_succeeded(
         &self,
         claim: &StorageEventDeliveryClaim,

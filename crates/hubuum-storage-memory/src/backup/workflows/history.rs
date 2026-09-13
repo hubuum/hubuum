@@ -4,6 +4,7 @@ mod tasks;
 
 pub(in crate::backup) fn capture_history(
     state: &MemoryState,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<StorageBackupHistorySections, StorageError> {
     let mut sections = StorageBackupHistorySection::ALL
         .iter()
@@ -12,7 +13,11 @@ pub(in crate::backup) fn capture_history(
         .collect::<StorageBackupHistorySections>();
     sections.insert(
         StorageBackupHistorySection::ClassSchemaHistory,
-        state.schema_history.clone(),
+        state
+            .schema_history
+            .iter()
+            .map(|row| capture_row(progress, Ok(row.clone())))
+            .collect::<Result<_, _>>()?,
     );
     for entry in &state.history {
         let (section, snapshot) = match &entry.value {
@@ -44,14 +49,20 @@ pub(in crate::backup) fn capture_history(
         sections
             .get_mut(&section)
             .expect("complete sections")
-            .push(row(Value::Object(fields))?);
+            .push(capture_row(progress, row(Value::Object(fields)))?);
     }
     for (&section, rows) in &state.relation_history {
-        sections.insert(section, rows.clone());
+        sections.insert(
+            section,
+            rows.iter()
+                .map(|row| capture_row(progress, Ok(row.clone())))
+                .collect::<Result<_, _>>()?,
+        );
     }
     let mut events = Vec::new();
     for recorded in &state.events {
-        let (event, before, after) = recorded.clone().into_parts();
+        progress.scan_row()?;
+        let (event, before, after) = recorded.as_parts();
         if event.entity_type() == EntityType::Task
             && !event.entity_id().is_some_and(|id| {
                 state
@@ -70,14 +81,36 @@ pub(in crate::backup) fn capture_history(
             "initiator_principal_id": event.provenance().initiator.as_ref().map(|p| p.principal_id.id()), "task_id": event.provenance().task_id.map(TaskId::id),
             "before_revision": before.map(ResourceRevision::get), "after_revision": after.map(ResourceRevision::get)}).as_object().expect("literal object").clone();
         add_trace(&mut fields, event.trace_link());
-        events.push(row(Value::Object(fields))?);
+        events.push(retain_row(progress, row(Value::Object(fields)))?);
     }
+    let event_ids = events
+        .iter()
+        .filter_map(|event| event.get("id").and_then(Value::as_i64))
+        .collect::<BTreeSet<_>>();
     sections.insert(StorageBackupHistorySection::AuditEvents, events);
-    sections.insert(StorageBackupHistorySection::TerminalEventDeliveries, state.event_deliveries.values().filter(|d| matches!(d.status(), EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead)).map(|d| row(json!({
-        "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "attempts": d.attempts(),
-        "next_attempt_at": d.next_attempt_at(), "last_error": d.last_error(), "created_at": d.created_at(), "updated_at": d.updated_at()
-    }))).collect::<Result<_, _>>()?);
-    tasks::capture(state, &mut sections)?;
+    let mut deliveries = Vec::new();
+    for d in state.event_deliveries.values() {
+        progress.scan_row()?;
+        if !matches!(
+            d.status(),
+            EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead
+        ) {
+            continue;
+        }
+        // Deliveries must refer to events retained by the same snapshot.
+        if !event_ids.contains(&d.event_id().get()) {
+            continue;
+        }
+        deliveries.push(retain_row(progress, row(json!({
+            "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "attempts": d.attempts(),
+            "next_attempt_at": d.next_attempt_at(), "last_error": d.last_error(), "created_at": d.created_at(), "updated_at": d.updated_at()
+        })))?);
+    }
+    sections.insert(
+        StorageBackupHistorySection::TerminalEventDeliveries,
+        deliveries,
+    );
+    tasks::capture(state, &mut sections, progress)?;
     Ok(sections)
 }
 

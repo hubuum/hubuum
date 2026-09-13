@@ -138,6 +138,22 @@ impl EventDeliverySettings {
         self.batch_size.query_limit()
     }
 
+    /// Limit claims to the execution slots available to the caller.
+    pub fn with_execution_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        if capacity.get() < self.batch_size() {
+            self.batch_size = EventWorkerBatchSize {
+                value: capacity,
+                query_limit: capacity.get() as i64,
+            };
+        }
+        self
+    }
+
+    /// Time reserved for persisting the transport result before lease expiry.
+    pub const fn acknowledgement_budget(self) -> StdDuration {
+        StdDuration::from_millis(self.lock_timeout_ms - self.transport_timeout_ms)
+    }
+
     pub const fn lock_deadline(self, now: NaiveDateTime) -> Option<NaiveDateTime> {
         now.checked_add_signed(self.lock_timeout)
     }
@@ -427,6 +443,18 @@ mod tests {
         let error = EventDeliverySettings::builder().build().unwrap_err();
 
         assert_eq!(error.to_string(), "event_delivery_batch_size is required");
+    }
+
+    #[rstest]
+    #[case(1, 1)]
+    #[case(8, 8)]
+    #[case(200, 100)]
+    #[case(usize::MAX, 100)]
+    fn delivery_claims_fit_execution_capacity(#[case] capacity: usize, #[case] expected: usize) {
+        let settings =
+            valid_delivery_settings().with_execution_capacity(NonZeroUsize::new(capacity).unwrap());
+        assert_eq!(settings.batch_size(), expected);
+        assert_eq!(settings.query_batch_size(), expected as i64);
     }
 
     #[rstest::rstest]

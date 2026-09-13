@@ -1064,6 +1064,13 @@ impl EventDeliveryWorkerStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
+    async fn begin_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+    ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
+        fixture_result()
+    }
+
     async fn mark_event_delivery_succeeded(
         &self,
         claim: &StorageEventDeliveryClaim,
@@ -1612,6 +1619,7 @@ impl BackupSnapshotStorage for CompleteExternalAdapter {
     async fn capture_backup_snapshot(
         &self,
         include_history: bool,
+        _budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         fixture_result()
     }

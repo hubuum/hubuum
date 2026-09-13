@@ -1,3 +1,4 @@
+mod event_delivery;
 mod schema_evolution;
 
 use std::collections::HashSet;
@@ -27,7 +28,7 @@ use hubuum_storage_conformance::{
     verify_backend_audit_contract, verify_delivery_fault_contract,
     verify_lease_loss_fault_contract, verify_restore_coordination_fault_contract,
 };
-use hubuum_storage_core::StorageTaskClaimToken;
+use hubuum_storage_core::{StorageBackupBudget, StorageTaskClaimToken};
 use hubuum_storage_memory::MemoryStorage;
 use hubuum_storage_postgres::test_support::fanout_event;
 use hubuum_storage_postgres::{
@@ -4418,6 +4419,24 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
     }
 }
 
+#[rstest::rstest]
+#[case::bytes(1, 1000)]
+#[case::rows(1024 * 1024, 1)]
+#[actix_web::test]
+async fn every_available_storage_backend_enforces_backup_budgets(
+    #[case] bytes: usize,
+    #[case] rows: usize,
+) {
+    use hubuum_storage_conformance::verify_backup_budget_rejected;
+
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        verify_backup_budget_rejected(&backend, StorageBackupBudget::new(bytes, rows).unwrap())
+            .await
+            .unwrap();
+    }
+}
+
 #[actix_web::test]
 async fn every_available_storage_backend_supplies_backup_snapshots() {
     let _permit = postgres_permit().await;
@@ -4430,7 +4449,10 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         )
         .await;
         let (state, history) = backend
-            .capture_backup_snapshot(false)
+            .capture_backup_snapshot(
+                false,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
             .await
             .expect("certified backend should supply a state-only backup snapshot")
             .into_parts();
@@ -4466,7 +4488,10 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         assert!(history.is_none());
 
         let (state, history) = backend
-            .capture_backup_snapshot(true)
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
             .await
             .expect("certified backend should supply a history-inclusive backup snapshot")
             .into_parts();

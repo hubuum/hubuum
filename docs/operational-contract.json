@@ -1822,6 +1822,7 @@
             "authenticate_bearer_token",
             "authorize_local_collection",
             "authorize_local_collections",
+            "begin_event_delivery",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_snapshot",
@@ -2197,6 +2198,7 @@
             "authenticate_bearer_token",
             "authorize_local_collection",
             "authorize_local_collections",
+            "begin_event_delivery",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_snapshot",
@@ -3387,6 +3389,29 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_BACKUP_MAX_CAPTURE_ROWS",
+      "owner": "backups",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1000000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
       "owner": "backups",
       "exposure": "public",
@@ -3402,7 +3427,8 @@
       "runtime_roles": [
         "all",
         "api",
-        "worker"
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -8180,6 +8206,25 @@
           "requires": []
         },
         {
+          "id": "backup_max_capture_rows",
+          "long": "backup-max-capture-rows",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_MAX_CAPTURE_ROWS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
           "id": "restore_stage_retention_minutes",
           "long": "restore-stage-retention-minutes",
           "short": null,
@@ -9415,6 +9460,44 @@
             "maximum": 1
           },
           "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_max_output_bytes",
+          "long": "backup-max-output-bytes",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "backup_max_capture_rows",
+          "long": "backup-max-capture-rows",
+          "short": null,
+          "environment": "HUBUUM_BACKUP_MAX_CAPTURE_ROWS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1000000"
+          ],
           "dynamic_default": null,
           "allowed_values": [],
           "required": false,

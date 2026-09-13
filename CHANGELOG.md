@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- A ready-to-restore functional test corpus containing 3,000 objects across
+  twelve classes, with schema-free, advisory and enforced policies, permission
+  scenarios, relations and retained history. Rich object data and shared and
+  personal computed-field examples cover aggregates, fallbacks, presence checks,
+  equality and field errors, with restore verification. Download the
+  corpus from the same branch or release tag as the server; see
+  [Test corpus](test-corpora/README.md).
+
 - Schema impact reports compare proposed and active policies against the same
   object snapshots, show changes in validity and validation requirements, and
   group bounded, value-redacted failure examples. Readiness is recomputed as
@@ -46,6 +54,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Update external adapters before upgrading. Public HTTP cursor token limits
   and encoding remain unchanged.
 
+- **Breaking storage SDK change:** `EventDeliveryWorkerStorage` implementations
+  must implement `begin_event_delivery` and return a `StorageEventDeliveryLease`
+  only for an unexpired, currently owned claim. External adapters must check the
+  token and in-flight status using their authoritative clock and construct the
+  conservative monotonic deadline from a timer started before acquiring storage
+  resources. Update adapters before upgrading `hubuum-storage-core`.
+
 - **Breaking tooling requirement:** Repository Python scripts and tests now
   require Python 3.11 or newer and use standard-library `tomllib` exclusively.
   Upgrade the interpreter selected by `python3` on `PATH` before running local
@@ -64,9 +79,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Continued JSON-sorted pages with exact totals use a separate bounded storage
   scan to locate the response boundary.
   Internal storage continuations also preserve oversized denied sort values
-  in lists and exports without applying public cursor byte limits. Sparse and scope-restricted
-  lists grow candidate batches up to 128 to avoid thousands of tiny database
-  and policy requests; abundant allowed pages retain their small initial fetch.
+  in lists and exports without applying public cursor byte limits. Sparse and
+  scope-restricted lists grow candidate batches up to 128 to avoid thousands of
+  tiny database and policy requests; abundant allowed pages retain their small
+  initial fetch.
+
+- Event delivery workers claim at most their eight execution slots, preventing
+  slow sinks from expiring leases in a local batch queue. Workers check ownership
+  before sending and budget claim/dispatch delays, transport, and acknowledgment
+  within the lease. The default settings remain valid; the five-second difference
+  between lease and transport timeouts is reserved for acknowledgment. Delivery
+  remains at least once and consumers must deduplicate by `event_id`.
+
+- Backups enforce byte and row-work budgets during snapshot capture and bound
+  final serialization. PostgreSQL fetches rows in primary-key order instead of
+  sorting full JSON rows; memory capture also stops before retaining an
+  oversized corpus. Failures include content-free resource accounting.
+  `HUBUUM_BACKUP_MAX_CAPTURE_ROWS` defaults to 1,000,000; the existing byte
+  ceiling remains 256 MiB. Administrator backups and verification recapture
+  honor both configurable limits and write compact JSON. Format 6 and restore
+  semantics are unchanged; see [capture limits](docs/backup-restore.md).
 
 - Canceled login requests no longer permanently consume in-memory rate-limit
   capacity, including the local fallback used during Valkey outages. Login
@@ -147,6 +179,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   limits, migration guidance, and separate debug/release measurements.
 
 ### Breaking changes and upgrade notes
+
+- **Breaking backup resource policy:** offline backups now enforce the configured
+  byte ceiling, and all captures enforce enumerated-row limits. An individual
+  PostgreSQL source row must also fit the byte ceiling before private-field
+  removal. Deploy matching API, worker, and administrator settings; explicitly
+  raise `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` and/or `HUBUUM_BACKUP_MAX_CAPTURE_ROWS`
+  after provisioning resources for workloads that exceed the defaults.
+- **Breaking experimental storage SDK 0.3:** adapter implementations and callers
+  of `capture_backup_snapshot` must accept/pass `StorageBackupBudget` and enforce
+  it during enumeration. Update the seven SDK dependencies together and rerun
+  conformance; see the storage adapter SDK upgrade guide.
 
 - Schema PATCH and legacy import overwrites that change policy on a nonempty
   class now return a conflict. Clients must stage a revision, request impact,

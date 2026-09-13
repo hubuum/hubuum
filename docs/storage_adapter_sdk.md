@@ -226,6 +226,18 @@ in class imports. Map the three new logical schema state sections and schema
 history section for backup format 6, validate them before restore replacement,
 and recreate revalidation work without restoring active leases or impact proofs.
 
+`BackupSnapshotStorage::capture_backup_snapshot` now requires a validated
+`StorageBackupBudget` in addition to the history selection. Pass deployment
+limits through unchanged and enforce both logical bytes and enumerated-row work
+before retaining snapshot rows. `StorageBackupCaptureProgress` supplies checked
+accounting and content-free diagnostics. Every selectable adapter must abort on
+budget exhaustion with `StorageErrorKind::InputTooLarge`, while preserving a
+consistent snapshot and the full restore contract. Do not implement a fallback
+that captures an unbounded document and checks its size afterward.
+Use `verify_backup_budget_rejected` from `hubuum-storage-conformance` with
+fixtures exceeding each limit, and retain native probes proving early database
+or iterator termination and bounded retained state.
+
 Run the portable conformance suite and native transaction, lease, concurrency,
 and query-budget tests. The shared implementation scenarios and exact method
 inventory are in `docs/storage_boundary/semantic-coverage.toml`; behavioral

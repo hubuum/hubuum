@@ -3,25 +3,30 @@ use super::*;
 pub(super) fn capture(
     state: &MemoryState,
     sections: &mut StorageBackupStateSections,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(
-        StorageBackupStateSection::ClassSchemaRevisions,
-        state
-            .schema_revisions
-            .values()
-            .filter(|revision| {
-                state
-                    .classes
-                    .contains_key(&revision.reference().class_id().id())
-            })
-            .map(|revision| row(revision.snapshot()))
-            .collect::<Result<_, _>>()?,
-    );
+    let mut revisions = Vec::new();
+    for revision in state.schema_revisions.values() {
+        progress.scan_row()?;
+        if state
+            .classes
+            .contains_key(&revision.reference().class_id().id())
+        {
+            revisions.push(retain_row(progress, row(revision.snapshot()))?);
+        }
+    }
+    sections.insert(StorageBackupStateSection::ClassSchemaRevisions, revisions);
+    // Resource capture has already admitted these objects. Count them once,
+    // rather than scanning all objects again for every class schema row.
+    let mut object_counts = BTreeMap::<i32, usize>::new();
+    for object in state.objects.values() {
+        *object_counts.entry(object.class_id().id()).or_default() += 1;
+    }
     sections.insert(StorageBackupStateSection::ClassSchemaState,state.schema_active.iter().map(|(id,revision)|{
         let last=state.schema_revisions.range((*id,0)..=(*id,i64::MAX)).next_back().map(|((_,revision),_)|*revision).unwrap_or(revision.get());
-        row(json!({"class_id":id,"active_revision":revision,"last_revision":last,"object_epoch":state.schema_epochs.get(id).copied().unwrap_or(0),"object_count":state.objects.values().filter(|object|object.class_id().id()==*id).count()}))
-    }).collect::<Result<_,_>>()?);
-    sections.insert(StorageBackupStateSection::ObjectSchemaEvidence,state.schema_evidence.iter().map(|(id,evidence)|row(json!({"object_id":id,"class_id":evidence.schema().class_id(),"schema_revision":evidence.schema().revision(),"object_revision":evidence.object_revision(),"valid":evidence.valid(),"validated_at":evidence.validated_at()}))).collect::<Result<_,_>>()?);
+        row(json!({"class_id":id,"active_revision":revision,"last_revision":last,"object_epoch":state.schema_epochs.get(id).copied().unwrap_or(0),"object_count":object_counts.get(id).copied().unwrap_or(0)}))
+    }).map(|row| capture_row(progress, row)).collect::<Result<_,_>>()?);
+    sections.insert(StorageBackupStateSection::ObjectSchemaEvidence,state.schema_evidence.iter().map(|(id,evidence)|row(json!({"object_id":id,"class_id":evidence.schema().class_id(),"schema_revision":evidence.schema().revision(),"object_revision":evidence.object_revision(),"valid":evidence.valid(),"validated_at":evidence.validated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_,_>>()?);
     Ok(())
 }
 

@@ -305,14 +305,24 @@ impl BackupSnapshotStorage for StorageHandle {
     async fn capture_backup_snapshot(
         &self,
         include_history: bool,
+        budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError> {
+        debug!(
+            backend = self.backend_name(),
+            max_output_bytes = budget.max_bytes(),
+            max_capture_rows = budget.max_rows(),
+            include_history,
+            "Capturing backup with configured resource limits"
+        );
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::BackupSnapshot,
             "capture_backup_snapshot",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.capture_backup_snapshot(include_history).await
+                    backend
+                        .capture_backup_snapshot(include_history, budget)
+                        .await
                 })
             },
         )

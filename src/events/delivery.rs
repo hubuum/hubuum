@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
 use std::time::Duration;
@@ -5,6 +6,7 @@ use std::time::Duration;
 use actix_rt::time::sleep;
 use futures_util::StreamExt;
 use tokio::sync::Notify;
+use tokio::time::{Instant, sleep_until};
 use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::config::{
@@ -92,6 +94,9 @@ async fn process_event_delivery_batch_with_schedule(
 ) -> Result<EventDeliveryBatchOutcome, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
+    let settings = settings.with_execution_capacity(
+        NonZeroUsize::new(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER).unwrap(),
+    );
     let (deliveries, next_wakeup_in) = storage
         .claim_event_delivery_batch(settings)
         .await?
@@ -110,6 +115,17 @@ async fn process_event_delivery_batch_with_schedule(
         processed,
         next_wakeup_in,
     })
+}
+
+#[cfg(test)]
+pub(crate) async fn process_event_delivery_batch_for_test(
+    storage: &StorageHandle,
+    settings: EventDeliverySettings,
+    resolver: &dyn SinkResolver,
+) -> Result<usize, ApiError> {
+    process_event_delivery_batch_with_schedule(storage, settings, resolver)
+        .await
+        .map(|outcome| outcome.processed)
 }
 
 pub(crate) async fn process_event_delivery_work_item(
@@ -135,42 +151,68 @@ pub(crate) async fn process_event_delivery_work_item(
     );
     telemetry::add_link(&span, envelope.trace_link());
     async move {
-        let result = tokio::time::timeout(
-            settings.transport_timeout(),
-            deliver_one(resolver, &envelope, &subscription, &sink),
-        )
-        .await
-        .map_err(|_| {
-            SinkError::new(format!(
-                "Event delivery transport timed out after {} ms",
-                settings.transport_timeout_ms()
-            ))
-        })
-        .and_then(|result| result);
-
-        match result {
-            Ok(()) => {
-                tracing::Span::current().record("delivery.outcome", "succeeded");
-                storage.mark_event_delivery_succeeded(&claim).await?;
-            }
-            Err(error) => {
-                tracing::Span::current().record("delivery.outcome", "failed");
-                warn!(
-                    message = "Event sink delivery failed",
-                    event_delivery_id = claim.delivery_id().id(),
-                    event_id = %envelope.event_id(),
-                    event_sink_id = sink.id().id(),
-                    event_subscription_id = subscription.id().id(),
-                    sink_kind = sink.kind(),
-                    error = %error,
-                );
-                storage
-                    .mark_event_delivery_failed(&claim, settings, &error.to_string())
-                    .await?;
-            }
+        let Some(lease) = storage.begin_event_delivery(&claim).await? else {
+            tracing::Span::current().record("delivery.outcome", "stale");
+            return Ok(());
+        };
+        let acknowledgement_deadline = Instant::from_std(lease.deadline());
+        let Some(transport_deadline) =
+            acknowledgement_deadline.checked_sub(settings.acknowledgement_budget())
+        else {
+            return Ok(());
+        };
+        if Instant::now() >= transport_deadline {
+            tracing::Span::current().record("delivery.outcome", "expired");
+            return Ok(());
         }
+        let transport_deadline = Instant::now()
+            .checked_add(settings.transport_timeout())
+            .map_or(transport_deadline, |maximum| {
+                transport_deadline.min(maximum)
+            });
+        // Poll the deadline first: timeout() may poll an already expired inner
+        // future once, which could start an external side effect after expiry.
+        let result = tokio::select! {
+            biased;
+            _ = sleep_until(transport_deadline) => Err(SinkError::new(format!(
+                "Event delivery transport exceeded its lease budget (maximum {} ms)",
+                settings.transport_timeout_ms(),
+            ))),
+            result = deliver_one(resolver, &envelope, &subscription, &sink) => result,
+        };
 
-        Ok(())
+        let acknowledge = async {
+            match result {
+                Ok(()) => {
+                    tracing::Span::current().record("delivery.outcome", "succeeded");
+                    storage.mark_event_delivery_succeeded(lease.claim()).await?;
+                }
+                Err(error) => {
+                    tracing::Span::current().record("delivery.outcome", "failed");
+                    warn!(
+                        message = "Event sink delivery failed",
+                        event_delivery_id = claim.delivery_id().id(),
+                        event_id = %envelope.event_id(),
+                        event_sink_id = sink.id().id(),
+                        event_subscription_id = subscription.id().id(),
+                        sink_kind = sink.kind(),
+                        error = %error,
+                    );
+                    storage
+                        .mark_event_delivery_failed(lease.claim(), settings, &error.to_string())
+                        .await?;
+                }
+            }
+
+            Ok(())
+        };
+        tokio::select! {
+            biased;
+            _ = sleep_until(acknowledgement_deadline) => Err(ApiError::ServiceUnavailable(
+                "Event delivery lease expired before acknowledgement completed".to_string(),
+            )),
+            result = acknowledge => result,
+        }
     }
     .instrument(span)
     .await

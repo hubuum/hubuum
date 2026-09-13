@@ -74,9 +74,16 @@ without reproducing PostgreSQL names.
 Restore rejects version 5 and older backups, unknown or incomplete sections,
 malformed logical rows, invalid timestamps, and invalid, maximum, or
 inconsistent revisions. Create a new backup after upgrading and before relying
-on restore. Class computation state and object materializations remain excluded
-as rebuildable caches; restore validates definitions and queues class rebuild
-tasks. The manifest does not carry partial-selection counts, import-planning
+on restore.
+
+Both shared and personal computed-field definitions are preserved, including
+personal ownership. Class computation state and object materializations remain
+excluded as rebuildable caches; restore validates definitions and queues shared
+class rebuild tasks. Personal values are evaluated when their owner reads an
+object. The [functional corpus](../test-corpora/README.md#object-data-and-computed-fields)
+includes verified restore examples for both scopes.
+
+The manifest does not carry partial-selection counts, import-planning
 warnings, a collection scope, or an embedded import request.
 
 Backups cannot be scoped and backup documents are not import requests. Use the
@@ -284,10 +291,54 @@ reports only the safe projections.
 | -------- | ------- | ------- |
 | `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS` | `24` | Hours a successful backup remains downloadable |
 | `HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER` | `1` | Maximum active backup tasks per administrator |
-| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum stored backup document size in bytes |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum compact artifact and individual source-row size in bytes; also bounds retained logical row bytes during capture |
+| `HUBUUM_BACKUP_MAX_CAPTURE_ROWS` | `1000000` | Maximum enumerated rows, including excluded active tasks and deliveries |
 | `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | Shared cleanup cadence for expired export and backup artifacts; the legacy name is retained for compatibility |
 | `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | Minutes a validated restore stage remains confirmable |
 | `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum restore upload and `hubuum-admin --verify-backup` document size in bytes |
+
+## Capture resource limits
+
+Both storage backends receive validated byte and row budgets before enumeration.
+Each projected row is measured through a bounded counting writer before it is
+retained. The complete artifact, including metadata, section names, separators,
+and manifest, is serialized through a bounded writer. Exceeding either budget
+fails the backup with a size/resource-limit error; no partial artifact is stored
+or written. Diagnostics include scanned rows and retained logical row counts and
+bytes, without row contents.
+
+PostgreSQL uses one repeatable-read, read-only transaction and fetches one source
+row at a time from cursors ordered by primary keys. Excluded history rows still
+consume the work budget. At most one additional row is fetched to detect that
+the row ceiling would be exceeded; that row is never retained. Eligibility uses indexed task/event lookups instead of
+building full-table membership sets. Source JSON is truncated on the server
+before transport, then checked before JSON parsing. A raw source row larger than
+the byte budget is rejected even when removing private fields would make its
+logical representation smaller.
+
+The bounds describe logical bytes and row work, rather than a process RSS limit.
+JSON trees, validation indexes, and the final artifact require additional memory
+proportional to the admitted data. PostgreSQL can materialize one source row
+before applying the transport bound; it never builds a table-sized JSON array.
+The default ceiling remains 256 MiB. Raising it requires provisioning additional
+memory for both backup and restore; external artifact storage and lifecycle
+support above the ordinary ceiling remain tracked by
+[#252](https://github.com/hubuum/hubuum/issues/252) and
+[#366](https://github.com/hubuum/hubuum/issues/366).
+
+`hubuum-admin --backup` and isolated verification recapture honor the same
+variables. They also accept `--backup-max-output-bytes` and
+`--backup-max-capture-rows`. Set the row limit high enough for retained history
+and excluded operational rows. Configure `HUBUUM_RESTORE_MAX_UPLOAD_BYTES`
+separately when verifying or restoring larger artifacts. Restart API and worker
+processes together after changing deployment settings.
+
+The document stays at format 6 with unchanged sections, fields, exclusions,
+revision validation, and history semantics. PostgreSQL section arrays now use
+primary-key order instead of full serialized-row order. Memory membership sources
+also use their stable composite key order. Offline output uses the
+same compact JSON representation as API output. Whitespace and row order can
+therefore differ from earlier artifacts; restore does not depend on either.
 
 ## SQL safety
 
@@ -297,6 +348,13 @@ identifiers accept only identifiers from closed, compile-time lists; arbitrary
 predicates and request-provided identifiers are not accepted.
 
 ## Benchmark dataset seeding
+
+For manual and functional testing, download the committed
+[comprehensive test corpus](../test-corpora/README.md) from the same branch or
+release tag as the server. It is an ordinary full-system backup containing
+3,000 objects, twelve classes with mixed schema policies, permission scenarios,
+relations and retained history. Consumers can restore it directly without
+running the generator.
 
 The extended import graph can seed deterministic users, groups, memberships,
 permissions, collections, classes, objects, relations, templates, remote

@@ -1,0 +1,778 @@
+{
+  "name": "comprehensive",
+  "revision": 2,
+  "description": "Synthetic inventory covering schema policies, pagination, relations, permissions, history and computed fields.",
+  "classes": [
+    {
+      "name": "untyped-empty",
+      "policy": "absent",
+      "collection": "operations",
+      "objects": 0
+    },
+    {
+      "name": "untyped-notes",
+      "policy": "absent",
+      "collection": "operations",
+      "objects": 100
+    },
+    {
+      "name": "untyped-locations",
+      "policy": "absent",
+      "collection": "branch",
+      "objects": 300
+    },
+    {
+      "name": "untyped-assets",
+      "policy": "absent",
+      "collection": "restricted",
+      "objects": 600
+    },
+    {
+      "name": "advisory-servers",
+      "policy": "advisory",
+      "collection": "operations",
+      "objects": 100
+    },
+    {
+      "name": "advisory-switches",
+      "policy": "advisory",
+      "collection": "operations",
+      "objects": 200
+    },
+    {
+      "name": "advisory-services",
+      "policy": "advisory",
+      "collection": "branch",
+      "objects": 300
+    },
+    {
+      "name": "advisory-applications",
+      "policy": "advisory",
+      "collection": "restricted",
+      "objects": 400
+    },
+    {
+      "name": "enforced-servers",
+      "policy": "enforced",
+      "collection": "operations",
+      "objects": 100
+    },
+    {
+      "name": "enforced-switches",
+      "policy": "enforced",
+      "collection": "operations",
+      "objects": 200
+    },
+    {
+      "name": "enforced-services",
+      "policy": "enforced",
+      "collection": "branch",
+      "objects": 300
+    },
+    {
+      "name": "enforced-applications",
+      "policy": "enforced",
+      "collection": "restricted",
+      "objects": 400
+    }
+  ],
+  "schema": {
+    "type": "object",
+    "required": [
+      "hostname",
+      "status",
+      "site",
+      "tags"
+    ],
+    "properties": {
+      "hostname": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "enum": [
+          "active",
+          "maintenance",
+          "retired"
+        ]
+      },
+      "site": {
+        "type": "object",
+        "required": [
+          "city",
+          "rack"
+        ],
+        "properties": {
+          "city": {
+            "type": "string"
+          },
+          "rack": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "owner": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "capacity": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "resources": {
+        "type": "object",
+        "required": [
+          "cpu_cores",
+          "memory_gib",
+          "disks_gib"
+        ],
+        "properties": {
+          "cpu_cores": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memory_gib": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "disks_gib": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "costs": {
+        "type": "object",
+        "required": [
+          "compute",
+          "storage"
+        ],
+        "properties": {
+          "compute": {
+            "type": "number",
+            "minimum": 0
+          },
+          "storage": {
+            "type": "number",
+            "minimum": 0
+          },
+          "network": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "telemetry": {
+        "type": "object",
+        "required": [
+          "cpu_pct",
+          "temperature_c"
+        ],
+        "properties": {
+          "cpu_pct": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "temperature_c": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "contacts": {
+        "type": "object",
+        "required": [
+          "team"
+        ],
+        "properties": {
+          "team": {
+            "type": "string"
+          },
+          "primary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "on_call": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "configuration": {
+        "type": "object",
+        "required": [
+          "desired",
+          "observed"
+        ],
+        "properties": {
+          "desired": {
+            "type": "object",
+            "required": [
+              "replicas",
+              "features",
+              "enabled"
+            ],
+            "properties": {
+              "replicas": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          },
+          "observed": {
+            "type": "object",
+            "required": [
+              "replicas",
+              "features",
+              "enabled"
+            ],
+            "properties": {
+              "replicas": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "interfaces": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "address",
+            "speed_mbps",
+            "up"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "address": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "speed_mbps": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "up": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "labels": {
+        "type": "object",
+        "required": [
+          "cost/center",
+          "rack~slot"
+        ],
+        "properties": {
+          "cost/center": {
+            "type": "string"
+          },
+          "rack~slot": {
+            "type": "string"
+          }
+        }
+      },
+      "checks": {
+        "type": "object",
+        "required": [
+          "zero",
+          "disabled",
+          "text",
+          "items",
+          "details"
+        ],
+        "properties": {
+          "zero": {
+            "type": "integer"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array"
+          },
+          "details": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "computed": {
+    "classes": [
+      "untyped-notes",
+      "advisory-servers",
+      "enforced-servers"
+    ],
+    "shared": [
+      {
+        "key": "hostname_copy",
+        "label": "Hostname",
+        "description": "Synthetic corpus example: hostname",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/hostname"
+          ]
+        },
+        "result_type": "string",
+        "enabled": true
+      },
+      {
+        "key": "owner_display",
+        "label": "Owner fallback",
+        "description": "Synthetic corpus example: owner fallback",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/owner",
+            "/contacts/primary",
+            "/contacts/team"
+          ]
+        },
+        "result_type": "string",
+        "enabled": true
+      },
+      {
+        "key": "monthly_cost",
+        "label": "Monthly cost",
+        "description": "Synthetic corpus example: monthly cost",
+        "operation": {
+          "type": "sum",
+          "paths": [
+            "/costs/compute",
+            "/costs/storage",
+            "/costs/network"
+          ]
+        },
+        "result_type": "number",
+        "enabled": true
+      },
+      {
+        "key": "cpu_average",
+        "label": "Average CPU usage",
+        "description": "Synthetic corpus example: average cpu usage",
+        "operation": {
+          "type": "average",
+          "paths": [
+            "/telemetry/cpu_pct/0",
+            "/telemetry/cpu_pct/1",
+            "/telemetry/cpu_pct/2"
+          ]
+        },
+        "result_type": "number",
+        "enabled": true
+      },
+      {
+        "key": "temperature_min",
+        "label": "Minimum temperature",
+        "description": "Synthetic corpus example: minimum temperature",
+        "operation": {
+          "type": "min",
+          "paths": [
+            "/telemetry/temperature_c/0",
+            "/telemetry/temperature_c/1",
+            "/telemetry/temperature_c/2"
+          ]
+        },
+        "result_type": "number",
+        "enabled": true
+      },
+      {
+        "key": "temperature_max",
+        "label": "Maximum temperature",
+        "description": "Synthetic corpus example: maximum temperature",
+        "operation": {
+          "type": "max",
+          "paths": [
+            "/telemetry/temperature_c/0",
+            "/telemetry/temperature_c/1",
+            "/telemetry/temperature_c/2"
+          ]
+        },
+        "result_type": "number",
+        "enabled": true
+      },
+      {
+        "key": "contacts_complete",
+        "label": "Both contacts present",
+        "description": "Synthetic corpus example: both contacts present",
+        "operation": {
+          "type": "all_present",
+          "paths": [
+            "/contacts/primary",
+            "/contacts/on_call"
+          ]
+        },
+        "result_type": "boolean",
+        "enabled": true
+      },
+      {
+        "key": "has_contact",
+        "label": "Any contact present",
+        "description": "Synthetic corpus example: any contact present",
+        "operation": {
+          "type": "any_present",
+          "paths": [
+            "/contacts/primary",
+            "/contacts/on_call"
+          ]
+        },
+        "result_type": "boolean",
+        "enabled": true
+      },
+      {
+        "key": "contact_count",
+        "label": "Contacts present",
+        "description": "Synthetic corpus example: contacts present",
+        "operation": {
+          "type": "count_present",
+          "paths": [
+            "/contacts/primary",
+            "/contacts/on_call"
+          ]
+        },
+        "result_type": "integer",
+        "enabled": true
+      },
+      {
+        "key": "configuration_matches",
+        "label": "Configuration matches",
+        "description": "Synthetic corpus example: configuration matches",
+        "operation": {
+          "type": "all_present_and_equal",
+          "paths": [
+            "/configuration/desired",
+            "/configuration/observed"
+          ]
+        },
+        "result_type": "boolean",
+        "enabled": true
+      },
+      {
+        "key": "falsy_present",
+        "label": "Falsy values are present",
+        "description": "Synthetic corpus example: falsy values are present",
+        "operation": {
+          "type": "all_present",
+          "paths": [
+            "/checks/zero",
+            "/checks/disabled",
+            "/checks/text",
+            "/checks/items",
+            "/checks/details"
+          ]
+        },
+        "result_type": "boolean",
+        "enabled": true
+      },
+      {
+        "key": "cost_center",
+        "label": "Cost center",
+        "description": "Synthetic corpus example: cost center",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/labels/cost~1center"
+          ]
+        },
+        "result_type": "string",
+        "enabled": true
+      },
+      {
+        "key": "rack_slot",
+        "label": "Rack slot",
+        "description": "Synthetic corpus example: rack slot",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/labels/rack~0slot"
+          ]
+        },
+        "result_type": "string",
+        "enabled": true
+      },
+      {
+        "key": "primary_interface",
+        "label": "Primary interface",
+        "description": "Synthetic corpus example: primary interface",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/interfaces/0"
+          ]
+        },
+        "result_type": "object",
+        "enabled": true
+      },
+      {
+        "key": "interfaces",
+        "label": "All interfaces",
+        "description": "Synthetic corpus example: all interfaces",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/interfaces"
+          ]
+        },
+        "result_type": "array",
+        "enabled": true
+      }
+    ],
+    "personal": {
+      "class": "enforced-servers",
+      "owner": "corpus-reader",
+      "definition": {
+        "key": "my_site",
+        "label": "My site",
+        "description": "Synthetic corpus example: my site",
+        "operation": {
+          "type": "first_non_null",
+          "paths": [
+            "/site"
+          ]
+        },
+        "result_type": "object",
+        "enabled": true
+      }
+    },
+    "examples": [
+      {
+        "class": "enforced-servers",
+        "number": 1,
+        "values": {
+          "hostname_copy": "enforced-servers-0001.example.invalid",
+          "owner_display": "Operations team",
+          "monthly_cost": 27.75,
+          "cpu_average": null,
+          "temperature_min": -4,
+          "temperature_max": 4,
+          "contacts_complete": false,
+          "has_contact": false,
+          "contact_count": 0,
+          "configuration_matches": false,
+          "falsy_present": true,
+          "cost_center": "CC-01",
+          "rack_slot": "R2",
+          "primary_interface": {
+            "name": "eth0",
+            "address": "192.0.2.2",
+            "speed_mbps": 1000,
+            "up": true
+          },
+          "interfaces": [
+            {
+              "name": "eth0",
+              "address": "192.0.2.2",
+              "speed_mbps": 1000,
+              "up": true
+            },
+            {
+              "name": "eth1",
+              "address": "198.51.100.2",
+              "speed_mbps": 10000,
+              "up": true
+            }
+          ]
+        },
+        "errors": {}
+      },
+      {
+        "class": "enforced-servers",
+        "number": 2,
+        "values": {
+          "owner_display": "Inventory team",
+          "monthly_cost": 35.5,
+          "cpu_average": 5,
+          "contacts_complete": false,
+          "has_contact": true,
+          "contact_count": 1,
+          "configuration_matches": true
+        },
+        "errors": {}
+      },
+      {
+        "class": "enforced-servers",
+        "number": 3,
+        "values": {
+          "owner_display": "",
+          "monthly_cost": 43.25,
+          "contacts_complete": true,
+          "has_contact": true,
+          "contact_count": 2,
+          "configuration_matches": true
+        },
+        "errors": {}
+      },
+      {
+        "class": "enforced-servers",
+        "number": 4,
+        "values": {
+          "owner_display": "person-4@example.invalid",
+          "monthly_cost": 41,
+          "configuration_matches": false
+        },
+        "errors": {}
+      },
+      {
+        "class": "enforced-servers",
+        "number": 6,
+        "values": {
+          "owner_display": "Operations team",
+          "monthly_cost": 56.5,
+          "cpu_average": null,
+          "temperature_min": 1,
+          "temperature_max": 9
+        },
+        "errors": {}
+      },
+      {
+        "class": "advisory-servers",
+        "number": 2,
+        "values": {
+          "hostname_copy": null,
+          "monthly_cost": null,
+          "cpu_average": 5,
+          "falsy_present": true
+        },
+        "errors": {
+          "hostname_copy": "result_type_mismatch",
+          "monthly_cost": "non_numeric_operand"
+        }
+      },
+      {
+        "class": "untyped-notes",
+        "number": 1,
+        "values": {
+          "hostname_copy": null,
+          "owner_display": null,
+          "monthly_cost": null,
+          "cpu_average": null,
+          "temperature_min": null,
+          "temperature_max": null,
+          "contacts_complete": false,
+          "has_contact": false,
+          "contact_count": 0,
+          "configuration_matches": false,
+          "falsy_present": false,
+          "cost_center": null,
+          "rack_slot": null,
+          "primary_interface": null,
+          "interfaces": null
+        },
+        "errors": {}
+      },
+      {
+        "class": "untyped-notes",
+        "number": 2,
+        "values": {
+          "hostname_copy": null,
+          "owner_display": null,
+          "monthly_cost": null,
+          "cpu_average": null,
+          "temperature_min": null,
+          "temperature_max": null,
+          "contacts_complete": false,
+          "has_contact": false,
+          "contact_count": 0,
+          "configuration_matches": false,
+          "falsy_present": false,
+          "cost_center": null,
+          "rack_slot": null,
+          "primary_interface": null,
+          "interfaces": null
+        },
+        "errors": {}
+      },
+      {
+        "class": "untyped-notes",
+        "number": 3,
+        "values": {
+          "hostname_copy": null,
+          "owner_display": null,
+          "monthly_cost": null,
+          "cpu_average": null,
+          "temperature_min": null,
+          "temperature_max": null,
+          "contacts_complete": false,
+          "has_contact": false,
+          "contact_count": 0,
+          "configuration_matches": false,
+          "falsy_present": false,
+          "cost_center": null,
+          "rack_slot": null,
+          "primary_interface": null,
+          "interfaces": null
+        },
+        "errors": {}
+      },
+      {
+        "class": "untyped-notes",
+        "number": 4,
+        "values": {
+          "hostname_copy": "untyped-notes-0004.example.invalid",
+          "monthly_cost": 41,
+          "falsy_present": true
+        },
+        "errors": {}
+      }
+    ]
+  }
+}

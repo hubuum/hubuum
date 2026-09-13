@@ -1,5 +1,6 @@
 use super::*;
 use hubuum_domain::{JsonSchemaLimits, SchemaReference, SchemaRevision, TaskId};
+use hubuum_storage_core::StorageBackupBudget;
 use hubuum_storage_core::schema_evolution::*;
 use hubuum_storage_core::{
     StorageAuthenticationTokenScope, StorageMutationOutcome, StorageTaskClaim,
@@ -912,7 +913,10 @@ async fn schema_backup_retains_supported_evidence_and_lifecycle_documents(
         .await;
     let (state, history) = fixture
         .backend
-        .capture_backup_snapshot(true)
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
         .await
         .unwrap()
         .into_parts();
@@ -975,7 +979,10 @@ async fn schema_history_preserves_explicit_mutation_actor(#[case] kind: StorageB
         .into_value();
     let (_, history) = fixture
         .backend
-        .capture_backup_snapshot(true)
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
         .await
         .unwrap()
         .into_parts();
@@ -1126,7 +1133,14 @@ async fn rejected_memory_class_policy_leaves_no_persisted_changes(
     #[values(false, true)] enforced: bool,
 ) {
     let fixture = SchemaFixture::new(StorageBackendKind::Memory, vec![]).await;
-    let before = fixture.backend.capture_backup_snapshot(true).await.unwrap();
+    let before = fixture
+        .backend
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await
+        .unwrap();
     let result = if update {
         let target = fixture
             .backend
@@ -1166,7 +1180,14 @@ async fn rejected_memory_class_policy_leaves_no_persisted_changes(
             .await
     };
     assert!(result.is_err());
-    let after = fixture.backend.capture_backup_snapshot(true).await.unwrap();
+    let after = fixture
+        .backend
+        .capture_backup_snapshot(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(before.into_parts(), after.into_parts());
     fixture.cleanup().await;
 }

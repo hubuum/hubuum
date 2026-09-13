@@ -63,8 +63,9 @@ pub use authorization::{
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
-    BackupSnapshotStorage, StorageBackupHistorySection, StorageBackupHistorySections,
-    StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
+    BackupSnapshotStorage, StorageBackupBudget, StorageBackupCaptureProgress,
+    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
+    StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
 };
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
@@ -102,10 +103,11 @@ pub use event_administration::{
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
-    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliverySink,
-    StorageEventDeliverySubscription, StorageEventDeliveryWorkItem, StorageEventFanoutOutcome,
-    StorageEventRetentionBatch, StorageEventRetentionBatchId, StorageEventRetentionSummary,
-    StorageRecordedEvent, StorageRetainedEvent, execute_event_retention_batch,
+    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliveryLease,
+    StorageEventDeliverySink, StorageEventDeliverySubscription, StorageEventDeliveryWorkItem,
+    StorageEventFanoutOutcome, StorageEventRetentionBatch, StorageEventRetentionBatchId,
+    StorageEventRetentionSummary, StorageRecordedEvent, StorageRetainedEvent,
+    execute_event_retention_batch,
 };
 pub use execution::{
     ExecutionStorage, StorageCallSite, StorageExecutionScope, StorageRevisionPrecondition,

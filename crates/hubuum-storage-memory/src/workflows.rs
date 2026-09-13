@@ -866,9 +866,10 @@ impl BackupSnapshotStorage for MemoryStorage {
     async fn capture_backup_snapshot(
         &self,
         include_history: bool,
+        budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError> {
         let state = self.state.read().await;
-        crate::backup::capture(&state, include_history, self.schema_limits)
+        crate::backup::capture(&state, include_history, self.schema_limits, budget)
     }
 }
 

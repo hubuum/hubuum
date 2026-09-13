@@ -138,10 +138,10 @@ cancellation, task interruption, and pool-drop ordering.
 | `HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for fan-out workers |
 | `HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS` | `30000` | Fan-out claim lock timeout before another worker may retry |
 | `HUBUUM_EVENT_DELIVERY_WORKERS` | `0` | Number of background workers that deliver rows to external sinks; `0` disables transport delivery |
-| `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Number of delivery rows a delivery worker claims per batch |
+| `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Upper bound on delivery rows per claim; each worker claims at most its eight execution slots |
 | `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for delivery workers |
 | `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS` | `30000` | Delivery claim lock timeout before another worker may retry |
-| `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Wall-clock timeout for one external transport attempt; must be less than the delivery lock timeout |
+| `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Maximum transport time, reduced by claim/dispatch delays; must be less than the lock timeout, with the difference reserved for acknowledgment |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS` | `1000` | Initial delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS` | `300000` | Maximum delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS` | `10` | Attempts before a delivery row moves to dead-letter status |
@@ -181,7 +181,8 @@ delivery semantics, operational health, and retention behavior.
 | -------- | ------- | ----------- |
 | `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS` | `24` | How long a successful full-system backup remains downloadable |
 | `HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER` | `1` | Maximum active backup tasks one unscoped administrator may own |
-| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum stored backup document size in bytes |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum backup artifact and individual source-row bytes, also enforced during capture |
+| `HUBUUM_BACKUP_MAX_CAPTURE_ROWS` | `1000000` | Maximum rows enumerated during backup capture, including excluded history rows |
 | `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | How long a validated restore stage remains confirmable |
 | `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum full-system restore document size accepted by the API |
 

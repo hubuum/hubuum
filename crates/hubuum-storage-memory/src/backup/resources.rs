@@ -115,6 +115,7 @@ pub(super) fn restore(
 fn capture_integrations(
     state: &MemoryState,
     sections: &mut StorageBackupStateSections,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
     sections.insert(
         StorageBackupStateSection::ExportTemplates,
@@ -122,6 +123,7 @@ fn capture_integrations(
             .export_templates
             .values()
             .map(export_templates)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<_, _>>()?,
     );
     sections.insert(
@@ -130,6 +132,7 @@ fn capture_integrations(
             .remote_targets
             .values()
             .map(remote_targets)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<_, _>>()?,
     );
     Ok(())
@@ -233,6 +236,7 @@ pub(super) fn remote_target(r: &Row<'_>) -> Result<StorageRemoteTarget, StorageE
 pub(super) fn capture(
     state: &MemoryState,
     sections: &mut StorageBackupStateSections,
+    progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
     sections.insert(
         StorageBackupStateSection::Collections,
@@ -240,6 +244,7 @@ pub(super) fn capture(
             .collections
             .values()
             .map(collections)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
     sections.insert(
@@ -248,6 +253,7 @@ pub(super) fn capture(
             .classes
             .values()
             .map(classes)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
     sections.insert(
@@ -256,6 +262,7 @@ pub(super) fn capture(
             .objects
             .values()
             .map(objects)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
     sections.insert(
@@ -264,6 +271,7 @@ pub(super) fn capture(
             .class_relations
             .values()
             .map(classrelations)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
     sections.insert(
@@ -272,10 +280,11 @@ pub(super) fn capture(
             .object_relations
             .values()
             .map(objectrelations)
+            .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
 
-    capture_integrations(state, sections)?;
+    capture_integrations(state, sections, progress)?;
     Ok(())
 }
 

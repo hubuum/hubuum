@@ -5,7 +5,7 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{EventEnvelope, EventId, EventSequence, TraceLink};
 use serde_json::Value;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::{StorageAuditReceipt, StorageError, StorageValidationError};
@@ -32,6 +32,18 @@ impl StorageRecordedEvent {
             before_revision,
             after_revision,
         }
+    }
+
+    /// Inspect an event without cloning its potentially large audit payload.
+    #[must_use]
+    pub const fn as_parts(
+        &self,
+    ) -> (
+        &EventEnvelope,
+        Option<ResourceRevision>,
+        Option<ResourceRevision>,
+    ) {
+        (&self.envelope, self.before_revision, self.after_revision)
     }
 
     #[must_use]
@@ -162,6 +174,40 @@ impl std::fmt::Debug for StorageEventDeliveryClaim {
             .field("attempts", &self.attempts)
             .field("token", &"<redacted>")
             .finish()
+    }
+}
+
+/// A currently owned delivery with a conservative local lease deadline.
+///
+/// Adapters construct this only after checking the token, in-flight status and
+/// expiry against their authoritative clock. Start the monotonic timer before
+/// acquiring a connection/lock so query and scheduling delays consume the lease.
+#[derive(Debug)]
+pub struct StorageEventDeliveryLease {
+    claim: StorageEventDeliveryClaim,
+    deadline: Instant,
+}
+
+impl StorageEventDeliveryLease {
+    pub fn try_new(
+        claim: StorageEventDeliveryClaim,
+        check_started: Instant,
+        remaining: Duration,
+    ) -> Result<Self, StorageValidationError> {
+        let deadline = check_started.checked_add(remaining).ok_or_else(|| {
+            StorageValidationError::invalid("Event delivery lease deadline overflowed")
+        })?;
+        Ok(Self { claim, deadline })
+    }
+
+    #[must_use]
+    pub const fn claim(&self) -> &StorageEventDeliveryClaim {
+        &self.claim
+    }
+
+    #[must_use]
+    pub const fn deadline(&self) -> Instant {
+        self.deadline
     }
 }
 
@@ -390,6 +436,13 @@ pub trait EventDeliveryWorkerStorage: Send + Sync {
         &self,
         settings: hubuum_domain::EventDeliverySettings,
     ) -> Result<StorageEventDeliveryBatch, StorageError>;
+
+    /// Check ownership and expiry immediately before an external send. Return
+    /// no lease for a stale/expired claim; never revive an expired claim here.
+    async fn begin_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+    ) -> Result<Option<StorageEventDeliveryLease>, StorageError>;
 
     async fn mark_event_delivery_succeeded(
         &self,
