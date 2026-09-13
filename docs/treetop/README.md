@@ -153,6 +153,19 @@ Sparse policies or token scopes may still require a complete scan to fill a
 page or prove exhaustion, even without totals. These ordinary cursor lists have
 no new total-work rejection threshold; adding one would reject previously valid
 queries. Exact totals also remain proportional to all matching candidates.
+Byte-collated name-and-ID indexes support first-page ordering and continued
+seeks for catalog names, group and principal names, scoped template and remote
+target names, event names, and computed-field keys. Both name directions keep
+the ascending ID tie-breaker. Existing locale-sensitive indexes remain for
+filters and uniqueness. Other arbitrary sort combinations are not guaranteed
+to have a matching index.
+
+Apply `2026-09-13-000001_byte_ordered_cursor_indexes` before deploying this
+pagination change. This additive migration builds indexes transactionally and
+can block writes until it commits. Schedule a quiet period; lock waits are
+limited to five seconds and each statement to sixty seconds. A timeout rolls
+back all of its indexes so the migration can be retried.
+
 Structured search retains its 10,000-candidate work limit per request, with
 bounded pages and early termination when totals are skipped. Related predicates
 and graph traversal retain their separate existing safety limits; planning them

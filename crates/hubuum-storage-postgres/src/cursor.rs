@@ -11,6 +11,9 @@ use hubuum_query::{CursorCodecError, CursorValue, FilterField, QueryOptions, Sor
 
 use crate::PostgresStorageError;
 
+#[cfg(all(test, feature = "integration-test-support"))]
+mod query_plan_tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorSqlType {
     Integer,
@@ -174,6 +177,31 @@ fn cursor_filter_sql_for_values<T: AsRef<str>>(
         validate_cursor_value(field, value)?;
     }
 
+    // A row comparison becomes a multicolumn Index Cond. The equivalent OR
+    // ladder alone can scan and discard every earlier entry on a deep page.
+    if sorts.len() > 1
+        && fields.iter().all(|field| !field.nullable)
+        && sorts
+            .iter()
+            .all(|sort| sort.descending == sorts[0].descending)
+    {
+        let columns = fields
+            .iter()
+            .map(CursorSqlField::ordering_expression)
+            .collect::<Vec<_>>();
+        let literals = fields
+            .iter()
+            .zip(values)
+            .map(|(field, value)| cursor_literal_sql(field, value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let operator = if sorts[0].descending { "<" } else { ">" };
+        return Ok(format!(
+            "(({}) {operator} ({}))",
+            columns.join(", "),
+            literals.join(", ")
+        ));
+    }
+
     let mut clauses = Vec::with_capacity(sorts.len());
     for current_index in 0..sorts.len() {
         let mut clause_parts = Vec::with_capacity(current_index + 1);
@@ -190,7 +218,18 @@ fn cursor_filter_sql_for_values<T: AsRef<str>>(
         )?);
         clauses.push(format!("({})", clause_parts.join(" AND ")));
     }
-    Ok(format!("({})", clauses.join(" OR ")))
+    let predicate = format!("({})", clauses.join(" OR "));
+    // Mixed directions retain the lexicographic predicate, with an inclusive
+    // leading bound that lets the index seek past earlier sort-key groups.
+    if sorts.len() > 1 && !fields[0].nullable {
+        let operator = if sorts[0].descending { "<=" } else { ">=" };
+        return Ok(format!(
+            "({} {operator} {} AND {predicate})",
+            fields[0].ordering_expression(),
+            cursor_literal_sql(&fields[0], &values[0])?
+        ));
+    }
+    Ok(predicate)
 }
 
 fn cursor_codec_error(error: CursorCodecError) -> PostgresStorageError {
@@ -487,7 +526,10 @@ mod tests {
     #[case::ascending(false)]
     #[case::descending(true)]
     #[tokio::test]
-    async fn string_cursor_order_matches_rust_under_a_locale_collation(#[case] descending: bool) {
+    async fn string_cursor_order_matches_rust_under_a_locale_collation(
+        #[case] descending: bool,
+        #[values(false, true)] nullable: bool,
+    ) {
         use diesel::QueryableByName;
         use diesel::sql_types::{Integer, Nullable, Text};
         use diesel_async::RunQueryDsl;
@@ -529,8 +571,9 @@ mod tests {
             let source = format!(
                 "WITH resources AS (SELECT id, name COLLATE \"{}\" AS name \
                  FROM (VALUES (1, NULL), (2, 'a'), (3, 'Z'), (4, 'a'), \
-                 (5, 'é'), (6, 'z'), (7, 'A')) AS input(id, name))",
-                collation.name.replace('"', "\"\"")
+                 (5, 'é'), (6, 'z'), (7, 'A')) AS input(id, name) WHERE {})",
+                collation.name.replace('"', "\"\""),
+                if nullable { "TRUE" } else { "name IS NOT NULL" },
             );
             let mut expected = diesel::sql_query(format!(
                 "{source} SELECT id, name FROM resources ORDER BY name ASC NULLS FIRST, id"
@@ -549,7 +592,7 @@ mod tests {
             }
             let sorts = [SortParam::new(FilterField::Name, descending), SortParam::new(FilterField::Id, false)];
             let fields = [
-                CursorSqlField { column: "resources.name", sql_type: CursorSqlType::String, nullable: true },
+                CursorSqlField { column: "resources.name", sql_type: CursorSqlType::String, nullable },
                 CursorSqlField { column: "resources.id", sql_type: CursorSqlType::Integer, nullable: false },
             ];
             let order = sorts.iter().zip(&fields)

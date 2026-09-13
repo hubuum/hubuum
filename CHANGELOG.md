@@ -83,6 +83,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   scope-restricted lists grow candidate batches up to 128 to avoid thousands of
   tiny database and policy requests; abundant allowed pages retain their small
   initial fetch.
+  Matching byte-collated name-and-ID indexes preserve indexed first pages and
+  continuations, including scoped lists and descending name order. Cursor
+  predicates expose index seek bounds instead of filtering earlier entries.
+  Apply migration `2026-09-13-000001_byte_ordered_cursor_indexes` during a quiet
+  period: the additive index builds take write locks, with a five-second lock
+  wait and a sixty-second statement timeout; failure rolls back the migration.
 
 - Event delivery workers claim at most their eight execution slots, preventing
   slow sinks from expiring leases in a local batch queue. Workers check ownership
