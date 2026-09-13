@@ -1070,12 +1070,13 @@ fn decode_i64_page_cursor(
     options: &QueryOptions,
     resource: &str,
 ) -> Result<Option<i64>, PostgresStorageError> {
-    let Some(cursor) = options.cursor().map(|cursor| cursor.as_str()) else {
+    let Some(values) = options
+        .cursor_values(options.sort())
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
+    else {
         return Ok(None);
     };
-    let values = hubuum_query::decode_cursor_values(cursor, options.sort())
-        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
-    match values.as_slice() {
+    match values.as_ref() {
         [CursorValue::Integer(value)] => Ok(Some(*value)),
         _ => Err(PostgresStorageError::invalid_input(format!(
             "{resource} cursor does not match the current sort order"

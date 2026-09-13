@@ -818,7 +818,7 @@ impl fmt::Debug for StorageObjectAggregateQuery {
             .field("spec", &self.spec)
             .field("filter_count", &self.options.filters().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .field("has_personal_owner", &self.personal_owner_id.is_some())
             .field("permission_count", &self.required_permissions.len())

@@ -262,7 +262,7 @@ async fn storage_json_cursor_uses_backend_order_even_without_the_boundary_row(
 #[case::needed_for_exact_total(true, true)]
 #[case::needed_after_denial(false, true)]
 #[actix_web::test]
-async fn storage_continuation_size_is_checked_only_when_fetching_again(
+async fn storage_continuation_accepts_oversized_non_response_boundaries(
     #[case] include_total: bool,
     #[case] deny_look_ahead: bool,
 ) {
@@ -311,15 +311,13 @@ async fn storage_continuation_size_is_checked_only_when_fetching_again(
         |collection| ResourceRef::collection(collection.id),
     )
     .await;
-    if include_total || deny_look_ahead {
-        assert!(
-            matches!(result, Err(ApiError::BadRequest(message)) if message.contains("maximum encoded size"))
-        );
-    } else {
-        let page = finalize_page(result.unwrap().rows, &query).unwrap();
-        assert_eq!(page.items[0].id, 1);
-        assert!(page.next_cursor.is_some());
+    let result = result.expect("stored sort values must not be constrained by HTTP token limits");
+    if include_total {
+        assert_eq!(result.total_count, 2);
     }
+    let page = finalize_page(result.rows, &query).unwrap();
+    assert_eq!(page.items[0].id, 1);
+    assert!(page.next_cursor.is_some());
 }
 
 #[actix_test]
@@ -672,8 +670,8 @@ async fn storage_pages_continue_through_denied_candidates(#[case] scoped: bool) 
     let scope = TokenScope::from_request_parts(
         None,
         Some(vec![
-            TokenResourceScope::Collection(CollectionID::new(299).unwrap()),
-            TokenResourceScope::Collection(CollectionID::new(300).unwrap()),
+            TokenResourceScope::Collection(CollectionID::new(9_999).unwrap()),
+            TokenResourceScope::Collection(CollectionID::new(10_000).unwrap()),
         ]),
     )
     .unwrap();
@@ -688,7 +686,7 @@ async fn storage_pages_continue_through_denied_candidates(#[case] scoped: bool) 
             &query,
             |query| {
                 std::future::ready(paginate_in_memory(
-                    (1..=300).map(candidate_collection).collect(),
+                    (1..=10_000).map(candidate_collection).collect(),
                     &query,
                 ))
             },
@@ -699,13 +697,20 @@ async fn storage_pages_continue_through_denied_candidates(#[case] scoped: bool) 
     let page = page.unwrap();
     assert_eq!(
         page.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
-        if scoped { vec![299, 300] } else { vec![] }
+        if scoped { vec![9_999, 10_000] } else { vec![] }
     );
-    assert_eq!(fetched.len(), 150);
-    assert!(fetched.iter().all(|count| *count <= 3));
+    // At most a handful of growing probes followed by full bounded batches,
+    // rather than 5,000 two-candidate round trips for this request.
+    assert!(
+        fetched.len() <= 85,
+        "candidate fetch count: {}",
+        fetched.len()
+    );
+    assert!(fetched.iter().all(|count| *count <= 129));
+    assert!(backend.authorization_batch_sizes().len() <= 85);
     assert_eq!(
         backend.authorization_batch_sizes().iter().sum::<usize>(),
-        if scoped { 2 } else { 300 }
+        if scoped { 2 } else { 10_000 }
     );
 }
 

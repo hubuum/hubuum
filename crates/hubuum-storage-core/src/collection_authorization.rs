@@ -83,7 +83,7 @@ impl fmt::Debug for StorageAuthorizationPrincipalCollectionPageQuery {
             .field("filter_count", &self.query_options.filters().len())
             .field("sort_count", &self.query_options.sort().len())
             .field("limit", &self.query_options.limit())
-            .field("has_cursor", &self.query_options.cursor().is_some())
+            .field("has_cursor", &self.query_options.has_cursor())
             .finish()
     }
 }

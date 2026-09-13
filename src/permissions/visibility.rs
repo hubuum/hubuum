@@ -19,6 +19,28 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, Resource
 const MAX_AUTHORIZATION_CHECKS_PER_BATCH: usize = 512;
 const STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE: usize = 128;
 
+/// Start small for dense policies, then amortize storage and policy round trips
+/// when more candidates are needed. Growth never exceeds the existing bound.
+pub(crate) struct AuthorizationCandidateBatch {
+    limit: usize,
+}
+
+impl AuthorizationCandidateBatch {
+    pub(crate) fn new(response_slots: usize) -> Self {
+        Self {
+            limit: response_slots.clamp(1, STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE),
+        }
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub(crate) fn grow(&mut self) {
+        self.limit = (self.limit * 2).min(STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE);
+    }
+}
+
 /// A page of authorized rows plus the total authorized count.
 ///
 /// Constructed by the candidate-authorization visibility helpers. The Local
@@ -363,13 +385,14 @@ where
     let mut rows = Vec::with_capacity(response_limit);
     let mut candidate_count = 0_usize;
     let mut authorized_count = 0_usize;
+    let mut batch = AuthorizationCandidateBatch::new(if query_options.include_total() {
+        STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE
+    } else {
+        response_limit
+    });
 
     loop {
-        let candidate_limit = if query_options.include_total() {
-            STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE
-        } else {
-            STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE.min(response_limit - rows.len())
-        };
+        let candidate_limit = batch.limit();
         let maximum_rows = candidate_limit.saturating_add(1);
         candidate_query.set_limit(Some(maximum_rows))?;
         let mut candidates = fetch(candidate_query.clone()).await?;
@@ -412,12 +435,12 @@ where
         if (!query_options.include_total() && rows.len() >= response_limit) || !has_more {
             break;
         }
-        candidate_query.set_cursor(
+        candidate_query.set_continuation(
             next_boundary
-                .transpose()?
-                .map(CursorBoundary::encode)
-                .transpose()?,
-        )?;
+                .expect("a nonempty storage page with look-ahead has a boundary")?
+                .into_continuation()?,
+        );
+        batch.grow();
     }
 
     let total_count = known_count_or_skipped(query_options, authorized_count as i64);

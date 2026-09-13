@@ -6,6 +6,8 @@ use base64::Engine as _;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+use hubuum_query::QueryContinuation;
+
 use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
 use crate::models::search::{QueryOptions, SortParam};
@@ -147,9 +149,9 @@ where
     let limit = page_limits()?.resolve(query_options.limit())?;
     let sorts = normalized_sorts::<T>(query_options.sort())?;
 
-    if let Some(cursor) = query_options.cursor() {
-        let _ = decode_cursor_values(cursor, &sorts)?;
-    }
+    let _ = query_options
+        .cursor_values(&sorts)
+        .map_err(cursor_codec_error)?;
 
     let mut prepared = query_options.clone();
     let mut requested_sorts = sorts;
@@ -224,10 +226,8 @@ where
 {
     let sorts = normalized_sorts::<T>(query_options.sort())?;
     let cursor_values = query_options
-        .cursor()
-        .map(|cursor| cursor.as_str())
-        .map(|cursor| decode_cursor_values(cursor, &sorts))
-        .transpose()?;
+        .cursor_values(&sorts)
+        .map_err(cursor_codec_error)?;
     paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
 }
 
@@ -362,8 +362,8 @@ where
     CursorBoundary::from_item(item, sorts)?.encode()
 }
 
-/// Capture a boundary before consuming its row, but defer token size checks
-/// until a continuation is actually needed.
+/// Capture a boundary before consuming its row. Encode public response cursors
+/// or preserve typed values when another internal storage page is needed.
 pub(crate) struct CursorBoundary {
     sorts: Vec<SortParam>,
     values: Vec<CursorValue>,
@@ -390,6 +390,10 @@ impl CursorBoundary {
             }
         }
         hubuum_query::encode_cursor_values(&self.sorts, self.values).map_err(cursor_codec_error)
+    }
+
+    pub(crate) fn into_continuation(self) -> Result<QueryContinuation, ApiError> {
+        QueryContinuation::new(&self.sorts, self.values).map_err(cursor_codec_error)
     }
 }
 

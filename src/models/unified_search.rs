@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
-use crate::permissions::visibility::authorize_all_candidates;
+use crate::permissions::visibility::{AuthorizationCandidateBatch, authorize_all_candidates};
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PermissionBackend, PrincipalRef, ResourceRef,
 };
@@ -23,7 +23,6 @@ use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
 const UNIFIED_SEARCH_CURSOR_VERSION: u8 = 1;
-const UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE: usize = 128;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Hash,
@@ -412,9 +411,10 @@ where
         } else {
             let mut candidate_spec = search_spec.clone();
             let mut authorized = Vec::new();
+            let mut batch =
+                AuthorizationCandidateBatch::new(params.limit_per_kind.saturating_add(1));
             loop {
-                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
-                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
+                candidate_spec.limit_per_kind = batch.limit();
                 let page = unified_search_service::search_collections(
                     backend,
                     user.principal_id(),
@@ -435,10 +435,12 @@ where
                     |candidate| ResourceRef::collection(candidate.item.id),
                 )
                 .await?;
-                authorized.extend(allowed);
+                let remaining = params.limit_per_kind.saturating_add(1) - authorized.len();
+                authorized.extend(allowed.into_iter().take(remaining));
                 if authorized.len() > params.limit_per_kind || !page_has_more {
                     break;
                 }
+                batch.grow();
                 candidate_spec.collection_cursor =
                     Some(next_candidate_cursor.ok_or_else(|| {
                         ApiError::InternalServerError(
@@ -499,9 +501,10 @@ where
         } else {
             let mut candidate_spec = search_spec.clone();
             let mut authorized = Vec::new();
+            let mut batch =
+                AuthorizationCandidateBatch::new(params.limit_per_kind.saturating_add(1));
             loop {
-                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
-                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
+                candidate_spec.limit_per_kind = batch.limit();
                 let page = unified_search_service::search_classes(
                     backend,
                     user.principal_id(),
@@ -528,10 +531,12 @@ where
                     },
                 )
                 .await?;
-                authorized.extend(allowed);
+                let remaining = params.limit_per_kind.saturating_add(1) - authorized.len();
+                authorized.extend(allowed.into_iter().take(remaining));
                 if authorized.len() > params.limit_per_kind || !page_has_more {
                     break;
                 }
+                batch.grow();
                 candidate_spec.class_cursor = Some(next_candidate_cursor.ok_or_else(|| {
                     ApiError::InternalServerError(
                         "Class search candidate page cannot advance its cursor".to_string(),
@@ -594,9 +599,10 @@ where
         } else {
             let mut candidate_spec = search_spec.clone();
             let mut authorized = Vec::new();
+            let mut batch =
+                AuthorizationCandidateBatch::new(params.limit_per_kind.saturating_add(1));
             loop {
-                candidate_spec.limit_per_kind = UNIFIED_SEARCH_CANDIDATE_PAGE_SIZE
-                    .min(params.limit_per_kind.saturating_add(1) - authorized.len());
+                candidate_spec.limit_per_kind = batch.limit();
                 let page = unified_search_service::search_objects(
                     backend,
                     user.principal_id(),
@@ -626,10 +632,12 @@ where
                     },
                 )
                 .await?;
-                authorized.extend(allowed);
+                let remaining = params.limit_per_kind.saturating_add(1) - authorized.len();
+                authorized.extend(allowed.into_iter().take(remaining));
                 if authorized.len() > params.limit_per_kind || !page_has_more {
                     break;
                 }
+                batch.grow();
                 candidate_spec.object_cursor = Some(next_candidate_cursor.ok_or_else(|| {
                     ApiError::InternalServerError(
                         "Object search candidate page cannot advance its cursor".to_string(),

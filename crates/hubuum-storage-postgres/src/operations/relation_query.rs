@@ -424,7 +424,7 @@ pub async fn list_related_classes(
                 operation = "list_related_classes",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -488,7 +488,7 @@ pub async fn list_related_objects(
                 operation = "list_related_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -1158,11 +1158,7 @@ fn apply_raw_sql_pagination(
         .iter()
         .map(|sort| graph_cursor_field(kind, &sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(cursor) = cursor_filter_sql_for_fields(
-        &sorts,
-        &fields,
-        options.cursor().map(|cursor| cursor.as_str()),
-    )? {
+    if let Some(cursor) = cursor_filter_sql_for_fields(options, &sorts, &fields)? {
         if spec.sql.contains("\nWHERE ") {
             spec.sql.push_str("\n  AND ");
         } else {

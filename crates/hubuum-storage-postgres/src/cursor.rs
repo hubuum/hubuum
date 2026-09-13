@@ -148,24 +148,29 @@ where
     format!("{} {direction}{nulls}", field.ordering_expression())
 }
 
-pub fn cursor_filter_sql_for_fields<T>(
+pub(crate) fn cursor_filter_sql_for_fields<T: AsRef<str>>(
+    options: &QueryOptions,
     sorts: &[SortParam],
     fields: &[CursorSqlField<T>],
-    cursor: Option<&str>,
-) -> Result<Option<String>, PostgresStorageError>
-where
-    T: AsRef<str>,
-{
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
+) -> Result<Option<String>, PostgresStorageError> {
+    options
+        .cursor_values(sorts)
+        .map_err(cursor_codec_error)?
+        .map(|values| cursor_filter_sql_for_values(sorts, fields, &values))
+        .transpose()
+}
+
+fn cursor_filter_sql_for_values<T: AsRef<str>>(
+    sorts: &[SortParam],
+    fields: &[CursorSqlField<T>],
+    values: &[CursorValue],
+) -> Result<String, PostgresStorageError> {
     if fields.len() != sorts.len() {
         return Err(PostgresStorageError::database(
             "Cursor SQL field count does not match sort count",
         ));
     }
-    let values = hubuum_query::decode_cursor_values(cursor, sorts).map_err(cursor_codec_error)?;
-    for (field, value) in fields.iter().zip(&values) {
+    for (field, value) in fields.iter().zip(values) {
         validate_cursor_value(field, value)?;
     }
 
@@ -185,7 +190,7 @@ where
         )?);
         clauses.push(format!("({})", clause_parts.join(" AND ")));
     }
-    Ok(Some(format!("({})", clauses.join(" OR "))))
+    Ok(format!("({})", clauses.join(" OR ")))
 }
 
 fn cursor_codec_error(error: CursorCodecError) -> PostgresStorageError {
@@ -453,9 +458,9 @@ macro_rules! apply_query_options_with_fields {
         let (query_options, sql_fields) =
             $crate::cursor::normalize_query_fields(&$query_options, $sql_fields, $tie_breaker)?;
         if let Some(cursor_sql) = $crate::cursor::cursor_filter_sql_for_fields(
+            &query_options,
             query_options.sort(),
             &sql_fields,
-            query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
@@ -553,7 +558,8 @@ mod tests {
             let mut cursor = None;
             let mut actual = Vec::new();
             loop {
-                let predicate = cursor_filter_sql_for_fields(&sorts, &fields, cursor.as_deref()).unwrap()
+                let options = QueryOptions::new(vec![], sorts.to_vec(), Some(1), cursor.clone(), false).unwrap();
+                let predicate = cursor_filter_sql_for_fields(&options, &sorts, &fields).unwrap()
                     .unwrap_or_else(|| "TRUE".to_string());
                 let mut page = diesel::sql_query(format!(
                     "{source} SELECT id, name FROM resources WHERE {predicate} ORDER BY {order} LIMIT 1"
@@ -585,7 +591,9 @@ mod tests {
             nullable: true,
         }];
 
-        let sql = cursor_filter_sql_for_fields(&sorts, &fields, Some(&cursor)).unwrap();
+        let options =
+            QueryOptions::new(vec![], sorts.to_vec(), Some(1), Some(cursor), false).unwrap();
+        let sql = cursor_filter_sql_for_fields(&options, &sorts, &fields).unwrap();
 
         assert_eq!(
             sql.as_deref(),

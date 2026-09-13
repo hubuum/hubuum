@@ -138,7 +138,7 @@ pub async fn list_computed_objects(
                 operation = "list_computed_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL computed-object query"
             );

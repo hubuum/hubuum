@@ -126,9 +126,10 @@ class, and object search, including its streaming endpoint.
 
 1. Load the caller's group ids once for candidate authorization.
 2. Fetch at most 128 candidates plus one storage look-ahead row. When totals are
-   skipped, reduce the batch to the remaining response slots plus the authorized
-   look-ahead. For `limit=1` with abundant allowed rows, fetch three rows and
-   authorize two candidates.
+   skipped, start with the response slots plus the authorized look-ahead. For
+   `limit=1` with abundant allowed rows, fetch three rows and authorize two
+   candidates. If the page still needs rows, double the next candidate batch,
+   up to 128, so sparse policies do not require a round trip for each denied row.
 3. Send candidate resources in batches of at most 512 Cedar decisions. Retain
    only the allowed response page plus one authorized look-ahead row. Advance
    using the last raw candidate, even when authorization or token scope rejects
@@ -141,9 +142,12 @@ and result memory remains bounded by the batch and response limits. With
 allowed, and the total is omitted. History authorizes each stored snapshot's
 attributes. Direct relation lists resolve endpoint metadata once per candidate
 batch. Computed-sort candidates retain their resolved types and values for
-cursor generation. Permission-grid lists use their existing bounded group-page
-protocol. Unified text search uses bounded batches sized to the remaining
-response slots and adapter-owned ranking cursors.
+cursor generation. Internal continuations carry validated sort values without
+encoding public cursor tokens, so an oversized denied value cannot break a
+valid response or exact-total scan. Public cursor byte limits still apply to
+client inputs and response cursors. Permission-grid lists use the same typed
+continuations. Unified text search uses the same growing bounded batches and
+adapter-owned ranking cursors.
 
 Sparse policies or token scopes may still require a complete scan to fill a
 page or prove exhaustion, even without totals. These ordinary cursor lists have

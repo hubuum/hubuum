@@ -40,6 +40,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking storage-adapter contract:** Ordinary cursor-page adapters must
+  support typed internal continuations by using `QueryOptions::cursor_values`
+  with the normalized execution sort instead of decoding only `cursor()`.
+  Update external adapters before upgrading. Public HTTP cursor token limits
+  and encoding remain unchanged.
+
 - **Breaking tooling requirement:** Repository Python scripts and tests now
   require Python 3.11 or newer and use standard-library `tomllib` exclusively.
   Upgrade the interpreter selected by `python3` on `PATH` before running local
@@ -57,6 +63,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   arrays and objects on locale-collated databases, preventing skipped results.
   Continued JSON-sorted pages with exact totals use a separate bounded storage
   scan to locate the response boundary.
+  Internal storage continuations also preserve oversized denied sort values
+  in lists and exports without applying public cursor byte limits. Sparse and scope-restricted
+  lists grow candidate batches up to 128 to avoid thousands of tiny database
+  and policy requests; abundant allowed pages retain their small initial fetch.
 
 - Canceled login requests no longer permanently consume in-memory rate-limit
   capacity, including the local fallback used during Valkey outages. Login
@@ -76,16 +86,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking string-order change on locale-collated databases:** String cursor
   sorts now use byte ordering consistently in PostgreSQL and authorization
   pagination. Restart in-progress string-sorted pagination after upgrading.
-  External pages no longer reject oversized look-ahead values when no further
-  storage fetch is needed, and raw computed-filter queries avoid unnecessary
-  computed enrichment.
+  Raw computed-filter queries avoid unnecessary computed enrichment.
 - Page external-authorization candidates in storage for class, object, computed
   object, direct relation, export-template, history, task, and structured-search
   lists. Skipping totals stops policy work once the response page and look-ahead are
   authorized; exact totals retain bounded candidate and response state. Sparse
   policies and token scopes preserve complete pages and stable cursors. History
   now accepts omitted totals from storage when `include_total=false`. Ranked text
-  search also limits policy checks to the remaining response slots.
+  search also starts with a small policy batch and grows it for sparse results.
 - Atomically throttle PostgreSQL token activity refreshes so concurrent
   authentication with the same stale token performs one `last_used_at` update
   per throttle window. Delayed observations cannot move activity timestamps

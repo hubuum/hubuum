@@ -190,7 +190,7 @@ pub async fn list_classes(
                 operation = "list_classes",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );
@@ -281,7 +281,7 @@ pub async fn list_objects(
                 operation = "list_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );

@@ -189,6 +189,144 @@ async fn external_object_page_does_not_encode_its_oversized_look_ahead() {
 }
 
 #[rstest]
+#[case::classes(Listing::Classes, false)]
+#[case::objects(Listing::Objects, false)]
+#[case::computed_arrays(Listing::Objects, true)]
+#[actix_web::test]
+async fn external_lists_continue_past_oversized_denied_sort_values(
+    #[case] listing: Listing,
+    #[case] computed: bool,
+    #[values(false, true)] include_total: bool,
+    #[values(false, true)] descending: bool,
+) {
+    use crate::tests::api_operations::post_request;
+    use serde_json::json;
+
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("large_denied_sort_values").await;
+    let collection_id = fixture.collection.id;
+    let class = NewHubuumClass {
+        name: context.scoped_name("large_denied_sort_class"),
+        collection_id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: String::new(),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    if computed {
+        let response = post_request(&context.pool, &context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", class.id),
+            json!({"key": "order", "label": "Order", "operation": {"type": "first_non_null", "paths": ["/order"]}, "result_type": "array"}),
+        ).await;
+        assert_response_status(response, StatusCode::CREATED).await;
+    }
+    let backend = Arc::new(MockTreetopBackend::new());
+    let prefix = context.scoped_name("selected_large_sort");
+    let mut visible_ids = Vec::new();
+    for index in 0..129 {
+        let mut value = format!("{:03}", if descending { 128 - index } else { index });
+        // Force a continuation at an oversized denied row in each count mode.
+        if index == if include_total { 127 } else { 1 } {
+            value.push_str(&"x".repeat(50_000));
+        }
+        let name = format!("{prefix}_{index:03}");
+        let (id, action, resource_kind) = if matches!(listing, Listing::Classes) {
+            let row = NewHubuumClass {
+                name,
+                collection_id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: value,
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            (row.id, Permissions::ReadClass, ResourceKind::Class)
+        } else {
+            let row = NewHubuumObject {
+                name,
+                collection_id,
+                hubuum_class_id: class.id,
+                description: value.clone(),
+                data: json!({"order": [value]}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            (row.id, Permissions::ReadObject, ResourceKind::Object)
+        };
+        if index == 0 || index == 128 {
+            visible_ids.push(id);
+            backend.add_rule(MockAllowRule {
+                group_id: fixture.owner_group.id,
+                action,
+                resource_kind,
+                resource_id: Some(id),
+                attrs: ResourceFields::default(),
+            });
+        }
+    }
+    let endpoint = if matches!(listing, Listing::Classes) {
+        format!("/api/v1/classes?collections={collection_id}&name__startswith={prefix}")
+    } else {
+        format!("/api/v1/classes/{}/?name__startswith={prefix}", class.id)
+    };
+    let sort = if computed {
+        "computed.shared.order"
+    } else {
+        "description"
+    };
+    let direction = if descending { ".desc" } else { "" };
+    let mut cursor = None;
+    for (page_index, expected_id) in visible_ids.iter().enumerate() {
+        let cursor_query = cursor
+            .as_ref()
+            .map(|value| format!("&cursor={value}"))
+            .unwrap_or_default();
+        let (response, fetched) = capture_candidate_fetches(get_request_with_permission_backend(
+            &context.pool, &context.admin_token,
+            &format!("{endpoint}&sort={sort}{direction}&limit=1&include_total={include_total}{cursor_query}"),
+            backend.clone(),
+        )).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            response
+                .headers()
+                .get(TOTAL_COUNT_HEADER)
+                .map(|value| value.to_str().unwrap()),
+            include_total.then_some("2")
+        );
+        cursor = response
+            .headers()
+            .get(NEXT_CURSOR_HEADER)
+            .map(|value| value.to_str().unwrap().to_string());
+        assert_eq!(cursor.is_some(), page_index == 0);
+        let rows: Vec<Value> = test::read_body_json(response).await;
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["id"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![i64::from(*expected_id)]
+        );
+        // Continued JSON pages with exact totals need two count batches in
+        // addition to the bounded storage scan that locates the response.
+        let maximum_fetches = if computed && include_total && page_index > 0 {
+            9
+        } else {
+            7
+        };
+        assert!(
+            fetched.len() <= maximum_fetches,
+            "sparse paging work: {fetched:?}"
+        );
+        assert!(fetched.iter().all(|rows| *rows <= 129));
+    }
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
 #[actix_web::test]
 async fn external_list_bounds_fetched_rows_and_authorization_work(
     #[values(Listing::Classes, Listing::Objects, Listing::ClassHistory)] listing: Listing,
@@ -356,10 +494,15 @@ async fn external_list_bounds_fetched_rows_and_authorization_work(
         assert!(response.headers().get(TOTAL_COUNT_HEADER).is_none());
         assert!(!fetched.is_empty());
         assert!(
-            fetched.iter().all(|count| *count <= 3),
+            fetched.iter().all(|count| *count <= 129),
             "fetched rows: {fetched:?}"
         );
-        if !sparse {
+        if sparse {
+            assert!(
+                fetched.len() <= 7,
+                "too many sparse candidate fetches: {fetched:?}"
+            );
+        } else {
             assert_eq!(fetched, vec![3]);
         }
     }
@@ -376,7 +519,7 @@ async fn external_list_bounds_fetched_rows_and_authorization_work(
     let expected_candidates = if include_total {
         140
     } else if sparse {
-        if after_cursor { 9 } else { 136 }
+        if after_cursor { 9 } else { 140 }
     } else {
         2
     };
@@ -386,6 +529,78 @@ async fn external_list_bounds_fetched_rows_and_authorization_work(
     assert_eq!(
         batches[before..].iter().sum::<usize>(),
         expected_candidates + boundary_checks
+    );
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::classes("class", Listing::Classes)]
+#[case::objects("object", Listing::Objects)]
+#[actix_web::test]
+async fn denied_ranked_search_bounds_database_and_policy_round_trips(
+    #[case] kind: &str,
+    #[case] listing: Listing,
+) {
+    use crate::models::UnifiedSearchResponse;
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("denied_ranked_search").await;
+    let class = NewHubuumClass {
+        name: context.scoped_name("ranked_parent"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: String::new(),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let needle = context.scoped_name("deniedranked").replace('_', "");
+    for index in 0..300 {
+        let name = format!("{needle}{index:03}");
+        if matches!(listing, Listing::Classes) {
+            NewHubuumClass {
+                name,
+                collection_id: fixture.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: String::new(),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+        } else {
+            NewHubuumObject {
+                name,
+                collection_id: fixture.collection.id,
+                hubuum_class_id: class.id,
+                description: String::new(),
+                data: serde_json::json!({}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+        }
+    }
+    let backend = Arc::new(MockTreetopBackend::new());
+    let (response, queries) =
+        hubuum_storage_postgres::capture_queries(get_request_with_permission_backend(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/search?q={needle}&kinds={kind}&limit_per_kind=1"),
+            backend.clone(),
+        ))
+        .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let response: UnifiedSearchResponse = test::read_body_json(response).await;
+    assert!(response.results.classes.is_empty() && response.results.objects.is_empty());
+    let batches = backend.authorization_batch_sizes();
+    assert_eq!(batches.iter().sum::<usize>(), 300);
+    assert!(batches.len() <= 10, "policy round trips: {batches:?}");
+    // Class pages include snapshot transaction control statements and their
+    // collection expansion; the budget includes those database round trips.
+    assert!(
+        queries.total_queries() <= 50,
+        "database round trips: {queries:?}"
     );
     fixture.cleanup().await.unwrap();
 }
@@ -533,8 +748,10 @@ async fn external_computed_filter_preserves_projection_query_budget(
         if include_total {
             assert_eq!(fetched, vec![129, 12]);
         } else if sparse {
-            // After the first allow, each fetch seeks only one more allowed row.
-            assert_eq!(fetched.len(), if page_index == 0 { 70 } else { 6 });
+            assert!(
+                fetched.len() <= if page_index == 0 { 7 } else { 3 },
+                "sparse policies must amortize candidate queries: {fetched:?}"
+            );
         } else {
             assert_eq!(fetched, vec![3]);
         }

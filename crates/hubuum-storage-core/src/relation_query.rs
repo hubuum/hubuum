@@ -994,7 +994,7 @@ fn query_debug(
         .field("filter_count", &options.filters().len())
         .field("sort_count", &options.sort().len())
         .field("limit", &options.limit())
-        .field("has_cursor", &options.cursor().is_some())
+        .field("has_cursor", &options.has_cursor())
         .field("include_total", &options.include_total())
         .field("visibility", visibility)
         .finish()
