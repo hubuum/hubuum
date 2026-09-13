@@ -300,7 +300,7 @@ impl fmt::Debug for StoragePrincipalGroupListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }
@@ -334,7 +334,7 @@ impl fmt::Debug for StorageGroupListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }
@@ -508,7 +508,7 @@ impl fmt::Debug for StorageTokenListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .field("state", &self.state)
             .field("observation", &self.observation)
@@ -980,7 +980,7 @@ impl fmt::Debug for StorageServiceAccountListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }

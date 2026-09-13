@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::api::etag::{RevisionedResource, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -11,11 +9,11 @@ use crate::models::{
     NewHubuumClassRelation, NewHubuumObjectRelation, ObjectRelationCreateSelector,
     ObjectRelationSelector, Permissions,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::pagination::prepare_db_pagination;
+use crate::permissions::visibility::filter_authorized_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::authorization_resources::{
-    class_relation_authorization_resources, object_relation_authorization_resources,
+    authorize_class_relation_candidates, authorize_object_relation_candidates,
 };
 use crate::services::relation_queries;
 use crate::storage::with_revision_precondition;
@@ -74,33 +72,28 @@ async fn get_class_relations(
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
 
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = relation_queries::list_class_relations(
-            &context,
-            relation_queries::RelationAccess::new(user.id().id(), true, None),
-            candidate_options,
-        )
-        .await?;
-        let resources = class_relation_authorization_resources(&context, &candidates).await?;
-        let resources = resources
-            .into_iter()
-            .map(|resource| (resource.id(), resource))
-            .collect::<HashMap<_, _>>();
         let principal = PrincipalRef::load(&context, user).await?;
-        let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-        let page = authorize_cursor_page(
+        let page = filter_authorized_cursor_page_from_storage(
             context.permission_backend(),
-            &principal,
-            candidates,
-            requestor.scopes(),
-            required,
-            &search_params,
-            |relation| {
-                resources
-                    .get(&Some(relation.id))
-                    .expect("every relation candidate has an authorization resource")
-                    .clone()
+            &params,
+            |candidate_options| async {
+                relation_queries::list_class_relations(
+                    &context,
+                    relation_queries::RelationAccess::new(user.id().id(), true, None),
+                    candidate_options,
+                )
+                .await
+                .map(|page| page.0)
+            },
+            |candidates| {
+                authorize_class_relation_candidates(
+                    &context,
+                    context.permission_backend(),
+                    &principal,
+                    requestor.scopes(),
+                    required.clone(),
+                    candidates,
+                )
             },
         )
         .await?;
@@ -320,33 +313,28 @@ async fn get_object_relations(
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
 
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = relation_queries::list_object_relations(
-            &context,
-            relation_queries::RelationAccess::new(user.id().id(), true, None),
-            candidate_options,
-        )
-        .await?;
-        let resources = object_relation_authorization_resources(&context, &candidates).await?;
-        let resources = resources
-            .into_iter()
-            .map(|resource| (resource.id(), resource))
-            .collect::<HashMap<_, _>>();
         let principal = PrincipalRef::load(&context, user).await?;
-        let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-        let page = authorize_cursor_page(
+        let page = filter_authorized_cursor_page_from_storage(
             context.permission_backend(),
-            &principal,
-            candidates,
-            requestor.scopes(),
-            required,
-            &search_params,
-            |relation| {
-                resources
-                    .get(&Some(relation.id))
-                    .expect("every relation candidate has an authorization resource")
-                    .clone()
+            &params,
+            |candidate_options| async {
+                relation_queries::list_object_relations(
+                    &context,
+                    relation_queries::RelationAccess::new(user.id().id(), true, None),
+                    candidate_options,
+                )
+                .await
+                .map(|page| page.0)
+            },
+            |candidates| {
+                authorize_object_relation_candidates(
+                    &context,
+                    context.permission_backend(),
+                    &principal,
+                    requestor.scopes(),
+                    required.clone(),
+                    candidates,
+                )
             },
         )
         .await?;

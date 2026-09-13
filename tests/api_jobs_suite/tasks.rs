@@ -326,4 +326,71 @@ mod tests {
             expected_ids
         );
     }
+    #[rstest]
+    #[actix_web::test]
+    async fn external_task_list_pages_before_policy_checks(
+        #[values(false, true)] include_total: bool,
+    ) {
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        use crate::tests::api_operations::get_request_with_permission_backend;
+        use std::sync::Arc;
+
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("task_candidate_pages").await;
+        let backend = Arc::new(MockTreetopBackend::new());
+        backend.add_admin_rule(fixture.owner_group.id);
+        backend.add_task_read_rule(fixture.owner_group.id, None);
+        let mut ids = Vec::new();
+        for index in 0..8 {
+            ids.push(
+                create_synthetic_task(
+                    &context,
+                    context.admin_user.id,
+                    TaskKind::Reindex,
+                    TaskStatus::Succeeded,
+                    &format!("candidate_{index}"),
+                )
+                .await,
+            );
+        }
+        let mut cursor = String::new();
+        for expected_id in ids.iter().take(2) {
+            let before = backend.task_authorization_batch_sizes().len();
+            let response = get_request_with_permission_backend(
+                &context.pool,
+                &context.admin_token,
+                &format!(
+                    "/api/v1/tasks?submitted_by={}&limit=1&include_total={include_total}{cursor}",
+                    context.admin_user.id
+                ),
+                backend.clone(),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            assert_eq!(
+                header_value(&response, crate::pagination::TOTAL_COUNT_HEADER),
+                include_total.then(|| "8".to_string())
+            );
+            cursor = format!(
+                "&cursor={}",
+                header_value(&response, NEXT_CURSOR_HEADER).unwrap()
+            );
+            let rows: Vec<TaskResponse> = test::read_body_json(response).await;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].id, *expected_id);
+            assert_eq!(
+                backend.task_authorization_batch_sizes()[before..],
+                if include_total { vec![8] } else { vec![2] }
+            );
+        }
+        hubuum_storage_postgres::test_support::delete_tasks(
+            &context.pool,
+            &ids.into_iter()
+                .map(|id| crate::models::TaskID::new(id).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .unwrap();
+        fixture.cleanup().await.unwrap();
+    }
 }

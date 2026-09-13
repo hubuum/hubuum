@@ -107,6 +107,18 @@ where
     pub fn expression(&self) -> &str {
         self.column.as_ref()
     }
+
+    // Cursor comparisons also run in Rust when policy authorization assembles
+    // a response page. Use byte ordering for both SQL ordering and predicates,
+    // independently of the database/column locale. Ordinary filters retain
+    // their configured collation.
+    fn ordering_expression(&self) -> String {
+        if self.sql_type == CursorSqlType::String {
+            format!("({}) COLLATE \"C\"", self.expression())
+        } else {
+            self.expression().to_string()
+        }
+    }
 }
 
 impl From<CursorSqlField> for CursorSqlField<String> {
@@ -133,27 +145,32 @@ where
     } else {
         ""
     };
-    format!("{} {direction}{nulls}", field.expression())
+    format!("{} {direction}{nulls}", field.ordering_expression())
 }
 
-pub fn cursor_filter_sql_for_fields<T>(
+pub(crate) fn cursor_filter_sql_for_fields<T: AsRef<str>>(
+    options: &QueryOptions,
     sorts: &[SortParam],
     fields: &[CursorSqlField<T>],
-    cursor: Option<&str>,
-) -> Result<Option<String>, PostgresStorageError>
-where
-    T: AsRef<str>,
-{
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
+) -> Result<Option<String>, PostgresStorageError> {
+    options
+        .cursor_values(sorts)
+        .map_err(cursor_codec_error)?
+        .map(|values| cursor_filter_sql_for_values(sorts, fields, &values))
+        .transpose()
+}
+
+fn cursor_filter_sql_for_values<T: AsRef<str>>(
+    sorts: &[SortParam],
+    fields: &[CursorSqlField<T>],
+    values: &[CursorValue],
+) -> Result<String, PostgresStorageError> {
     if fields.len() != sorts.len() {
         return Err(PostgresStorageError::database(
             "Cursor SQL field count does not match sort count",
         ));
     }
-    let values = hubuum_query::decode_cursor_values(cursor, sorts).map_err(cursor_codec_error)?;
-    for (field, value) in fields.iter().zip(&values) {
+    for (field, value) in fields.iter().zip(values) {
         validate_cursor_value(field, value)?;
     }
 
@@ -173,7 +190,7 @@ where
         )?);
         clauses.push(format!("({})", clause_parts.join(" AND ")));
     }
-    Ok(Some(format!("({})", clauses.join(" OR "))))
+    Ok(format!("({})", clauses.join(" OR ")))
 }
 
 fn cursor_codec_error(error: CursorCodecError) -> PostgresStorageError {
@@ -215,7 +232,7 @@ where
         ))),
         _ => Ok(format!(
             "{} = {}",
-            field.expression(),
+            field.ordering_expression(),
             cursor_literal_sql(field, value)?
         )),
     }
@@ -241,13 +258,16 @@ where
             if field.nullable && sort.descending {
                 Ok(format!(
                     "({} < {} OR {} IS NULL)",
-                    field.expression(),
+                    field.ordering_expression(),
                     literal,
                     field.expression()
                 ))
             } else {
                 let operator = if sort.descending { "<" } else { ">" };
-                Ok(format!("{} {operator} {literal}", field.expression()))
+                Ok(format!(
+                    "{} {operator} {literal}",
+                    field.ordering_expression()
+                ))
             }
         }
     }
@@ -438,9 +458,9 @@ macro_rules! apply_query_options_with_fields {
         let (query_options, sql_fields) =
             $crate::cursor::normalize_query_fields(&$query_options, $sql_fields, $tie_breaker)?;
         if let Some(cursor_sql) = $crate::cursor::cursor_filter_sql_for_fields(
+            &query_options,
             query_options.sort(),
             &sql_fields,
-            query_options.cursor().map(|cursor| cursor.as_str()),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
@@ -462,6 +482,98 @@ mod tests {
         normalize_query_fields, validated_query_limit,
     };
 
+    #[cfg(feature = "integration-test-support")]
+    #[rstest::rstest]
+    #[case::ascending(false)]
+    #[case::descending(true)]
+    #[tokio::test]
+    async fn string_cursor_order_matches_rust_under_a_locale_collation(#[case] descending: bool) {
+        use diesel::QueryableByName;
+        use diesel::sql_types::{Integer, Nullable, Text};
+        use diesel_async::RunQueryDsl;
+        use hubuum_query::CursorValue;
+
+        use super::order_sql_clause_for_field;
+        use crate::test_support::integration_test_pool;
+        use crate::with_connection;
+
+        #[derive(QueryableByName)]
+        struct Collation {
+            #[diesel(sql_type = Text)]
+            name: String,
+        }
+        #[derive(Debug, PartialEq, QueryableByName)]
+        struct Row {
+            #[diesel(sql_type = Integer)]
+            id: i32,
+            #[diesel(sql_type = Nullable<Text>)]
+            name: Option<String>,
+        }
+        impl Row {
+            fn value(&self) -> CursorValue {
+                self.name
+                    .clone()
+                    .map_or(CursorValue::Null, CursorValue::String)
+            }
+        }
+
+        let pool = integration_test_pool(1);
+        with_connection(&pool, async |connection| {
+            let collation = diesel::sql_query(
+                "SELECT collname AS name FROM pg_collation WHERE collname IN \
+                 ('en-x-icu', 'en-US-x-icu', 'en_US.utf8', 'en_US.UTF-8', 'en_US') \
+                 ORDER BY collname LIMIT 1",
+            )
+            .get_result::<Collation>(connection)
+            .await?;
+            let source = format!(
+                "WITH resources AS (SELECT id, name COLLATE \"{}\" AS name \
+                 FROM (VALUES (1, NULL), (2, 'a'), (3, 'Z'), (4, 'a'), \
+                 (5, 'é'), (6, 'z'), (7, 'A')) AS input(id, name))",
+                collation.name.replace('"', "\"\"")
+            );
+            let mut expected = diesel::sql_query(format!(
+                "{source} SELECT id, name FROM resources ORDER BY name ASC NULLS FIRST, id"
+            ))
+            .load::<Row>(connection)
+            .await?;
+            let locale_order = expected.iter().map(|row| row.id).collect::<Vec<_>>();
+            expected.sort_by(|left, right| {
+                let order = left.value().cmp(&right.value());
+                (if descending { order.reverse() } else { order })
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+            if !descending {
+                assert_ne!(locale_order, expected.iter().map(|row| row.id).collect::<Vec<_>>(),
+                    "fixture must exercise a collation that differs from Rust");
+            }
+            let sorts = [SortParam::new(FilterField::Name, descending), SortParam::new(FilterField::Id, false)];
+            let fields = [
+                CursorSqlField { column: "resources.name", sql_type: CursorSqlType::String, nullable: true },
+                CursorSqlField { column: "resources.id", sql_type: CursorSqlType::Integer, nullable: false },
+            ];
+            let order = sorts.iter().zip(&fields)
+                .map(|(sort, field)| order_sql_clause_for_field(sort, field))
+                .collect::<Vec<_>>().join(", ");
+            let mut cursor = None;
+            let mut actual = Vec::new();
+            loop {
+                let options = QueryOptions::new(vec![], sorts.to_vec(), Some(1), cursor.clone(), false).unwrap();
+                let predicate = cursor_filter_sql_for_fields(&options, &sorts, &fields).unwrap()
+                    .unwrap_or_else(|| "TRUE".to_string());
+                let mut page = diesel::sql_query(format!(
+                    "{source} SELECT id, name FROM resources WHERE {predicate} ORDER BY {order} LIMIT 1"
+                )).load::<Row>(connection).await?;
+                let Some(row) = page.pop() else { break; };
+                cursor = Some(encode_cursor_values(&sorts, vec![row.value(), CursorValue::Integer(i64::from(row.id))]).unwrap());
+                actual.push(row);
+                assert!(actual.len() <= expected.len(), "cursor repeated a row");
+            }
+            assert_eq!(actual, expected);
+            Ok::<_, diesel::result::Error>(())
+        }).await.unwrap();
+    }
+
     #[test]
     fn cursor_predicate_preserves_nullable_descending_semantics() {
         let sorts = [SortParam {
@@ -479,11 +591,13 @@ mod tests {
             nullable: true,
         }];
 
-        let sql = cursor_filter_sql_for_fields(&sorts, &fields, Some(&cursor)).unwrap();
+        let options =
+            QueryOptions::new(vec![], sorts.to_vec(), Some(1), Some(cursor), false).unwrap();
+        let sql = cursor_filter_sql_for_fields(&options, &sorts, &fields).unwrap();
 
         assert_eq!(
             sql.as_deref(),
-            Some("(((resources.name < 'beta' OR resources.name IS NULL)))")
+            Some("((((resources.name) COLLATE \"C\" < 'beta' OR resources.name IS NULL)))")
         );
     }
 

@@ -1,8 +1,11 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use futures_util::{FutureExt, future::BoxFuture};
+use hubuum_query::StructuredQueryExpression;
+use tokio::sync::OnceCell;
 use tracing::debug;
 
 use crate::errors::ApiError;
@@ -16,7 +19,8 @@ use crate::models::{
     StructuredSearchResourceKind, TokenScope,
 };
 use crate::permissions::visibility::{
-    AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
+    AuthorizedObjectIds, AuthorizedPage, authorize_all_candidates, authorize_resource_permissions,
+    filter_authorized_cursor_page_from_storage,
 };
 use crate::permissions::{PermissionBackend, PrincipalRef, ResourceRef};
 use crate::services::catalog;
@@ -178,9 +182,9 @@ pub(crate) async fn externally_authorized_structured_objects<S>(
     permission_backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
     scopes: Option<&TokenScope>,
-    mut source_query: QueryOptions,
+    source_query: &QueryOptions,
     expression: Option<&StructuredSearchExpression>,
-) -> Result<Vec<HubuumObject>, ApiError>
+) -> Result<AuthorizedPage<HubuumObject>, ApiError>
 where
     S: StorageContext,
 {
@@ -188,61 +192,113 @@ where
         scopes,
         &[Permissions::ReadCollection, Permissions::ReadObject],
     ) {
-        return Ok(Vec::new());
+        return Ok(AuthorizedPage {
+            rows: Vec::new(),
+            total_count: crate::pagination::known_count_or_skipped(source_query, 0),
+        });
     }
 
-    let class_id = source_query
-        .filters()
-        .iter()
-        .find(|filter| filter.field == FilterField::ClassId)
-        .map(|filter| {
-            filter.value.parse::<i32>().map_err(|_| {
-                ApiError::InternalServerError(
-                    "Structured object search has an invalid resolved class filter".to_string(),
-                )
-            })
-        })
-        .transpose()?;
-    source_query.set_structured_filter(None);
-    source_query.set_limit(Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1))?;
-    source_query.clear_cursor();
-    source_query.set_include_total(false);
-    let (candidates, _) =
-        catalog::list_objects(storage, principal.user_id, true, None, source_query).await?;
-    ensure_structured_external_candidate_count(candidates.len())?;
-    let visible = authorize_all_candidates(
+    let has_related = expression.is_some_and(expression_has_related);
+    let prepared_expression = expression.map(ExternalObjectExpression::new).transpose()?;
+    let expression = prepared_expression.as_ref();
+    let fetched = Cell::new(0usize);
+    filter_authorized_cursor_page_from_storage(
         permission_backend,
-        principal,
-        candidates,
-        scopes,
-        vec![Permissions::ReadObject, Permissions::ReadCollection],
-        object_resource,
-    )
-    .await?;
-    let universe = visible
-        .iter()
-        .map(|object| object.id)
-        .collect::<HashSet<_>>();
-    let matched = match expression {
-        Some(expression) => {
-            evaluate_external_structured_expression(
+        source_query,
+        |mut query| {
+            let fetched = &fetched;
+            async move {
+                // Plain predicates can be evaluated by storage. Related predicates
+                // must use external-policy traversal, including under NOT and OR.
+                if has_related {
+                    query.set_structured_filter(None);
+                }
+                let (candidates, _) =
+                    catalog::list_objects(storage, principal.user_id, true, None, query).await?;
+                let visited = fetched.get().saturating_add(candidates.len());
+                ensure_structured_external_candidate_count(visited)?;
+                fetched.set(visited.saturating_sub(1));
+                Ok(candidates)
+            }
+        },
+        |candidates| async move {
+            let visible = authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadObject, Permissions::ReadCollection],
+                object_resource,
+            )
+            .await?;
+            if !has_related || visible.is_empty() {
+                return Ok(visible);
+            }
+            let universe = visible
+                .iter()
+                .map(|object| object.id)
+                .collect::<HashSet<_>>();
+            let matched = evaluate_external_structured_expression(
                 storage,
                 permission_backend,
                 principal,
                 scopes,
-                class_id,
-                expression,
+                expression.expect("a related expression exists"),
                 &universe,
             )
-            .await?
-        }
-        None => universe,
-    };
+            .await?;
+            Ok(visible
+                .into_iter()
+                .filter(|object| matched.contains(&object.id))
+                .collect())
+        },
+    )
+    .await
+}
 
-    Ok(visible
-        .into_iter()
-        .filter(|object| matched.contains(&object.id))
-        .collect())
+fn expression_has_related(expression: &StructuredSearchExpression) -> bool {
+    match expression {
+        StructuredSearchExpression::And { args } | StructuredSearchExpression::Or { args } => {
+            args.iter().any(expression_has_related)
+        }
+        StructuredSearchExpression::Not { arg } => expression_has_related(arg),
+        StructuredSearchExpression::Related { .. } => true,
+        StructuredSearchExpression::Field { .. } => false,
+    }
+}
+
+/// Related leaves cache their bounded, authorized ID set once per request;
+/// field leaves are evaluated only against the current candidate page.
+enum ExternalObjectExpression {
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    Field(StructuredQueryExpression),
+    Related {
+        filters: Vec<ParsedQueryParam>,
+        matches: OnceCell<AuthorizedObjectIds>,
+    },
+}
+
+impl ExternalObjectExpression {
+    fn new(expression: &StructuredSearchExpression) -> Result<Self, ApiError> {
+        Ok(match expression {
+            StructuredSearchExpression::And { args } => {
+                Self::And(args.iter().map(Self::new).collect::<Result<_, _>>()?)
+            }
+            StructuredSearchExpression::Or { args } => {
+                Self::Or(args.iter().map(Self::new).collect::<Result<_, _>>()?)
+            }
+            StructuredSearchExpression::Not { arg } => Self::Not(Box::new(Self::new(arg)?)),
+            StructuredSearchExpression::Field { .. } => {
+                Self::Field(expression.query_expression(StructuredSearchResourceKind::Object)?)
+            }
+            StructuredSearchExpression::Related { predicate } => Self::Related {
+                filters: predicate.query_params("dsl")?,
+                matches: OnceCell::new(),
+            },
+        })
+    }
 }
 
 fn evaluate_external_structured_expression<'a, S>(
@@ -250,8 +306,7 @@ fn evaluate_external_structured_expression<'a, S>(
     permission_backend: &'a dyn PermissionBackend,
     principal: &'a PrincipalRef,
     scopes: Option<&'a TokenScope>,
-    class_id: Option<i32>,
-    expression: &'a StructuredSearchExpression,
+    expression: &'a ExternalObjectExpression,
     universe: &'a HashSet<i32>,
 ) -> BoxFuture<'a, Result<HashSet<i32>, ApiError>>
 where
@@ -259,7 +314,7 @@ where
 {
     async move {
         match expression {
-            StructuredSearchExpression::And { args } => {
+            ExternalObjectExpression::And(args) => {
                 let mut matched = universe.clone();
                 for argument in args {
                     let argument_matches = evaluate_external_structured_expression(
@@ -267,7 +322,6 @@ where
                         permission_backend,
                         principal,
                         scopes,
-                        class_id,
                         argument,
                         universe,
                     )
@@ -279,7 +333,7 @@ where
                 }
                 Ok(matched)
             }
-            StructuredSearchExpression::Or { args } => {
+            ExternalObjectExpression::Or(args) => {
                 let mut matched = HashSet::new();
                 for argument in args {
                     matched.extend(
@@ -288,7 +342,6 @@ where
                             permission_backend,
                             principal,
                             scopes,
-                            class_id,
                             argument,
                             universe,
                         )
@@ -298,58 +351,58 @@ where
                 matched.retain(|id| universe.contains(id));
                 Ok(matched)
             }
-            StructuredSearchExpression::Not { arg } => {
+            ExternalObjectExpression::Not(arg) => {
                 let excluded = evaluate_external_structured_expression(
                     storage,
                     permission_backend,
                     principal,
                     scopes,
-                    class_id,
                     arg,
                     universe,
                 )
                 .await?;
                 Ok(universe.difference(&excluded).copied().collect())
             }
-            StructuredSearchExpression::Field { .. } => {
-                let mut filters = Vec::with_capacity(1);
-                if let Some(class_id) = class_id {
-                    filters.push(ParsedQueryParam {
-                        field: FilterField::ClassId,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: class_id.to_string(),
-                    });
+            ExternalObjectExpression::Field(predicate) => {
+                let ids = universe.iter().copied().collect::<Vec<_>>();
+                let mut matched = HashSet::new();
+                // Bound field predicate reads to this page's already authorized
+                // objects. Equality filters accept at most 50 values.
+                for ids in ids.chunks(50) {
+                    let mut query = QueryOptions::new(
+                        vec![ParsedQueryParam {
+                            field: FilterField::Id,
+                            operator: SearchOperator::Equals { is_negated: false },
+                            value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+                        }],
+                        Vec::new(),
+                        Some(ids.len()),
+                        None,
+                        false,
+                    )?;
+                    query.set_structured_filter(Some(predicate.clone()));
+                    let (matches, _) =
+                        catalog::list_objects(storage, principal.user_id, true, None, query)
+                            .await?;
+                    matched.extend(matches.into_iter().map(|object| object.id));
                 }
-                let mut query = QueryOptions::new(
-                    filters,
-                    Vec::new(),
-                    Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1),
-                    None,
-                    false,
-                )?;
-                query.set_structured_filter(Some(
-                    expression.query_expression(StructuredSearchResourceKind::Object)?,
-                ));
-                let (matches, _) =
-                    catalog::list_objects(storage, principal.user_id, true, None, query).await?;
-                ensure_structured_external_candidate_count(matches.len())?;
-                Ok(matches
-                    .into_iter()
-                    .map(|object| object.id)
-                    .filter(|id| universe.contains(id))
-                    .collect())
+                Ok(matched)
             }
-            StructuredSearchExpression::Related { predicate } => {
-                let filters = predicate.query_params("dsl")?;
-                let matches = externally_authorized_related_object_ids(
-                    storage,
-                    permission_backend,
-                    principal,
-                    scopes,
-                    &filters,
-                )
-                .await?
-                .unwrap_or_else(AuthorizedObjectIds::empty);
+
+            ExternalObjectExpression::Related { filters, matches } => {
+                let matches = matches
+                    .get_or_try_init(|| async {
+                        externally_authorized_related_object_ids(
+                            storage,
+                            permission_backend,
+                            principal,
+                            scopes,
+                            filters,
+                        )
+                        .await
+                        .map(|ids| ids.unwrap_or_else(AuthorizedObjectIds::empty))
+                    })
+                    .await?;
                 Ok(matches
                     .as_slice()
                     .iter()

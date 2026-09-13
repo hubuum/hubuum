@@ -43,6 +43,13 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for authorization_path in src/tests/permissions/candidate_paging.rs \
+  src/api/v1/handlers/tasks.rs tests/api_jobs_suite/tasks.rs; do
+  authorization_output="$(bash "$classifier" "$authorization_path")"
+  assert_flag "$authorization_output" code true
+  assert_flag "$authorization_output" treetop_conformance true
+done
+
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
   test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py; do
   corpus_output="$(bash "$classifier" "$corpus_path")"

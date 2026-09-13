@@ -584,7 +584,7 @@ impl fmt::Debug for StorageAuthorizationGroupCandidateQuery {
             .debug_struct("StorageAuthorizationGroupCandidateQuery")
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("page_limit", &self.page_limit)
             .finish_non_exhaustive()
     }
@@ -884,7 +884,7 @@ impl fmt::Debug for StorageAuthorizationCollectionGrantListQuery {
             .field("filter_count", &self.query_options.filters().len())
             .field("sort_count", &self.query_options.sort().len())
             .field("limit", &self.query_options.limit())
-            .field("has_cursor", &self.query_options.cursor().is_some())
+            .field("has_cursor", &self.query_options.has_cursor())
             .field("include_total", &self.query_options.include_total())
             .finish()
     }

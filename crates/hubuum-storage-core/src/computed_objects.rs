@@ -116,7 +116,9 @@ impl StorageComputedObjectQueryOptions {
                 "Computed-object requested and execution queries must use the same filters",
             ));
         }
-        if requested.cursor() != execution.cursor() {
+        if requested.cursor() != execution.cursor()
+            || requested.continuation() != execution.continuation()
+        {
             return Err(StorageError::invalid_input(
                 "Computed-object requested and execution queries must use the same cursor",
             ));
@@ -226,7 +228,7 @@ impl fmt::Debug for StorageComputedObjectListQuery {
             .field("filter_count", &self.options.requested.filters().len())
             .field("sort_count", &self.options.requested.sort().len())
             .field("limit", &self.options.requested.limit())
-            .field("has_cursor", &self.options.requested.cursor().is_some())
+            .field("has_cursor", &self.options.requested.has_cursor())
             .field("include_total", &self.options.requested.include_total())
             .field("visibility", &self.visibility)
             .field("projection", &self.projection)
@@ -548,6 +550,20 @@ mod tests {
             .expect("requested and execution count intent must disagree");
 
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn computed_query_rejects_a_different_execution_continuation() {
+        use hubuum_query::{CursorValue, QueryContinuation};
+        let mut requested = computed_query("object", None, false);
+        let mut execution = computed_execution_query("object", None, false);
+        requested.set_continuation(
+            QueryContinuation::new(execution.sort(), vec![CursorValue::Integer(1)]).unwrap(),
+        );
+        execution.set_continuation(
+            QueryContinuation::new(execution.sort(), vec![CursorValue::Integer(2)]).unwrap(),
+        );
+        assert!(StorageComputedObjectQueryOptions::try_new(requested, execution, 20).is_err());
     }
 
     #[test]

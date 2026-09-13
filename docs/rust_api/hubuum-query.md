@@ -34,6 +34,14 @@ Scalar inference uses application-neutral value categories. SQL expressions,
 column names, and database type identifiers belong to adapters and are not part
 of this crate's API.
 
+`QueryContinuation` carries validated sort values for internal storage paging
+without encoding a client token. It is mutually exclusive with `QueryCursor` in
+`QueryOptions`. Adapters consuming ordinary cursor pages must resolve either
+form through `QueryOptions::cursor_values` using the normalized execution sort.
+The legacy `cursor()` accessor returns only client tokens; `has_cursor()` covers
+both forms. Internal continuation does not relax client token byte limits or
+scalar validation. Capability-specific cursor formats retain their own codecs.
+
 ## Ownership and Verification
 
 Hubuum maintainers own the crate. `hubuum-storage-core`, the root application,

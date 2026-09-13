@@ -6,7 +6,9 @@ use crate::cursor::{
 use crate::operations::dynamic_sql::SqlValue;
 use crate::operations::json_filter::json_filter_sql;
 use crate::operations::relation::{ClassRelationRow, ObjectRelationRow};
-use crate::operations::visibility::{authorized_collection_ids, required_permissions};
+use crate::operations::visibility::{
+    CollectionVisibility, authorized_collection_ids, required_permissions,
+};
 use crate::revision::record_metadata_from_raw_revision;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 use diesel::dsl::not;
@@ -64,7 +66,7 @@ pub async fn list_class_relations(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let (from_name_ids, to_name_ids) =
                 class_name_filter_ids(connection, &options, &visibility).await?;
             let build_query = || {
@@ -121,7 +123,7 @@ pub async fn list_object_relations(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let build_query =
                 || build_object_relation_query(&options, &visibility, &collection_ids, None);
             let total = if include_total {
@@ -169,7 +171,7 @@ pub async fn list_class_relations_touching(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let build_query = || {
                 build_class_relation_query(
                     &options,
@@ -225,7 +227,7 @@ pub async fn list_object_relations_touching(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let build_query = || {
                 build_object_relation_query(
                     &options,
@@ -292,9 +294,12 @@ pub async fn list_object_relations_between_ids(
     let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
         .with_read_connection(async move |connection| {
-            let collection_ids =
-                authorized_collection_ids(connection, &visibility, &[OBJECT_RELATION_PERMISSION])
-                    .await?;
+            let collection_ids = CollectionVisibility::resolve(
+                connection,
+                &visibility,
+                &[OBJECT_RELATION_PERMISSION],
+            )
+            .await?;
             let options = empty_options();
             let mut records =
                 build_object_relation_query(&options, &visibility, &collection_ids, None)?
@@ -339,9 +344,12 @@ pub async fn list_object_relations_touching_ids(
         .collect::<Vec<_>>();
     runtime
         .with_read_connection(async move |connection| {
-            let collection_ids =
-                authorized_collection_ids(connection, &visibility, &[OBJECT_RELATION_PERMISSION])
-                    .await?;
+            let collection_ids = CollectionVisibility::resolve(
+                connection,
+                &visibility,
+                &[OBJECT_RELATION_PERMISSION],
+            )
+            .await?;
             let options = empty_options();
             let mut records =
                 build_object_relation_query(&options, &visibility, &collection_ids, None)?.filter(
@@ -416,7 +424,7 @@ pub async fn list_related_classes(
                 operation = "list_related_classes",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -480,7 +488,7 @@ pub async fn list_related_objects(
                 operation = "list_related_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL relation graph query"
             );
@@ -1150,11 +1158,7 @@ fn apply_raw_sql_pagination(
         .iter()
         .map(|sort| graph_cursor_field(kind, &sort.field))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(cursor) = cursor_filter_sql_for_fields(
-        &sorts,
-        &fields,
-        options.cursor().map(|cursor| cursor.as_str()),
-    )? {
+    if let Some(cursor) = cursor_filter_sql_for_fields(options, &sorts, &fields)? {
         if spec.sql.contains("\nWHERE ") {
             spec.sql.push_str("\n  AND ");
         } else {
@@ -1944,9 +1948,12 @@ async fn class_relations_for_ids(
     let ids = ids.into_iter().map(|id| id.id()).collect::<Vec<_>>();
     runtime
         .with_read_connection(async move |connection| {
-            let collection_ids =
-                authorized_collection_ids(connection, &visibility, &[CLASS_RELATION_PERMISSION])
-                    .await?;
+            let collection_ids = CollectionVisibility::resolve(
+                connection,
+                &visibility,
+                &[CLASS_RELATION_PERMISSION],
+            )
+            .await?;
             let options = empty_options();
             let records = build_class_relation_query(
                 &options,
@@ -1984,7 +1991,7 @@ async fn class_relations_for_ids(
 fn build_class_relation_query<'query>(
     options: &'query QueryOptions,
     visibility: &'query StorageVisibility,
-    collection_ids: &'query [i32],
+    collection_ids: &'query CollectionVisibility,
     touching_id: Option<i32>,
     from_name_ids: Option<&'query [i32]>,
     to_name_ids: Option<&'query [i32]>,
@@ -1994,15 +2001,17 @@ fn build_class_relation_query<'query>(
 > {
     use crate::schema::{hubuumclass, hubuumclass_relation};
 
-    let visible_class_ids = || {
-        hubuumclass::table
-            .select(hubuumclass::id)
-            .filter(hubuumclass::collection_id.eq_any(collection_ids))
-    };
-    let mut records = hubuumclass_relation::table
-        .filter(hubuumclass_relation::from_hubuum_class_id.eq_any(visible_class_ids()))
-        .filter(hubuumclass_relation::to_hubuum_class_id.eq_any(visible_class_ids()))
-        .into_boxed();
+    let mut records = hubuumclass_relation::table.into_boxed();
+    if let Some(ids) = collection_ids.restriction() {
+        let visible_class_ids = || {
+            hubuumclass::table
+                .select(hubuumclass::id)
+                .filter(hubuumclass::collection_id.eq_any(ids))
+        };
+        records = records
+            .filter(hubuumclass_relation::from_hubuum_class_id.eq_any(visible_class_ids()))
+            .filter(hubuumclass_relation::to_hubuum_class_id.eq_any(visible_class_ids()));
+    }
     if let Some(touching_id) = touching_id {
         records = records.filter(
             hubuumclass_relation::from_hubuum_class_id
@@ -2083,7 +2092,7 @@ fn build_class_relation_query<'query>(
 fn build_object_relation_query<'query>(
     options: &'query QueryOptions,
     visibility: &'query StorageVisibility,
-    collection_ids: &'query [i32],
+    collection_ids: &'query CollectionVisibility,
     touching_id: Option<i32>,
 ) -> Result<
     crate::schema::hubuumobject_relation::BoxedQuery<'query, diesel::pg::Pg>,
@@ -2091,15 +2100,17 @@ fn build_object_relation_query<'query>(
 > {
     use crate::schema::{hubuumobject, hubuumobject_relation};
 
-    let visible_object_ids = || {
-        hubuumobject::table
-            .select(hubuumobject::id)
-            .filter(hubuumobject::collection_id.eq_any(collection_ids))
-    };
-    let mut records = hubuumobject_relation::table
-        .filter(hubuumobject_relation::from_hubuum_object_id.eq_any(visible_object_ids()))
-        .filter(hubuumobject_relation::to_hubuum_object_id.eq_any(visible_object_ids()))
-        .into_boxed();
+    let mut records = hubuumobject_relation::table.into_boxed();
+    if let Some(ids) = collection_ids.restriction() {
+        let visible_object_ids = || {
+            hubuumobject::table
+                .select(hubuumobject::id)
+                .filter(hubuumobject::collection_id.eq_any(ids))
+        };
+        records = records
+            .filter(hubuumobject_relation::from_hubuum_object_id.eq_any(visible_object_ids()))
+            .filter(hubuumobject_relation::to_hubuum_object_id.eq_any(visible_object_ids()));
+    }
     if let Some(touching_id) = touching_id {
         records = records.filter(
             hubuumobject_relation::from_hubuum_object_id
@@ -2209,13 +2220,14 @@ async fn class_name_filter_ids(
         return Ok((from.map(|_| Vec::new()), to.map(|_| Vec::new())));
     }
     let collection_ids =
-        authorized_collection_ids(connection, visibility, &class_permissions).await?;
+        CollectionVisibility::resolve(connection, visibility, &class_permissions).await?;
     let mut load = async |parameter: &hubuum_query::ParsedQueryParam| {
         use crate::schema::hubuumclass;
 
-        let mut classes = hubuumclass::table
-            .filter(hubuumclass::collection_id.eq_any(&collection_ids))
-            .into_boxed();
+        let mut classes = hubuumclass::table.into_boxed();
+        if let Some(ids) = collection_ids.restriction() {
+            classes = classes.filter(hubuumclass::collection_id.eq_any(ids));
+        }
         crate::postgres_string_filter!(classes, parameter, hubuumclass::name);
         if let Some(scope) = visibility.resources() {
             classes = classes.filter(

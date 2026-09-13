@@ -64,6 +64,131 @@ async fn enriched_pagination_preserves_totals_and_cursors(
     finish_active_rebuild(&test_context, fixture.class.id).await;
     fixture.cleanup().await.unwrap();
 }
+
+#[rstest::rstest]
+#[case::array("array", (serde_json::json!(["a"]), serde_json::json!(["Z"])))]
+#[case::object_keys("object", (serde_json::json!({"a": 0}), serde_json::json!({"Z": 0})))]
+#[case::object_values("object", (serde_json::json!({"key": "a"}), serde_json::json!({"key": "Z"})))]
+#[case::nested("array", (serde_json::json!([{"key": ["a"]}]), serde_json::json!([{"key": ["Z"]}])))]
+#[tokio::test]
+async fn external_computed_json_pages_preserve_storage_order(
+    #[future(awt)] test_context: TestContext,
+    #[case] result_type: &str,
+    #[case] values: (serde_json::Value, serde_json::Value),
+    #[values(false, true)] descending: bool,
+    #[values(false, true)] include_total: bool,
+    #[values(false, true)] include_computed: bool,
+    #[values(false, true)] materialized: bool,
+) {
+    let mut fixture = fixture(&test_context, "computed JSON cursor ordering").await;
+    let (lower, upper) = values;
+    // Include a missing value, duplicate sort values, and a denied row so the
+    // complete traversal exercises nulls, the ID tie breaker, and policy gaps.
+    for (index, value) in [lower.clone(), upper.clone(), lower, upper]
+        .into_iter()
+        .enumerate()
+    {
+        let object = NewHubuumObject {
+            collection_id: fixture.class.collection_id,
+            hubuum_class_id: fixture.class.id,
+            name: test_context.scoped_name(&format!("json_cursor_{index}")),
+            description: String::new(),
+            data: serde_json::json!({"order": value}),
+        }
+        .save_without_events(&test_context.pool)
+        .await
+        .unwrap();
+        fixture.objects.push(object);
+    }
+    let response = post_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+        serde_json::json!({"key": "order", "label": "Order",
+            "operation": {"type": "first_non_null", "paths": ["/order"]},
+            "result_type": result_type}),
+    )
+    .await;
+    assert_response_status(response, StatusCode::CREATED).await;
+    if materialized {
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+    }
+    let denied_id = fixture.objects[2].id;
+    let backend = Arc::new(MockTreetopBackend::new());
+    backend.add_rule(MockAllowRule {
+        group_id: fixture.collection.owner_group.id,
+        action: Permissions::ReadClass,
+        resource_kind: ResourceKind::Class,
+        resource_id: Some(fixture.class.id),
+        attrs: ResourceFields::default(),
+    });
+    for object in fixture
+        .objects
+        .iter()
+        .filter(|object| object.id != denied_id)
+    {
+        backend.add_rule(MockAllowRule {
+            group_id: fixture.collection.owner_group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceFields::default(),
+        });
+    }
+    let direction = if descending { ".desc" } else { "" };
+    let include = if include_computed {
+        "&include=computed"
+    } else {
+        ""
+    };
+    let endpoint = format!(
+        "/api/v1/classes/{}/?sort=computed.shared.order{direction}{include}",
+        fixture.class.id
+    );
+    // Obtain the ordering from the adapter, independent of the database locale.
+    // The English-locale test container makes this differ from Rust byte order.
+    let response = get_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("{endpoint}&limit=100"),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let expected: Vec<serde_json::Value> = test::read_body_json(response).await;
+    let expected = expected
+        .into_iter()
+        .filter(|row| row["id"] != denied_id)
+        .collect::<Vec<_>>();
+    let total = expected.len().to_string();
+    let mut cursor = None;
+    for (index, expected_row) in expected.iter().enumerate() {
+        let cursor_query = cursor
+            .as_ref()
+            .map(|cursor| format!("&cursor={cursor}"))
+            .unwrap_or_default();
+        let response = get_request_with_permission_backend(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("{endpoint}&limit=1&include_total={include_total}{cursor_query}"),
+            backend.clone(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER),
+            include_total.then(|| total.clone())
+        );
+        cursor = header_value(&response, NEXT_CURSOR_HEADER);
+        assert_eq!(cursor.is_some(), index + 1 < expected.len());
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(rows, vec![expected_row.clone()]);
+    }
+    if !materialized {
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+    }
+    fixture.cleanup().await.unwrap();
+}
+
 #[rstest::rstest]
 #[case::string("string", serde_json::json!("Edge.EXAMPLE"), "__icontains", "edge.example")]
 #[case::string_in_whitespace("string", serde_json::json!(" edge "), "__in", " edge ")]

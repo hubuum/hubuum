@@ -20,7 +20,7 @@ use crate::operations::json_filter::json_predicate;
 use crate::operations::object::ObjectRow;
 use crate::operations::related_filter::related_object_filter_predicate;
 use crate::operations::structured_search::{StructuredResourceKind, structured_filter_predicate};
-use crate::operations::visibility::{authorized_collection_ids, required_permissions};
+use crate::operations::visibility::{CollectionVisibility, required_permissions};
 use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -148,7 +148,7 @@ pub async fn list_classes(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let structured_predicate = match options.structured_filter() {
                 Some(expression) => Some(
                     structured_filter_predicate(
@@ -190,7 +190,7 @@ pub async fn list_classes(
                 operation = "list_classes",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );
@@ -232,7 +232,7 @@ pub async fn list_objects(
     runtime
         .with_read_only_snapshot(async move |connection| {
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let related_predicate =
                 related_object_filter_predicate(connection, options.filters(), &visibility).await?;
             let structured_predicate = match options.structured_filter() {
@@ -281,7 +281,7 @@ pub async fn list_objects(
                 operation = "list_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL catalog query"
             );
@@ -316,14 +316,15 @@ fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresSt
 }
 
 pub(crate) fn object_query<'query>(
-    collection_ids: &'query [i32],
+    collection_ids: &'query CollectionVisibility,
     resource_scope: Option<&'query StorageResourceScope>,
 ) -> crate::schema::hubuumobject::BoxedQuery<'query, diesel::pg::Pg> {
     use crate::schema::hubuumobject;
 
-    let mut query = hubuumobject::table
-        .filter(hubuumobject::collection_id.eq_any(collection_ids))
-        .into_boxed();
+    let mut query = hubuumobject::table.into_boxed();
+    if let Some(ids) = collection_ids.restriction() {
+        query = query.filter(hubuumobject::collection_id.eq_any(ids));
+    }
     if let Some(scope) = resource_scope {
         query = query.filter(
             hubuumobject::collection_id
@@ -476,14 +477,15 @@ pub(crate) fn object_cursor_field(
 }
 
 fn class_query<'query>(
-    collection_ids: &'query [i32],
+    collection_ids: &'query CollectionVisibility,
     resource_scope: Option<&'query StorageResourceScope>,
 ) -> crate::schema::hubuumclass::BoxedQuery<'query, diesel::pg::Pg> {
     use crate::schema::hubuumclass;
 
-    let mut query = hubuumclass::table
-        .filter(hubuumclass::collection_id.eq_any(collection_ids))
-        .into_boxed();
+    let mut query = hubuumclass::table.into_boxed();
+    if let Some(ids) = collection_ids.restriction() {
+        query = query.filter(hubuumclass::collection_id.eq_any(ids));
+    }
     if let Some(scope) = resource_scope {
         query = query.filter(
             hubuumclass::collection_id

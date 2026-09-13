@@ -180,31 +180,40 @@ async fn load_raw_object_page(
             params.filters(),
         )
         .await?;
-        let mut candidate_options = count_query_options(params);
-        candidate_options
-            .filters_mut()
-            .try_retain(|filter| filter.field.related_query().is_none())
-            .expect("removing every related filter preserves query invariants");
-        candidate_options.set_include_total(false);
-        let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
-            Vec::new()
-        } else {
-            catalog_service::list_objects(&context, user.id().id(), true, None, candidate_options)
-                .await?
-                .0
-        };
-        if let Some(related_ids) = &related_ids {
-            candidates.retain(|object| related_ids.contains(object.id));
-        }
-        let search_params = prepare_db_pagination::<HubuumObject>(params)?;
-        let page = authorize_cursor_page(
+        let page = filter_authorized_cursor_page_from_storage(
             context.permission_backend(),
-            &principal,
-            candidates,
-            requestor.scopes(),
-            vec![Permissions::ReadObject],
-            &search_params,
-            HubuumObject::authorization_resource,
+            params,
+            |mut candidate_options| async {
+                candidate_options
+                    .filters_mut()
+                    .try_retain(|filter| filter.field.related_query().is_none())
+                    .expect("removing every related filter preserves query invariants");
+                if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
+                    return Ok(Vec::new());
+                }
+                catalog_service::list_objects(
+                    context,
+                    user.id().id(),
+                    true,
+                    None,
+                    candidate_options,
+                )
+                .await
+                .map(|page| page.0)
+            },
+            |mut candidates: Vec<HubuumObject>| {
+                if let Some(related_ids) = &related_ids {
+                    candidates.retain(|object| related_ids.contains(object.id));
+                }
+                authorize_all_candidates(
+                    context.permission_backend(),
+                    &principal,
+                    candidates,
+                    requestor.scopes(),
+                    vec![Permissions::ReadObject],
+                    HubuumObject::authorization_resource,
+                )
+            },
         )
         .await?;
         (page.rows, page.total_count)

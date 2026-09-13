@@ -723,6 +723,61 @@ impl IntoIterator for QuerySort {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryCursor(String);
 
+/// A validated position captured from storage, without HTTP token framing or
+/// size limits. Keep it typed while walking a bounded candidate set; only a
+/// client-visible cursor needs to pass through the token codec.
+#[derive(Clone, PartialEq, Eq)]
+pub struct QueryContinuation {
+    sorts: Vec<CursorSort>,
+    values: Vec<CursorValue>,
+}
+
+impl fmt::Debug for QueryContinuation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QueryContinuation")
+            .field("sorts", &self.sorts)
+            .field("value_count", &self.values.len())
+            .finish()
+    }
+}
+
+impl QueryContinuation {
+    pub fn new(
+        sorts: &[SortParam],
+        mut values: Vec<CursorValue>,
+    ) -> Result<Self, CursorCodecError> {
+        if sorts.is_empty()
+            || sorts.len() > MAX_QUERY_SORT_FIELDS + 1
+            || sorts.len() != values.len()
+        {
+            return Err(CursorCodecError::Invalid(
+                "continuation values must match a bounded, nonempty sort order".to_string(),
+            ));
+        }
+        normalize_cursor_values(&mut values)?;
+        Ok(Self {
+            sorts: cursor_sorts(sorts),
+            values,
+        })
+    }
+
+    fn values_for(&self, sorts: &[SortParam]) -> Result<&[CursorValue], CursorCodecError> {
+        if self.sorts != cursor_sorts(sorts) {
+            return Err(CursorCodecError::Invalid(
+                "continuation does not match current sort order".to_string(),
+            ));
+        }
+        Ok(&self.values)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum QueryPosition {
+    Token(QueryCursor),
+    Continuation(QueryContinuation),
+}
+
 impl QueryCursor {
     pub fn new(cursor: String) -> Result<Self, QueryError> {
         if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
@@ -828,7 +883,7 @@ pub struct QueryOptions {
     filters: QueryFilters,
     sort: QuerySort,
     limit: Option<usize>,
-    cursor: Option<QueryCursor>,
+    cursor: Option<QueryPosition>,
     include_total: bool,
     structured_filter: Option<StructuredQueryExpression>,
 }
@@ -846,7 +901,10 @@ impl QueryOptions {
             filters: QueryFilters(filters),
             sort: QuerySort(sort),
             limit,
-            cursor: cursor.map(QueryCursor::new).transpose()?,
+            cursor: cursor
+                .map(QueryCursor::new)
+                .transpose()?
+                .map(QueryPosition::Token),
             include_total,
             structured_filter: None,
         })
@@ -864,7 +922,10 @@ impl QueryOptions {
             filters: QueryFilters::new(filters)?,
             sort: QuerySort::new(sort)?,
             limit,
-            cursor: cursor.map(QueryCursor::new).transpose()?,
+            cursor: cursor
+                .map(QueryCursor::new)
+                .transpose()?
+                .map(QueryPosition::Token),
             include_total,
             structured_filter: None,
         })
@@ -939,18 +1000,60 @@ impl QueryOptions {
         Ok(())
     }
 
+    /// Return the encoded client token only. Ordinary storage page readers must
+    /// use [`Self::cursor_values`] to also honor internal continuations.
     #[must_use]
     pub const fn cursor(&self) -> Option<&QueryCursor> {
-        self.cursor.as_ref()
+        match &self.cursor {
+            Some(QueryPosition::Token(cursor)) => Some(cursor),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn continuation(&self) -> Option<&QueryContinuation> {
+        match &self.cursor {
+            Some(QueryPosition::Continuation(continuation)) => Some(continuation),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn has_cursor(&self) -> bool {
+        self.cursor.is_some()
+    }
+
+    /// Resolve either a bounded public token or an already validated storage
+    /// continuation against the execution sort (including its tie-breaker).
+    pub fn cursor_values(
+        &self,
+        sorts: &[SortParam],
+    ) -> Result<Option<Cow<'_, [CursorValue]>>, CursorCodecError> {
+        match &self.cursor {
+            Some(QueryPosition::Token(cursor)) => {
+                decode_cursor_values(cursor, sorts).map(|values| Some(Cow::Owned(values)))
+            }
+            Some(QueryPosition::Continuation(continuation)) => continuation
+                .values_for(sorts)
+                .map(|values| Some(Cow::Borrowed(values))),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_continuation(&mut self, continuation: QueryContinuation) {
+        self.cursor = Some(QueryPosition::Continuation(continuation));
     }
 
     pub fn set_cursor(&mut self, cursor: Option<String>) -> Result<(), QueryError> {
-        self.cursor = cursor.map(QueryCursor::new).transpose()?;
+        self.cursor = cursor
+            .map(QueryCursor::new)
+            .transpose()?
+            .map(QueryPosition::Token);
         Ok(())
     }
 
     pub fn set_validated_cursor(&mut self, cursor: Option<QueryCursor>) {
-        self.cursor = cursor;
+        self.cursor = cursor.map(QueryPosition::Token);
     }
 
     pub fn clear_cursor(&mut self) {
@@ -1247,15 +1350,19 @@ pub fn decode_cursor_values(
             "cursor value count does not match current sort order".to_string(),
         ));
     }
-    for value in &mut token.values {
+    normalize_cursor_values(&mut token.values)?;
+    Ok(token.values)
+}
+
+fn normalize_cursor_values(values: &mut [CursorValue]) -> Result<(), CursorCodecError> {
+    for value in &mut *values {
         if let CursorValue::Decimal(source) = value {
             *source = canonical_decimal_string(source).ok_or_else(|| {
                 CursorCodecError::Invalid("cursor contains an invalid decimal value".to_string())
             })?;
         }
     }
-    validate_cursor_values(&token.values)?;
-    Ok(token.values)
+    validate_cursor_values(values)
 }
 
 fn cursor_sorts(sorts: &[SortParam]) -> Vec<CursorSort> {
@@ -2526,7 +2633,7 @@ mod tests {
 
         assert_eq!(parsed.filters.len(), 1);
         assert_eq!(parsed.limit, Some(10));
-        assert_eq!(parsed.cursor.as_deref(), Some("abc"));
+        assert_eq!(parsed.cursor().map(QueryCursor::as_str), Some("abc"));
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
@@ -3213,6 +3320,86 @@ mod tests {
         assert_eq!(
             infer_query_scalar_type("router", Operator::IContains),
             Some(QueryScalarType::String)
+        );
+    }
+
+    #[test]
+    fn storage_continuation_does_not_relax_the_public_cursor_limit() {
+        let sorts = vec![SortParam::new(FilterField::Description, false)];
+        let values = vec![CursorValue::String("x".repeat(MAX_ENCODED_CURSOR_BYTES))];
+        let continuation = QueryContinuation::new(&sorts, values.clone()).unwrap();
+        let mut query = QueryOptions::new(vec![], sorts.clone(), Some(1), None, false).unwrap();
+        query.set_continuation(continuation);
+        assert_eq!(
+            query.cursor_values(&sorts).unwrap().unwrap().as_ref(),
+            &values
+        );
+        assert!(encode_cursor_values(&sorts, values).is_err());
+        assert!(
+            query
+                .set_cursor(Some("x".repeat(MAX_ENCODED_CURSOR_BYTES + 1)))
+                .is_err()
+        );
+        assert!(
+            query.continuation().is_some(),
+            "a rejected token must preserve the continuation"
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::clear(None)]
+    #[case::replace(Some("client-token"))]
+    fn public_cursor_update_clears_storage_continuation(#[case] cursor: Option<&str>) {
+        let sorts = [SortParam::new(FilterField::Id, false)];
+        let mut query = QueryOptions::empty();
+        query.set_continuation(
+            QueryContinuation::new(&sorts, vec![CursorValue::Integer(1)]).unwrap(),
+        );
+        if let Some(cursor) = cursor {
+            query.set_validated_cursor(Some(QueryCursor::new(cursor.to_string()).unwrap()));
+        } else {
+            query.clear_cursor();
+        }
+        assert!(query.continuation().is_none());
+        assert_eq!(query.cursor().map(QueryCursor::as_str), cursor);
+        assert_eq!(query.has_cursor(), cursor.is_some());
+    }
+
+    #[test]
+    fn storage_continuation_rejects_a_different_sort_order() {
+        let mut query = QueryOptions::empty();
+        query.set_continuation(
+            QueryContinuation::new(
+                &[SortParam::new(FilterField::Id, false)],
+                vec![CursorValue::Integer(1)],
+            )
+            .unwrap(),
+        );
+        assert!(
+            query
+                .cursor_values(&[SortParam::new(FilterField::Id, true)])
+                .is_err()
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::wrong_count(vec![])]
+    #[case::nul(vec![CursorValue::String("a\0b".to_string())])]
+    #[case::invalid_decimal(vec![CursorValue::Decimal("1); SELECT 1".to_string())])]
+    fn storage_continuation_validates_values_before_the_adapter(#[case] values: Vec<CursorValue>) {
+        assert!(QueryContinuation::new(&[SortParam::new(FilterField::Id, false)], values).is_err());
+    }
+
+    #[test]
+    fn storage_continuation_normalizes_decimal_values_like_public_tokens() {
+        let sorts = [SortParam::new(FilterField::Id, false)];
+        let values = vec![CursorValue::Decimal("1.00e2".to_string())];
+        let encoded = encode_cursor_values(&sorts, values.clone()).unwrap();
+        let mut query = QueryOptions::empty();
+        query.set_continuation(QueryContinuation::new(&sorts, values).unwrap());
+        assert_eq!(
+            query.cursor_values(&sorts).unwrap().unwrap().as_ref(),
+            decode_cursor_values(&encoded, &sorts).unwrap()
         );
     }
 

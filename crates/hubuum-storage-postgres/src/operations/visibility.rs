@@ -3,11 +3,43 @@
 use diesel::JoinOnDsl;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::CollectionId;
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{StorageAuthorizationPermission, StorageVisibility};
 
 use crate::operations::authorization::apply_permission_filter;
 use crate::{PostgresConnection, PostgresStorageError};
+
+/// Resolved collection restriction for resource queries. Unrestricted access
+/// needs no ID enumeration; foreign keys already ensure valid parent collections.
+pub(crate) struct CollectionVisibility {
+    ids: Option<Vec<i32>>,
+}
+
+impl CollectionVisibility {
+    pub(crate) fn for_collection(id: CollectionId) -> Self {
+        Self {
+            ids: Some(vec![id.id()]),
+        }
+    }
+
+    pub(crate) async fn resolve(
+        connection: &mut PostgresConnection,
+        visibility: &StorageVisibility,
+        permissions: &[StorageAuthorizationPermission],
+    ) -> Result<Self, PostgresStorageError> {
+        let ids = if visibility.is_admin() {
+            None
+        } else {
+            Some(authorized_collection_ids(connection, visibility, permissions).await?)
+        };
+        Ok(Self { ids })
+    }
+
+    pub(crate) fn restriction(&self) -> Option<&[i32]> {
+        self.ids.as_deref()
+    }
+}
 
 /// Resolve the descendant collections on which a principal holds every
 /// requested permission.
