@@ -60,6 +60,31 @@ pub(super) struct ClaimedTask {
     pub(super) token: Uuid,
 }
 
+pub(super) async fn persist_remote_dispatch(
+    connection: &mut PostgresConnection,
+    task_id: i32,
+    target: hubuum_storage_core::StorageRemoteCallArtifactTarget,
+) -> Result<(), PostgresStorageError> {
+    let artifact = StorageRemoteCallTaskArtifact::new(
+        target,
+        hubuum_storage_core::StorageRemoteCallArtifactResponse::new(None, None, None),
+        hubuum_storage_core::StorageRemoteCallArtifactOutcome::new(
+            0,
+            false,
+            Some("Remote dispatch admitted; outcome is not yet known".to_string()),
+        ),
+    );
+    upsert_remote_call_result(connection, remote_call_artifact(task_id, artifact)).await?;
+    diesel::update(
+        crate::schema::remote_call_results::table
+            .filter(crate::schema::remote_call_results::task_id.eq(task_id)),
+    )
+    .set(crate::schema::remote_call_results::side_effect_state.eq("possibly_sent"))
+    .execute(connection)
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone)]
 struct TaskStateUpdate {
     status: StorageTaskStatus,
@@ -158,7 +183,9 @@ pub async fn claim_next_task(
             let row = diesel::update(tasks::tasks.filter(tasks::id.eq(task_id)))
                 .set((
                     tasks::status.eq(StorageTaskStatus::Validating.as_str()),
-                    tasks::started_at.eq(Some(claimed_at)),
+                    tasks::started_at.eq(sql::<Nullable<Timestamp>>("COALESCE(started_at, ")
+                        .bind::<Timestamp, _>(claimed_at)
+                        .sql(")")),
                     tasks::lease_token.eq(Some(claim_token)),
                     tasks::lease_expires_at.eq(sql::<Nullable<Timestamp>>(
                         DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
@@ -265,30 +292,37 @@ pub async fn recover_expired_task_leases(
             use crate::schema::tasks::dsl as tasks;
             let now = database_now(connection).await?;
             let stale = tasks::tasks
-                .filter(tasks::status.eq_any(active_statuses()))
                 .filter(tasks::deleted_at.is_null())
                 .filter(
-                    tasks::lease_expires_at
-                        .is_null()
-                        .or(tasks::lease_expires_at.le(now)),
+                    tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
+                    .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))),
                 )
                 .order(tasks::id.asc())
                 .limit(batch_size)
-                .for_update()
-                .skip_locked()
                 .select(TaskRow::as_select())
                 .load::<TaskRow>(connection)
                 .await?;
+            super::task_control::lock_reindex_cleanup(connection, &stale.iter().map(|task| task.id).collect::<Vec<_>>()).await?;
             let mut recovered = Vec::with_capacity(stale.len());
-            for stale_task in stale {
+            for candidate in stale {
+                let stale_task = tasks::tasks.filter(tasks::id.eq(candidate.id))
+                    .filter(tasks::deleted_at.is_null())
+                    .filter(tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
+                        .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))))
+                    .for_update().skip_locked().select(TaskRow::as_select()).first::<TaskRow>(connection).await.optional()?;
+                let Some(stale_task) = stale_task else { continue; };
                 let kind = stored_task_kind(&stale_task)?;
+                if let Some(reason) = stale_task.control(kind)?.stop_reason(now.and_utc()) {
+                    let provenance = system_provenance(&stale_task)?;
+                    recovered.push(super::task_control::finish_stopped_on(connection, stale_task, reason, &provenance).await?);
+                    continue;
+                }
                 if kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await? {
                     append_task_lifecycle_event(connection, &stale_task,
                         StorageTaskEventInput::new("queued", "Schema validation resumed from durable checkpoint after lease expiry"),
                         &system_provenance(&stale_task)?).await?;
                     let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id))).set((
                         tasks::status.eq("queued"), tasks::lease_token.eq::<Option<Uuid>>(None),
-                        tasks::started_at.eq::<Option<NaiveDateTime>>(None),
                         tasks::lease_expires_at.eq::<Option<NaiveDateTime>>(None), tasks::updated_at.eq(now),
                     )).returning(TaskRow::as_returning()).get_result::<TaskRow>(connection).await?;
                     recovered.push(row);
@@ -481,6 +515,7 @@ pub async fn fail_task(
     let row = if kind == StorageTaskKind::Reindex {
         let row = runtime
             .with_transaction(async move |connection| {
+                super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_reindex_failed(connection, &stored, &summary).await?;
                 finalize_task_connection(connection, claimed, update, event).await
@@ -491,6 +526,7 @@ pub async fn fail_task(
     } else if kind == StorageTaskKind::SchemaValidation {
         runtime
             .with_transaction(async move |connection| {
+                super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_schema_work_failed_on(connection, TaskId::new(claimed.id)?).await?;
                 finalize_task_connection(connection, claimed, update, event).await
@@ -530,6 +566,26 @@ async fn finalize_task(
 ) -> Result<TaskRow, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
+            super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
+            let row = live_claimed_task(connection, claimed).await?;
+            if let Some(reason) = row
+                .control(stored_task_kind(&row)?)?
+                .stop_reason(database_now(connection).await?.and_utc())
+            {
+                // A received remote response is useful reconciliation evidence,
+                // even if cancellation won the terminal-state race.
+                if let Some(TaskArtifact::RemoteCall(output)) = artifact {
+                    upsert_remote_call_result(connection, output).await?;
+                }
+                let provenance = worker_provenance(&row)?;
+                return super::task_control::finish_stopped_on(
+                    connection,
+                    row,
+                    reason,
+                    &provenance,
+                )
+                .await;
+            }
             if let Some(artifact) = artifact {
                 persist_artifact(connection, artifact).await?;
             }
@@ -573,11 +629,14 @@ async fn finalize_task_connection(
     event: StorageTaskEventInput,
 ) -> Result<TaskRow, PostgresStorageError> {
     use crate::schema::tasks::dsl as tasks;
-    let row = tasks::tasks
-        .filter(tasks::id.eq(claimed.id))
-        .select(TaskRow::as_select())
-        .first::<TaskRow>(connection)
-        .await?;
+    let row = live_claimed_task(connection, claimed).await?;
+    if let Some(reason) = row
+        .control(stored_task_kind(&row)?)?
+        .stop_reason(database_now(connection).await?.and_utc())
+    {
+        let provenance = worker_provenance(&row)?;
+        return super::task_control::finish_stopped_on(connection, row, reason, &provenance).await;
+    }
     let recorded =
         append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?).await?;
     let occurred_at = recorded.into_parts().0.occurred_at().naive_utc();
@@ -660,7 +719,7 @@ async fn update_task_state_row(
     Ok(row)
 }
 
-async fn append_task_lifecycle_event(
+pub(super) async fn append_task_lifecycle_event(
     connection: &mut PostgresConnection,
     task: &TaskRow,
     event: StorageTaskEventInput,
@@ -686,7 +745,9 @@ async fn append_task_lifecycle_event(
     append_event(connection, &event).await
 }
 
-fn worker_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStorageError> {
+pub(super) fn worker_provenance(
+    task: &TaskRow,
+) -> Result<MutationProvenance, PostgresStorageError> {
     Ok(MutationProvenance::worker(
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
@@ -694,7 +755,9 @@ fn worker_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStora
     .with_trace_link(task_event_trace_link(task)?))
 }
 
-fn system_provenance(task: &TaskRow) -> Result<MutationProvenance, PostgresStorageError> {
+pub(super) fn system_provenance(
+    task: &TaskRow,
+) -> Result<MutationProvenance, PostgresStorageError> {
     Ok(MutationProvenance::system_for_task(
         task.initiator_user_id.map(PrincipalId::new).transpose()?,
         TaskId::new(task.id)?,
@@ -721,6 +784,21 @@ pub(super) async fn live_claimed_task(
         .first::<TaskRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
+}
+
+pub(super) async fn runnable_claimed_task(
+    connection: &mut PostgresConnection,
+    claimed: ClaimedTask,
+) -> Result<TaskRow, PostgresStorageError> {
+    crate::runtime::task_execution_checkpoint()?;
+    let row = live_claimed_task(connection, claimed).await?;
+    if let Some(reason) = row
+        .control(stored_task_kind(&row)?)?
+        .stop_reason(database_now(connection).await?.and_utc())
+    {
+        return Err(PostgresStorageError::task_stopped(reason));
+    }
+    Ok(row)
 }
 
 pub(super) async fn find_task(
@@ -803,7 +881,7 @@ fn validated_counts(
     )
 }
 
-fn stored_task_kind(task: &TaskRow) -> Result<StorageTaskKind, PostgresStorageError> {
+pub(super) fn stored_task_kind(task: &TaskRow) -> Result<StorageTaskKind, PostgresStorageError> {
     StorageTaskKind::from_persisted(&task.kind).ok_or_else(|| {
         PostgresStorageError::database(format!("Unknown stored task kind '{}'", task.kind))
     })
@@ -828,7 +906,7 @@ async fn maintenance_is_normal(
     Ok(state == "normal")
 }
 
-async fn database_now(
+pub(super) async fn database_now(
     connection: &mut PostgresConnection,
 ) -> Result<NaiveDateTime, PostgresStorageError> {
     Ok(diesel::sql_query(DATABASE_UTC_NOW_QUERY)
@@ -864,13 +942,14 @@ async fn import_result_counts(
         .await
 }
 
-async fn import_result_counts_connection(
+pub(super) async fn import_result_counts_connection(
     connection: &mut PostgresConnection,
     task_id: i32,
 ) -> Result<StorageTaskResultCounts, PostgresStorageError> {
     use crate::schema::import_task_results::dsl as results;
     let processed = results::import_task_results
         .filter(results::task_id.eq(task_id))
+        .filter(results::outcome.ne("unattempted"))
         .count()
         .get_result::<i64>(connection)
         .await?;
@@ -1030,6 +1109,8 @@ async fn upsert_remote_call_result(
         ))
         .execute(connection)
         .await?;
+    diesel::sql_query("UPDATE remote_call_results SET side_effect_state = CASE WHEN response_status IS NOT NULL THEN 'response_received' WHEN EXISTS (SELECT 1 FROM tasks WHERE tasks.id = remote_call_results.task_id AND remote_dispatched_at IS NOT NULL) THEN 'possibly_sent' ELSE 'not_sent' END WHERE task_id = $1")
+        .bind::<diesel::sql_types::Integer,_>(row.task_id).execute(connection).await?;
     Ok(())
 }
 

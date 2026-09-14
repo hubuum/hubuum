@@ -1,9 +1,9 @@
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
+use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
 use crate::models::{
     BackupOutputLookup, ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskRecord,
@@ -294,4 +294,57 @@ pub async fn get_task_events(
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) = list_task_events(&context, task_id, search_params).await?;
     ApiResponse::paginated(events, total_count, &params)
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/tasks/{task_id}/cancel", tag = "tasks",
+    security(("bearer_auth" = [])),
+    params(("task_id" = TaskID, Path, description = "Task ID")),
+    request_body = crate::models::TaskCancelRequest,
+    responses(
+        (status = 200, description = "Terminal task; repeated requests return the same state", body = TaskResponse),
+        (status = 202, description = "Durable cancellation requested; executor cleanup is pending", body = TaskResponse),
+        (status = 400, description = "Invalid cancellation reason or status", body = ApiErrorResponse),
+        (status = 401, description = "Unauthenticated", body = ApiErrorResponse),
+        (status = 403, description = "Cancellation is not authorized", body = ApiErrorResponse),
+        (status = 404, description = "Task not found", body = ApiErrorResponse),
+        (status = 409, description = "Expected status no longer matches", body = ApiErrorResponse)
+    )
+)]
+#[post("/{task_id}/cancel")]
+pub async fn cancel_task(
+    context: AppContext,
+    requestor: Authenticated,
+    task_id: web::Path<TaskID>,
+    body: web::Json<crate::models::TaskCancelRequest>,
+    request: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let task_id = task_id.into_inner();
+    let task = crate::services::tasks::cancel_task(
+        &context,
+        &requestor,
+        task_id,
+        body.into_inner(),
+        requestor.event_context(&request),
+    )
+    .await?;
+    let status = if TaskStatus::from_db(&task.status)?.is_terminal() {
+        StatusCode::OK
+    } else {
+        StatusCode::ACCEPTED
+    };
+    let export_output = if task.kind == TaskKind::Export.as_str() {
+        export_output_summary(&context, task_id).await?
+    } else {
+        ExportOutputLookup::Missing
+    };
+    let backup_output = if task.kind == TaskKind::Backup.as_str() {
+        backup_output_summary(&context, task_id).await?
+    } else {
+        BackupOutputLookup::Missing
+    };
+    Ok(ApiResponse::new(
+        task.to_response_with_outputs(export_output.as_ref(), backup_output.as_ref())?,
+        status,
+    ))
 }

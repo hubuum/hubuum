@@ -393,4 +393,304 @@ mod tests {
         .unwrap();
         fixture.cleanup().await.unwrap();
     }
+    #[rstest]
+    #[case::owner(false)]
+    #[case::administrator(true)]
+    #[actix_web::test]
+    async fn cancel_endpoint_allows_owner_or_unscoped_admin(#[case] admin: bool) {
+        use crate::tests::api_operations::post_request;
+        let context = TestContext::new().await;
+        let task_id = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Running,
+            "cancel_authorized",
+        )
+        .await;
+        let (token, actor) = if admin {
+            (&context.admin_token, context.admin_user.id)
+        } else {
+            (&context.normal_token, context.normal_user.id)
+        };
+        let response = post_request(
+            &context.pool,
+            token,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            serde_json::json!({"reason":"Withdraw this request"}),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        assert_eq!(task.status, TaskStatus::Running);
+        assert_eq!(task.cancel_requested_by, Some(actor));
+        assert!(task.cancel_requested_at.is_some());
+        assert!(task.terminal_reason.is_none());
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case::blank(serde_json::json!({"reason":" "}))]
+    #[case::multiline(serde_json::json!({"reason":"first\nsecond"}))]
+    #[case::oversized(serde_json::json!({"reason":"x".repeat(513)}))]
+    #[case::unknown_field(serde_json::json!({"timeout":2}))]
+    #[actix_web::test]
+    async fn cancel_endpoint_validates_before_mutation(#[case] body: serde_json::Value) {
+        use crate::tests::api_operations::post_request;
+        let context = TestContext::new().await;
+        let task_id = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Queued,
+            "cancel_bad_input",
+        )
+        .await;
+        let response = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            body,
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case::ordinary(TaskKind::Import)]
+    #[case::internal(TaskKind::Reindex)]
+    #[actix_web::test]
+    async fn cancel_endpoint_hides_another_principals_task(#[case] kind: TaskKind) {
+        use crate::tests::api_operations::post_request;
+        let context = TestContext::new().await;
+        let task_id = create_synthetic_task(
+            &context,
+            context.admin_user.id,
+            kind,
+            TaskStatus::Queued,
+            "cancel_foreign",
+        )
+        .await;
+        let response = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(response, StatusCode::NOT_FOUND).await;
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn cancel_endpoint_requires_admin_for_internal_reindex() {
+        use crate::tests::api_operations::post_request;
+        let context = TestContext::new().await;
+        let task_id = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Reindex,
+            TaskStatus::Queued,
+            "cancel_internal",
+        )
+        .await;
+        let response = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(response, StatusCode::FORBIDDEN).await;
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case::same_credential(true, StatusCode::ACCEPTED)]
+    #[case::another_credential(false, StatusCode::FORBIDDEN)]
+    #[actix_web::test]
+    async fn scoped_admin_can_withdraw_only_its_own_token_submission(
+        #[case] same_credential: bool,
+        #[case] expected: StatusCode,
+    ) {
+        use crate::models::{Permissions, TokenScope};
+        use crate::tests::api_operations::post_request;
+        use crate::tests::{persisted_test_token, scoped_token};
+        use hubuum_storage_core::StorageTaskScopeSnapshot;
+        let context = TestContext::new().await;
+        let bearer = scoped_token(
+            &context.pool,
+            context.admin_user.id,
+            &[Permissions::ReadCollection],
+        )
+        .await;
+        let token = persisted_test_token(&context.pool, &bearer).await;
+        let scope = TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None)
+            .unwrap()
+            .unwrap();
+        let snapshot = if same_credential {
+            StorageTaskScopeSnapshot::new(
+                Some(hubuum_domain::TokenId::new(token.id).unwrap()),
+                true,
+                scope.snapshot_json(),
+            )
+        } else {
+            StorageTaskScopeSnapshot::unscoped()
+        };
+        let task = crate::test_support::create_persisted_test_task(
+            &context.pool,
+            crate::test_support::persisted_test_task_request(
+                TaskKind::Import,
+                TaskStatus::Running,
+                context.admin_user.id,
+            )
+            .unwrap()
+            .scope_snapshot(snapshot),
+        )
+        .await
+        .unwrap();
+        let response = post_request(
+            &context.pool,
+            &bearer,
+            &format!("{TASKS_ENDPOINT}/{}/cancel", task.id),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(response, expected).await;
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task.id).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case::human_owner(false, false)]
+    #[case::disabled_account_human_owner(true, false)]
+    #[case::service_account_self(false, true)]
+    #[actix_web::test]
+    async fn service_account_cancellation_follows_principal_and_owner_group_policy(
+        #[case] disabled: bool,
+        #[case] self_cancel: bool,
+    ) {
+        use crate::events::EventContext;
+        use crate::tests::api_operations::post_request;
+        use crate::tests::{create_test_group, create_test_service_account, service_account_token};
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let account =
+            create_test_service_account(&context.pool, &group, Some(context.admin_user.id)).await;
+        let task_id = create_synthetic_task(
+            &context,
+            account.id,
+            TaskKind::Import,
+            TaskStatus::Running,
+            "cancel_service_owner",
+        )
+        .await;
+        if disabled {
+            crate::services::identity::disable_service_account(
+                &context.pool,
+                account.id,
+                &EventContext::system(),
+            )
+            .await
+            .unwrap();
+        }
+        let (bearer, actor_id) = if self_cancel {
+            (
+                service_account_token(&context.pool, &account, None, None).await,
+                account.id,
+            )
+        } else {
+            (context.normal_token.clone(), context.normal_user.id)
+        };
+        let response = post_request(
+            &context.pool,
+            &bearer,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            serde_json::json!({}),
+        )
+        .await;
+        let requested: TaskResponse =
+            test::read_body_json(assert_response_status(response, StatusCode::ACCEPTED).await)
+                .await;
+        assert_eq!(requested.cancel_requested_by, Some(actor_id));
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+        crate::services::identity::delete_service_account(
+            &context.pool,
+            account.id,
+            &EventContext::system(),
+        )
+        .await
+        .unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn task_read_policy_does_not_grant_cancellation() {
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        use crate::tests::api_operations::post_request_with_permission_backend;
+        use std::sync::Arc;
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("task_cancel_policy").await;
+        let backend = Arc::new(MockTreetopBackend::new());
+        backend.add_admin_rule(fixture.owner_group.id);
+        backend.add_task_read_rule(fixture.owner_group.id, None);
+        let task_id = create_synthetic_task(
+            &context,
+            context.admin_user.id,
+            TaskKind::Import,
+            TaskStatus::Queued,
+            "cancel_policy",
+        )
+        .await;
+        let response = post_request_with_permission_backend(
+            &context.pool,
+            &context.admin_token,
+            &format!("{TASKS_ENDPOINT}/{task_id}/cancel"),
+            serde_json::json!({}),
+            backend,
+        )
+        .await;
+        assert_response_status(response, StatusCode::NOT_FOUND).await;
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task_id).unwrap(),
+        )
+        .await
+        .unwrap();
+        fixture.cleanup().await.unwrap();
+    }
 }

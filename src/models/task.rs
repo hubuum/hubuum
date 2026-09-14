@@ -213,6 +213,7 @@ pub use hubuum_domain::TaskId as TaskID;
 
 #[derive(Clone)]
 pub struct TaskRecord {
+    pub(crate) control: hubuum_storage_core::StorageTaskControl,
     pub id: i32,
     pub kind: String,
     pub status: String,
@@ -902,8 +903,26 @@ impl PartialSchema for TaskDetails {
 
 impl ToSchema for TaskDetails {}
 
+/// Conservative dispatch evidence. An in-flight request can already have
+/// affected the remote system even when no HTTP response was received.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRemoteSideEffectState {
+    NotSent,
+    PossiblySent,
+    LegacyUnknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskResponse {
+    pub remote_side_effect_state: Option<TaskRemoteSideEffectState>,
+    pub cancel_requested_at: Option<NaiveDateTime>,
+    pub cancel_requested_by: Option<i32>,
+    pub cancel_reason: Option<String>,
+    pub execution_deadline_at: Option<NaiveDateTime>,
+    pub terminal_reason: Option<String>,
+    /// Items without a committed result; authoritative for a terminal task.
+    pub unattempted_items: i32,
     pub id: i32,
     pub kind: TaskKind,
     pub status: TaskStatus,
@@ -1057,7 +1076,42 @@ impl TaskRecord {
             _ => None,
         };
 
+        let remote_side_effect_state = (kind == TaskKind::RemoteCall).then(|| {
+            if matches!(
+                self.control.phase(),
+                hubuum_storage_core::StorageTaskExecutionPhase::RemoteDispatched { .. }
+            ) {
+                TaskRemoteSideEffectState::PossiblySent
+            } else if self.control.deadline().is_some()
+                || (self.started_at.is_none() && self.attempt_count == 0)
+            {
+                TaskRemoteSideEffectState::NotSent
+            } else {
+                TaskRemoteSideEffectState::LegacyUnknown
+            }
+        });
         Ok(TaskResponse {
+            remote_side_effect_state,
+            cancel_requested_at: self
+                .control
+                .cancellation()
+                .map(|value| value.requested_at().naive_utc()),
+            cancel_requested_by: self
+                .control
+                .cancellation()
+                .and_then(|value| value.requested_by())
+                .map(|id| id.id()),
+            cancel_reason: self
+                .control
+                .cancellation()
+                .and_then(|value| value.reason())
+                .map(|reason| reason.as_str().to_owned()),
+            execution_deadline_at: self.control.deadline().map(|value| value.naive_utc()),
+            terminal_reason: self
+                .control
+                .terminal_reason()
+                .map(|reason| reason.as_str().to_owned()),
+            unattempted_items: self.total_items.saturating_sub(self.processed_items).max(0),
             id: self.id,
             kind,
             status,
@@ -1373,6 +1427,32 @@ impl AuthzTarget for TaskID {
     }
 }
 
+/// An idempotent stop request. The optional expected status protects queued-only withdrawals.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCancelRequest {
+    #[serde(default, deserialize_with = "deserialize_cancel_reason")]
+    #[schema(value_type = Option<String>, max_length = 512)]
+    reason: Option<hubuum_task_core::TaskCancellationReason>,
+    expected_status: Option<TaskStatus>,
+}
+impl TaskCancelRequest {
+    pub(crate) fn reason(&self) -> Option<hubuum_task_core::TaskCancellationReason> {
+        self.reason.clone()
+    }
+    pub(crate) const fn expected_status(&self) -> Option<TaskStatus> {
+        self.expected_status
+    }
+}
+fn deserialize_cancel_reason<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<hubuum_task_core::TaskCancellationReason>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(hubuum_task_core::TaskCancellationReason::new)
+        .transpose()
+        .map_err(serde::de::Error::custom)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1513,6 +1593,9 @@ mod tests {
     fn task_record_debug_redacts_request_and_scope_material() {
         let timestamp = test_timestamp();
         let task = TaskRecord {
+            control: hubuum_storage_core::StorageTaskControl::new(
+                hubuum_storage_core::StorageTaskKind::Import,
+            ),
             id: 7,
             kind: TaskKind::Import.as_str().to_string(),
             status: TaskStatus::Running.as_str().to_string(),
@@ -1559,6 +1642,9 @@ mod tests {
     fn export_task_details_include_persisted_phase_timings() {
         let timestamp = test_timestamp();
         let task = TaskRecord {
+            control: hubuum_storage_core::StorageTaskControl::new(
+                hubuum_storage_core::StorageTaskKind::Import,
+            ),
             id: 7,
             kind: TaskKind::Export.as_str().to_string(),
             status: TaskStatus::Succeeded.as_str().to_string(),

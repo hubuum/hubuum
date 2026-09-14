@@ -13,6 +13,7 @@ use hubuum_events_core::CorrelationId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::task_control::SNAPSHOT_FIELDS;
 use crate::{StorageError, StorageValidationError};
 
 macro_rules! backup_sections {
@@ -130,9 +131,15 @@ impl StorageBackupRow {
     }
 
     /// Apply version-5 legacy repairs shared by restore and source comparison.
-    /// Only previously accepted invalid correlation strings are cleared; other
-    /// field types remain intact so malformed rows and unrelated drift fail.
+    /// Clear previously accepted invalid correlation strings and supply the
+    /// conservative default for remote results without dispatch evidence.
+    /// Other field types remain intact so malformed rows and unrelated drift fail.
     pub fn normalize_legacy_history(&mut self, section: StorageBackupHistorySection) {
+        if section == StorageBackupHistorySection::RemoteCallResults {
+            self.0
+                .entry("side_effect_state".to_string())
+                .or_insert_with(|| Value::String("legacy_unknown".to_string()));
+        }
         if section == StorageBackupHistorySection::AuditEvents
             && self
                 .0
@@ -147,7 +154,21 @@ impl StorageBackupRow {
     /// Canonicalize optional history fields added within backup version 5.
     /// An absent trace link and an all-null link carry the same information;
     /// populated or partial links must remain intact for validation/comparison.
+    /// Empty task control and legacy-unknown remote evidence likewise carry no
+    /// additional information; populated values must never disappear.
     pub fn canonicalize_history(&mut self, section: StorageBackupHistorySection) {
+        if section == StorageBackupHistorySection::TerminalTasks {
+            for field in SNAPSHOT_FIELDS {
+                if self.0.get(*field).is_some_and(Value::is_null) {
+                    self.0.remove(*field);
+                }
+            }
+        }
+        if section == StorageBackupHistorySection::RemoteCallResults
+            && self.0.get("side_effect_state").and_then(Value::as_str) == Some("legacy_unknown")
+        {
+            self.0.remove("side_effect_state");
+        }
         if !matches!(
             section,
             StorageBackupHistorySection::TerminalTasks | StorageBackupHistorySection::AuditEvents
@@ -270,6 +291,9 @@ impl StorageBackupSnapshot {
             for (section, rows) in history {
                 for row in rows {
                     row.canonicalize_history(*section);
+                    if *section == StorageBackupHistorySection::TerminalTasks {
+                        crate::task_control::validate_control_snapshot(row)?;
+                    }
                 }
             }
         }
@@ -402,6 +426,64 @@ mod tests {
         let mut row = StorageBackupRow::try_from_value(value.clone()).unwrap();
         row.canonicalize_history(StorageBackupHistorySection::AuditEvents);
         assert_eq!(row.into_value(), value);
+    }
+
+    #[rstest]
+    fn canonicalization_omits_only_empty_task_control(
+        #[values(
+            "cancel_requested_at",
+            "cancel_requested_by",
+            "cancel_reason",
+            "execution_deadline_at",
+            "import_effects_committed_at",
+            "remote_dispatched_at",
+            "terminal_reason"
+        )]
+        field: &str,
+        #[values(Value::Null, json!("retained"), json!(42))] value: Value,
+    ) {
+        let original = json!({"id": 1, field: value});
+        let mut row = StorageBackupRow::try_from_value(original.clone()).unwrap();
+        row.canonicalize_history(StorageBackupHistorySection::TerminalTasks);
+        let expected = if value.is_null() {
+            json!({"id": 1})
+        } else {
+            original
+        };
+        assert_eq!(row.into_value(), expected);
+    }
+
+    #[rstest]
+    #[case::absent(json!({"id": 1}), json!({"id": 1, "side_effect_state": "legacy_unknown"}))]
+    #[case::not_sent(json!({"side_effect_state": "not_sent"}), json!({"side_effect_state": "not_sent"}))]
+    #[case::possibly_sent(json!({"side_effect_state": "possibly_sent"}), json!({"side_effect_state": "possibly_sent"}))]
+    #[case::response(json!({"side_effect_state": "response_received"}), json!({"side_effect_state": "response_received"}))]
+    #[case::null(json!({"side_effect_state": null}), json!({"side_effect_state": null}))]
+    #[case::malformed(json!({"side_effect_state": 42}), json!({"side_effect_state": 42}))]
+    fn legacy_remote_history_defaults_only_missing_evidence(
+        #[case] original: Value,
+        #[case] expected: Value,
+    ) {
+        let mut row = StorageBackupRow::try_from_value(original).unwrap();
+        row.normalize_legacy_history(StorageBackupHistorySection::RemoteCallResults);
+        assert_eq!(row.into_value(), expected);
+    }
+
+    #[rstest]
+    #[case::legacy(json!("legacy_unknown"), json!({"id": 1}))]
+    #[case::not_sent(json!("not_sent"), json!({"id": 1, "side_effect_state": "not_sent"}))]
+    #[case::possibly_sent(json!("possibly_sent"), json!({"id": 1, "side_effect_state": "possibly_sent"}))]
+    #[case::response(json!("response_received"), json!({"id": 1, "side_effect_state": "response_received"}))]
+    #[case::null(Value::Null, json!({"id": 1, "side_effect_state": null}))]
+    #[case::malformed(json!(42), json!({"id": 1, "side_effect_state": 42}))]
+    fn canonicalization_preserves_remote_side_effect_evidence(
+        #[case] value: Value,
+        #[case] expected: Value,
+    ) {
+        let mut row =
+            StorageBackupRow::try_from_value(json!({"id": 1, "side_effect_state": value})).unwrap();
+        row.canonicalize_history(StorageBackupHistorySection::RemoteCallResults);
+        assert_eq!(row.into_value(), expected);
     }
 
     #[rstest]

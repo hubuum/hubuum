@@ -9,7 +9,7 @@ use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{StorageError, StoragePage, StorageValidationError};
+use crate::{StorageError, StoragePage, StorageTaskControl, StorageValidationError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageTaskKind {
@@ -428,6 +428,7 @@ pub struct StorageTask {
     attempt_count: i32,
     initiator_principal_id: Option<PrincipalId>,
     trace_link: Option<TraceLink>,
+    control: StorageTaskControl,
 }
 
 impl StorageTask {
@@ -462,6 +463,7 @@ impl StorageTask {
                 attempt_count: 0,
                 initiator_principal_id: None,
                 trace_link: None,
+                control: StorageTaskControl::new(kind),
             },
         }
     }
@@ -469,6 +471,11 @@ impl StorageTask {
     #[must_use]
     pub const fn id(&self) -> TaskId {
         self.id
+    }
+
+    #[must_use]
+    pub const fn control(&self) -> &StorageTaskControl {
+        &self.control
     }
 
     #[must_use]
@@ -600,6 +607,12 @@ pub struct StorageTaskBuilder {
 
 impl StorageTaskBuilder {
     #[must_use]
+    pub fn control(mut self, control: StorageTaskControl) -> Self {
+        self.task.control = control;
+        self
+    }
+
+    #[must_use]
     pub const fn submitted_by(mut self, submitted_by: Option<PrincipalId>) -> Self {
         self.task.submitted_by = submitted_by;
         self
@@ -699,6 +712,18 @@ impl StorageTaskBuilder {
 
     /// Validate and build a task projection returned by a storage adapter.
     pub fn try_build(self) -> Result<StorageTask, StorageValidationError> {
+        if self.task.control.kind() != self.task.kind {
+            return Err(StorageValidationError::invalid(
+                "Task control kind must match the task",
+            ));
+        }
+        if self.task.control.terminal_reason().is_some()
+            && self.task.status != StorageTaskStatus::Cancelled
+        {
+            return Err(StorageValidationError::invalid(
+                "A task stop reason requires cancelled status",
+            ));
+        }
         if self.task.attempt_count < 0 {
             return Err(StorageValidationError::invalid(
                 "Task attempt count must not be negative",
@@ -755,7 +780,9 @@ impl StorageTaskBuilder {
         }
         let lifecycle_is_consistent = match self.task.status {
             StorageTaskStatus::Queued => {
-                self.task.started_at.is_none()
+                (self.task.started_at.is_none()
+                    || (self.task.kind == StorageTaskKind::SchemaValidation
+                        && self.task.attempt_count > 0))
                     && self.task.finished_at.is_none()
                     && self.task.lease_expires_at.is_none()
             }
@@ -1894,6 +1921,29 @@ mod tests {
         .try_build()
         .unwrap_err();
 
+        assert_eq!(
+            error.kind(),
+            crate::StorageValidationErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn task_projection_rejects_a_stop_reason_on_success() {
+        let now = chrono::Utc::now();
+        let mut control = crate::StorageTaskControl::new(StorageTaskKind::Import);
+        control.request_cancellation(crate::StorageTaskCancellation::new(now, None, None));
+        control.acknowledge_stop(now).unwrap();
+        let error = StorageTask::builder(
+            TaskId::new(91_014).unwrap(),
+            StorageTaskKind::Import,
+            StorageTaskStatus::Succeeded,
+            now,
+            now,
+        )
+        .finished_at(Some(now))
+        .control(control)
+        .try_build()
+        .unwrap_err();
         assert_eq!(
             error.kind(),
             crate::StorageValidationErrorKind::InvalidValue

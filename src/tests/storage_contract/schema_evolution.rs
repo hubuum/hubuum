@@ -486,10 +486,15 @@ async fn schema_impact_is_bounded_and_oversized_objects_cannot_prove_compatibili
 }
 
 #[rstest::rstest]
-#[case::memory(StorageBackendKind::Memory)]
-#[case::postgres(StorageBackendKind::Postgres)]
+#[case::memory_legacy(StorageBackendKind::Memory, false)]
+#[case::postgres_legacy(StorageBackendKind::Postgres, false)]
+#[case::memory_generic(StorageBackendKind::Memory, true)]
+#[case::postgres_generic(StorageBackendKind::Postgres, true)]
 #[actix_web::test]
-async fn cancelled_schema_worker_cannot_commit_another_batch(#[case] backend: StorageBackendKind) {
+async fn cancelled_schema_worker_cannot_commit_another_batch(
+    #[case] backend: StorageBackendKind,
+    #[case] generic: bool,
+) {
     let fixture = SchemaFixture::new(backend, vec![json!({}), json!({})]).await;
     let revision = fixture.stage(json!({"required":["missing"]}), true).await;
     let work = fixture
@@ -502,16 +507,43 @@ async fn cancelled_schema_worker_cannot_commit_another_batch(#[case] backend: St
         .process_schema_work(lease.clone(), limits)
         .await
         .unwrap();
-    let cancelled = fixture
-        .backend
-        .cancel_schema_work(
-            work.task_id(),
-            fixture.collection_id(),
-            &EventContext::system(),
-        )
-        .await
-        .unwrap()
-        .into_value();
+    let cancelled = if generic {
+        let (task, _) = fixture
+            .backend
+            .get_task_access(work.task_id())
+            .await
+            .unwrap()
+            .into_parts();
+        fixture
+            .backend
+            .request_task_cancellation(hubuum_storage_core::StorageTaskCancellationRequest::new(
+                &task,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap();
+        fixture
+            .backend
+            .acknowledge_task_stop(lease.clone())
+            .await
+            .unwrap();
+        fixture
+            .backend
+            .get_schema_work(work.task_id())
+            .await
+            .unwrap()
+    } else {
+        fixture
+            .backend
+            .cancel_schema_work(
+                work.task_id(),
+                fixture.collection_id(),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value()
+    };
     assert_eq!(cancelled.examined(), 1);
     assert!(
         fixture
@@ -535,6 +567,80 @@ async fn cancelled_schema_worker_cannot_commit_another_batch(#[case] backend: St
     assert_eq!(
         report.impact.unwrap().failures[0].samples,
         vec![fixture.resources.objects[0].id().id()]
+    );
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::memory(StorageBackendKind::Memory)]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[actix_web::test]
+async fn requeued_schema_deadline_expires_without_another_worker(
+    #[case] backend: StorageBackendKind,
+) {
+    use hubuum_storage_core::StorageTaskExecutionAdmission;
+    use hubuum_task_core::{TaskExecutionLimit, TaskStopReason};
+    let fixture = SchemaFixture::new(backend, vec![json!({})]).await;
+    let revision = fixture.stage(json!({"type":"object"}), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 60_000).await;
+    let admission = fixture
+        .backend
+        .admit_task_execution(StorageTaskExecutionAdmission::new(
+            lease.clone(),
+            TaskExecutionLimit::from_milliseconds(2_000).unwrap(),
+        ))
+        .await
+        .unwrap();
+    fixture
+        .backend
+        .renew_task_lease(
+            lease,
+            StorageTaskLeaseDuration::from_milliseconds(1).unwrap(),
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    fixture
+        .backend
+        .recover_expired_task_leases(100)
+        .await
+        .unwrap();
+    let (queued, _) = fixture
+        .backend
+        .get_task_access(work.task_id())
+        .await
+        .unwrap()
+        .into_parts();
+    assert_eq!(queued.status(), StorageTaskStatus::Queued);
+    assert_eq!(queued.control().deadline(), admission.control().deadline());
+    tokio::time::sleep(admission.remaining().unwrap()).await;
+    fixture
+        .backend
+        .recover_expired_task_leases(100)
+        .await
+        .unwrap();
+    let (stopped, _) = fixture
+        .backend
+        .get_task_access(work.task_id())
+        .await
+        .unwrap()
+        .into_parts();
+    assert_eq!(stopped.status(), StorageTaskStatus::Cancelled);
+    assert_eq!(
+        stopped.control().terminal_reason(),
+        Some(TaskStopReason::DeadlineExceeded)
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .get_schema_work(work.task_id())
+            .await
+            .unwrap()
+            .status(),
+        StorageSchemaWorkStatus::Cancelled
     );
     fixture.cleanup().await;
 }

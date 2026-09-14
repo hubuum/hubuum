@@ -70,6 +70,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
     debug!(message = "Detailed error for import execution", error = %err);
 
     match err {
+        ApiError::TaskStopped(reason) => reason.to_string(),
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
         ApiError::PreconditionFailed(msg, _) | ApiError::RevisionConflict(msg, _) => {
             format!("Stale resource: {msg}")

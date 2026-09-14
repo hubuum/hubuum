@@ -5,8 +5,10 @@ use diesel::{Queryable, Selectable};
 use hubuum_domain::{PrincipalId, TaskId, TokenId};
 use hubuum_events_core::TraceLink;
 use hubuum_storage_core::{
-    StorageTask, StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTask, StorageTaskCancellation, StorageTaskControl, StorageTaskExecutionPhase,
+    StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
+use hubuum_task_core::{TaskCancellationReason, TaskStopReason};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -45,6 +47,13 @@ pub(crate) struct TaskRow {
     pub(super) trace_span_id: Option<String>,
     pub(super) trace_flags: Option<i16>,
     pub(super) trace_context_version: Option<i16>,
+    pub(super) cancel_requested_at: Option<NaiveDateTime>,
+    pub(super) cancel_requested_by: Option<i32>,
+    pub(super) cancel_reason: Option<String>,
+    pub(super) execution_deadline_at: Option<NaiveDateTime>,
+    pub(super) import_effects_committed_at: Option<NaiveDateTime>,
+    pub(super) remote_dispatched_at: Option<NaiveDateTime>,
+    pub(super) terminal_reason: Option<String>,
 }
 
 impl TaskRow {
@@ -66,6 +75,7 @@ impl TaskRow {
             ),
         )?;
         let trace_link = self.trace_link()?;
+        let control = self.control(kind)?;
         let task = StorageTask::builder(
             TaskId::new(self.id)?,
             kind,
@@ -74,6 +84,7 @@ impl TaskRow {
             self.updated_at.and_utc(),
         )
         .submitted_by(self.submitted_by.map(PrincipalId::new).transpose()?)
+        .control(control)
         .idempotency_key(self.idempotency_key)
         .request_hash(self.request_hash)
         .request_payload(self.request_payload)
@@ -107,6 +118,63 @@ impl TaskRow {
             self.trace_span_id.clone(),
             self.trace_flags,
             self.trace_context_version,
+        )
+    }
+
+    pub(super) fn control(
+        &self,
+        kind: StorageTaskKind,
+    ) -> Result<StorageTaskControl, PostgresStorageError> {
+        let cancellation = match self.cancel_requested_at {
+            Some(at) => Some(StorageTaskCancellation::new(
+                at.and_utc(),
+                self.cancel_requested_by.map(PrincipalId::new).transpose()?,
+                self.cancel_reason
+                    .clone()
+                    .map(TaskCancellationReason::new)
+                    .transpose()
+                    .map_err(|error| {
+                        PostgresStorageError::invalid_persisted_value(
+                            "task cancellation reason",
+                            error,
+                        )
+                    })?,
+            )),
+            None if self.cancel_requested_by.is_none() && self.cancel_reason.is_none() => None,
+            None => {
+                return Err(PostgresStorageError::database(
+                    "Cancellation metadata requires a request timestamp",
+                ));
+            }
+        };
+        let phase = match (self.import_effects_committed_at, self.remote_dispatched_at) {
+            (None, None) => StorageTaskExecutionPhase::Uncommitted,
+            (Some(at), None) => StorageTaskExecutionPhase::ImportCommitted { at: at.and_utc() },
+            (None, Some(at)) => StorageTaskExecutionPhase::RemoteDispatched { at: at.and_utc() },
+            (Some(_), Some(_)) => {
+                return Err(PostgresStorageError::database(
+                    "Task cannot have both import and remote effects",
+                ));
+            }
+        };
+        let terminal_reason = self
+            .terminal_reason
+            .as_deref()
+            .map(|value| {
+                TaskStopReason::from_persisted(value).ok_or_else(|| {
+                    PostgresStorageError::database("Unknown task termination reason")
+                })
+            })
+            .transpose()?;
+        crate::validate_persisted(
+            "task execution control",
+            StorageTaskControl::try_new(
+                kind,
+                cancellation,
+                self.execution_deadline_at.map(|at| at.and_utc()),
+                phase,
+                terminal_reason,
+            ),
         )
     }
 }
@@ -190,6 +258,13 @@ mod tests {
             trace_span_id: None,
             trace_flags: None,
             trace_context_version: None,
+            cancel_requested_at: None,
+            cancel_requested_by: None,
+            cancel_reason: None,
+            execution_deadline_at: None,
+            import_effects_committed_at: None,
+            remote_dispatched_at: None,
+            terminal_reason: None,
         }
     }
 

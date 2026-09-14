@@ -629,6 +629,7 @@ async fn load_capture_rows(
     .await?;
     let mut retained = Vec::new();
     loop {
+        crate::runtime::task_execution_checkpoint()?;
         // FETCH 1 prevents the driver/server from running an unbounded SELECT
         // ahead of the consumer when a small byte budget is exhausted.
         let rows = diesel::sql_query("FETCH FORWARD 1 FROM hubuum_backup_rows")
@@ -724,6 +725,7 @@ async fn snapshot_state(
 ) -> Result<StorageBackupStateSections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
     for section in StorageBackupStateSection::ALL.iter().copied() {
+        crate::runtime::task_execution_checkpoint()?;
         let rows = load_capture_rows(
             conn,
             state_table(section),
@@ -743,6 +745,7 @@ async fn snapshot_history(
 ) -> Result<StorageBackupHistorySections, PostgresStorageError> {
     let mut sections = BTreeMap::new();
     for section in StorageBackupHistorySection::ALL.iter().copied() {
+        crate::runtime::task_execution_checkpoint()?;
         let filter = match section {
             StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
             StorageBackupHistorySection::ImportResults

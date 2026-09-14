@@ -144,8 +144,13 @@ for an exception.
   `ComputedFieldStorage::request_computed_field_rebuild`,
   `ComputedFieldStorage::execute_computed_field_rebuild`, and
   `TaskQueueStorage::create_task` create or advance durable work whose task row,
-  submitter, claim, and task-event stream carry its provenance. Worker-only
-  transitions are `TaskExecutionStorage::claim_next_task`,
+  submitter, claim, and task-event stream carry its provenance.
+  `TaskExecutionStorage::request_task_cancellation` records the authorized
+  actor from its typed request and serializes intent with claim/finalization.
+  Worker-only transitions are `TaskExecutionStorage::admit_task_execution`,
+  `TaskExecutionStorage::acknowledge_task_stop`,
+  `TaskExecutionStorage::begin_remote_dispatch`,
+  `TaskExecutionStorage::claim_next_task`,
   `TaskExecutionStorage::renew_task_lease`,
   `TaskExecutionStorage::recover_expired_task_leases`,
   `TaskExecutionStorage::append_task_event`,

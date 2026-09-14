@@ -439,6 +439,7 @@ fn treetop_fixture_schema_covers_every_runtime_permission() {
         .map(|permission| permission.to_string())
         .collect::<BTreeSet<_>>();
     expected.insert("ReadTask".to_string());
+    expected.insert("CancelTask".to_string());
     let expected = expected.iter().map(String::as_str).collect::<BTreeSet<_>>();
 
     assert_eq!(

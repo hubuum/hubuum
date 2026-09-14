@@ -114,7 +114,9 @@ pub(crate) async fn execute_backup_task(
     let request: BackupRequest = serde_json::from_value(payload)?;
     authorize_backup_request(context, user, scopes).await?;
     let document = create_backup_document(context, &request, settings.budget()).await?;
+    crate::tasks::control::checkpoint()?;
     let bytes = settings.budget().serialize(&document)?;
+    crate::tasks::control::checkpoint()?;
     let sha256 = Sha256::digest(&bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -127,7 +129,7 @@ pub(crate) async fn execute_backup_task(
         total_items,
         bytes.len()
     );
-    complete_task(
+    let finished = complete_task(
         context,
         task,
         TaskStateChange::new(
@@ -152,7 +154,7 @@ pub(crate) async fn execute_backup_task(
         )?),
     )
     .await?;
-    Ok(TaskStatus::Succeeded)
+    TaskStatus::from_db(&finished.status)
 }
 
 pub(crate) async fn authorize_backup_request(

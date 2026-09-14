@@ -29,6 +29,10 @@ workflow_state_machine = [
     "ComputedFieldStorage::request_computed_field_rebuild",
     "ComputedFieldStorage::execute_computed_field_rebuild",
     "TaskQueueStorage::create_task",
+    "TaskExecutionStorage::request_task_cancellation",
+    "TaskExecutionStorage::admit_task_execution",
+    "TaskExecutionStorage::acknowledge_task_stop",
+    "TaskExecutionStorage::begin_remote_dispatch",
     "TaskExecutionStorage::claim_next_task",
     "TaskExecutionStorage::renew_task_lease",
     "TaskExecutionStorage::recover_expired_task_leases",
@@ -295,9 +299,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TaskExecutionStorage]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-methods = ["claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
-effects = { workflow_mutation = ["claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
+methods = ["poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
+effects = { point_read = ["poll_task_execution"], workflow_mutation = ["request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
+shared_scenarios = ["src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
 native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_task_page_count_and_rows_share_one_snapshot", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
 
 [traits.BackupSnapshotStorage]

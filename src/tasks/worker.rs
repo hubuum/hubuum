@@ -56,6 +56,10 @@ static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
         .expect("task lease heartbeat runtime must start")
 });
 
+pub(super) fn task_lease_runtime() -> &'static tokio::runtime::Runtime {
+    &TASK_LEASE_RUNTIME
+}
+
 pub fn initialize_task_worker_settings(settings: TaskWorkerSettings) -> Result<(), String> {
     TASK_WORKER_SETTINGS
         .set(settings)
@@ -353,10 +357,10 @@ async fn process_one_task_with_settings(
                         _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                             "Task interrupted by graceful server shutdown".to_string(),
                         )),
-                        result = process_claimed_task(context, &task, backup_settings) => result,
+                        result = super::control::execute(context, &task, settings.execution_limit(TaskKind::from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
                     }
                 }
-                None => process_claimed_task(context, &task, backup_settings).await,
+                None => super::control::execute(context, &task, settings.execution_limit(TaskKind::from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
             }
         };
         let mut ownership_lost = false;
@@ -369,8 +373,14 @@ async fn process_one_task_with_settings(
                 ))
             }
         };
-        let mut terminal_status = result.as_ref().ok().copied();
-        if let Err(err) = &result
+        let persisted_terminal = crate::services::tasks::find_task(context, task.lease().task_id()).await
+            .ok().and_then(|task| TaskStatus::from_db(&task.status).ok()).filter(|status| status.is_terminal());
+        let mut terminal_status = persisted_terminal.or(result.as_ref().ok().copied());
+        if persisted_terminal.is_none() && matches!(&result, Err(ApiError::TaskStopped(_))) && !ownership_lost {
+            let finished = crate::services::tasks::acknowledge_task_stop(context, &task).await?;
+            terminal_status = Some(TaskStatus::from_db(&finished.status)?);
+        } else if let Err(err) = &result
+            && persisted_terminal.is_none()
             && !ownership_lost
         {
             let finalized = finalize_failure_while_lease_owned(
@@ -379,7 +389,8 @@ async fn process_one_task_with_settings(
             )
             .await?;
             if finalized {
-                terminal_status = Some(TaskStatus::Failed);
+                let finished = crate::services::tasks::find_task(context, task.lease().task_id()).await?;
+                terminal_status = Some(TaskStatus::from_db(&finished.status)?);
             } else {
                 warn!(
                     message = "Task failure finalization stopped because its worker lease was lost",

@@ -336,6 +336,13 @@
           "resourceTypes": ["HubuumTask"],
           "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
         }
+      },
+      "CancelTask": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTask"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
       }
     }
   }

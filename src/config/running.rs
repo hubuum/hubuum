@@ -127,6 +127,13 @@ pub struct TaskConfig {
     pub workers: usize,
     pub poll_interval_ms: u64,
     pub lease_seconds: u64,
+    pub import_execution_timeout_seconds: u64,
+    pub export_execution_timeout_seconds: u64,
+    pub backup_execution_timeout_seconds: u64,
+    pub reindex_execution_timeout_seconds: u64,
+    pub remote_call_execution_timeout_seconds: u64,
+    pub schema_validation_execution_timeout_seconds: u64,
+
     pub heartbeat_seconds: u64,
     pub recovery_interval_seconds: u64,
     pub computed_reindex_batch_size: usize,
@@ -372,6 +379,15 @@ impl RunningConfig {
                 workers: config.task_workers,
                 poll_interval_ms: config.task_poll_interval_ms,
                 lease_seconds: config.task_lease_seconds,
+                import_execution_timeout_seconds: config.task_import_execution_timeout_seconds,
+                export_execution_timeout_seconds: config.task_export_execution_timeout_seconds,
+                backup_execution_timeout_seconds: config.task_backup_execution_timeout_seconds,
+                reindex_execution_timeout_seconds: config.task_reindex_execution_timeout_seconds,
+                remote_call_execution_timeout_seconds: config
+                    .task_remote_call_execution_timeout_seconds,
+                schema_validation_execution_timeout_seconds: config
+                    .task_schema_validation_execution_timeout_seconds,
+
                 heartbeat_seconds: config.task_heartbeat_seconds,
                 recovery_interval_seconds: config.task_recovery_interval_seconds,
                 computed_reindex_batch_size: config.computed_reindex_batch_size,

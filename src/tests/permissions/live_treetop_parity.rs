@@ -163,6 +163,28 @@ async fn live_fixture_metadata_is_immutable() {
     );
 }
 
+#[rstest::rstest]
+#[case::owner(TEST_USER_ID, PermissionDecision::Allow)]
+#[case::foreign(TEST_USER_ID_SECOND, PermissionDecision::Deny)]
+#[actix_web::test]
+#[ignore = "run by scripts/run-treetop-conformance.sh"]
+async fn live_task_cancellation_uses_the_explicit_owner_policy(
+    #[case] submitter: i32,
+    #[case] expected: PermissionDecision,
+) {
+    let _guard = live_test_guard().await;
+    let backend = live_backend().await.unwrap();
+    let principal = PrincipalRef::new(TEST_USER_ID, [TEST_NORMAL_GROUP_ID]);
+    let task = ResourceRef::task(TEST_TASK_ID, Some(submitter));
+    assert_eq!(
+        backend
+            .authorize_task_cancellation(&principal, &task)
+            .await
+            .unwrap(),
+        expected
+    );
+}
+
 #[actix_test]
 #[ignore = "run by scripts/run-treetop-conformance.sh"]
 async fn live_health_check_succeeds() {

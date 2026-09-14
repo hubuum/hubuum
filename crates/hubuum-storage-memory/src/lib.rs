@@ -23,7 +23,6 @@ use hubuum_storage_core::{
     StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenMigrationOutcome,
     StorageValidationError,
 };
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 const ROOT_COLLECTION_ID: i32 = 1;
@@ -63,6 +62,7 @@ struct MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryTaskRecord {
+    control: StorageTaskControl,
     id: TaskId,
     kind: StorageTaskKind,
     status: StorageTaskStatus,
@@ -249,6 +249,7 @@ impl MemoryTaskRecord {
             self.updated_at,
         )
         .submitted_by(self.submitted_by)
+        .control(self.control.clone())
         .idempotency_key(self.idempotency_key.clone())
         .request_hash(self.request_hash.clone())
         .request_payload(self.request_payload.clone())
@@ -329,6 +330,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryState {
+    generation: Arc<()>,
     schema_history: Vec<StorageBackupRow>,
     schema_revisions: BTreeMap<(i32, i64), StorageSchemaRevision>,
     schema_active: BTreeMap<i32, SchemaRevision>,
@@ -630,6 +632,15 @@ impl MemoryState {
         task_id: TaskId,
         input: StorageTaskEventInput,
     ) -> Result<(), StorageError> {
+        self.append_task_event_record_with_context(task_id, input, None)
+    }
+
+    fn append_task_event_record_with_context(
+        &mut self,
+        task_id: TaskId,
+        input: StorageTaskEventInput,
+        actor: Option<&EventContext>,
+    ) -> Result<(), StorageError> {
         let (event_type, message, data) = input.into_parts();
         let action = Action::parse(&event_type).map_err(|_| {
             StorageError::internal(format!("Unknown task event type '{event_type}'"))
@@ -638,11 +649,12 @@ impl MemoryState {
             .tasks
             .get(&task_id.id())
             .ok_or_else(|| StorageError::internal("Task event is missing its task"))?;
-        let context = EventContext::from_mutation(MutationProvenance::system_for_task(
+        let default_context = EventContext::from_mutation(MutationProvenance::system_for_task(
             task.initiator_principal_id,
             task_id,
         ))
         .with_trace_link(task.trace_link.clone());
+        let context = actor.unwrap_or(&default_context);
         let mut metadata = serde_json::json!({
             "task_id": task_id.id(),
             "task_kind": task.kind.as_str(),
@@ -659,7 +671,7 @@ impl MemoryState {
             None,
             None,
             action,
-            &context,
+            context,
             document,
             None,
             None,
@@ -739,7 +751,7 @@ impl MemoryState {
 #[derive(Clone)]
 pub struct MemoryStorage {
     schema_limits: JsonSchemaLimits,
-    state: Arc<RwLock<MemoryState>>,
+    state: Arc<MemoryStateLock>,
 }
 
 impl MemoryStorage {
@@ -754,7 +766,7 @@ impl MemoryStorage {
     pub fn with_schema_limits(schema_limits: JsonSchemaLimits) -> Self {
         Self {
             schema_limits,
-            state: Arc::new(RwLock::new(MemoryState::new())),
+            state: Arc::new(MemoryStateLock::new(MemoryState::new())),
         }
     }
 }
@@ -785,4 +797,7 @@ mod queries;
 mod resources;
 mod schema_evolution;
 mod state;
+mod state_lock;
+mod task_control;
+use state_lock::MemoryStateLock;
 mod workflows;

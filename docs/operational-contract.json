@@ -359,6 +359,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "ok",
+            "task_cancelled",
+            "task_deadline_exceeded",
             "authorization_unavailable",
             "invalid_input",
             "conflict",
@@ -434,6 +436,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "ok",
+            "task_cancelled",
+            "task_deadline_exceeded",
             "authorization_unavailable",
             "invalid_input",
             "conflict",
@@ -1808,8 +1812,10 @@
           "bounded_by": "enumerated values",
           "values": [
             "abandon_schema_revision",
+            "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
+            "admit_task_execution",
             "aggregate_objects",
             "anonymize_user",
             "append_task_event",
@@ -1823,6 +1829,7 @@
             "authorize_local_collection",
             "authorize_local_collections",
             "begin_event_delivery",
+            "begin_remote_dispatch",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_snapshot",
@@ -2007,6 +2014,7 @@
             "mark_external_sync_attempted",
             "move_collection",
             "patch_object_data",
+            "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
             "prepare_object_relation",
@@ -2027,6 +2035,7 @@
             "replace_export_template",
             "request_computed_field_rebuild",
             "request_schema_work",
+            "request_task_cancellation",
             "reset_local_password",
             "resolve_class",
             "resolve_class_names",
@@ -2079,6 +2088,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "ok",
+            "task_cancelled",
+            "task_deadline_exceeded",
             "authorization_unavailable",
             "invalid_input",
             "conflict",
@@ -2185,8 +2196,10 @@
           "bounded_by": "enumerated values",
           "values": [
             "abandon_schema_revision",
+            "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
+            "admit_task_execution",
             "aggregate_objects",
             "anonymize_user",
             "append_task_event",
@@ -2200,6 +2213,7 @@
             "authorize_local_collection",
             "authorize_local_collections",
             "begin_event_delivery",
+            "begin_remote_dispatch",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_snapshot",
@@ -2384,6 +2398,7 @@
             "mark_external_sync_attempted",
             "move_collection",
             "patch_object_data",
+            "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
             "prepare_object_relation",
@@ -2404,6 +2419,7 @@
             "replace_export_template",
             "request_computed_field_rebuild",
             "request_schema_work",
+            "request_task_cancellation",
             "reset_local_password",
             "resolve_class",
             "resolve_class_names",
@@ -2456,6 +2472,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "ok",
+            "task_cancelled",
+            "task_deadline_exceeded",
             "authorization_unavailable",
             "invalid_input",
             "conflict",
@@ -2476,6 +2494,106 @@
       "histogram_buckets": [],
       "scope": "process",
       "description": "Logical storage operation failures",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_ambiguous_remote_stops_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "reason",
+          "bounded_by": "enumerated values",
+          "values": [
+            "cancel_requested",
+            "deadline_exceeded"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Remote tasks stopped after dispatch may have produced external effects",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_cancellation_acknowledgement_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call",
+            "schema_validation"
+          ]
+        },
+        {
+          "name": "reason",
+          "bounded_by": "enumerated values",
+          "values": [
+            "cancel_requested",
+            "deadline_exceeded"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Time from cancellation request to terminal acknowledgement",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_cancellation_requests_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call",
+            "schema_validation"
+          ]
+        },
+        {
+          "name": "result",
+          "bounded_by": "enumerated values",
+          "values": [
+            "queued",
+            "active",
+            "unchanged"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Durable cancellation requests by task kind and queued, active or unchanged result",
       "feature": null
     },
     {
@@ -2778,6 +2896,37 @@
       ],
       "scope": "process",
       "description": "Task queue wait duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_task_stop_acknowledgements_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "kind",
+          "bounded_by": "enumerated values",
+          "values": [
+            "import",
+            "export",
+            "backup",
+            "reindex",
+            "remote_call",
+            "schema_validation"
+          ]
+        },
+        {
+          "name": "reason",
+          "bounded_by": "enumerated values",
+          "values": [
+            "cancel_requested",
+            "deadline_exceeded"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Acknowledged task cancellation and deadline expiration",
       "feature": null
     },
     {
@@ -5327,6 +5476,50 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "3600"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "900"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TASK_HEARTBEAT_SECONDS",
       "owner": "tasks",
       "exposure": "public",
@@ -5341,6 +5534,28 @@
       "maximum": null,
       "runtime_roles": [
         "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "3600"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
         "worker"
       ],
       "appears_in_running_configuration": true,
@@ -5404,6 +5619,72 @@
       "maximum": null,
       "runtime_roles": [
         "all",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "7200"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "7200"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
         "worker"
       ],
       "appears_in_running_configuration": true,
@@ -6767,6 +7048,7 @@
           "succeeded",
           "failed",
           "partially_succeeded",
+          "cancel_requested",
           "cancelled",
           "cleanup"
         ]
@@ -7708,6 +7990,120 @@
           },
           "default": [
             "20"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_import_execution_timeout_seconds",
+          "long": "task-import-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "3600"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_export_execution_timeout_seconds",
+          "long": "task-export-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "900"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_backup_execution_timeout_seconds",
+          "long": "task-backup-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "3600"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_reindex_execution_timeout_seconds",
+          "long": "task-reindex-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "7200"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_remote_call_execution_timeout_seconds",
+          "long": "task-remote-call-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_schema_validation_execution_timeout_seconds",
+          "long": "task-schema-validation-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "7200"
           ],
           "dynamic_default": null,
           "allowed_values": [],

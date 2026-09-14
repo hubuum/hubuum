@@ -12,6 +12,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-task-core = { version = "=0.3.0", path = "../hubuum-task-core" }
 argon2 = "0.6.0-rc.8"
 async-trait = "0.1"
 chrono = "0.4"

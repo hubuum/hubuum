@@ -1561,6 +1561,37 @@ impl TaskQueueStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl TaskExecutionStorage for CompleteExternalAdapter {
+    async fn request_task_cancellation(
+        &self,
+        request: StorageTaskCancellationRequest,
+    ) -> Result<StorageTaskCancellationOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn admit_task_execution(
+        &self,
+        request: StorageTaskExecutionAdmission,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        fixture_result()
+    }
+    async fn poll_task_execution(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        fixture_result()
+    }
+    async fn acknowledge_task_stop(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        fixture_result()
+    }
+    async fn begin_remote_dispatch(
+        &self,
+        request: StorageTaskRemoteDispatch,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+
     async fn claim_next_task(
         &self,
         lease_duration: StorageTaskLeaseDuration,

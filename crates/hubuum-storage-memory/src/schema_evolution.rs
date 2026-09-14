@@ -545,6 +545,7 @@ impl MemoryState {
         );
         let now = Utc::now();
         let task = MemoryTaskRecord {
+            control: StorageTaskControl::new(StorageTaskKind::SchemaValidation),
             id: task_id,
             kind: StorageTaskKind::SchemaValidation,
             status: StorageTaskStatus::Queued,
@@ -992,6 +993,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         lease: StorageTaskLease,
         limits: StorageSchemaBatchLimits,
     ) -> Result<StorageSchemaWork, StorageError> {
+        crate::execution::task_execution_checkpoint()?;
         let started = Instant::now();
         let (mut work, active, baseline, snapshots, context) = {
             let state = self.state.read().await;
@@ -1000,6 +1002,9 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 .get(&lease.task_id().id())
                 .filter(|task| task.status.is_active() && task.lease_matches(&lease))
                 .ok_or_else(invalid_task_lease)?;
+            if let Some(reason) = task.control.stop_reason(Utc::now()) {
+                return Err(StorageError::task_stopped(reason));
+            }
             let work = state
                 .schema_work
                 .get(&lease.task_id().id())
@@ -1089,6 +1094,10 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .get(&lease.task_id().id())
             .filter(|task| task.status.is_active() && task.lease_matches(&lease))
             .ok_or_else(invalid_task_lease)?;
+        crate::execution::task_execution_checkpoint()?;
+        if let Some(reason) = live.control.stop_reason(Utc::now()) {
+            return Err(StorageError::task_stopped(reason));
+        }
         let current = guard
             .schema_work
             .get(&work.task_id().id())
@@ -1249,7 +1258,18 @@ impl SchemaEvolutionStorage for MemoryStorage {
         if work.status() != StorageSchemaWorkStatus::Running {
             return Ok(StorageMutationOutcome::unchanged(work));
         }
-        state.finish_schema_task(task_id, StorageSchemaWorkStatus::Cancelled)?;
+        let now = Utc::now();
+        let task = state
+            .tasks
+            .get_mut(&task_id.id())
+            .ok_or_else(invalid_task_lease)?;
+        task.control
+            .request_cancellation(StorageTaskCancellation::new(
+                now,
+                context.actor_user_id(),
+                None,
+            ));
+        state.finish_stopped_task(task_id, now, Some(context))?;
         let receipt = state.schema_event(
             work.target().class_id(),
             Action::Updated,
@@ -1344,6 +1364,7 @@ impl MemoryState {
             .clone();
         task.id = task_id;
         task.kind = StorageTaskKind::Reindex;
+        task.control = StorageTaskControl::new(StorageTaskKind::Reindex);
         task.progress = StorageTaskProgress::try_new(0, 0, 0, 0).map_err(schema_error)?;
         task.request_payload = Some(json!({"class_id":class_id,"schema":work.target()}));
         let class = self

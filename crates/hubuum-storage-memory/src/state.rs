@@ -74,6 +74,7 @@ impl MemoryState {
         )
         .expect("admin group membership is valid");
         Self {
+            generation: Arc::new(()),
             schema_history: Vec::new(),
             schema_revisions: BTreeMap::new(),
             schema_active: BTreeMap::new(),

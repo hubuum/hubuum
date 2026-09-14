@@ -103,7 +103,7 @@ permit (
 // owner rule explicitly so queued-worker rechecks can share the corpus.
 permit (
     principal == User::"9001",
-    action == Action::"ReadTask",
+    action in [Action::"ReadTask", Action::"CancelTask"],
     resource
 ) when {
     resource is HubuumTask &&

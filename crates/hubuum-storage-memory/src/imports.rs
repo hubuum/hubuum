@@ -42,7 +42,7 @@ impl MemoryStorage {
         let mut state = self.state.write().await;
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(RwLock::new(state.clone())),
+            state: Arc::new(MemoryStateLock::new(state.clone())),
         };
         let mut next_references = references.clone();
         let revision = scratch

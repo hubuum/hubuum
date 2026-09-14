@@ -27,6 +27,7 @@ use super::{
     event_record::append_event,
     object::ObjectRow,
     task_execution,
+    task_rows::TaskRow,
 };
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
@@ -321,6 +322,21 @@ pub(super) async fn mark_schema_work_failed_on(
     connection: &mut PostgresConnection,
     task_id: TaskId,
 ) -> Result<(), PostgresStorageError> {
+    mark_schema_work_stopped_on(connection, task_id, StorageSchemaWorkStatus::Failed).await
+}
+
+pub(super) async fn mark_schema_work_cancelled_on(
+    connection: &mut PostgresConnection,
+    task_id: TaskId,
+) -> Result<(), PostgresStorageError> {
+    mark_schema_work_stopped_on(connection, task_id, StorageSchemaWorkStatus::Cancelled).await
+}
+
+async fn mark_schema_work_stopped_on(
+    connection: &mut PostgresConnection,
+    task_id: TaskId,
+    status: StorageSchemaWorkStatus,
+) -> Result<(), PostgresStorageError> {
     let row = diesel::sql_query(
         "SELECT checkpoint AS value FROM schema_validation_work WHERE task_id=$1 FOR UPDATE",
     )
@@ -333,10 +349,7 @@ pub(super) async fn mark_schema_work_failed_on(
         let epoch = state_on(connection, work.target().class_id())
             .await?
             .object_epoch;
-        work.finish(
-            StorageSchemaWorkStatus::Failed,
-            u64::try_from(epoch).map_err(invalid)?,
-        );
+        work.finish(status, u64::try_from(epoch).map_err(invalid)?);
         save_work_on(connection, &work).await?;
     }
     Ok(())
@@ -722,7 +735,7 @@ pub async fn process_schema_work(
     let started = Instant::now();
     let claimed = task_execution::claimed_task(&lease)?;
     let (mut work,revision,baseline,snapshots,context)=runtime.with_transaction(async move |connection|{
-        let task=task_execution::live_claimed_task(connection,claimed).await?;
+        let task=task_execution::runnable_claimed_task(connection,claimed).await?;
         if task.kind!=StorageTaskKind::SchemaValidation.as_str(){return Err(PostgresStorageError::invalid_input("Task is not schema validation"));}
         let work=work_on(connection,TaskId::new(claimed.id)?).await?;
         let revision=revision_on(schema_limits, connection,work.target()).await?;
@@ -738,6 +751,7 @@ pub async fn process_schema_work(
     let results = snapshots
         .into_iter()
         .map(|snapshot| {
+            crate::runtime::task_execution_checkpoint()?;
             let inspection = (work.kind() == StorageSchemaWorkKind::Impact).then(|| {
                 StorageSchemaInspection::new(
                     baseline.as_ref().map(|revision| revision.policy()),
@@ -753,14 +767,14 @@ pub async fn process_schema_work(
                     .as_ref()
                     .map(|value| revision.policy().inspect(value))
             };
-            (snapshot.id, snapshot.revision, status, inspection)
+            Ok((snapshot.id, snapshot.revision, status, inspection))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, PostgresStorageError>>()?;
     runtime.with_transaction(async move |connection|{
         lock_class(connection,work.target().class_id()).await?;
-        task_execution::live_claimed_task(connection,claimed).await?;
+        task_execution::runnable_claimed_task(connection,claimed).await?;
         let persisted=work_on(connection,work.task_id()).await?;
-        task_execution::live_claimed_task(connection,claimed).await?;
+        task_execution::runnable_claimed_task(connection,claimed).await?;
         if persisted.cursor()!=work.cursor() || persisted.status()!=StorageSchemaWorkStatus::Running{return Err(PostgresStorageError::conflict("Schema work checkpoint changed"));}
         if work.kind()==StorageSchemaWorkKind::Revalidation && active_on(schema_limits, connection,work.target().class_id()).await?.reference()!=work.target(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Superseded,&context).await?;}
         else if results.is_empty(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Complete,&context).await?;}
@@ -777,7 +791,7 @@ pub async fn process_schema_work(
                 if let Some(inspection) = inspection { findings.extend(work.record_impact(ObjectId::new(id)?,inspection,stale)); }
                 else { work.record(ObjectId::new(id)?,status,stale); }
             }
-            task_execution::live_claimed_task(connection,claimed).await?;
+            task_execution::runnable_claimed_task(connection,claimed).await?;
             if !findings.is_empty() {
                 diesel::sql_query("INSERT INTO schema_impact_findings(task_id,object_id,reason) SELECT $1,object_id,reason FROM jsonb_to_recordset($2) AS finding(object_id integer,reason jsonb)")
                     .bind::<Integer,_>(work.task_id().id())
@@ -815,17 +829,39 @@ pub async fn cancel_schema_work(
                 .first::<i32>(connection)
                 .await?;
 
-            let mut work = work_on(connection, task_id).await?;
+            let work = work_on(connection, task_id).await?;
             if work.status() != StorageSchemaWorkStatus::Running {
                 return Ok::<_, PostgresStorageError>(StorageMutationOutcome::unchanged(work));
             }
-            finish_work_on(
+            let now = task_execution::database_now(connection).await?;
+            diesel::update(
+                tasks::tasks
+                    .filter(tasks::id.eq(task_id.id()))
+                    .filter(tasks::cancel_requested_at.is_null()),
+            )
+            .set((
+                tasks::cancel_requested_at.eq(Some(now)),
+                tasks::cancel_requested_by.eq(context.actor_user_id().map(|id| id.id())),
+            ))
+            .execute(connection)
+            .await?;
+            let row = tasks::tasks
+                .filter(tasks::id.eq(task_id.id()))
+                .select(TaskRow::as_select())
+                .first::<TaskRow>(connection)
+                .await?;
+            let reason = row
+                .control(StorageTaskKind::SchemaValidation)?
+                .stop_reason(now.and_utc())
+                .expect("persisted cancellation has a cause");
+            super::task_control::finish_stopped_on(
                 connection,
-                &mut work,
-                StorageSchemaWorkStatus::Cancelled,
-                &context,
+                row,
+                reason,
+                context.mutation_provenance(),
             )
             .await?;
+            let work = work_on(connection, task_id).await?;
             let receipt = schema_event_on(
                 connection,
                 &class,

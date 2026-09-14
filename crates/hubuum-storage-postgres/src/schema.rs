@@ -624,6 +624,8 @@ diesel::table! {
         success -> Bool,
         error -> Nullable<Text>,
         created_at -> Timestamp,
+        #[max_length = 32]
+        side_effect_state -> Varchar,
     }
 }
 
@@ -807,6 +809,14 @@ diesel::table! {
         trace_span_id -> Nullable<Varchar>,
         trace_flags -> Nullable<Int2>,
         trace_context_version -> Nullable<Int2>,
+        cancel_requested_at -> Nullable<Timestamp>,
+        cancel_requested_by -> Nullable<Int4>,
+        cancel_reason -> Nullable<Text>,
+        execution_deadline_at -> Nullable<Timestamp>,
+        import_effects_committed_at -> Nullable<Timestamp>,
+        remote_dispatched_at -> Nullable<Timestamp>,
+        #[max_length = 32]
+        terminal_reason -> Nullable<Varchar>,
     }
 }
 

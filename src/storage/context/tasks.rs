@@ -1,4 +1,8 @@
 use super::*;
+use hubuum_storage_core::{
+    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskExecutionAdmission,
+    StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
+};
 
 #[async_trait]
 impl TaskQueueStorage for StorageHandle {
@@ -169,6 +173,79 @@ impl TaskQueueStorage for StorageHandle {
 
 #[async_trait]
 impl TaskExecutionStorage for StorageHandle {
+    async fn request_task_cancellation(
+        &self,
+        request: StorageTaskCancellationRequest,
+    ) -> Result<StorageTaskCancellationOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "request_task_cancellation",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .request_task_cancellation(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn admit_task_execution(
+        &self,
+        request: StorageTaskExecutionAdmission,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "admit_task_execution",
+            async {
+                dispatch_backend!(self, |backend| backend.admit_task_execution(request).await)
+            },
+        )
+        .await
+    }
+
+    async fn poll_task_execution(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "poll_task_execution",
+            async { dispatch_backend!(self, |backend| backend.poll_task_execution(lease).await) },
+        )
+        .await
+    }
+
+    async fn acknowledge_task_stop(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "acknowledge_task_stop",
+            async { dispatch_backend!(self, |backend| backend.acknowledge_task_stop(lease).await) },
+        )
+        .await
+    }
+
+    async fn begin_remote_dispatch(
+        &self,
+        request: StorageTaskRemoteDispatch,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "begin_remote_dispatch",
+            async {
+                dispatch_backend!(self, |backend| backend.begin_remote_dispatch(request).await)
+            },
+        )
+        .await
+    }
+
     async fn claim_next_task(
         &self,
         lease_duration: StorageTaskLeaseDuration,

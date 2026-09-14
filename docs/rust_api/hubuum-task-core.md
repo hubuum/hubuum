@@ -4,9 +4,10 @@ Status: experimental public API in the storage SDK `0.3` release train.
 
 ## Purpose and Callers
 
-`hubuum-task-core` provides validated task identifiers and idempotency values
-used across application and storage boundaries. External backend crates may use
-them without depending on Hubuum's server implementation.
+`hubuum-task-core` provides validated task identifiers, idempotency values,
+cancellation reasons, execution limits, and cooperative stop contexts used across
+application and storage boundaries. External backend crates may use them without
+depending on Hubuum's server implementation.
 
 ## Compatibility
 
@@ -19,9 +20,12 @@ serialization guarantees.
 ## Errors, Runtime, and Security
 
 Invalid input returns crate-owned errors and does not intentionally panic. The
-crate performs no I/O, has no asynchronous runtime or cancellation behavior,
-and stores no secrets. Debug output must not disclose idempotency values where
-their type promises redaction.
+crate performs no I/O and requires no asynchronous runtime. Execution contexts
+share an atomic stop signal and a monotonic deadline; callers must check them at
+work boundaries and complete cleanup before acknowledging a stop. Stop signals
+do not replace durable coordination or lease fencing. Debug output redacts
+operator cancellation explanations and idempotency values where their types
+promise redaction.
 
 ## Ownership and Verification
 

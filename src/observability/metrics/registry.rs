@@ -193,6 +193,13 @@ pub fn init() -> Result<(), ApiError> {
         task_claims: u64_counter(&meter, "hubuum_task_claims"),
         task_lease_recoveries: u64_counter(&meter, "hubuum_task_lease_recoveries"),
         task_completions: u64_counter(&meter, "hubuum_task_completions"),
+        task_cancellation_requests: u64_counter(&meter, "hubuum_task_cancellation_requests"),
+        task_stop_acknowledgements: u64_counter(&meter, "hubuum_task_stop_acknowledgements"),
+        task_cancellation_acknowledgement_duration: duration_histogram(
+            &meter,
+            "hubuum_task_cancellation_acknowledgement_duration",
+        ),
+        task_ambiguous_remote_stops: u64_counter(&meter, "hubuum_task_ambiguous_remote_stops"),
         task_queue_wait_duration: duration_histogram(&meter, "hubuum_task_queue_wait_duration"),
         task_execution_duration: duration_histogram(&meter, "hubuum_task_execution_duration"),
         task_workers_configured: u64_gauge(&meter, "hubuum_task_workers_configured"),

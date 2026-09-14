@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
-    StorageTaskDurations, StorageTaskKind, StorageTaskStatus, StorageValidationError,
+    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskDurations,
+    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskKind,
+    StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -951,6 +953,38 @@ impl StorageTaskFailure {
 /// Mandatory worker state-machine behavior for every selectable backend.
 #[async_trait]
 pub trait TaskExecutionStorage: Send + Sync {
+    /// Persist an authorized request; queued cancellation is terminal in the
+    /// same transaction, while active execution retains its fenced lease.
+    async fn request_task_cancellation(
+        &self,
+        request: StorageTaskCancellationRequest,
+    ) -> Result<StorageTaskCancellationOutcome, StorageError>;
+
+    /// Pin the first execution deadline using the adapter's trusted clock.
+    async fn admit_task_execution(
+        &self,
+        request: StorageTaskExecutionAdmission,
+    ) -> Result<StorageTaskExecutionObservation, StorageError>;
+
+    /// Observe durable intent outside the executor's snapshot/transaction.
+    async fn poll_task_execution(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTaskExecutionObservation, StorageError>;
+
+    /// Finalize a stopped executor under its live claim, reconciling durable
+    /// effects, results, cleanup and cancellation provenance atomically.
+    async fn acknowledge_task_stop(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError>;
+
+    /// Fence and persist outbound intent before performing an external effect.
+    async fn begin_remote_dispatch(
+        &self,
+        request: StorageTaskRemoteDispatch,
+    ) -> Result<(), StorageError>;
+
     async fn claim_next_task(
         &self,
         lease_duration: StorageTaskLeaseDuration,

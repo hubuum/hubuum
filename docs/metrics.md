@@ -277,6 +277,10 @@ and
 | `hubuum_task_claims_total` | `kind` | Tasks claimed by workers |
 | `hubuum_task_lease_recoveries_total` | `kind` | Tasks failed after their owning worker lease expired |
 | `hubuum_task_completions_total` | `kind`, `final_status` | Tasks reaching a terminal status |
+| `hubuum_task_cancellation_requests_total` | `kind`, `result` | Durable requests with `queued`, `active`, or `unchanged` result |
+| `hubuum_task_stop_acknowledgements_total` | `kind`, `reason` | Terminal stops with `cancel_requested` or `deadline_exceeded` reason |
+| `hubuum_task_cancellation_acknowledgement_duration_seconds` | `kind`, `reason` | Time from persisted cancellation request to terminal acknowledgement |
+| `hubuum_task_ambiguous_remote_stops_total` | `reason` | Stops after remote dispatch where external effects may have occurred |
 | `hubuum_task_queue_wait_duration_seconds` | `kind` | Time from task creation to claim |
 | `hubuum_task_execution_duration_seconds` | `kind`, `final_status` | Time from task start to finish |
 | `hubuum_task_workers_configured` | none | Task workers configured in this process; zero on API-only processes |

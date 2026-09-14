@@ -2427,6 +2427,7 @@ dependencies = [
  "hubuum-query",
  "hubuum-scale-core",
  "hubuum-storage-core",
+ "hubuum-task-core",
  "hubuum-templates",
  "ipnet",
  "pq-sys",
