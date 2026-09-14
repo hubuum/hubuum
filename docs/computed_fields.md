@@ -311,6 +311,11 @@ stale data. Computed filter and sort list reads remain read-only and defer
 repair to the rebuild path. A manual rebuild is available for failed or
 deliberately refreshed classes.
 
+Backfills and read repair acquire definition and class locks before locking
+bounded object batches. The adapter enforces this order with transaction-bound
+capabilities; see [Computed-field lock protocol](computed_field_locking.md) for
+the covered operations, runtime checks, and database limitations.
+
 ## Backup, events, and metrics
 
 Backup version 5 includes computed-field definitions and their resource

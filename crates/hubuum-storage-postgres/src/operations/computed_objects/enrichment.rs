@@ -16,11 +16,10 @@ use super::query::ComputedQuerySnapshot;
 use crate::operations::computed_definition::{
     ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY, evaluate_definitions,
 };
+use crate::operations::computed_fields::locking::repair_stale_materializations;
 use crate::operations::computed_materialization::{
-    ObjectMaterializationInput, acquire_computed_class_shared_lock, materialize_object,
-    source_data_sha256,
+    acquire_computed_class_shared_lock, source_data_sha256,
 };
-use crate::operations::object::ObjectRow;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(Clone, Queryable, Selectable)]
@@ -402,49 +401,6 @@ async fn load_materialized(
         .load(connection)
         .await
         .map_err(PostgresStorageError::from)
-}
-
-async fn repair_stale_materializations(
-    runtime: &PostgresRuntime,
-    mut stale_objects: Vec<StorageObject>,
-) -> Result<(), PostgresStorageError> {
-    stale_objects.sort_by_key(|object| object.id().id());
-    let object_ids = stale_objects
-        .iter()
-        .map(|object| object.id().id())
-        .collect::<Vec<_>>();
-    let evaluations = runtime
-        .with_transaction(async move |connection| {
-            use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
-            let current_objects = hubuumobject
-                .filter(id.eq_any(object_ids))
-                .order(id.asc())
-                .for_update()
-                .select(ObjectRow::as_select())
-                .load::<ObjectRow>(connection)
-                .await?;
-            let mut evaluations = Vec::with_capacity(current_objects.len());
-            for object in &current_objects {
-                evaluations.push(
-                    materialize_object(
-                        connection,
-                        ObjectMaterializationInput::new(
-                            object.id,
-                            object.hubuum_class_id,
-                            &object.data,
-                        ),
-                    )
-                    .await?,
-                );
-            }
-            Ok::<_, PostgresStorageError>(evaluations)
-        })
-        .await?;
-    for evaluation in evaluations.iter().flatten() {
-        runtime.record_computed_evaluation("shared", evaluation.error_codes());
-    }
-    Ok(())
 }
 
 fn validate_owner_id(personal_owner_id: Option<i32>) -> Result<(), PostgresStorageError> {

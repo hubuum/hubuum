@@ -1,5 +1,7 @@
 //! PostgreSQL implementation of computed-field definition and rebuild lifecycle.
 
+pub(crate) mod locking;
+
 use std::time::Instant;
 
 use chrono::{NaiveDateTime, Utc};
@@ -38,11 +40,9 @@ use crate::operations::computed_definition::{
     ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY,
 };
 use crate::operations::computed_materialization::{
-    ObjectMaterializationInput, acquire_computed_class_exclusive_lock,
-    acquire_computed_class_shared_lock, rebuild_objects,
+    acquire_computed_class_exclusive_lock, acquire_computed_class_shared_lock,
 };
 use crate::operations::event_record::append_event;
-use crate::operations::object::ObjectRow;
 use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
 use crate::revision::RevisionOwner;
@@ -933,73 +933,7 @@ async fn process_reindex_batch(
     payload: &ComputedReindexPayload,
     cursor: i32,
 ) -> Result<ReindexBatch, PostgresStorageError> {
-    let payload = payload.clone();
-    let batch_size = i64::try_from(runtime.computed_reindex_batch_size()).map_err(|_| {
-        PostgresStorageError::invalid_input(
-            "computed reindex batch size exceeds the supported range",
-        )
-    })?;
-    runtime
-        .with_transaction(
-            async move |connection| -> Result<ReindexBatch, PostgresStorageError> {
-                acquire_computed_class_shared_lock(connection, payload.class_id).await?;
-                task_execution::runnable_claimed_task(connection, claimed).await?;
-                // Object updates lock the class before the object. Take the
-                // materialization's class foreign-key lock in that same order,
-                // otherwise its INSERT can deadlock with a concurrent update
-                // that holds the class lock and is waiting for a batch object.
-                use crate::schema::hubuumclass::dsl as classes;
-                classes::hubuumclass
-                    .filter(classes::id.eq(payload.class_id))
-                    .for_key_share()
-                    .select(classes::id)
-                    .first::<i32>(connection)
-                    .await?;
-                use crate::schema::hubuumobject::dsl as objects;
-                let rows = objects::hubuumobject
-                    .filter(objects::hubuum_class_id.eq(payload.class_id))
-                    .filter(objects::id.gt(cursor))
-                    .filter(objects::id.le(payload.object_upper_bound))
-                    .order(objects::id.asc())
-                    .limit(batch_size)
-                    .for_update()
-                    .select(ObjectRow::as_select())
-                    .load::<ObjectRow>(connection)
-                    .await?;
-                let state = ensure_computation_state(connection, payload.class_id).await?;
-                if state.evaluation_revision != payload.target_revision
-                    || state.active_task_id != Some(claimed.id)
-                {
-                    return Ok(ReindexBatch::Superseded);
-                }
-                let Some(last_id) = rows.last().map(|row| row.id) else {
-                    return Ok(ReindexBatch::Complete);
-                };
-                let inputs = rows
-                    .iter()
-                    .map(|row| {
-                        ObjectMaterializationInput::new(row.id, row.hubuum_class_id, &row.data)
-                    })
-                    .collect::<Vec<_>>();
-                let summaries = rebuild_objects(
-                    connection,
-                    payload.class_id,
-                    payload.target_revision,
-                    &inputs,
-                )
-                .await?;
-                task_execution::runnable_claimed_task(connection, claimed).await?;
-                Ok(ReindexBatch::Rows {
-                    last_id,
-                    count: i32::try_from(rows.len()).unwrap_or(i32::MAX),
-                    error_codes: summaries
-                        .into_iter()
-                        .map(|summary| summary.error_codes().to_vec())
-                        .collect(),
-                })
-            },
-        )
-        .await
+    locking::reindex_batch(runtime, claimed, payload, cursor).await
 }
 
 fn successful_counts(processed: i32) -> Result<StorageTaskResultCounts, PostgresStorageError> {
