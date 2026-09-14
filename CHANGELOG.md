@@ -110,6 +110,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   snapshot. Update adapters and rerun conformance; see the storage adapter SDK
   upgrade guide.
 
+- Computed-field read repair now acquires definition and class locks before
+  object locks, preventing lock inversions with concurrent object and definition
+  updates. Backfill and repair batches use transaction-bound lock capabilities;
+  repair work is bounded per class and reloads current source data and definitions.
+
 - External authorization pagination preserves PostgreSQL ordering for computed
   arrays and objects on locale-collated databases, preventing skipped results.
   Continued JSON-sorted pages with exact totals use a separate bounded storage

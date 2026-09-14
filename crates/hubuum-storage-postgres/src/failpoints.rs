@@ -25,6 +25,7 @@ use crate::{PostgresConnection, PostgresStorageError};
 pub enum PostgresFaultPoint {
     AuthenticationBeforeActivityUpdate,
     CollectionCreateAfterRecords,
+    ComputedRepairBeforeLocks,
     EventDeliveryAfterClaim,
     EventDeliveryAfterOwnershipCheck,
     EventDeliveryBeforeAcknowledge,
@@ -46,6 +47,7 @@ impl PostgresFaultPoint {
         match self {
             Self::AuthenticationBeforeActivityUpdate => "authentication_before_activity_update",
             Self::CollectionCreateAfterRecords => "collection_create_after_records",
+            Self::ComputedRepairBeforeLocks => "computed_repair_before_locks",
             Self::EventDeliveryAfterClaim => "event_delivery_after_claim",
             Self::EventDeliveryAfterOwnershipCheck => "event_delivery_after_ownership_check",
             Self::EventDeliveryBeforeAcknowledge => "event_delivery_before_acknowledge",

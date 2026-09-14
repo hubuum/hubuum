@@ -102,7 +102,7 @@ mod tests {
                 label,
                 NewHubuumClass {
                     collection_id: 0,
-                    name: context.scoped_name("computed class"),
+                    name: context.scoped_name(&format!("computed class {label}")),
                     description: "Computed field test class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
@@ -110,7 +110,7 @@ mod tests {
                 vec![NewHubuumObject {
                     collection_id: 0,
                     hubuum_class_id: 0,
-                    name: context.scoped_name("computed object"),
+                    name: context.scoped_name(&format!("computed object {label}")),
                     description: "Computed field test object".to_string(),
                     data: serde_json::json!({
                         "inventory": {"hostname": "inventory.example"},
@@ -467,5 +467,6 @@ mod tests {
     mod consistency;
     mod definitions;
     mod lifecycle;
+    mod locking;
     mod querying;
 }

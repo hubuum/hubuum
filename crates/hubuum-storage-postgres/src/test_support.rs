@@ -4,6 +4,8 @@
 //! connections or rows. They are compiled only when the explicit
 //! `integration-test-support` feature is enabled.
 
+pub mod computed_lock_protocol;
+
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Timestamp};
 use diesel::{
