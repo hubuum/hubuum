@@ -5,6 +5,7 @@ use diesel::{
     sql_types::{BigInt, Bool, Integer, Jsonb, Nullable, Text},
 };
 use diesel_async::RunQueryDsl;
+use futures_util::TryStreamExt;
 use hubuum_domain::JsonSchemaLimits;
 use hubuum_domain::{
     ClassId, CollectionId, ObjectId, PrincipalId, ResourceRevision, SchemaReference,
@@ -34,6 +35,13 @@ use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 struct JsonRow {
     #[diesel(sql_type=Jsonb)]
     value: Value,
+}
+#[derive(QueryableByName)]
+struct FindingRow {
+    #[diesel(sql_type=Integer)]
+    object_id: i32,
+    #[diesel(sql_type=Jsonb)]
+    reason: Value,
 }
 #[derive(QueryableByName)]
 struct StateRow {
@@ -442,6 +450,32 @@ pub async fn get_schema_work(
         .await
 }
 
+pub async fn get_schema_work_report(
+    runtime: &PostgresRuntime,
+    task_id: TaskId,
+) -> Result<StorageSchemaWorkReport, PostgresStorageError> {
+    runtime.with_read_only_snapshot(async move |connection| {
+        let work = work_on(connection, task_id).await?;
+        crate::reach_fault_point(crate::PostgresFaultPoint::SchemaReportAfterCheckpoint, Some(connection)).await?;
+        let cursor = work.cursor();
+        let has_findings = work.impact().is_some_and(|impact| impact.persisted_findings() > 0);
+        let mut report = StorageSchemaWorkReport::builder(work);
+        if has_findings {
+            // Stream bounded rows rather than building a PostgreSQL JSON aggregate.
+            let mut rows = diesel::sql_query("SELECT object_id, reason FROM schema_impact_findings WHERE task_id=$1 AND object_id<=$2 ORDER BY object_id")
+                .bind::<Integer,_>(task_id.id()).bind::<Integer,_>(cursor)
+                .load_stream::<FindingRow>(connection).await?;
+            while let Some(row) = rows.try_next().await? {
+                report.push(StorageSchemaImpactFinding::new(
+                    ObjectId::new(row.object_id)?,
+                    serde_json::from_value(row.reason).map_err(invalid)?,
+                )).map_err(invalid)?;
+            }
+        }
+        report.finish().map_err(invalid)
+    }).await
+}
+
 pub async fn activate_schema_revision(
     runtime: &PostgresRuntime,
     request: StorageSchemaActivation,
@@ -746,6 +780,7 @@ pub async fn process_schema_work(
         else if results.is_empty(){finish_work_on(connection,&mut work,StorageSchemaWorkStatus::Complete,&context).await?;}
         else{
             use crate::schema::hubuumobject::dsl as objects;
+            let mut findings = Vec::new();
             for (id,resource_revision,status,inspection) in results{
                 let object=objects::hubuumobject.filter(objects::id.eq(id)).filter(objects::hubuum_class_id.eq(work.target().class_id().id())).filter(objects::revision.eq(resource_revision)).for_update().select(ValidationObject::as_select()).first::<ValidationObject>(connection).await.optional()?;
                 let stale=object.is_none();
@@ -753,10 +788,17 @@ pub async fn process_schema_work(
                     if work.kind()==StorageSchemaWorkKind::Revalidation && let Some(status)=status {store_result_on(connection,&object,&revision,status,&context).await?;}
                     else if status==Some(StorageComplianceStatus::Invalid) {impact_mismatch_on(connection,&object,&revision,&context).await?;}
                 }
-                if let Some(inspection) = inspection { work.record_impact(ObjectId::new(id)?,inspection,stale); }
+                if let Some(inspection) = inspection { findings.extend(work.record_impact(ObjectId::new(id)?,inspection,stale)); }
                 else { work.record(ObjectId::new(id)?,status,stale); }
             }
             task_execution::runnable_claimed_task(connection,claimed).await?;
+            if !findings.is_empty() {
+                diesel::sql_query("INSERT INTO schema_impact_findings(task_id,object_id,reason) SELECT $1,object_id,reason FROM jsonb_to_recordset($2) AS finding(object_id integer,reason jsonb)")
+                    .bind::<Integer,_>(work.task_id().id())
+                    .bind::<Jsonb,_>(serde_json::to_value(findings).map_err(invalid)?)
+                    .execute(connection).await?;
+                crate::reach_fault_point(crate::PostgresFaultPoint::SchemaImpactAfterFindings, Some(connection)).await?;
+            }
             work.batch_committed(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
             save_work_on(connection,&work).await?;
             let processed=i32::try_from(work.examined()).unwrap_or(i32::MAX);let failed=i32::try_from(work.invalid()+work.uninspectable()).unwrap_or(processed).min(processed);

@@ -561,6 +561,13 @@ async fn cancelled_schema_worker_cannot_commit_another_batch(
             .status(),
         StorageSchemaWorkStatus::Cancelled
     );
+    let report = crate::services::schema_evolution::get_work(&fixture.backend, work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.impact.unwrap().failures[0].samples,
+        vec![fixture.resources.objects[0].id().id()]
+    );
     fixture.cleanup().await;
 }
 
@@ -646,7 +653,7 @@ async fn expired_schema_lease_resumes_from_committed_checkpoint(
     #[case] backend: StorageBackendKind,
 ) {
     let fixture = SchemaFixture::new(backend, vec![json!({}), json!({})]).await;
-    let revision = fixture.stage(json!({"type":"object"}), true).await;
+    let revision = fixture.stage(json!(false), true).await;
     let work = fixture
         .request(revision.reference(), StorageSchemaWorkKind::Impact)
         .await;
@@ -695,6 +702,18 @@ async fn expired_schema_lease_resumes_from_committed_checkpoint(
         .await;
     assert_eq!(complete.examined(), 2);
     assert_eq!(complete.batches(), 2);
+    let report = crate::services::schema_evolution::get_work(&fixture.backend, work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.impact.unwrap().failures[0].samples,
+        fixture
+            .resources
+            .objects
+            .iter()
+            .map(|object| object.id().id())
+            .collect::<Vec<_>>()
+    );
     fixture.cleanup().await;
 }
 
@@ -1308,7 +1327,7 @@ async fn failed_schema_workers_publish_terminal_checkpoints(
     #[values(false, true)] process_batch: bool,
 ) {
     let fixture = SchemaFixture::new(kind, vec![json!({}), json!({})]).await;
-    let revision = fixture.stage(json!(true), true).await;
+    let revision = fixture.stage(json!(false), true).await;
     let work = fixture
         .request(revision.reference(), StorageSchemaWorkKind::Impact)
         .await;
@@ -1350,6 +1369,22 @@ async fn failed_schema_workers_publish_terminal_checkpoints(
             .await
             .is_err()
     );
+    let report = crate::services::schema_evolution::get_work(&fixture.backend, work.task_id())
+        .await
+        .unwrap();
+    let reported_ids = report
+        .impact
+        .unwrap()
+        .failures
+        .into_iter()
+        .flat_map(|group| group.samples)
+        .collect::<Vec<_>>();
+    let expected_ids = if process_batch {
+        vec![fixture.resources.objects[0].id().id()]
+    } else {
+        vec![]
+    };
+    assert_eq!(reported_ids, expected_ids);
     let replacement = fixture
         .request(revision.reference(), StorageSchemaWorkKind::Impact)
         .await;

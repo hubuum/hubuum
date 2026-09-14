@@ -29,6 +29,7 @@ use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_stor
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
 const TRUNCATE_TABLES: &[&str] = &[
+    "schema_impact_findings",
     "schema_validation_work",
     "object_schema_evidence",
     "class_schema_history",

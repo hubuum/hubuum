@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::BudgetedSchema;
 
 /// One failure, containing only a keyword and bounded schema-owned metadata.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "FailureSnapshot")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SchemaFailure {

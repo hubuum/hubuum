@@ -2,8 +2,9 @@
 
 mod impact;
 pub use impact::{
-    StorageSchemaImpact, StorageSchemaImpactBoundary, StorageSchemaImpactReadiness,
-    StorageSchemaInspection,
+    StorageSchemaImpact, StorageSchemaImpactBoundary, StorageSchemaImpactFinding,
+    StorageSchemaImpactReadiness, StorageSchemaImpactReport, StorageSchemaInspection,
+    StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
 };
 
 use async_trait::async_trait;
@@ -667,7 +668,7 @@ pub enum StorageSchemaWorkStatus {
     Superseded,
 }
 
-/// Bounded resumable scan state. Serialized only as workflow/backup metadata.
+/// Bounded resumable scan state. Complete findings belong to StorageSchemaWorkReport.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "SchemaWorkSnapshot")]
 pub struct StorageSchemaWork {
@@ -1003,6 +1004,11 @@ pub trait SchemaEvolutionStorage: Send + Sync {
         request: StorageSchemaWorkRequest,
     ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError>;
     async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError>;
+    /// Read one consistent checkpoint and its separately persisted findings.
+    async fn get_schema_work_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaWorkReport, StorageError>;
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,

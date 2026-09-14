@@ -26,6 +26,7 @@ pub struct QueryCaptureSnapshot {
     control_queries: usize,
     connection_checkouts: usize,
     query_counts: BTreeMap<String, usize>,
+    rendered_query_bytes: BTreeMap<String, usize>,
 }
 
 impl QueryCaptureSnapshot {
@@ -54,6 +55,16 @@ impl QueryCaptureSnapshot {
             .iter()
             .filter(|(query, _)| query.contains(needle))
             .map(|(_, count)| *count)
+            .sum()
+    }
+
+    /// Size of debug SQL plus bind representations, a deterministic traffic proxy.
+    /// Bound values are counted but never retained in the capture.
+    pub fn rendered_bytes_matching(&self, needle: &str) -> usize {
+        self.rendered_query_bytes
+            .iter()
+            .filter(|(query, _)| query.contains(needle))
+            .map(|(_, bytes)| *bytes)
             .sum()
     }
 }
@@ -101,6 +112,7 @@ fn active_capture_id() -> Option<u64> {
 }
 
 fn record_query(capture_id: u64, query: &str) {
+    let rendered_bytes = query.len();
     let query = normalize_query(query);
     // bb8's test-on-checkout probe runs before `acquire_connection` can replace
     // instrumentation on a reused connection. Pool use is captured separately
@@ -121,6 +133,10 @@ fn record_query(capture_id: u64, query: &str) {
     if is_control_query(&query) {
         snapshot.control_queries += 1;
     }
+    *snapshot
+        .rendered_query_bytes
+        .entry(query.clone())
+        .or_insert(0) += rendered_bytes;
     *snapshot.query_counts.entry(query).or_insert(0) += 1;
 }
 
@@ -184,7 +200,30 @@ pub async fn capture_queries<T>(future: impl Future<Output = T>) -> (T, QueryCap
 
 #[cfg(test)]
 mod tests {
-    use super::{is_control_query, is_pool_validation_query, normalize_query};
+    use super::{
+        active_capture_id, capture_queries, is_control_query, is_pool_validation_query,
+        normalize_query, record_query,
+    };
+
+    #[tokio::test]
+    async fn traffic_capture_counts_bind_bytes_without_retaining_values() {
+        let queries = [
+            "UPDATE work SET payload=$1 -- binds: [\"first private payload\"]",
+            "UPDATE work SET payload=$1 -- binds: [\"larger second private payload\"]",
+        ];
+        let (_, capture) = capture_queries(async {
+            for query in queries {
+                record_query(active_capture_id().unwrap(), query);
+            }
+        })
+        .await;
+        assert_eq!(
+            capture.rendered_bytes_matching("UPDATE work"),
+            queries.iter().map(|query| query.len()).sum::<usize>()
+        );
+        assert_eq!(capture.queries_matching("UPDATE work"), 2);
+        assert!(!format!("{capture:?}").contains("private payload"));
+    }
 
     #[test]
     fn query_normalization_collapses_whitespace() {

@@ -153,6 +153,7 @@ pub struct SchemaWorkResponse {
     pub not_required: u64,
     pub uninspectable: u64,
     pub stale: u64,
+    /// Up to 20 summary IDs; impact.failures contains all committed mismatches.
     pub invalid_samples: Vec<i32>,
     pub elapsed_millis: u64,
     pub batches: u64,
@@ -176,9 +177,10 @@ pub enum SchemaImpactReadiness {
 pub struct SchemaImpactResponse {
     pub baseline: SchemaReference,
     pub counts: SchemaImpactCounts,
-    /// At most 20 groups, counting the first failure per object.
+    /// Every committed mismatched object, grouped by its first failure without a group limit.
     pub failures: Vec<SchemaFailureGroup>,
-    /// Failures whose group did not fit the report limit.
+    /// Failures omitted by older capped reports; zero for newly started analyses.
+    /// Rerun an older analysis to obtain its complete object lists.
     pub ungrouped_failures: u64,
 }
 
@@ -203,7 +205,8 @@ pub struct SchemaImpactCounts {
 pub struct SchemaFailureGroup {
     pub reason: SchemaFailure,
     pub objects: u64,
-    /// At most five object IDs per group; values and instance paths are omitted.
+    /// All object IDs in this group, in scan order; the field name is retained for compatibility.
+    /// Older reports may contain only samples. Values and instance paths are omitted.
     pub samples: Vec<i32>,
 }
 

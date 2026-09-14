@@ -310,10 +310,14 @@ locking behavior.
 `SchemaEvolutionStorage` belongs to the workflow family. Staging, abandonment,
 activation and work requests return durable audit receipts. The context-free
 `SchemaEvolutionStorage::process_schema_work` operation uses its live task lease and captured initiator
-to commit each bounded batch's evidence, checkpoint and audit/outbox together.
+to commit each bounded batch's evidence, new findings, checkpoint and audit/outbox together.
 Expired schema-validation tasks resume that checkpoint; other task kinds keep
 their existing recovery policy. Cancellation fences subsequent batch commits.
 Impact compares both policies against each captured object revision and commits
-its comparison counts and redacted failure groups with the checkpoint. It does
-not replace active evidence. Strict activation rechecks the captured baseline
+its comparison counts with the bounded checkpoint while appending the batch's
+redacted findings separately. `record_impact` returns each finding to persist;
+adapters must commit it in the same fenced transaction as the updated checkpoint.
+`get_schema_work_report` assembles the full groups from a consistent snapshot;
+workers and activation proofs use `get_schema_work` without reading past findings.
+Impact does not replace active evidence. Strict activation rechecks the captured baseline
 and population epoch while holding the class boundary.

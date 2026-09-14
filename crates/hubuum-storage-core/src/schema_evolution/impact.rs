@@ -2,6 +2,12 @@ use hubuum_domain::{ObjectId, SchemaFailure, SchemaImpactInspection, SchemaRefer
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod report;
+pub use report::{
+    StorageSchemaImpactFinding, StorageSchemaImpactReport, StorageSchemaWorkReport,
+    StorageSchemaWorkReportBuilder,
+};
+
 use super::{
     StorageComplianceStatus, StorageSchemaRevisionStatus, StorageSchemaWork, StorageSchemaWorkKind,
     StorageSchemaWorkStatus, StorageValidatedSchemaPolicy, StorageValidationError,
@@ -164,7 +170,7 @@ struct FailureGroup {
     samples: Vec<ObjectId>,
 }
 
-/// Bounded checkpoint metadata; grouped counts describe the first failure per object.
+/// Bounded comparison checkpoint. Findings are appended separately from scan progress.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "ImpactSnapshot")]
 pub struct StorageSchemaImpact {
@@ -172,6 +178,8 @@ pub struct StorageSchemaImpact {
     counts: ImpactCounts,
     failures: Vec<FailureGroup>,
     ungrouped_failures: u64,
+    #[serde(default)]
+    persisted_findings: u64,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +188,8 @@ struct ImpactSnapshot {
     counts: ImpactCounts,
     failures: Vec<FailureGroup>,
     ungrouped_failures: u64,
+    #[serde(default)]
+    persisted_findings: u64,
 }
 
 impl TryFrom<ImpactSnapshot> for StorageSchemaImpact {
@@ -191,6 +201,7 @@ impl TryFrom<ImpactSnapshot> for StorageSchemaImpact {
             counts: raw.counts,
             failures: raw.failures,
             ungrouped_failures: raw.ungrouped_failures,
+            persisted_findings: raw.persisted_findings,
         };
         let total = impact.counts.total();
         if total.is_none()
@@ -228,11 +239,16 @@ impl StorageSchemaImpact {
             counts: ImpactCounts::default(),
             failures: Vec::new(),
             ungrouped_failures: 0,
+            persisted_findings: 0,
         }
     }
 
     pub const fn baseline(&self) -> SchemaReference {
         self.baseline
+    }
+
+    pub const fn persisted_findings(&self) -> u64 {
+        self.persisted_findings
     }
 
     pub(super) fn is_inspectable(&self) -> bool {
@@ -260,40 +276,27 @@ impl StorageSchemaImpact {
     }
 
     fn grouped_count(&self) -> Option<u64> {
-        self.failures
-            .iter()
-            .try_fold(self.ungrouped_failures, |total, group| {
-                total.checked_add(group.objects)
-            })
+        self.failures.iter().try_fold(
+            self.ungrouped_failures
+                .checked_add(self.persisted_findings)?,
+            |total, group| total.checked_add(group.objects),
+        )
     }
 
-    fn record(&mut self, object: ObjectId, inspection: StorageSchemaInspection, stale: bool) {
+    fn record(
+        &mut self,
+        object: ObjectId,
+        inspection: StorageSchemaInspection,
+        stale: bool,
+    ) -> Option<StorageSchemaImpactFinding> {
         if stale {
             self.counts.record(None, None);
-            return;
+            return None;
         }
         self.counts.record(inspection.before, inspection.after);
-        let Some(reason) = inspection.failure else {
-            return;
-        };
-        if let Some(group) = self
-            .failures
-            .iter_mut()
-            .find(|group| group.reason == reason)
-        {
-            group.objects += 1;
-            if group.samples.len() < 5 {
-                group.samples.push(object);
-            }
-        } else if self.failures.len() < 20 {
-            self.failures.push(FailureGroup {
-                reason,
-                objects: 1,
-                samples: vec![object],
-            });
-        } else {
-            self.ungrouped_failures += 1;
-        }
+        let reason = inspection.failure?;
+        self.persisted_findings += 1;
+        Some(StorageSchemaImpactFinding::new(object, reason))
     }
 }
 
@@ -307,11 +310,11 @@ impl StorageSchemaWork {
         object: ObjectId,
         inspection: StorageSchemaInspection,
         stale: bool,
-    ) {
+    ) -> Option<StorageSchemaImpactFinding> {
         self.record(object, inspection.status(), stale);
-        if let Some(impact) = &mut self.impact {
-            impact.record(object, inspection, stale);
-        }
+        self.impact
+            .as_mut()
+            .and_then(|impact| impact.record(object, inspection, stale))
     }
 
     /// Readiness is evaluated against current state, never persisted as a promise.
@@ -376,10 +379,13 @@ mod tests {
             json!({"type":"integer"}),
         ))
         .unwrap();
-        work.record_impact(
-            ObjectId::new(1).unwrap(),
-            StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&json!("secret"))),
-            true,
+        assert!(
+            work.record_impact(
+                ObjectId::new(1).unwrap(),
+                StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&json!("secret"))),
+                true,
+            )
+            .is_none()
         );
         let impact = serde_json::to_value(work.impact().unwrap()).unwrap();
         assert_eq!(impact["counts"]["uninspectable"], 1);
@@ -401,6 +407,58 @@ mod tests {
     }
 
     #[test]
+    fn legacy_capped_checkpoints_resume_without_discarding_findings() {
+        let mut work = work();
+        work.upper_bound = 15;
+        let baseline =
+            StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Absent).unwrap();
+        let candidate = StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Enforced(
+            json!({"type":"integer", "minimum":1}),
+        ))
+        .unwrap();
+        for id in 1..=14 {
+            let value = if id <= 7 { json!("private") } else { json!(0) };
+            let _ = work.record_impact(
+                ObjectId::new(id).unwrap(),
+                StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&value)),
+                false,
+            );
+        }
+        // Reproduce omitted IDs and groups from an older persisted checkpoint.
+        let mut snapshot = serde_json::to_value(work).unwrap();
+        snapshot["impact"]["failures"] = json!([{
+            "reason": {"keyword":"type", "schema_path":"/type", "missing_property":null},
+            "objects":7, "samples":[1,2,3,4,5]
+        }]);
+        snapshot["impact"]
+            .as_object_mut()
+            .unwrap()
+            .remove("persisted_findings");
+        snapshot["impact"]["ungrouped_failures"] = json!(7);
+        let mut restored: StorageSchemaWork = serde_json::from_value(snapshot).unwrap();
+        let finding = restored
+            .record_impact(
+                ObjectId::new(15).unwrap(),
+                StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&json!("private"))),
+                false,
+            )
+            .unwrap();
+        let restored = serde_json::from_value(serde_json::to_value(restored).unwrap()).unwrap();
+        let mut builder = StorageSchemaWorkReport::builder(restored);
+        builder.push(finding).unwrap();
+        let resumed = serde_json::to_value(builder.finish().unwrap().impact().unwrap()).unwrap();
+        assert_eq!(
+            resumed["failures"],
+            json!([{
+                "reason": {"keyword":"type", "schema_path":"/type", "missing_property":null},
+                "objects":8,
+                "samples":[1,2,3,4,5,15]
+            }])
+        );
+        assert_eq!(resumed["ungrouped_failures"], 7);
+    }
+
+    #[test]
     fn legacy_checkpoints_cannot_authorize_new_strict_activations() {
         let mut work = work();
         work.finish(StorageSchemaWorkStatus::Complete, 0);
@@ -409,5 +467,95 @@ mod tests {
         snapshot.as_object_mut().unwrap().remove("impact");
         let restored: StorageSchemaWork = serde_json::from_value(snapshot).unwrap();
         assert!(!restored.proves_compatible(work.target(), baseline, 0));
+    }
+
+    #[rstest]
+    #[case::same_reason(1)]
+    #[case::many_reasons(256)]
+    fn checkpoint_size_is_independent_of_accumulated_findings(#[case] reasons: usize) {
+        let mut work = work();
+        work.upper_bound = 8192;
+        let reasons = (0..reasons).map(|index| serde_json::from_value::<SchemaFailure>(json!({
+            "keyword":"type", "schema_path":format!("/properties/field{index}/type"), "missing_property":null
+        })).unwrap()).collect::<Vec<_>>();
+        let mut findings = Vec::new();
+        for id in 1..=work.upper_bound() {
+            findings.extend(work.record_impact(
+                ObjectId::new(id).unwrap(),
+                StorageSchemaInspection {
+                    before: Some(StorageComplianceStatus::NotRequired),
+                    after: Some(StorageComplianceStatus::Invalid),
+                    failure: Some(reasons[(id as usize - 1) % reasons.len()].clone()),
+                },
+                false,
+            ));
+            if id % 64 == 0 {
+                let checkpoint = serde_json::to_vec(&work).unwrap();
+                assert!(
+                    checkpoint.len() < 2048,
+                    "checkpoint grew to {} bytes at object {id}",
+                    checkpoint.len()
+                );
+                work = serde_json::from_slice(&checkpoint).unwrap();
+            }
+        }
+        let mut report = StorageSchemaWorkReport::builder(work);
+        for finding in findings {
+            report.push(finding).unwrap();
+        }
+        let report = report.finish().unwrap();
+        let impact = serde_json::to_value(report.impact().unwrap()).unwrap();
+        assert_eq!(impact["failures"].as_array().unwrap().len(), reasons.len());
+        assert_eq!(
+            impact["failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|group| group["samples"].as_array().unwrap().len())
+                .sum::<usize>(),
+            8192
+        );
+    }
+
+    #[rstest]
+    #[case::missing("missing")]
+    #[case::duplicate("duplicate")]
+    #[case::unordered("unordered")]
+    #[case::past_cursor("past_cursor")]
+    fn inconsistent_persisted_findings_cannot_produce_a_report(#[case] corruption: &str) {
+        let mut work = work();
+        work.upper_bound = 3;
+        let candidate =
+            StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Enforced(json!(false)))
+                .unwrap();
+        let mut findings = (1..=2)
+            .map(|id| {
+                work.record_impact(
+                    ObjectId::new(id).unwrap(),
+                    StorageSchemaInspection::new(Some(&candidate), &candidate, Some(&json!({}))),
+                    false,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        match corruption {
+            "missing" => {
+                findings.pop();
+            }
+            "duplicate" => {
+                findings[1] = findings[0].clone();
+            }
+            "unordered" => findings.swap(0, 1),
+            "past_cursor" => {
+                findings[1] = serde_json::from_value(json!({"object_id":3,"reason":{"keyword":"falseSchema","schema_path":"","missing_property":null}})).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let mut report = StorageSchemaWorkReport::builder(work);
+        let outcome = findings
+            .into_iter()
+            .try_for_each(|finding| report.push(finding))
+            .and_then(|()| report.finish().map(|_| ()));
+        assert!(outcome.is_err());
     }
 }

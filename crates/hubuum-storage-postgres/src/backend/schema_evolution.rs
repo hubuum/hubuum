@@ -86,6 +86,14 @@ impl SchemaEvolutionStorage for PostgresStorage {
             .await
             .map_err(StorageError::from)
     }
+    async fn get_schema_work_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaWorkReport, StorageError> {
+        schema_evolution::get_schema_work_report(self.runtime(), task_id)
+            .await
+            .map_err(StorageError::from)
+    }
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,

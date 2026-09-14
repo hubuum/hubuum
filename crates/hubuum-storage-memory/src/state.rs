@@ -81,6 +81,7 @@ impl MemoryState {
             schema_epochs: BTreeMap::new(),
             schema_evidence: BTreeMap::new(),
             schema_work: BTreeMap::new(),
+            schema_findings: BTreeMap::new(),
             next_collection_id: ROOT_COLLECTION_ID + 1,
             next_class_id: 1,
             next_object_id: 1,

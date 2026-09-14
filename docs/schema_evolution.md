@@ -62,7 +62,7 @@ All routes below are relative to `/api/v1/classes/{class_id}/schema`.
 | `POST /revisions/{revision}/impact` | Queue bounded impact analysis |
 | `POST /revisions/{revision}/activate` | Activate with an explicit policy |
 | `POST /revisions/{revision}/revalidate` | Queue revalidation of the active revision |
-| `GET /tasks/{task_id}` | Read progress and bounded findings |
+| `GET /tasks/{task_id}` | Read progress and grouped impact findings |
 | `DELETE /tasks/{task_id}` | Cancel work and fence later batch commits |
 | `GET` | Read active revision, population epoch, and compliance counts |
 | `GET /objects` | Page compliance metadata, optionally filtered by `status` |
@@ -144,20 +144,27 @@ The `impact.baseline` reference identifies the comparison policy. The disjoint
 | `unchanged_not_required` | Neither policy requires validation |
 | `uninspectable` | Either comparison could not run, or the object changed before commit |
 
-`impact.failures` groups the first failing constraint per object, with at most
-20 groups and five object IDs per group. Each group includes `objects` and a
+`impact.failures` groups every mismatched object by its first failing constraint,
+without a limit on groups or object IDs. Each group's `samples` field contains
+all of its object IDs in scan order; the field name is retained for compatibility.
+Each group includes `objects` and a
 `reason` containing the JSON Schema `keyword` (`falseSchema` for a boolean-false
 schema), a schema-owned `schema_path`,
 and, for missing required properties, `missing_property`. No instance paths,
 unexpected property names, instance values, or validator messages are included.
 Schema paths exceeding 512 bytes and property names exceeding 128 bytes are
-omitted. `ungrouped_failures` counts failures whose group did not fit the limit;
-the overall invalid count remains complete. These are first-failure counts,
-not an exhaustive list of everything that must be repaired in each object.
+omitted. `ungrouped_failures` is retained for compatibility and is zero for newly
+started analyses. Older checkpoints may still contain capped ID lists and a
+nonzero count of omitted failures; rerun those analyses to obtain complete lists.
+Each object has one failure reason, not an exhaustive list of everything that
+must be repaired in that object. Running, cancelled, and failed tasks include
+only findings committed so far; stale or uninspectable objects have no proven
+mismatch reason and remain accounted for by their counters and readiness.
 
 For example, a report could show 43 `newly_invalid` objects, with one group of
 38 failures for missing `hostname` and another of five `type` failures at
-`/properties/hostname/type`. Use the sample IDs to inspect authorized objects,
+`/properties/hostname/type`, with all 43 IDs in their respective groups. Use these
+IDs to inspect authorized objects,
 repair them under the active policy, or stage a revised proposal. Then request
 a fresh impact task before activation.
 
@@ -176,8 +183,9 @@ failures are uninspectable, not proof of a schema mismatch. Increasing admission
 budgets may allow a new task to inspect those objects. Impact checkpoints created
 before comparison metadata was available remain inconclusive and need a fresh
 task. Revalidation responses have no impact comparison or readiness.
-Polling reads only the task checkpoint and indexed schema state; it does not
-scan objects or recompute compliance totals.
+Polling assembles the committed findings with the task checkpoint and reads
+indexed schema state; it does not scan objects or recompute compliance totals.
+Its response size and assembly work grow with the number of reported mismatches.
 
 ### Checkpoints and execution
 
@@ -187,16 +195,22 @@ After completion, cancellation, or failure, another request starts a fresh scan
 of the class, including stale and invalid objects.
 
 A checkpoint retains the target, initial population epoch, maximum object ID,
-cursor, counters, up to 20 invalid object IDs, batch count, and elapsed batch
+cursor, counters, up to 20 summary IDs in `invalid_samples`, batch count, and elapsed batch
 time. Matching start/end epochs make completed impact exact at completion;
 activation rechecks that epoch again. An analysis with population changes is
-advisory. Impact checkpoints also retain the baseline, comparison counts, and
-bounded failure groups described above. Event and audit findings retain fixed
+advisory. Impact checkpoints also retain the baseline, comparison counts, and a
+count of separately persisted findings. Each batch appends only its new findings
+in the same transaction as the bounded checkpoint. Workers never reload or
+rewrite findings from earlier batches. The report reader groups findings by
+reason using a hash index, with checkpoint and findings read from one consistent
+snapshot. Full report sizes grow with the number of mismatches; checkpoint sizes
+and batch persistence stay bounded independently of accumulated findings.
+Event and audit findings retain fixed
 categories; their payloads omit validator messages, instance values, and paths.
 
 Each batch reads snapshots in object-ID order, validates outside its write
 transaction, then rechecks the lease, checkpoint, active revision, and inspected
-object revisions before publishing results. Evidence, progress, task completion,
+object revisions before publishing results. Evidence, findings, progress, task completion,
 events, and audit records commit together. A superseded revalidation terminates
 without satisfying the new schema. Historical impact can finish but cannot
 satisfy another revision. Cancellation preserves already committed results and
@@ -273,7 +287,7 @@ Backup format 6 adds `class_schema_revisions`, `class_schema_state`, and
 is included. Pre-replacement validation checks references, lifecycle, compiled
 policies, active projection, population counts, and evidence integrity. Current
 successful evidence is rechecked against its object document. Work checkpoints,
-impact proofs, and active leases are not restored; fresh revalidation tasks are
+impact findings, impact proofs, and active leases are not restored; fresh revalidation tasks are
 queued for enforced classes. History retains documents for deleted classes.
 Reconstructed jobs are covered by the restore completion audit entry; subsequent
 validation findings emit the usual object events and audit entries.
@@ -304,7 +318,8 @@ not add declarative indexes, inheritance, or automatic JSON transformations.
 
 The seven coordinated SDK crates move from 0.2 to 0.3 because the mandatory
 capability, task/event vocabularies, import DTO, and backup sections change.
-Adapters must implement all eleven schema methods, handle `schema_validation`,
+Adapters must implement every required schema method, including the separate
+`get_schema_work_report` projection, handle `schema_validation`,
 map the new event entities and logical sections, and preserve the schema
 transaction and lease semantics. See the storage boundary inventories.
 
@@ -317,6 +332,12 @@ between inspection and commit, and a 128-object workload with 256 KiB JSON rows.
 That workload asserts constant activation query count, two checkouts per batch,
 and the aggregate byte bound. Ordinary backup/restore conformance exercises the
 new sections with both adapters.
+
+Impact regressions scan 8,192 mismatches across one or 256 reasons while bounding
+serialized checkpoint size. PostgreSQL probes measure query counts and rendered
+SQL/bind bytes across 4 and 32 default batches, rejecting accumulated finding
+reads or growing checkpoint writes. Native fault tests verify atomic rollback
+and consistent reports while another batch commits.
 
 Run `cargo bench --bench schema_validation_criterion` for deterministic compiled
 validation and budget-rejection throughput without database or global config.
