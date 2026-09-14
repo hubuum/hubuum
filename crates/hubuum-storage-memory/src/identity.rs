@@ -814,6 +814,10 @@ impl ServiceAccountStorage for MemoryStorage {
             .tokens
             .retain(|_, token| token.principal_id.id() != id.id());
         for task in state.tasks.values_mut() {
+            task.control.forget_actor(
+                PrincipalId::new(id.id())
+                    .map_err(|error| StorageError::internal(error.to_string()))?,
+            );
             if task
                 .submitted_by
                 .is_some_and(|principal| principal.id() == id.id())
@@ -1380,6 +1384,11 @@ impl UserStorage for MemoryStorage {
         let Some(record) = state.users.remove(&id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(0));
         };
+        let actor =
+            PrincipalId::new(id.id()).map_err(|error| StorageError::internal(error.to_string()))?;
+        for task in state.tasks.values_mut() {
+            task.control.forget_actor(actor);
+        }
         state.principals.remove(&id.id());
         state
             .memberships

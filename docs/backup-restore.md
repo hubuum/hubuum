@@ -10,6 +10,14 @@ replaces the whole system. Export/import is the portable merge path for moving
 selected collections or hosts while retaining the destination's existing data
 and history.
 
+Backup cancellation uses `POST /api/v1/tasks/{task_id}/cancel`. Incomplete
+capture output is discarded and is never downloadable as a valid backup.
+History-inclusive backups preserve cancellation intent, actor, terminal cause,
+execution deadlines and remote dispatch evidence. These optional fields extend
+the current logical format; older backups omit them and remain readable. Restore
+validates supplied control metadata and rejects inconsistent task-kind or terminal
+states. Restore confirmation itself is outside generic task cancellation.
+
 ## Backup API
 
 Submit a full backup as an unscoped administrator:

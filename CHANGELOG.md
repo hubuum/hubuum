@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Task cancellation through `POST /api/v1/tasks/{task_id}/cancel`, with durable
+  cross-replica intent, idempotent queued withdrawal, cooperative executor cleanup,
+  and explicit import/reindex/remote-side-effect accounting. Owners and unscoped
+  administrators can cancel authorized work; scoped tokens are limited to work
+  submitted with the same token. Internal reindex and schema work require an
+  unscoped administrator.
+- Validated per-kind execution limits, persisted from first claim independently
+  of lease expiry, plus cancellation/deadline metadata and bounded metrics.
+
 - A ready-to-restore functional test corpus containing 3,000 objects across
   twelve classes, with schema-free, advisory and enforced policies, permission
   scenarios, relations and retained history. Rich object data and shared and
@@ -47,6 +56,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   history, aggregate compliance metrics, and bounded large-object validation.
 
 ### Changed
+
+- **Breaking storage SDK change:** `TaskExecutionStorage` adapters must implement
+  cancellation requests, deadline admission/polling, fenced stop acknowledgement,
+  and remote dispatch admission. Implement all five operations and preserve typed
+  task control and execution scopes before upgrading the storage SDK.
+- **Worker upgrade requirement:** Drain old task workers, apply migration
+  `20260914000001`, then start upgraded workers with consistent execution limits.
+  Treetop deployments must add the `CancelTask` action and cancellation policies;
+  `ReadTask` alone does not grant this mutation. The root Rust application library
+  remains an internal composition crate.
 
 - **Breaking storage-adapter contract:** Ordinary cursor-page adapters must
   support typed internal continuations by using `QueryOptions::cursor_values`

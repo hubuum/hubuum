@@ -12,7 +12,7 @@ The statically linked storage adapter SDK consists of exactly these crates:
 | `hubuum-domain` | Validated identifiers, revisions, JSON Patch, and domain values | Default; `openapi` |
 | `hubuum-events-core` | Event catalog, envelopes, filters, and mutation provenance | Default; `schema` |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
-| `hubuum-task-core` | Task identity and idempotency values | Default only |
+| `hubuum-task-core` | Task identity, idempotency, validated execution limits and cooperative stop contexts | Default only |
 | `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default only |
 | `hubuum-storage-conformance` | Reusable behavioral certification for complete adapters | Default only |
 
@@ -113,7 +113,7 @@ closed set is:
   `QueryError`, `QueryScalarType`, `RelatedClassField`,
   `RelatedFilterTarget`, `RelatedObjectField`, `SearchOperator`,
   `StructuredQueryExpression`, and `StructuredQueryField`;
-- `hubuum-task-core`: `IdempotencyKeyError`; and
+- `hubuum-task-core`: `IdempotencyKeyError`, `TaskControlError`, and `TaskStopReason`; and
 - `hubuum-storage-core`: all public enums except `StorageCapability`, including
   authorization permissions, errors, lifecycle selectors, query dimensions,
   task and restore states, import policies, mutation outcomes, notifications,
@@ -248,3 +248,26 @@ Schema work reporting also applies through generic task APIs. Adapters must hono
 attribution does not grant access to class-wide counts. Task failure must atomically
 persist the schema checkpoint's terminal `failed` status and release its active-work
 slot. Schema provenance timestamps use UTC microsecond precision across adapters.
+
+## Cancellation contract migration
+
+The next incompatible SDK release adds five required `TaskExecutionStorage`
+operations: `request_task_cancellation`, `admit_task_execution`,
+`poll_task_execution`, `acknowledge_task_stop`, and `begin_remote_dispatch`.
+Adapters must preserve private-fielded `StorageTaskControl` across projections
+and logical backups, pin the original deadline at first admission, and honor
+`StorageExecutionScope::with_task_execution` for actual work and cleanup.
+
+Requests persist independently of acknowledgement. Queue withdrawal and terminal
+bookkeeping are atomic. Active work keeps its live lease through cleanup, and
+all terminal writes arbitrate cancellation against completion under that lease.
+Strict imports fence the effect/receipt commit against the stop decision;
+remote dispatch persists conservative evidence before attempting HTTP. Export
+and backup artifacts are published only with their successful terminal state.
+`TaskCancelled` and `TaskDeadlineExceeded` are distinct storage errors and must
+not be converted into per-item import failures. Update exhaustive error/action
+matches for these variants and `Action::CancelRequested`.
+
+The shared application contract tests exercise every registered adapter. Keep
+adapter-native coverage for SQL cancellation, receipt commit races, database
+locking, replica recovery and connection cleanup alongside those shared tests.

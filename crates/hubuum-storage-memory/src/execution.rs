@@ -37,6 +37,13 @@ fn merge_memory_execution_scope(
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
     let mut merged = StorageExecutionScope::default();
+    if let Some(execution) = child
+        .task_execution_override()
+        .or_else(|| parent.task_execution_override())
+    {
+        merged = merged.with_task_execution(execution.clone());
+    }
+
     if let Some(call_site) = child
         .call_site_override()
         .or_else(|| parent.call_site_override())
@@ -129,7 +136,7 @@ impl TransactionStorage for MemoryStorage {
         let transaction = MemoryTransaction {
             storage: Self {
                 schema_limits: self.schema_limits,
-                state: Arc::new(RwLock::new(committed.clone())),
+                state: Arc::new(MemoryStateLock::new(committed.clone())),
             },
             event_context,
         };
@@ -147,4 +154,17 @@ impl StorageBackend for MemoryStorage {}
 fn an_external_crate_can_implement_the_complete_backend_contract() {
     fn assert_complete<T: StorageBackend + Clone + 'static>() {}
     assert_complete::<MemoryStorage>();
+}
+
+pub(crate) fn task_execution_checkpoint() -> Result<(), StorageError> {
+    MEMORY_EXECUTION_SCOPE
+        .try_with(|scope| {
+            scope
+                .task_execution_override()
+                .and_then(Option::as_ref)
+                .map_or(Ok(()), |execution| {
+                    execution.check().map_err(StorageError::task_stopped)
+                })
+        })
+        .unwrap_or(Ok(()))
 }

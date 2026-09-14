@@ -482,6 +482,54 @@ pub struct AppConfig {
     )]
     pub task_heartbeat_seconds: u64,
 
+    /// Maximum import execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 3600
+    )]
+    pub task_import_execution_timeout_seconds: u64,
+
+    /// Maximum export execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 900
+    )]
+    pub task_export_execution_timeout_seconds: u64,
+
+    /// Maximum backup execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 3600
+    )]
+    pub task_backup_execution_timeout_seconds: u64,
+
+    /// Maximum reindex execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 7200
+    )]
+    pub task_reindex_execution_timeout_seconds: u64,
+
+    /// Maximum remote call execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 300
+    )]
+    pub task_remote_call_execution_timeout_seconds: u64,
+
+    /// Maximum schema validation execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 7200
+    )]
+    pub task_schema_validation_execution_timeout_seconds: u64,
+
     /// Minimum interval between stale-task recovery scans in this process.
     #[clap(
         long,
@@ -1212,7 +1260,39 @@ impl AppConfig {
     }
 
     pub fn task_worker_settings(&self) -> Result<TaskWorkerSettings, ApiError> {
+        let limits = crate::tasks::TaskExecutionLimits::default()
+            .with_seconds(
+                crate::models::TaskKind::Import,
+                self.task_import_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
+                crate::models::TaskKind::Export,
+                self.task_export_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
+                crate::models::TaskKind::Backup,
+                self.task_backup_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
+                crate::models::TaskKind::Reindex,
+                self.task_reindex_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
+                crate::models::TaskKind::RemoteCall,
+                self.task_remote_call_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
+                crate::models::TaskKind::SchemaValidation,
+                self.task_schema_validation_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?;
         TaskWorkerSettings::builder()
+            .execution_limits(limits)
             .worker_count(self.runtime_role.effective_worker_count(self.task_workers))
             .poll_interval(Duration::from_millis(self.task_poll_interval_ms))
             .lease_duration(Duration::from_secs(self.task_lease_seconds))
@@ -1727,6 +1807,16 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
 
     environment::validate_registry().map_err(ApiError::BadRequest)?;
 
+    fn execution_seconds(key: &str, default: u64) -> Result<u64, ApiError> {
+        match env::var(key) {
+            Ok(value) => value.parse().map_err(|_| {
+                ApiError::BadRequest(format!("{key} must be a positive whole number of seconds"))
+            }),
+            Err(env::VarError::NotPresent) => Ok(default),
+            Err(_) => Err(ApiError::BadRequest(format!("{key} must be valid UTF-8"))),
+        }
+    }
+
     // Helper function to read an environment variable or return a default value
     fn env_or_default(key: &str, default: &str) -> String {
         env::var(key).unwrap_or_else(|_| default.to_string())
@@ -1903,6 +1993,30 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_HEARTBEAT_SECONDS),
+        task_import_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS",
+            3600,
+        )?,
+        task_export_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS",
+            900,
+        )?,
+        task_backup_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS",
+            3600,
+        )?,
+        task_reindex_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS",
+            7200,
+        )?,
+        task_remote_call_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+            300,
+        )?,
+        task_schema_validation_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+            7200,
+        )?,
         task_recovery_interval_seconds: env::var("HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS")
             .ok()
             .and_then(|value| value.parse().ok())

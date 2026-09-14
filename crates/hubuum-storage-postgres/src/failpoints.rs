@@ -33,6 +33,7 @@ pub enum PostgresFaultPoint {
     RestoreCoordinatorAfterHeartbeat,
     TaskFinalizeAfterEvent,
     ImportAfterCommit,
+    ImportBeforeCommitFence,
     TaskLeaseBeforeRenewal,
     TransactionBeforeCommit,
 }
@@ -50,6 +51,7 @@ impl PostgresFaultPoint {
             Self::RestoreAfterDrainTransition => "restore_after_drain_transition",
             Self::RestoreCoordinatorAfterHeartbeat => "restore_coordinator_after_heartbeat",
             Self::ImportAfterCommit => "import_after_commit",
+            Self::ImportBeforeCommitFence => "import_before_commit_fence",
             Self::TaskFinalizeAfterEvent => "task_finalize_after_event",
             Self::TaskLeaseBeforeRenewal => "task_lease_before_renewal",
             Self::TransactionBeforeCommit => "transaction_before_commit",

@@ -22,6 +22,7 @@ pub(super) fn capture(
             "success_items": t.progress.succeeded(), "failed_items": t.progress.failed(), "submitted_token_scoped": t.scope_snapshot.scoped(), "submitted_token_scopes": t.scope_snapshot.scopes(),
             "request_redacted_at": t.request_redacted_at, "started_at": t.started_at, "finished_at": t.finished_at, "deleted_at": t.deleted_at, "deleted_by": t.deleted_by.map(PrincipalId::id),
             "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
+        fields.extend(t.control.snapshot_fields());
         add_trace(&mut fields, t.trace_link.as_ref());
         tasks.push(retain_row(progress, row(Value::Object(fields)))?);
     }
@@ -74,6 +75,11 @@ pub(super) fn restore(
         let r = Row(row);
         let id = TaskId::new(r.integer("id")?).map_err(|_| invalid("id"))?;
         let task = MemoryTaskRecord {
+            control: StorageTaskControl::from_snapshot(
+                StorageTaskKind::from_persisted(r.text("kind")?).ok_or_else(|| invalid("kind"))?,
+                row,
+            )
+            .map_err(invalid_contract_value)?,
             id,
             kind: StorageTaskKind::from_persisted(r.text("kind")?)
                 .ok_or_else(|| invalid("kind"))?,

@@ -17,6 +17,7 @@ Endpoints:
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `GET /api/v1/tasks/{task_id}/events`
+- `POST /api/v1/tasks/{task_id}/cancel`
 
 Authentication:
 
@@ -36,6 +37,7 @@ Current task kinds:
 - `backup`
 - `reindex`
 - `remote_call`
+- `schema_validation`
 
 Public task-producing endpoints today:
 
@@ -61,6 +63,77 @@ Terminal statuses:
 - `failed`
 - `partially_succeeded`
 - `cancelled`
+
+## Cancel a task
+
+```http
+POST /api/v1/tasks/12/cancel
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"reason":"Submitted with the wrong collection","expected_status":"queued"}
+```
+
+Both fields are optional; send `{}` for an unconditional cancellation request.
+A reason must be a nonempty single line of at most 512 UTF-8 bytes. Unknown
+request fields are rejected. `expected_status` returns `409 Conflict` if a
+previously uncancelled, nonterminal task has moved to another status.
+
+A queued task becomes terminal atomically and returns `200 OK`. An active task
+retains its status and lease while its durable cancellation request returns
+`202 Accepted`. Poll the task until cleanup is acknowledged with a terminal
+status. Repeating a request returns the existing state without replacing the
+first actor/reason or emitting another event. A task that already finished
+returns `200` with its original result, even if `expected_status` differs.
+
+Local authorization allows the submitting principal, an unscoped administrator,
+or an unscoped human member of the submitting service account's owner group.
+The owner-group rule also permits withdrawing a disabled service account's
+work. Authentication still rejects disabled callers. A scoped token may cancel
+only tasks submitted with that exact token; it cannot exercise administrator
+or service-account management authority. Internal reindex tasks, including
+manually requested rebuilds, and schema validation tasks require an unscoped
+administrator. Schema cancellation additionally checks `UpdateClass`.
+
+With Treetop, cancellation requires the independent `CancelTask` action; a
+`ReadTask` grant does not authorize cancellation. The local scoped-token and
+internal-task restrictions still apply. Deploy the updated Cedar schema and
+appropriate `CancelTask` policies before enabling the endpoint.
+
+Task responses include `cancel_requested_at`, `cancel_requested_by`,
+`cancel_reason`, `execution_deadline_at`, `terminal_reason`, and
+`unattempted_items`. Request metadata is distinct from terminal acknowledgement.
+`terminal_reason` is `cancel_requested` or `deadline_exceeded` when the task
+terminates as `cancelled`. Deleting an actor clears the live actor reference;
+audit provenance remains. Reason text is returned to authorized readers but
+is excluded from metric labels and lifecycle log messages.
+
+| Kind | Cancellation behavior |
+| --- | --- |
+| Strict import | Uncommitted domain writes and receipts roll back together. If the domain transaction committed first, its factual completed result is retained. |
+| Best-effort import | Committed items remain. Remaining work stops. The summary and `unattempted_items` report the exact remainder. Results include an aggregate `unattempted` row with `details.count`; this row does not increase processed or failed counts. |
+| Export | Query, hydration and rendering stop at checkpoints. A cancelled task publishes no partial output. |
+| Backup | Capture stops at checkpoints and discards incomplete output. Cancellation is separate from backup verification failure. |
+| Reindex | Committed object batches remain, class materialization stays incomplete, and a later class rebuild can restore freshness. |
+| Remote call | Before dispatch, no request is sent. After dispatch, external effects may have occurred; cancellation cannot undo them and never automatically retries. |
+| Schema validation | Completed batches remain. Further commits are fenced, and cancelled work is never requeued by lease recovery. The existing schema DELETE endpoint retains its atomic batch-fencing behavior. |
+
+For remote calls, `remote_side_effect_state` is `not_sent`, `possibly_sent`, or
+`legacy_unknown` for older executions without dispatch evidence. The durable
+result retains the task ID, target, method, rendered URL, and any known response
+for reconciliation. A known response does not imply that cancellation undid its
+effects. Review the remote system before manually submitting replacement work.
+
+Deadlines use the same cleanup protocol and the stable `cancelled` status.
+The server pins a per-kind maximum duration at the first claim; queue wait is
+excluded. Changing configuration, renewing a lease, or recovering a schema
+checkpoint never extends that deadline. See [execution limits](task_system.md#execution-limits).
+
+Request cancellation before confirming a destructive restore. Once maintenance
+draining begins, the cancellation endpoint follows the normal API gate and
+returns `503`. Workers continue observing already persisted cancellation requests
+and deadlines while draining; the restore coordinator waits for their cleanup.
+Restore confirmation itself is outside the generic task cancellation protocol.
 
 ## Get task
 

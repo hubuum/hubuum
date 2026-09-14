@@ -119,6 +119,15 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TASK_POLL_INTERVAL_MS", Tasks),
     option!("HUBUUM_TASK_LEASE_SECONDS", Tasks),
     option!("HUBUUM_TASK_HEARTBEAT_SECONDS", Tasks),
+    option!("HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS", Tasks),
+    option!("HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS", Tasks),
+    option!("HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS", Tasks),
+    option!("HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS", Tasks),
+    option!("HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS", Tasks),
+    option!(
+        "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+        Tasks
+    ),
     option!("HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS", Tasks),
     option!("HUBUUM_COMPUTED_REINDEX_BATCH_SIZE", Tasks),
     option!("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER", Tasks),
@@ -352,6 +361,36 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!("HUBUUM_TASK_POLL_INTERVAL_MS", task_poll_interval_ms),
     configuration_bound!("HUBUUM_TASK_LEASE_SECONDS", task_lease_seconds),
     configuration_bound!("HUBUUM_TASK_HEARTBEAT_SECONDS", task_heartbeat_seconds),
+    configuration_bound!(
+        "HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS",
+        task_import_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS",
+        task_export_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS",
+        task_backup_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS",
+        task_reindex_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+        task_remote_call_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
+        task_schema_validation_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
     configuration_bound!(
         "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS",
         task_recovery_interval_seconds

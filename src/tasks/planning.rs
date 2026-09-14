@@ -160,7 +160,8 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         | ApiError::PayloadTooLarge(_)
         | ApiError::OperatorMismatch(_)
         | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
-        ApiError::InternalServerError(_)
+        ApiError::TaskStopped(_)
+        | ApiError::InternalServerError(_)
         | ApiError::DatabaseError(_)
         | ApiError::NotImplemented(_)
         | ApiError::PermissionBackendUnavailable(_)
@@ -508,6 +509,10 @@ where
         }
 
         for input in &request.graph.identity_scopes {
+            if super::control::checkpoint().is_err() {
+                aborted = true;
+                break;
+            }
             if let Some(reference) = &input.ref_ {
                 state
                     .planned_identity_scope_names_by_ref
@@ -524,6 +529,10 @@ where
             ));
         }
         for input in &request.graph.groups {
+            if super::control::checkpoint().is_err() {
+                aborted = true;
+                break;
+            }
             let scope = input
                 .identity_scope_key
                 .as_ref()
@@ -593,6 +602,10 @@ where
             ));
         }
         for input in &request.graph.group_memberships {
+            if super::control::checkpoint().is_err() {
+                aborted = true;
+                break;
+            }
             planned_items.push(plan_system_item(
                 "group_membership",
                 input.ref_.clone(),
@@ -610,6 +623,10 @@ where
 
     macro_rules! push_or_stop {
         ($expr:expr) => {{
+            if super::control::checkpoint().is_err() {
+                aborted = true;
+                break;
+            }
             match $expr.await {
                 Ok(item) => planned_items.push(item),
                 Err(failure) => {
@@ -836,6 +853,10 @@ where
     );
 
     for input in &request.graph.computed_fields {
+        if super::control::checkpoint().is_err() {
+            aborted = true;
+            break;
+        }
         planned_items.push(plan_system_item(
             "computed_field",
             input.ref_.clone(),
@@ -848,6 +869,10 @@ where
     }
 
     for input in &request.graph.export_templates {
+        if super::control::checkpoint().is_err() {
+            aborted = true;
+            break;
+        }
         planned_items.push(plan_system_item(
             "export_template",
             input.ref_.clone(),
@@ -859,6 +884,10 @@ where
         ));
     }
     for input in &request.graph.remote_targets {
+        if super::control::checkpoint().is_err() {
+            aborted = true;
+            break;
+        }
         planned_items.push(plan_system_item(
             "remote_target",
             input.ref_.clone(),
@@ -870,6 +899,10 @@ where
         ));
     }
     for input in &request.graph.event_sinks {
+        if super::control::checkpoint().is_err() {
+            aborted = true;
+            break;
+        }
         planned_items.push(plan_system_item(
             "event_sink",
             input.ref_.clone(),
@@ -881,6 +914,10 @@ where
         ));
     }
     for input in &request.graph.event_subscriptions {
+        if super::control::checkpoint().is_err() {
+            aborted = true;
+            break;
+        }
         planned_items.push(plan_system_item(
             "event_subscription",
             input.ref_.clone(),
@@ -892,6 +929,13 @@ where
         ));
     }
 
+    if super::control::checkpoint().is_err() {
+        return PlanningOutcome {
+            planned_items,
+            failures,
+            aborted: true,
+        };
+    }
     if request.dry_run() {
         match preflight_dry_run(pool, &mode, planned_items).await {
             Ok(mut preflight) => {

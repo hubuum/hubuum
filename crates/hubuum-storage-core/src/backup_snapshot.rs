@@ -270,6 +270,9 @@ impl StorageBackupSnapshot {
             for (section, rows) in history {
                 for row in rows {
                     row.canonicalize_history(*section);
+                    if *section == StorageBackupHistorySection::TerminalTasks {
+                        crate::task_control::validate_control_snapshot(row)?;
+                    }
                 }
             }
         }

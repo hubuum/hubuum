@@ -8,6 +8,7 @@ use hubuum_domain::{
     PrincipalId, RemoteTargetId, ResourceRevision, TokenId,
 };
 use hubuum_events_core::MutationProvenance;
+use hubuum_task_core::TaskExecutionContext;
 
 use crate::StorageQueryBudget;
 
@@ -136,9 +137,21 @@ pub struct StorageExecutionScope {
     mutation_provenance: Option<Option<MutationProvenance>>,
     revision_precondition: Option<Option<StorageRevisionPrecondition>>,
     query_budget: Option<Option<StorageQueryBudget>>,
+    task_execution: Option<Option<TaskExecutionContext>>,
 }
 
 impl StorageExecutionScope {
+    #[must_use]
+    pub fn with_task_execution(mut self, execution: Option<TaskExecutionContext>) -> Self {
+        self.task_execution = Some(execution);
+        self
+    }
+
+    #[must_use]
+    pub fn task_execution_override(&self) -> Option<&Option<TaskExecutionContext>> {
+        self.task_execution.as_ref()
+    }
+
     #[must_use]
     pub const fn with_call_site(mut self, call_site: StorageCallSite) -> Self {
         self.call_site = Some(call_site);

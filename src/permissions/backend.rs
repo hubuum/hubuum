@@ -113,6 +113,16 @@ pub trait PermissionBackend: Send + Sync {
         })
     }
 
+    /// Cancellation is a mutation with an independent policy decision. An
+    /// implementation that has only task-read support must fail closed.
+    async fn authorize_task_cancellation(
+        &self,
+        _principal: &PrincipalRef,
+        _task: &ResourceRef,
+    ) -> Result<PermissionDecision, ApiError> {
+        Ok(PermissionDecision::Deny)
+    }
+
     async fn authorize_tasks(
         &self,
         principal: &PrincipalRef,

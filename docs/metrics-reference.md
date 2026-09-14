@@ -66,6 +66,9 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_storage_backend_info` | gauge | none | process | `backend` | Selected storage backend |
 | `hubuum_storage_operation_duration_seconds` | histogram | seconds | process | `backend`, `capability`, `operation`, `result` | Logical storage operation duration |
 | `hubuum_storage_operation_errors_total` | counter | none | process | `backend`, `capability`, `operation`, `result` | Logical storage operation failures |
+| `hubuum_task_ambiguous_remote_stops_total` | counter | none | process | `reason` | Remote tasks stopped after dispatch may have produced external effects |
+| `hubuum_task_cancellation_acknowledgement_duration_seconds` | histogram | seconds | process | `kind`, `reason` | Time from cancellation request to terminal acknowledgement |
+| `hubuum_task_cancellation_requests_total` | counter | none | process | `kind`, `result` | Durable cancellation requests by task kind and queued, active or unchanged result |
 | `hubuum_task_claims_total` | counter | none | process | `kind` | Tasks claimed by workers |
 | `hubuum_task_completions_total` | counter | none | process | `kind`, `final_status` | Tasks reaching a terminal status |
 | `hubuum_task_execution_duration_seconds` | histogram | seconds | process | `kind`, `final_status` | Task execution duration |
@@ -77,6 +80,7 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_task_output_cleanup_runs_total` | counter | none | process | `kind` | Stored output cleanup runs |
 | `hubuum_task_poll_interval_seconds` | gauge | seconds | process | none | Configured task-worker poll interval |
 | `hubuum_task_queue_wait_duration_seconds` | histogram | seconds | process | `kind` | Task queue wait duration |
+| `hubuum_task_stop_acknowledgements_total` | counter | none | process | `kind`, `reason` | Acknowledged task cancellation and deadline expiration |
 | `hubuum_task_worker_iterations_total` | counter | none | process | `outcome` | Task worker loop iterations |
 | `hubuum_task_workers_configured` | gauge | none | process | none | Configured task workers |
 | `hubuum_tasks` | gauge | none | database | `kind`, `status` | Current task counts |

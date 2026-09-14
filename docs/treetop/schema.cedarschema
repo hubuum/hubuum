@@ -248,3 +248,9 @@ action ReadTask appliesTo {
     principal: [User, Group],
     resource: HubuumTask
 };
+
+// Cancellation is an independent mutation, never implied by ReadTask.
+action CancelTask appliesTo {
+    principal: [User, Group],
+    resource: HubuumTask
+};

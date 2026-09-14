@@ -10,6 +10,12 @@ These tasks are internal: definition mutations and manual class rebuild requests
 create them transactionally, and clients inspect them through the normal task
 API rather than submitting arbitrary reindex payloads.
 
+User-requested task cancellation and execution deadlines have a durable protocol
+separate from process shutdown. A control monitor runs alongside lease renewal,
+and the owning worker acknowledges the stop only after executor cleanup. A
+process that dies first leaves its request for lease recovery to acknowledge.
+See [task execution limits](task_system.md#execution-limits).
+
 ## Graceful Shutdown
 
 Actix handles the operating-system shutdown signal and first stops accepting

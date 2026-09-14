@@ -1,5 +1,10 @@
+use crate::operations::task_control as postgres_task_control;
 use crate::operations::task_execution as postgres_task_execution;
 use async_trait::async_trait;
+use hubuum_storage_core::{
+    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskExecutionAdmission,
+    StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
+};
 
 use hubuum_storage_core::{
     StorageError, StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskCompletion,
@@ -11,6 +16,51 @@ use super::PostgresStorage;
 
 #[async_trait]
 impl TaskExecutionStorage for PostgresStorage {
+    async fn request_task_cancellation(
+        &self,
+        request: StorageTaskCancellationRequest,
+    ) -> Result<StorageTaskCancellationOutcome, StorageError> {
+        postgres_task_control::request_task_cancellation(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn admit_task_execution(
+        &self,
+        request: StorageTaskExecutionAdmission,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        postgres_task_control::admit_task_execution(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn poll_task_execution(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        postgres_task_control::poll_task_execution(self.runtime(), lease)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn acknowledge_task_stop(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        postgres_task_control::acknowledge_task_stop(self.runtime(), lease)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn begin_remote_dispatch(
+        &self,
+        request: StorageTaskRemoteDispatch,
+    ) -> Result<(), StorageError> {
+        postgres_task_control::begin_remote_dispatch(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn claim_next_task(
         &self,
         lease_duration: StorageTaskLeaseDuration,

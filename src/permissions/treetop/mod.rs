@@ -336,6 +336,28 @@ impl PermissionBackend for TreetopPermissionBackend {
         })
     }
 
+    async fn authorize_task_cancellation(
+        &self,
+        principal: &PrincipalRef,
+        task: &ResourceRef,
+    ) -> Result<PermissionDecision, ApiError> {
+        let batch = AuthorizeRequest::single(TreetopRequest::new(
+            cedar_user(principal).map_err(treetop_validation_to_api_error)?,
+            Action::new("CancelTask").map_err(treetop_validation_to_api_error)?,
+            cedar_resource(task).map_err(treetop_validation_to_api_error)?,
+        ));
+        let response = self
+            .client
+            .authorize(&batch)
+            .await
+            .map_err(treetop_to_api_error)?;
+        Ok(if extract_decisions(&response, 1)?[0] {
+            PermissionDecision::Allow
+        } else {
+            PermissionDecision::Deny
+        })
+    }
+
     async fn authorize_tasks(
         &self,
         principal: &PrincipalRef,

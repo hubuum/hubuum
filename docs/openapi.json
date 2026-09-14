@@ -20145,6 +20145,114 @@
         ]
       }
     },
+    "/api/v1/tasks/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Post Api V1 Tasks By Task Id Cancel",
+        "description": "Auto-generated documentation for POST /api/v1/tasks/{task_id}/cancel.",
+        "operationId": "postApiV1TasksByTaskIdCancel",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TaskID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Terminal task; repeated requests return the same state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Durable cancellation requested; executor cleanup is pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cancellation reason or status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Cancellation is not authorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Expected status no longer matches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/tasks/{task_id}/events": {
       "get": {
         "tags": [
@@ -31206,12 +31314,42 @@
         ],
         "description": "One resource catalog selected by a structured search request.\n\nObject searches may optionally be constrained to one exact class. All\nother target variants are property-free tagged objects."
       },
+      "TaskCancelRequest": {
+        "type": "object",
+        "description": "An idempotent stop request. The optional expected status protects queued-only withdrawals.",
+        "properties": {
+          "expected_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskStatus"
+              }
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 512
+          }
+        },
+        "additionalProperties": false
+      },
       "TaskConfig": {
         "type": "object",
         "required": [
           "workers",
           "poll_interval_ms",
           "lease_seconds",
+          "import_execution_timeout_seconds",
+          "export_execution_timeout_seconds",
+          "backup_execution_timeout_seconds",
+          "reindex_execution_timeout_seconds",
+          "remote_call_execution_timeout_seconds",
+          "schema_validation_execution_timeout_seconds",
           "heartbeat_seconds",
           "recovery_interval_seconds",
           "computed_reindex_batch_size",
@@ -31220,8 +31358,18 @@
           "remote_call_max_active_per_user"
         ],
         "properties": {
+          "backup_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "computed_reindex_batch_size": {
             "type": "integer",
+            "minimum": 0
+          },
+          "export_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "export_max_active_per_user": {
@@ -31229,6 +31377,11 @@
             "minimum": 0
           },
           "heartbeat_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "import_execution_timeout_seconds": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
@@ -31252,8 +31405,23 @@
             "format": "int64",
             "minimum": 0
           },
+          "reindex_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "remote_call_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "remote_call_max_active_per_user": {
             "type": "integer",
+            "minimum": 0
+          },
+          "schema_validation_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "workers": {
@@ -31532,9 +31700,19 @@
           }
         }
       },
+      "TaskRemoteSideEffectState": {
+        "type": "string",
+        "description": "Conservative dispatch evidence. An in-flight request can already have\naffected the remote system even when no HTTP response was received.",
+        "enum": [
+          "not_sent",
+          "possibly_sent",
+          "legacy_unknown"
+        ]
+      },
       "TaskResponse": {
         "type": "object",
         "required": [
+          "unattempted_items",
           "id",
           "kind",
           "status",
@@ -31543,6 +31721,26 @@
           "links"
         ],
         "properties": {
+          "cancel_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cancel_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancel_requested_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -31556,6 +31754,13 @@
                 "$ref": "#/components/schemas/TaskDetails"
               }
             ]
+          },
+          "execution_deadline_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "finished_at": {
             "type": [
@@ -31576,6 +31781,16 @@
           },
           "progress": {
             "$ref": "#/components/schemas/TaskProgress"
+          },
+          "remote_side_effect_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskRemoteSideEffectState"
+              }
+            ]
           },
           "request_redacted_at": {
             "type": [
@@ -31606,6 +31821,17 @@
               "string",
               "null"
             ]
+          },
+          "terminal_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unattempted_items": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items without a committed result; authoritative for a terminal task."
           }
         }
       },

@@ -1336,7 +1336,11 @@ where
 
     let render_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Render, metric_template_id);
+    crate::tasks::control::checkpoint()?;
+    // Await the bounded render job so its child has been reaped before the
+    // worker acknowledges a stop and releases its claim.
     let artifact = build_export_artifact(&runtime, execution, timings).await?;
+    crate::tasks::control::checkpoint()?;
     let mut timings = artifact.timings;
     if let Err(error) = enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
     {
@@ -1369,7 +1373,7 @@ where
     )
     .await?;
 
-    complete_task(
+    let finished = complete_task(
         pool,
         task,
         TaskStateChange::new(
@@ -1396,6 +1400,9 @@ where
     )
     .await?;
 
+    if finished.status == TaskStatus::Cancelled.as_str() {
+        return Ok(TaskStatus::Cancelled);
+    }
     // Only label the total phase successful after the output and terminal task
     // state have been persisted. If finalization fails, the timer's drop path
     // records an error outcome instead.
@@ -1408,7 +1415,7 @@ where
         metrics::export_warnings(metric_scope, metric_content_type, metric_warning_count);
     }
 
-    Ok(TaskStatus::Succeeded)
+    TaskStatus::from_db(&finished.status)
 }
 
 fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArtifact, ApiError> {
@@ -1598,6 +1605,7 @@ fn export_query_budget() -> Option<StorageQueryBudget> {
 /// budget, `export_template_max_objects`, output byte caps, and the configured
 /// storage query budgets.
 fn enforce_export_stage_timeout(elapsed: Duration, stage_name: &str) -> Result<(), ApiError> {
+    crate::tasks::control::checkpoint()?;
     let stage_timeout_ms = get_config()
         .map(|config| config.export_stage_timeout_ms)
         .unwrap_or(DEFAULT_EXPORT_STAGE_TIMEOUT_MS);

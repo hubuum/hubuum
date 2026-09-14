@@ -801,7 +801,7 @@ pub async fn execute_computed_field_rebuild(
     }
     runtime
         .with_connection(async move |connection| {
-            task_execution::live_claimed_task(connection, claimed).await
+            task_execution::runnable_claimed_task(connection, claimed).await
         })
         .await?;
     let payload = task
@@ -875,8 +875,8 @@ pub async fn execute_computed_field_rebuild(
 
     let (status, finalized) = runtime
         .with_transaction(async move |connection| {
-            task_execution::live_claimed_task(connection, claimed).await?;
             acquire_computed_class_shared_lock(connection, payload.class_id).await?;
+            task_execution::runnable_claimed_task(connection, claimed).await?;
             use crate::schema::class_computation_state::dsl as state;
             let changed = diesel::update(
                 state::class_computation_state
@@ -942,8 +942,8 @@ async fn process_reindex_batch(
     runtime
         .with_transaction(
             async move |connection| -> Result<ReindexBatch, PostgresStorageError> {
-                task_execution::live_claimed_task(connection, claimed).await?;
                 acquire_computed_class_shared_lock(connection, payload.class_id).await?;
+                task_execution::runnable_claimed_task(connection, claimed).await?;
                 // Object updates lock the class before the object. Take the
                 // materialization's class foreign-key lock in that same order,
                 // otherwise its INSERT can deadlock with a concurrent update
@@ -988,7 +988,7 @@ async fn process_reindex_batch(
                     &inputs,
                 )
                 .await?;
-                task_execution::live_claimed_task(connection, claimed).await?;
+                task_execution::runnable_claimed_task(connection, claimed).await?;
                 Ok(ReindexBatch::Rows {
                     last_id,
                     count: i32::try_from(rows.len()).unwrap_or(i32::MAX),

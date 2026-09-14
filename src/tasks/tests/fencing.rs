@@ -266,3 +266,386 @@ async fn lease_expiring_after_the_final_application_check_rejects_the_commit(
     .await
     .unwrap();
 }
+
+#[rstest]
+#[case::before_commit(PostgresFaultPoint::ImportBeforeCommitFence, false)]
+#[case::after_commit(PostgresFaultPoint::ImportAfterCommit, true)]
+#[tokio::test]
+async fn cancellation_arbitrates_against_strict_import_commit(
+    #[case] point: PostgresFaultPoint,
+    #[case] committed: bool,
+) {
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::{StorageTaskCancellationRequest, StorageTaskStatus};
+    let context = TestContext::new().await;
+    let name = context.scoped_name("cancel_commit_fence");
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        1,
+        "cancel_commit_fence",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let backend = crate::storage::storage_handle(&context.pool);
+    let (stored, _) = backend
+        .get_task_access(claimed.lease().task_id())
+        .await
+        .unwrap()
+        .into_parts();
+    let controller = PostgresFaultController::pausing(point);
+    let mut accumulator = ExecutionAccumulator::default();
+    let items = [collection_item(&name)];
+    let (execution, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            controller.run(execute_import_strict(
+                &context.pool,
+                &claimed,
+                &items,
+                &mut accumulator
+            )),
+            async {
+                controller.wait_until_reached().await;
+                backend
+                    .request_task_cancellation(StorageTaskCancellationRequest::new(
+                        &stored,
+                        EventContext::system(),
+                    ))
+                    .await
+                    .unwrap();
+                controller.resume();
+            },
+        )
+    })
+    .await
+    .expect("cancellation must not deadlock on import receipt foreign keys");
+    if committed {
+        assert!(execution.is_ok());
+    } else {
+        assert!(matches!(execution, Err(ApiError::TaskStopped(_))));
+    }
+    assert_eq!(exists(&context, &name).await, committed);
+    let finished = backend
+        .acknowledge_task_stop(claimed.lease().clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        finished.status(),
+        if committed {
+            StorageTaskStatus::Succeeded
+        } else {
+            StorageTaskStatus::Cancelled
+        }
+    );
+    with_connection(&context.pool, async |connection| {
+        diesel::delete(collections.filter(collection_name.eq(&name)))
+            .execute(connection)
+            .await
+    })
+    .await
+    .unwrap();
+    hubuum_storage_postgres::test_support::delete_task(&context.pool, stored.id())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn postgres_stop_cancels_inflight_query_and_drains_before_connection_reuse() {
+    use crate::storage::{StorageExecutionScope, with_storage_execution_scope};
+    use diesel::sql_types::{Bool, Text};
+    use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
+    use std::time::Duration;
+    let context = TestContext::new().await;
+    let sql = format!(
+        "SELECT pg_sleep(30) /* {} */",
+        context.scoped_name("cancel_inflight_query")
+    );
+    let (execution, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            with_storage_execution_scope(
+                &context.pool,
+                StorageExecutionScope::default().with_task_execution(Some(execution)),
+                with_connection(&context.pool, async |connection| {
+                    diesel::sql_query(&sql).execute(connection).await
+                })
+            ),
+            async {
+                loop {
+                    let running = with_connection(&context.pool, async |connection| {
+                        diesel::select(
+                            diesel::dsl::sql::<Bool>(
+                                "EXISTS (SELECT 1 FROM pg_stat_activity WHERE query = ",
+                            )
+                            .bind::<Text, _>(&sql)
+                            .sql(" AND state = 'active' AND wait_event = 'PgSleep')"),
+                        )
+                        .get_result::<bool>(connection)
+                        .await
+                    })
+                    .await
+                    .unwrap();
+                    if running {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                stop.request_stop(TaskStopReason::Cancelled);
+            }
+        )
+    })
+    .await
+    .expect("SQL cancellation must stop actual work well before pg_sleep completes");
+    let error = result.unwrap_err();
+    assert_eq!(
+        error.kind(),
+        hubuum_storage_core::StorageErrorKind::TaskCancelled
+    );
+    let healthy = with_connection(&context.pool, async |connection| {
+        diesel::select(diesel::dsl::sql::<Bool>("true"))
+            .get_result::<bool>(connection)
+            .await
+    })
+    .await
+    .unwrap();
+    assert!(healthy, "drained connections must remain usable");
+}
+
+#[tokio::test]
+async fn maximum_task_duration_fits_postgres_statement_timeout() {
+    use crate::storage::{StorageExecutionScope, with_storage_execution_scope};
+    use diesel::sql_types::Text;
+    use hubuum_task_core::{TaskExecutionContext, TaskExecutionLimit};
+    let context = TestContext::new().await;
+    let limit =
+        TaskExecutionLimit::from_milliseconds(TaskExecutionLimit::MAX_MILLISECONDS).unwrap();
+    let (execution, _) = TaskExecutionContext::new(limit.duration()).unwrap();
+    let milliseconds = with_storage_execution_scope(
+        &context.pool,
+        StorageExecutionScope::default().with_task_execution(Some(execution)),
+        with_connection(&context.pool, async |connection| {
+            diesel::select(diesel::dsl::sql::<Text>(
+                "(SELECT setting FROM pg_settings WHERE name='statement_timeout')",
+            ))
+            .get_result::<String>(connection)
+            .await
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(milliseconds.parse::<i32>().unwrap(), i32::MAX);
+}
+
+async fn resume_after_database_waiter(
+    context: &TestContext,
+    controller: &PostgresFaultController,
+    blocker: i32,
+) {
+    use diesel::sql_types::{Bool, Integer};
+    loop {
+        let blocked = with_connection(&context.pool, async |connection| {
+            diesel::select(
+                diesel::dsl::sql::<Bool>("EXISTS (SELECT 1 FROM pg_stat_activity WHERE ")
+                    .bind::<Integer, _>(blocker)
+                    .sql(" = ANY(pg_blocking_pids(pid)))"),
+            )
+            .get_result::<bool>(connection)
+            .await
+        })
+        .await
+        .unwrap();
+        if blocked {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    controller.resume();
+}
+
+#[tokio::test]
+async fn queued_cancellation_lock_prevents_a_concurrent_claim() {
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::{StorageTaskCancellationRequest, StorageTaskStatus};
+    let context = TestContext::new().await;
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        1,
+        "cancel_claim_race",
+    )
+    .await;
+    let backend = crate::storage::storage_handle(&context.pool);
+    let task_id = hubuum_domain::TaskId::new(task.id).unwrap();
+    let (stored, _) = backend.get_task_access(task_id).await.unwrap().into_parts();
+    let controller = PostgresFaultController::pausing(PostgresFaultPoint::TransactionBeforeCommit);
+    let (cancel, (claim, ())) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            controller.run(
+                backend.request_task_cancellation(StorageTaskCancellationRequest::new(
+                    &stored,
+                    EventContext::system()
+                ))
+            ),
+            async {
+                let blocker = controller.wait_until_reached().await.backend_pid().unwrap();
+                tokio::join!(
+                    hubuum_storage_postgres::test_support::claim_task_by_id(&context.pool, task_id),
+                    resume_after_database_waiter(&context, &controller, blocker),
+                )
+            },
+        )
+    })
+    .await
+    .expect("claim and cancellation must serialize without deadlock");
+    assert_eq!(
+        cancel.unwrap().task().status(),
+        StorageTaskStatus::Cancelled
+    );
+    assert!(
+        claim.is_err(),
+        "claim predicate must be rechecked after the cancellation lock releases"
+    );
+    hubuum_storage_postgres::test_support::delete_task(&context.pool, task_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn success_finalization_lock_wins_a_concurrent_cancel_request() {
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::{
+        StorageTaskCancellationChange, StorageTaskCancellationRequest, StorageTaskCompletion,
+        StorageTaskCompletionPayload, StorageTaskEventInput, StorageTaskResultCounts,
+        StorageTaskStatus, StorageTaskTerminalStatus, StorageTaskTerminalUpdate,
+    };
+    let context = TestContext::new().await;
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        1,
+        "cancel_success_race",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let backend = crate::storage::storage_handle(&context.pool);
+    let (stored, _) = backend
+        .get_task_access(claimed.lease().task_id())
+        .await
+        .unwrap()
+        .into_parts();
+    let controller = PostgresFaultController::pausing(PostgresFaultPoint::TaskFinalizeAfterEvent);
+    let (success, (cancel, ())) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            controller.run(backend.complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    claimed.lease().clone(),
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap()
+                ),
+                StorageTaskEventInput::new("succeeded", "success won"),
+                StorageTaskCompletionPayload::Import,
+            ))),
+            async {
+                let blocker = controller.wait_until_reached().await.backend_pid().unwrap();
+                tokio::join!(
+                    backend.request_task_cancellation(StorageTaskCancellationRequest::new(
+                        &stored,
+                        EventContext::system(),
+                    )),
+                    resume_after_database_waiter(&context, &controller, blocker),
+                )
+            },
+        )
+    })
+    .await
+    .expect("success and cancellation must serialize without deadlock");
+    assert_eq!(success.unwrap().status(), StorageTaskStatus::Succeeded);
+    assert_eq!(
+        cancel.unwrap().change(),
+        StorageTaskCancellationChange::Unchanged
+    );
+    hubuum_storage_postgres::test_support::delete_task(&context.pool, stored.id())
+        .await
+        .unwrap();
+}
+
+#[rstest]
+#[case::durable_request(false)]
+#[case::execution_deadline(true)]
+#[tokio::test]
+async fn control_monitor_stops_executor_from_durable_backend_state(#[case] deadline: bool) {
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::StorageTaskCancellationRequest;
+    use hubuum_task_core::{TaskExecutionLimit, TaskStopReason};
+    use std::time::Duration;
+    let context = TestContext::new().await;
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        1,
+        "monitor_stop",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let backend = crate::storage::storage_handle(&context.pool);
+    let app = crate::permissions::AppContext::new(
+        backend.clone(),
+        Arc::new(crate::permissions::LocalPermissionBackend::new(
+            backend.clone(),
+            "admin".to_string(),
+        )),
+    );
+    let (stored, _) = backend
+        .get_task_access(claimed.lease().task_id())
+        .await
+        .unwrap()
+        .into_parts();
+    let started = tokio::sync::Notify::new();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            super::super::control::execute(
+                &app,
+                &claimed,
+                TaskExecutionLimit::from_milliseconds(if deadline { 1000 } else { 60_000 })
+                    .unwrap(),
+                async {
+                    started.notify_one();
+                    loop {
+                        if let Err(error) = super::super::control::checkpoint() {
+                            break Err::<(), ApiError>(error);
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+            ),
+            async {
+                started.notified().await;
+                if !deadline {
+                    backend
+                        .request_task_cancellation(StorageTaskCancellationRequest::new(
+                            &stored,
+                            EventContext::system(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+            },
+        )
+    })
+    .await
+    .expect("control monitor must stop the executor");
+    assert!(
+        matches!(result, Err(ApiError::TaskStopped(reason)) if reason == if deadline { TaskStopReason::DeadlineExceeded } else { TaskStopReason::Cancelled })
+    );
+    backend
+        .acknowledge_task_stop(claimed.lease().clone())
+        .await
+        .unwrap();
+    hubuum_storage_postgres::test_support::delete_task(&context.pool, stored.id())
+        .await
+        .unwrap();
+}

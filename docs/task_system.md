@@ -274,6 +274,7 @@ Current dispatch:
 - `backup` -> full-system backup executor
 - `reindex` -> internal computed-field class rebuild executor
 - `remote_call` -> remote HTTP invocation executor
+- `schema_validation` -> bounded schema validation executor
 
 This logic is in:
 
@@ -582,3 +583,54 @@ The simplest accurate mental model is:
 The [generated project inventory](generated/project_inventory.md) lists all current
 task kinds. The [runtime hardening guide](runtime_hardening.md) describes claim
 fencing and recovery.
+
+## Execution limits
+
+Every worker admits execution under its live lease and persists an absolute UTC
+deadline using the storage backend's clock. The first claim's start time anchors
+it. Queue wait is excluded, and recovery preserves the deadline and original
+start time. Renewing a lease only establishes ownership; it never extends the
+execution budget.
+
+| Environment variable | Default seconds |
+| --- | --- |
+| `HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS` | `3600` |
+| `HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS` | `900` |
+| `HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS` | `3600` |
+| `HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS` | `7200` |
+| `HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS` | `300` |
+| `HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS` | `7200` |
+
+Values must be positive whole seconds, at most thirty days. Zero does not disable
+deadlines. The administrator configuration exposes the effective policy.
+
+A separately scheduled monitor polls durable control every 250 ms and shares a
+read-only typed execution context with services and adapters. Local deadline
+checks use a monotonic clock. Lease renewal continues through executor cleanup
+and terminal acknowledgement. PostgreSQL cancels an in-flight query through its
+reserved lease pool, drains the operation, and rolls back before releasing the
+connection. The memory adapter stages strict imports and validates its snapshot
+again before publication, allowing cancellation and lease renewal while staging.
+Concurrent state changes invalidate a memory import snapshot rather than allowing
+it to overwrite another mutation.
+
+Cancellation, success and recovery serialize their final decision under the task
+lock and live lease. A strict import's receipt fence also checks cancellation and
+the deadline at commit. Committed receipts survive worker death and preserve
+factual results. Recovery acknowledges a persisted stop before considering schema
+checkpoint resumption. A resumed queued task whose original deadline expires can
+be finalized by recovery without a new claim. A task that has never been claimed
+has no execution deadline yet.
+
+Cancellation requests and terminal events use bounded reason categories. The
+first request retains its actor, timestamp and optional private explanation.
+Terminal cleanup removes the request payload and incomplete export/backup output.
+See the [task API cancellation contract](task_api.md#cancel-a-task).
+
+### Upgrade coordination
+
+Apply migration `20260914000001` before starting the new server. Drain and stop
+old task workers before migrating; an old worker does not understand cancellation
+intent or execution deadlines. Start all replacement workers with consistent
+per-kind limits. Existing terminal tasks remain readable and their absent control
+metadata means no historical cancellation/deadline evidence was recorded.

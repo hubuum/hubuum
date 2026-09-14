@@ -10,7 +10,7 @@ pub(super) fn run(future: impl Future<Output = ()>) {
 fn restored(snapshot: StorageBackupSnapshot) -> MemoryStorage {
     MemoryStorage {
         schema_limits: snapshot.schema_limits(),
-        state: Arc::new(RwLock::new(restore(snapshot).unwrap())),
+        state: Arc::new(MemoryStateLock::new(restore(snapshot).unwrap())),
     }
 }
 

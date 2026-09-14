@@ -66,9 +66,9 @@ pub(crate) use self::secret::{secret_resolution_finished, secret_source_identity
 pub use self::security::{client_allowlist_rejected, revision_condition};
 pub use self::storage::{storage_backend_identity, storage_operation_finished};
 pub use self::task::{
-    TaskOutputKind, task_claimed, task_completed, task_lease_recovered,
-    task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
-    task_worker_config, task_worker_iteration,
+    TaskOutputKind, task_cancellation_requested, task_claimed, task_completed,
+    task_lease_recovered, task_output_cleanup_deleted, task_output_cleanup_failed,
+    task_output_cleanup_run, task_stop_acknowledged, task_worker_config, task_worker_iteration,
 };
 pub(crate) use self::template::template_worker_event;
 pub(crate) use self::token::{token_authentication, token_hash_key_ring};
@@ -211,6 +211,10 @@ struct Metrics {
     task_claims: CheckedCounter,
     task_lease_recoveries: CheckedCounter,
     task_completions: CheckedCounter,
+    task_cancellation_requests: CheckedCounter,
+    task_stop_acknowledgements: CheckedCounter,
+    task_cancellation_acknowledgement_duration: CheckedHistogram,
+    task_ambiguous_remote_stops: CheckedCounter,
     task_queue_wait_duration: CheckedHistogram,
     task_execution_duration: CheckedHistogram,
     task_workers_configured: CheckedU64Gauge,

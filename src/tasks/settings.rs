@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
+use crate::models::TaskKind;
 use chrono::Utc;
 use hubuum_domain::OrderedConstraint;
+use hubuum_task_core::TaskExecutionLimit;
 
 pub(crate) const TASK_HEARTBEAT_CONSTRAINT: OrderedConstraint =
     OrderedConstraint::less_than("HUBUUM_TASK_HEARTBEAT_SECONDS", "HUBUUM_TASK_LEASE_SECONDS");
@@ -9,6 +11,7 @@ pub(crate) const TASK_HEARTBEAT_CONSTRAINT: OrderedConstraint =
 /// Validated settings for task execution, lease renewal, and maintenance work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskWorkerSettings {
+    execution_limits: TaskExecutionLimits,
     worker_count: usize,
     poll_interval: Duration,
     lease_duration: TaskLeaseDuration,
@@ -20,6 +23,10 @@ pub struct TaskWorkerSettings {
 impl TaskWorkerSettings {
     pub fn builder() -> TaskWorkerSettingsBuilder {
         TaskWorkerSettingsBuilder::default()
+    }
+
+    pub const fn execution_limit(self, kind: TaskKind) -> TaskExecutionLimit {
+        self.execution_limits.for_kind(kind)
     }
 
     pub const fn worker_count(self) -> usize {
@@ -50,6 +57,7 @@ impl TaskWorkerSettings {
 /// Builder for the multi-field task-worker policy.
 #[derive(Debug, Default)]
 pub struct TaskWorkerSettingsBuilder {
+    execution_limits: TaskExecutionLimits,
     worker_count: Option<usize>,
     poll_interval: Option<Duration>,
     lease_duration: Option<Duration>,
@@ -59,6 +67,11 @@ pub struct TaskWorkerSettingsBuilder {
 }
 
 impl TaskWorkerSettingsBuilder {
+    pub fn execution_limits(mut self, limits: TaskExecutionLimits) -> Self {
+        self.execution_limits = limits;
+        self
+    }
+
     pub fn worker_count(mut self, value: usize) -> Self {
         self.worker_count = Some(value);
         self
@@ -130,6 +143,7 @@ impl TaskWorkerSettingsBuilder {
         }
 
         Ok(TaskWorkerSettings {
+            execution_limits: self.execution_limits,
             worker_count,
             poll_interval,
             lease_duration,
@@ -186,9 +200,95 @@ impl TaskLeaseDuration {
     }
 }
 
+/// Server policy, validated before workers start. Deadlines begin at first claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskExecutionLimits {
+    import: TaskExecutionLimit,
+    export: TaskExecutionLimit,
+    backup: TaskExecutionLimit,
+    reindex: TaskExecutionLimit,
+    remote_call: TaskExecutionLimit,
+    schema_validation: TaskExecutionLimit,
+}
+impl Default for TaskExecutionLimits {
+    fn default() -> Self {
+        Self {
+            import: TaskExecutionLimit::from_milliseconds(3600 * 1000)
+                .expect("default duration is valid"),
+            export: TaskExecutionLimit::from_milliseconds(900 * 1000)
+                .expect("default duration is valid"),
+            backup: TaskExecutionLimit::from_milliseconds(3600 * 1000)
+                .expect("default duration is valid"),
+            reindex: TaskExecutionLimit::from_milliseconds(7200 * 1000)
+                .expect("default duration is valid"),
+            remote_call: TaskExecutionLimit::from_milliseconds(300 * 1000)
+                .expect("default duration is valid"),
+            schema_validation: TaskExecutionLimit::from_milliseconds(7200 * 1000)
+                .expect("default duration is valid"),
+        }
+    }
+}
+impl TaskExecutionLimits {
+    pub fn with_seconds(mut self, kind: TaskKind, seconds: u64) -> Result<Self, String> {
+        let milliseconds = seconds
+            .checked_mul(1000)
+            .ok_or_else(|| "Task execution duration is too large".to_string())?;
+        let limit = TaskExecutionLimit::from_milliseconds(milliseconds)
+            .map_err(|error| error.to_string())?;
+        match kind {
+            TaskKind::Import => self.import = limit,
+            TaskKind::Export => self.export = limit,
+            TaskKind::Backup => self.backup = limit,
+            TaskKind::Reindex => self.reindex = limit,
+            TaskKind::RemoteCall => self.remote_call = limit,
+            TaskKind::SchemaValidation => self.schema_validation = limit,
+        }
+        Ok(self)
+    }
+    pub const fn for_kind(self, kind: TaskKind) -> TaskExecutionLimit {
+        match kind {
+            TaskKind::Import => self.import,
+            TaskKind::Export => self.export,
+            TaskKind::Backup => self.backup,
+            TaskKind::Reindex => self.reindex,
+            TaskKind::RemoteCall => self.remote_call,
+            TaskKind::SchemaValidation => self.schema_validation,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case::zero(0)]
+    #[case::too_large(2_592_001)]
+    #[case::overflow(u64::MAX)]
+    fn execution_limits_reject_invalid_configuration(#[case] seconds: u64) {
+        assert!(
+            TaskExecutionLimits::default()
+                .with_seconds(TaskKind::Import, seconds)
+                .is_err()
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::import(TaskKind::Import, 3600)]
+    #[case::export(TaskKind::Export, 900)]
+    #[case::backup(TaskKind::Backup, 3600)]
+    #[case::reindex(TaskKind::Reindex, 7200)]
+    #[case::remote(TaskKind::RemoteCall, 300)]
+    #[case::schema(TaskKind::SchemaValidation, 7200)]
+    fn execution_limits_have_a_finite_default_for_every_kind(
+        #[case] kind: TaskKind,
+        #[case] seconds: u64,
+    ) {
+        assert_eq!(
+            TaskExecutionLimits::default().for_kind(kind).duration(),
+            Duration::from_secs(seconds)
+        );
+    }
 
     fn valid_builder() -> TaskWorkerSettingsBuilder {
         TaskWorkerSettings::builder()
