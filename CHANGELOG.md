@@ -63,6 +63,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   task control and execution scopes before upgrading the storage SDK.
 - **Worker upgrade requirement:** Drain old task workers, apply migration
   `20260914000001`, then start upgraded workers with consistent execution limits.
+  Schedule a quiet period for its bounded constraint validation and index build;
+  a timeout rolls back the migration so it can be retried during a quieter period.
   Treetop deployments must add the `CancelTask` action and cancellation policies;
   `ReadTask` alone does not grant this mutation. The root Rust application library
   remains an internal composition crate.

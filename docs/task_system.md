@@ -634,3 +634,8 @@ old task workers before migrating; an old worker does not understand cancellatio
 intent or execution deadlines. Start all replacement workers with consistent
 per-kind limits. Existing terminal tasks remain readable and their absent control
 metadata means no historical cancellation/deadline evidence was recorded.
+
+Schedule a quiet period for the migration's constraint validation and partial
+deadline index build. Lock waits are limited to five seconds and each statement
+to sixty seconds. A timeout rolls back the entire migration; retry during a
+quieter period with these limits in place.
