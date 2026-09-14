@@ -743,6 +743,7 @@ pub(crate) fn verify_restored_backup_matches(
                     section,
                     StorageBackupHistorySection::TerminalTasks
                         | StorageBackupHistorySection::AuditEvents
+                        | StorageBackupHistorySection::RemoteCallResults
                 ) {
                     if source_rows != restored_rows {
                         return Err(ApiError::InternalServerError(format!(
@@ -2004,6 +2005,40 @@ mod tests {
         #[case] source_link: serde_json::Value,
         #[case] restored_link: serde_json::Value,
         #[case] accepted: bool,
+    ) {
+        assert_history_comparison(section, source_link, restored_link, accepted);
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[rstest]
+    #[case::empty_control(StorageBackupHistorySection::TerminalTasks, json!({}), json!({
+        "cancel_requested_at": null, "cancel_requested_by": null, "cancel_reason": null,
+        "execution_deadline_at": null, "import_effects_committed_at": null,
+        "remote_dispatched_at": null, "terminal_reason": null
+    }), true)]
+    #[case::lost_cancellation(StorageBackupHistorySection::TerminalTasks, json!({"cancel_requested_at": "2026-09-14T12:00:00Z"}), json!({}), false)]
+    #[case::lost_deadline(StorageBackupHistorySection::TerminalTasks, json!({"execution_deadline_at": "2026-09-14T12:00:00Z"}), json!({}), false)]
+    #[case::legacy_remote(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": "legacy_unknown"}), true)]
+    #[case::canonical_legacy_remote(StorageBackupHistorySection::RemoteCallResults, json!({"side_effect_state": "legacy_unknown"}), json!({}), true)]
+    #[case::lost_dispatch_evidence(StorageBackupHistorySection::RemoteCallResults, json!({"side_effect_state": "possibly_sent"}), json!({}), false)]
+    #[case::invented_dispatch_evidence(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": "not_sent"}), false)]
+    #[case::malformed_remote(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": null}), false)]
+    #[case::unrelated_drift(StorageBackupHistorySection::TerminalTasks, json!({}), json!({"unknown_field": null}), false)]
+    fn restored_backup_comparison_preserves_task_execution_evidence(
+        #[case] section: StorageBackupHistorySection,
+        #[case] source_fields: serde_json::Value,
+        #[case] restored_fields: serde_json::Value,
+        #[case] accepted: bool,
+    ) {
+        assert_history_comparison(section, source_fields, restored_fields, accepted);
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    fn assert_history_comparison(
+        section: StorageBackupHistorySection,
+        source_link: serde_json::Value,
+        restored_link: serde_json::Value,
+        accepted: bool,
     ) {
         let row = |link: serde_json::Value| {
             let mut row = json!({"id": 1, "summary": "retained history"});

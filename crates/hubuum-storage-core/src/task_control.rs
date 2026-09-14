@@ -2,6 +2,16 @@
 
 mod snapshot;
 
+pub(crate) const SNAPSHOT_FIELDS: &[&str] = &[
+    "cancel_requested_at",
+    "cancel_requested_by",
+    "cancel_reason",
+    "execution_deadline_at",
+    "import_effects_committed_at",
+    "remote_dispatched_at",
+    "terminal_reason",
+];
+
 use chrono::{DateTime, Utc};
 use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::EventContext;
@@ -400,7 +410,7 @@ impl StorageTaskRemoteDispatch {
 pub(crate) fn validate_control_snapshot(
     row: &crate::StorageBackupRow,
 ) -> Result<(), StorageValidationError> {
-    if snapshot::FIELDS
+    if SNAPSHOT_FIELDS
         .iter()
         .all(|field| row.get(field).is_none_or(serde_json::Value::is_null))
     {

@@ -4,16 +4,6 @@ use chrono::NaiveDateTime;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-pub(super) const FIELDS: &[&str] = &[
-    "cancel_requested_at",
-    "cancel_requested_by",
-    "cancel_reason",
-    "execution_deadline_at",
-    "import_effects_committed_at",
-    "remote_dispatched_at",
-    "terminal_reason",
-];
-
 impl StorageTaskControl {
     /// Validate optional control metadata in a logical backup. Older backups
     /// omit these fields; any supplied values must satisfy the current invariants.
