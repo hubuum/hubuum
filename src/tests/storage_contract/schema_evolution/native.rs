@@ -474,8 +474,11 @@ async fn failed_schema_batch_rolls_back_findings_with_its_checkpoint() {
     fixture.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::next_batch(false)]
+#[case::work_removed(true)]
 #[actix_web::test]
-async fn schema_report_reads_findings_from_the_checkpoints_snapshot() {
+async fn schema_report_reads_findings_from_the_checkpoints_snapshot(#[case] remove_work: bool) {
     let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({}); 2]).await;
     let candidate = fixture.stage(json!(false), true).await;
     let work = fixture
@@ -491,28 +494,42 @@ async fn schema_report_reads_findings_from_the_checkpoints_snapshot() {
     let gate = PostgresFaultController::pausing(PostgresFaultPoint::SchemaReportAfterCheckpoint);
     let backend = fixture.backend.clone();
     let reader_gate = gate.clone();
+    let task_id = work.task_id();
     let reader = tokio::spawn(async move {
         reader_gate
-            .run(crate::services::schema_evolution::get_work(
-                &backend,
-                work.task_id(),
-            ))
+            .run(backend.get_schema_work_report(task_id))
             .await
     });
     tokio::time::timeout(Duration::from_secs(10), gate.wait_until_reached())
         .await
         .unwrap();
-    fixture
-        .backend
-        .process_schema_work(lease, limits)
+    if remove_work {
+        let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
+            unreachable!()
+        };
+        with_connection(pool, async |connection| {
+            diesel::sql_query("DELETE FROM tasks WHERE id=$1")
+                .bind::<Integer, _>(task_id.id())
+                .execute(connection)
+                .await
+                .map_err(hubuum_storage_postgres::PostgresStorageError::from)
+        })
         .await
         .unwrap();
+    } else {
+        fixture
+            .backend
+            .process_schema_work(lease, limits)
+            .await
+            .unwrap();
+    }
     gate.resume();
     let report = reader.await.unwrap().unwrap();
-    assert_eq!(report.examined, 1);
+    assert_eq!(report.work().examined(), 1);
+    let impact = serde_json::to_value(report.impact().unwrap()).unwrap();
     assert_eq!(
-        report.impact.unwrap().failures[0].samples,
-        vec![fixture.resources.objects[0].id().id()]
+        impact["failures"][0]["samples"],
+        json!([fixture.resources.objects[0].id().id()])
     );
     fixture.cleanup().await;
 }
