@@ -9,19 +9,20 @@ use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
-use diesel::sql_types::{BigInt, Text};
+use diesel::sql_types::{BigInt, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
     StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
 };
+use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
 use tracing::{debug, warn};
 
 use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260913000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260914000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
@@ -207,7 +208,18 @@ impl PostgresRuntime {
     async fn acquire_connection(
         &self,
     ) -> Result<PostgresPooledConnection<'_>, PostgresStorageError> {
-        self.acquire_connection_from(&self.pool).await
+        let execution = AMBIENT_TASK_EXECUTION.try_with(Clone::clone).ok().flatten();
+        if let Some(execution) = execution {
+            execution
+                .check()
+                .map_err(PostgresStorageError::task_stopped)?;
+            tokio::select! {
+                result = self.acquire_connection_from(&self.pool) => result,
+                reason = wait_for_task_stop(&execution) => Err(PostgresStorageError::task_stopped(reason)),
+            }
+        } else {
+            self.acquire_connection_from(&self.pool).await
+        }
     }
 
     pub async fn with_connection<F, R, E>(&self, operation: F) -> Result<R, PostgresStorageError>
@@ -274,9 +286,8 @@ impl PostgresRuntime {
             connection
                 .transaction::<R, PostgresStorageError, _>(async move |connection| {
                     context.apply(connection).await?;
-                    operation(connection)
+                    self.execute_controlled(connection, context.task_execution.as_ref(), operation)
                         .await
-                        .map_err(PostgresStorageError::from)
                 })
                 .await
         };
@@ -325,6 +336,58 @@ impl PostgresRuntime {
         result
     }
 
+    async fn execute_controlled<F, R, E>(
+        &self,
+        connection: &mut PostgresConnection,
+        execution: Option<&TaskExecutionContext>,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let Some(execution) = execution else {
+            return operation(connection)
+                .await
+                .map_err(PostgresStorageError::from);
+        };
+        execution
+            .check()
+            .map_err(PostgresStorageError::task_stopped)?;
+        let pid = diesel::select(diesel::dsl::sql::<Integer>("pg_backend_pid()"))
+            .get_result::<i32>(connection)
+            .await?;
+        let work = operation(connection);
+        tokio::pin!(work);
+        let result = tokio::select! {
+            result = &mut work => result.map_err(PostgresStorageError::from),
+            reason = wait_for_task_stop(execution) => {
+                let cancel = async {
+                    let mut cancel_connection = self.acquire_connection_from(&self.task_lease_pool).await?;
+                    diesel::sql_query("SELECT pg_cancel_backend($1)")
+                        .bind::<Integer,_>(pid).execute(&mut *cancel_connection).await?;
+                    Ok::<_, PostgresStorageError>(())
+                };
+                // The reserved pool uses the same authenticated/TLS connection
+                // setup as lease renewal. No driver/TLS types cross the contract.
+                let _ = tokio::time::timeout(Duration::from_secs(2), cancel).await;
+                let _ = work.await;
+                return Err(PostgresStorageError::task_stopped(reason));
+            }
+        };
+        execution
+            .check()
+            .map_err(PostgresStorageError::task_stopped)?;
+        result
+    }
+
     pub async fn with_transaction<F, R, E>(&self, operation: F) -> Result<R, PostgresStorageError>
     where
         F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
@@ -343,14 +406,19 @@ impl PostgresRuntime {
         let result = connection
             .transaction::<R, PostgresStorageError, _>(async move |connection| {
                 context.apply(connection).await?;
-                let value = operation(&mut *connection)
-                    .await
-                    .map_err(PostgresStorageError::from)?;
+                let value = self
+                    .execute_controlled(
+                        &mut *connection,
+                        context.task_execution.as_ref(),
+                        operation,
+                    )
+                    .await?;
                 crate::reach_fault_point(
                     crate::PostgresFaultPoint::TransactionBeforeCommit,
                     Some(connection),
                 )
                 .await?;
+                task_execution_checkpoint()?;
                 Ok(value)
             })
             .await;
@@ -387,9 +455,8 @@ impl PostgresRuntime {
                     .execute(connection)
                     .await?;
                 context.apply(connection).await?;
-                operation(connection)
+                self.execute_controlled(connection, context.task_execution.as_ref(), operation)
                     .await
-                    .map_err(PostgresStorageError::from)
             })
             .await;
         self.record_completion("transaction", started_at, &result);
@@ -461,6 +528,38 @@ tokio::task_local! {
 
 tokio::task_local! {
     static AMBIENT_QUERY_BUDGET: Option<StorageQueryBudget>;
+}
+
+tokio::task_local! {
+    static AMBIENT_TASK_EXECUTION: Option<TaskExecutionContext>;
+}
+
+pub(crate) async fn with_task_execution<F: Future>(
+    execution: Option<TaskExecutionContext>,
+    future: F,
+) -> F::Output {
+    AMBIENT_TASK_EXECUTION.scope(execution, future).await
+}
+
+pub(crate) fn task_execution_checkpoint() -> Result<(), PostgresStorageError> {
+    AMBIENT_TASK_EXECUTION
+        .try_with(|context| {
+            context.as_ref().map_or(Ok(()), |execution| {
+                execution
+                    .check()
+                    .map_err(PostgresStorageError::task_stopped)
+            })
+        })
+        .unwrap_or(Ok(()))
+}
+
+async fn wait_for_task_stop(execution: &TaskExecutionContext) -> TaskStopReason {
+    loop {
+        if let Err(reason) = execution.check() {
+            return reason;
+        }
+        tokio::time::sleep(execution.remaining().min(Duration::from_millis(50))).await;
+    }
 }
 
 tokio::task_local! {
@@ -598,6 +697,7 @@ pub(crate) fn require_existing_revision_target<T>(
 }
 
 struct TransactionLocalContext {
+    task_execution: Option<TaskExecutionContext>,
     query_budget: Option<StorageQueryBudget>,
     provenance: Option<MutationProvenance>,
     revision_precondition: Option<StorageRevisionPrecondition>,
@@ -606,6 +706,9 @@ struct TransactionLocalContext {
 impl TransactionLocalContext {
     fn read_only() -> Self {
         Self {
+            task_execution: AMBIENT_TASK_EXECUTION
+                .try_with(Clone::clone)
+                .unwrap_or(None),
             query_budget: AMBIENT_QUERY_BUDGET
                 .try_with(|budget| *budget)
                 .unwrap_or(None),
@@ -616,6 +719,9 @@ impl TransactionLocalContext {
 
     fn ambient() -> Self {
         Self {
+            task_execution: AMBIENT_TASK_EXECUTION
+                .try_with(Clone::clone)
+                .unwrap_or(None),
             query_budget: AMBIENT_QUERY_BUDGET
                 .try_with(|budget| *budget)
                 .unwrap_or(None),
@@ -630,14 +736,37 @@ impl TransactionLocalContext {
 
     fn is_empty(&self) -> bool {
         self.query_budget.is_none()
+            && self.task_execution.is_none()
             && self.provenance.is_none()
             && self.revision_precondition.is_none()
     }
 
     async fn apply(&self, connection: &mut PostgresConnection) -> Result<(), PostgresStorageError> {
-        if let Some(query_budget) = self.query_budget {
+        let remaining = self
+            .task_execution
+            .as_ref()
+            .map(|execution| {
+                execution
+                    .check()
+                    .map_err(PostgresStorageError::task_stopped)?;
+                // PostgreSQL statement_timeout is a signed 32-bit millisecond
+                // setting, while a whole task may validly run for thirty days.
+                Ok::<_, PostgresStorageError>(
+                    execution.remaining().as_millis().clamp(1, i32::MAX as u128),
+                )
+            })
+            .transpose()?;
+        let query_limit = match (
+            self.query_budget
+                .map(|budget| u128::from(budget.as_millis())),
+            remaining,
+        ) {
+            (Some(query), Some(execution)) => Some(query.min(execution)),
+            (query, execution) => query.or(execution),
+        };
+        if let Some(milliseconds) = query_limit {
             diesel::sql_query("SELECT set_config('statement_timeout', $1, true)")
-                .bind::<diesel::sql_types::Text, _>(query_budget.as_millis().to_string())
+                .bind::<diesel::sql_types::Text, _>(milliseconds.to_string())
                 .execute(connection)
                 .await?;
         }

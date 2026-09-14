@@ -90,6 +90,7 @@ fn retain_row(
     progress: &mut StorageBackupCaptureProgress,
     row: Result<StorageBackupRow, StorageError>,
 ) -> Result<StorageBackupRow, StorageError> {
+    crate::execution::task_execution_checkpoint()?;
     let row = row?;
     progress.retain_row(&row)?;
     Ok(row)
@@ -146,6 +147,7 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             .checked_add(1)
             .ok_or_else(|| invalid("task sequence"))?;
         let record = MemoryTaskRecord {
+            control: StorageTaskControl::new(StorageTaskKind::Reindex),
             id,
             kind: StorageTaskKind::Reindex,
             status: StorageTaskStatus::Queued,
@@ -313,12 +315,41 @@ pub(super) fn store_remote_call_result(
         .unwrap_or(0)
         .checked_add(1)
         .ok_or_else(|| invalid("remote result sequence"))?;
+    let previous = state
+        .remote_call_results
+        .iter()
+        .find(|row| row.get("task_id").and_then(Value::as_i64) == Some(i64::from(task_id.id())));
+    let id = previous
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_i64)
+        .unwrap_or(id);
+    let created_at = previous
+        .and_then(|row| row.get("created_at"))
+        .cloned()
+        .unwrap_or(json!(created_at));
+    let dispatched = state.tasks.get(&task_id.id()).is_some_and(|task| {
+        matches!(
+            task.control.phase(),
+            StorageTaskExecutionPhase::RemoteDispatched { .. }
+        )
+    });
+    let side_effect_state = if response_status.is_some() {
+        "response_received"
+    } else if dispatched {
+        "possibly_sent"
+    } else {
+        "not_sent"
+    };
+    state
+        .remote_call_results
+        .retain(|row| row.get("task_id").and_then(Value::as_i64) != Some(i64::from(task_id.id())));
     state.remote_call_results.push(row(json!({
         "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
         "subject_type": target.subject_type().as_str(), "subject_id": target.subject_id().id(),
         "method": target.method().map_or("unknown", |method| method.as_str()), "rendered_url": target.rendered_url(),
         "response_status": response_status, "response_headers": response_headers, "response_body_preview": response_body_preview,
-        "duration_ms": duration_ms, "success": success, "error": error, "created_at": created_at
+        "duration_ms": duration_ms, "success": success, "error": error, "created_at": created_at,
+        "side_effect_state": side_effect_state
     }))?);
     Ok(())
 }

@@ -37,6 +37,7 @@ mod relation_query;
 mod remote_target;
 mod resource_lifecycle;
 mod restore;
+mod task_control;
 mod task_execution;
 mod task_queue;
 mod telemetry;
@@ -307,9 +308,18 @@ pub use worker_notifications::{
 
 use hubuum_domain::ResourceRevision;
 use std::fmt;
+pub use task_control::{
+    StorageTaskCancellation, StorageTaskCancellationChange, StorageTaskCancellationOutcome,
+    StorageTaskCancellationRequest, StorageTaskControl, StorageTaskExecutionAdmission,
+    StorageTaskExecutionObservation, StorageTaskExecutionPhase, StorageTaskRemoteDispatch,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageErrorKind {
+    /// The operation reached a cooperative cancellation checkpoint.
+    TaskCancelled,
+    /// The operation reached its persisted execution deadline.
+    TaskDeadlineExceeded,
     /// The configured authorization provider could not answer safely.
     AuthorizationUnavailable,
     /// Caller-supplied storage input is malformed or outside its valid range.
@@ -341,7 +351,9 @@ pub enum StorageErrorKind {
 }
 
 impl StorageErrorKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
+        Self::TaskCancelled,
+        Self::TaskDeadlineExceeded,
         Self::AuthorizationUnavailable,
         Self::InvalidInput,
         Self::Conflict,
@@ -361,6 +373,8 @@ impl StorageErrorKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::TaskCancelled => "task_cancelled",
+            Self::TaskDeadlineExceeded => "task_deadline_exceeded",
             Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
@@ -402,6 +416,17 @@ pub struct StorageError {
 }
 
 impl StorageError {
+    #[must_use]
+    pub fn task_stopped(reason: hubuum_task_core::TaskStopReason) -> Self {
+        let kind = match reason {
+            hubuum_task_core::TaskStopReason::Cancelled => StorageErrorKind::TaskCancelled,
+            hubuum_task_core::TaskStopReason::DeadlineExceeded => {
+                StorageErrorKind::TaskDeadlineExceeded
+            }
+        };
+        Self::new(kind, reason.as_str(), None)
+    }
+
     #[must_use]
     pub fn invalid_input(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::InvalidInput, message, None)

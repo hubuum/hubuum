@@ -284,6 +284,7 @@ impl TaskQueueStorage for MemoryStorage {
         state.next_task_id += 1;
         let now = Utc::now();
         let record = MemoryTaskRecord {
+            control: StorageTaskControl::new(request.kind()),
             id,
             kind: request.kind(),
             status: StorageTaskStatus::Queued,
@@ -494,6 +495,41 @@ impl TaskQueueStorage for MemoryStorage {
 
 #[async_trait]
 impl TaskExecutionStorage for MemoryStorage {
+    async fn request_task_cancellation(
+        &self,
+        request: StorageTaskCancellationRequest,
+    ) -> Result<StorageTaskCancellationOutcome, StorageError> {
+        self.request_cancellation(request).await
+    }
+
+    async fn admit_task_execution(
+        &self,
+        request: StorageTaskExecutionAdmission,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        self.admit_execution(request).await
+    }
+
+    async fn poll_task_execution(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTaskExecutionObservation, StorageError> {
+        self.poll_execution(lease).await
+    }
+
+    async fn acknowledge_task_stop(
+        &self,
+        lease: StorageTaskLease,
+    ) -> Result<StorageTask, StorageError> {
+        self.acknowledge_stop(lease).await
+    }
+
+    async fn begin_remote_dispatch(
+        &self,
+        request: StorageTaskRemoteDispatch,
+    ) -> Result<(), StorageError> {
+        self.begin_dispatch(request).await
+    }
+
     async fn claim_next_task(
         &self,
         lease_duration: StorageTaskLeaseDuration,
@@ -517,7 +553,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .get_mut(&task_id.id())
             .expect("selected task remains present");
         task.status = StorageTaskStatus::Validating;
-        task.started_at = Some(now);
+        task.started_at.get_or_insert(now);
         task.updated_at = now;
         task.lease_expires_at = Some(expires_at);
         task.attempt_count += 1;
@@ -541,7 +577,7 @@ impl TaskExecutionStorage for MemoryStorage {
         lease: StorageTaskLease,
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<bool, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_lease().await;
         let now = Utc::now();
         let Some(task) = state.tasks.get_mut(&lease.task_id().id()) else {
             return Ok(false);
@@ -570,19 +606,37 @@ impl TaskExecutionStorage for MemoryStorage {
             .tasks
             .values()
             .filter(|task| {
-                task.status.is_active()
+                (task.status.is_active()
                     && task
                         .lease_expires_at
-                        .is_none_or(|expires_at| expires_at <= now)
+                        .is_none_or(|expires_at| expires_at <= now))
+                    || (task.status == StorageTaskStatus::Queued
+                        && task
+                            .control
+                            .deadline()
+                            .is_some_and(|deadline| deadline <= now))
             })
             .take(batch_size)
             .map(|task| task.id)
             .collect::<Vec<_>>();
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
+            if state
+                .tasks
+                .get(&task_id.id())
+                .is_some_and(|task| task.control.stop_reason(now).is_some())
+            {
+                recovered.push(state.finish_stopped_task(task_id, now, None)?);
+                continue;
+            }
             let has_schema_work = state.schema_work.contains_key(&task_id.id());
             let results = state.import_task_results.get(&task_id.id());
-            let processed = results.map_or(0, |results| results.len()) as i32;
+            let processed = results.map_or(0, |results| {
+                results
+                    .iter()
+                    .filter(|result| result.outcome() != "unattempted")
+                    .count()
+            }) as i32;
             let failed = results.map_or(0, |results| {
                 results
                     .iter()
@@ -595,7 +649,6 @@ impl TaskExecutionStorage for MemoryStorage {
                 .expect("selected task remains present");
             if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
                 task.status = StorageTaskStatus::Queued;
-                task.started_at = None;
                 task.lease_expires_at = None;
                 task.claim_token = None;
                 task.updated_at = now;
@@ -714,6 +767,17 @@ impl TaskExecutionStorage for MemoryStorage {
             return Err(invalid_task_lease());
         }
         let now = Utc::now();
+        if stored.control.stop_reason(now).is_some() {
+            if let StorageTaskCompletionPayload::RemoteCall(artifact) = payload {
+                crate::backup::store_remote_call_result(
+                    &mut state,
+                    lease.task_id(),
+                    artifact,
+                    now,
+                )?;
+            }
+            return state.finish_stopped_task(lease.task_id(), now, None);
+        }
         match payload {
             StorageTaskCompletionPayload::Import
             | StorageTaskCompletionPayload::Reindex
@@ -809,6 +873,9 @@ impl TaskExecutionStorage for MemoryStorage {
         if !task.status.is_active() || !task.lease_matches(&lease) {
             return Err(invalid_task_lease());
         }
+        if task.control.stop_reason(now).is_some() {
+            return state.finish_stopped_task(lease.task_id(), now, None);
+        }
         let succeeded = task.progress.succeeded();
         let processed = task.progress.processed().max(1);
         task.status = StorageTaskStatus::Failed;
@@ -868,7 +935,7 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
         budget: StorageBackupBudget,
     ) -> Result<StorageBackupSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await.clone();
         crate::backup::capture(&state, include_history, self.schema_limits, budget)
     }
 }
@@ -1463,12 +1530,13 @@ impl ImportStorage for MemoryStorage {
     ) -> Result<StorageImportPreflight, StorageError> {
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(RwLock::new(self.state.read().await.clone())),
+            state: Arc::new(MemoryStateLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
         let mut items = Vec::new();
         let mut aborted = false;
         for item in plan.into_items() {
+            crate::execution::task_execution_checkpoint()?;
             let (index, operation) = item.into_parts();
             match scratch
                 .commit_import_operation(operation, &mut references)
@@ -1504,7 +1572,7 @@ impl ImportStorage for MemoryStorage {
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(RwLock::new(self.state.read().await.clone())),
+            state: Arc::new(MemoryStateLock::new(self.state.read().await.clone())),
         };
         let mut references = BTreeMap::new();
         for item in plan.into_items() {
@@ -1524,6 +1592,7 @@ impl ImportStorage for MemoryStorage {
         let mut references = BTreeMap::new();
         let mut items = Vec::new();
         for item in plan.into_items() {
+            crate::execution::task_execution_checkpoint()?;
             let (index, operation) = item.into_parts();
             match self
                 .commit_import_operation(operation, &mut references)
@@ -1541,28 +1610,18 @@ impl ImportStorage for MemoryStorage {
         results: FencedImportResults,
     ) -> Result<(), StorageError> {
         let (lease, results) = results.into_parts();
-        let mut state = self.state.write().await;
-        let valid_claim = |state: &MemoryState| {
-            state.tasks.get(&lease.task_id().id()).is_some_and(|task| {
-                task.kind == StorageTaskKind::Import
-                    && task.status.is_active()
-                    && task.lease_matches(&lease)
-            })
-        };
-        if !valid_claim(&state) {
-            return Err(invalid_task_lease());
-        }
+        self.check_import_claim(&lease).await?;
+        let snapshot = self.state.read().await.clone();
+        let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(RwLock::new(state.clone())),
+            state: Arc::new(MemoryStateLock::new(snapshot)),
         };
         scratch.record_import_results(results).await?;
         let committed_state = scratch.state.read().await.clone();
-        if !valid_claim(&state) {
-            return Err(invalid_task_lease());
-        }
-        *state = committed_state;
-        Ok(())
+        self.state
+            .commit_import(&generation, committed_state, &lease)
+            .await
     }
 
     async fn record_import_results(
@@ -1583,6 +1642,7 @@ impl ImportStorage for MemoryStorage {
             }
         }
         for result in results {
+            crate::execution::task_execution_checkpoint()?;
             let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
                 result.into_parts();
             let id = ImportTaskResultId::new(state.next_import_result_id)
@@ -1817,7 +1877,7 @@ impl MemoryStorage {
                 .cloned()
                 .map(|item| item.into_parts().0)
                 .collect::<Vec<_>>();
-            self.commit_import_receipts(&lease, items, &mut references)
+            self.commit_import_receipts(&lease, items, &mut references, true)
                 .await?;
             return Ok(StorageImportApply::new(
                 indices
@@ -1832,11 +1892,17 @@ impl MemoryStorage {
         for item in items {
             let (index, _, result) = item.clone().into_parts();
             match self
-                .commit_import_receipts(&lease, vec![item], &mut references)
+                .commit_import_receipts(&lease, vec![item], &mut references, false)
                 .await
             {
                 Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
                 Err(error) => {
+                    if matches!(
+                        error.kind(),
+                        StorageErrorKind::TaskCancelled | StorageErrorKind::TaskDeadlineExceeded
+                    ) {
+                        return Err(error);
+                    }
                     aborted = match error.kind() {
                         StorageErrorKind::PermissionDenied
                         | StorageErrorKind::AuthenticationRequired => {
@@ -1851,6 +1917,7 @@ impl MemoryStorage {
                         &lease,
                         vec![FencedImportItem::new(index, None, result.failed(&error))],
                         &mut references,
+                        false,
                     )
                     .await?;
                     outcomes.push(StorageImportApplyItem::failure(index, error));
@@ -1868,21 +1935,18 @@ impl MemoryStorage {
         lease: &StorageTaskLease,
         items: Vec<FencedImportItem>,
         references: &mut BTreeMap<String, MemoryImportReference>,
+        complete_import: bool,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
-        if !state.tasks.get(&lease.task_id().id()).is_some_and(|task| {
-            task.kind == StorageTaskKind::Import
-                && task.status.is_active()
-                && task.lease_matches(lease)
-        }) {
-            return Err(invalid_task_lease());
-        }
+        let snapshot = self.state.read().await.clone();
+        let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(RwLock::new(state.clone())),
+            state: Arc::new(MemoryStateLock::new(snapshot)),
         };
         let mut next_references = references.clone();
         for item in items {
+            crate::execution::task_execution_checkpoint()?;
+            self.check_import_claim(lease).await?;
             let (index, operation, result) = item.into_parts();
             if !scratch
                 .state
@@ -1901,17 +1965,39 @@ impl MemoryStorage {
                     .await?;
             }
             scratch.record_import_results(vec![result]).await?;
+            tokio::task::yield_now().await;
         }
-        let committed_state = scratch.state.read().await.clone();
-        if !state
+        let mut committed_state = scratch.state.read().await.clone();
+        if complete_import {
+            committed_state
+                .tasks
+                .get_mut(&lease.task_id().id())
+                .ok_or_else(invalid_task_lease)?
+                .control
+                .record_import_commit(Utc::now())
+                .map_err(invalid_contract_value)?;
+        }
+        self.state
+            .commit_import(&generation, committed_state, lease)
+            .await?;
+        *references = next_references;
+        Ok(())
+    }
+
+    async fn check_import_claim(&self, lease: &StorageTaskLease) -> Result<(), StorageError> {
+        let state = self.state.read().await;
+        let task = state
             .tasks
             .get(&lease.task_id().id())
-            .is_some_and(|task| task.lease_matches(lease))
-        {
-            return Err(invalid_task_lease());
+            .filter(|task| {
+                task.kind == StorageTaskKind::Import
+                    && task.status.is_active()
+                    && task.lease_matches(lease)
+            })
+            .ok_or_else(invalid_task_lease)?;
+        if let Some(reason) = task.control.stop_reason(Utc::now()) {
+            return Err(StorageError::task_stopped(reason));
         }
-        *state = committed_state;
-        *references = next_references;
         Ok(())
     }
 }

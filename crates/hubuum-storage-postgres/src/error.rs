@@ -7,6 +7,7 @@ use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
     StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
 };
+use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
 
 const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
@@ -25,6 +26,10 @@ pub struct PostgresStorageError {
 }
 
 impl PostgresStorageError {
+    pub(crate) fn task_stopped(reason: TaskStopReason) -> Self {
+        Self::from(StorageError::task_stopped(reason))
+    }
+
     pub(crate) fn precondition_failed(
         message: impl Into<String>,
         current_revision: Option<ResourceRevision>,
@@ -213,6 +218,12 @@ impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
         let (kind, message, current_revision) = error.into_parts();
         match kind {
+            StorageErrorKind::TaskCancelled => {
+                Self::new(StorageErrorKind::TaskCancelled, message, None)
+            }
+            StorageErrorKind::TaskDeadlineExceeded => {
+                Self::new(StorageErrorKind::TaskDeadlineExceeded, message, None)
+            }
             StorageErrorKind::AuthorizationUnavailable => Self::authorization_unavailable(message),
             StorageErrorKind::InvalidInput => Self::invalid_input(message),
             StorageErrorKind::Conflict => Self::conflict(message),
@@ -288,6 +299,12 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if message == "hubuum_task_cancelled" {
+                    return Self::task_stopped(TaskStopReason::Cancelled);
+                }
+                if message == "hubuum_task_deadline_exceeded" {
+                    return Self::task_stopped(TaskStopReason::DeadlineExceeded);
+                }
                 if message == "hubuum_import_claim_expired" {
                     return Self::conflict("Import task claim expired before commit");
                 }
@@ -332,6 +349,10 @@ impl From<DieselError> for PostgresStorageError {
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
         match error.kind {
+            StorageErrorKind::TaskCancelled => Self::task_stopped(TaskStopReason::Cancelled),
+            StorageErrorKind::TaskDeadlineExceeded => {
+                Self::task_stopped(TaskStopReason::DeadlineExceeded)
+            }
             StorageErrorKind::AuthorizationUnavailable => {
                 Self::authorization_unavailable(error.message)
             }

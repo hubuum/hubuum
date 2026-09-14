@@ -14,7 +14,11 @@ impl ExecutionStorage for PostgresStorage {
         let provenance = scope.mutation_provenance_override().cloned();
         let precondition = scope.revision_precondition_override().cloned();
         let query_budget = scope.query_budget_override();
+        let task_execution = scope.task_execution_override().cloned();
         let mut scoped: Pin<Box<dyn Future<Output = R> + 'a>> = Box::pin(future);
+        if let Some(task_execution) = task_execution {
+            scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
+        }
         if let Some(query_budget) = query_budget {
             scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
         }
@@ -43,7 +47,11 @@ impl ExecutionStorage for PostgresStorage {
         let provenance = scope.mutation_provenance_override().cloned();
         let precondition = scope.revision_precondition_override().cloned();
         let query_budget = scope.query_budget_override();
+        let task_execution = scope.task_execution_override().cloned();
         let mut scoped: Pin<Box<dyn Future<Output = R> + Send + 'a>> = Box::pin(future);
+        if let Some(task_execution) = task_execution {
+            scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
+        }
         if let Some(query_budget) = query_budget {
             scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
         }

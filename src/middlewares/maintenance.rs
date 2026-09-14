@@ -75,6 +75,7 @@ mod tests {
     #[case::restore_status("/api/v1/restores/12/status", None, true)]
     #[case::restore_confirmation("/api/v1/restores/12/confirm", None, false)]
     #[case::ordinary_api("/api/v1/classes", None, false)]
+    #[case::task_cancellation("/api/v1/tasks/12/cancel", None, false)]
     fn maintenance_path_availability(
         #[case] path: &str,
         #[case] metrics_path: Option<&str>,

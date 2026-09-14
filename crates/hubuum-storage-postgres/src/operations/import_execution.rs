@@ -153,6 +153,7 @@ pub async fn preflight_import(
             let transaction = connection
                 .transaction::<(), PostgresStorageError, _>(async |connection| {
                     for item in items {
+                        crate::runtime::task_execution_checkpoint()?;
                         let (index, operation) = item.into_parts();
                         let observed_revision =
                             observed_revision(connection, &state, &operation).await;
@@ -233,6 +234,7 @@ pub async fn apply_claimed_import_strict(
         .with_transaction(async move |connection| {
             let mut state = ImportRuntime::for_plan(&fenced_operations(&items));
             for item in items {
+                crate::runtime::task_execution_checkpoint()?;
                 let (index, operation, result) = item.into_parts();
                 if let Some(operation) = operation {
                     state.publish(
@@ -241,9 +243,32 @@ pub async fn apply_claimed_import_strict(
                 }
                 record_execution_receipt(connection, &lease, Some(index), result).await?;
             }
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::ImportBeforeCommitFence,
+                Some(connection),
+            )
+            .await?;
             // Lock only at the commit boundary so long imports do not block lease
             // renewal. The deferred receipt trigger checks expiry again at commit.
-            live_claimed_task(connection, claimed_task(&lease)?).await?;
+            let task = live_claimed_task(connection, claimed_task(&lease)?).await?;
+            if let Some(reason) = task
+                .control(hubuum_storage_core::StorageTaskKind::Import)?
+                .stop_reason(
+                    super::task_execution::database_now(connection)
+                        .await?
+                        .and_utc(),
+                )
+            {
+                return Err(PostgresStorageError::task_stopped(reason));
+            }
+            use crate::schema::tasks::dsl as tasks;
+            diesel::update(tasks::tasks.filter(tasks::id.eq(task.id)))
+                .set(
+                    tasks::import_effects_committed_at
+                        .eq(Some(super::task_execution::database_now(connection).await?)),
+                )
+                .execute(connection)
+                .await?;
             Ok::<_, PostgresStorageError>(())
         })
         .await?;
@@ -261,6 +286,7 @@ pub async fn apply_claimed_import_best_effort(
     let mut outcomes = Vec::new();
     let mut aborted = false;
     for item in items {
+        crate::runtime::task_execution_checkpoint()?;
         let (index, operation, result) = item.into_parts();
         let receipt = result.clone();
         let outcome = runtime
@@ -281,6 +307,12 @@ pub async fn apply_claimed_import_best_effort(
                 outcomes.push(StorageImportApplyItem::success(index));
             }
             Err(error) => {
+                if matches!(
+                    error.kind(),
+                    StorageErrorKind::TaskCancelled | StorageErrorKind::TaskDeadlineExceeded
+                ) {
+                    return Err(error);
+                }
                 record_revision_condition(runtime, &error);
                 aborted = should_abort_best_effort(&error, &mode);
                 let error = StorageError::from(error);
@@ -361,6 +393,7 @@ pub async fn apply_import_strict(
         .with_transaction(async move |connection| {
             let mut state = ImportRuntime::for_plan(&items);
             for item in items {
+                crate::runtime::task_execution_checkpoint()?;
                 let (_, operation) = item.into_parts();
                 state.publish(
                     execute_operation(schema_limits, connection, &state, operation).await?,

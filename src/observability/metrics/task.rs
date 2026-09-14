@@ -83,6 +83,55 @@ pub fn task_completed(kind: &str, final_status: &str, execution: Option<Duration
     }
 }
 
+pub fn task_cancellation_requested(outcome: &hubuum_storage_core::StorageTaskCancellationOutcome) {
+    use hubuum_storage_core::StorageTaskCancellationChange;
+    let result = match outcome.change() {
+        StorageTaskCancellationChange::CancelledQueued => "queued",
+        StorageTaskCancellationChange::Requested => "active",
+        StorageTaskCancellationChange::Unchanged => "unchanged",
+    };
+    if let Some(metrics) = current() {
+        metrics.task_cancellation_requests.add(
+            1,
+            &[
+                KeyValue::new("kind", outcome.task().kind().as_str()),
+                KeyValue::new("result", result),
+            ],
+        );
+    }
+    if outcome.change() == StorageTaskCancellationChange::CancelledQueued {
+        task_stop_acknowledged(outcome.task());
+    }
+}
+
+pub fn task_stop_acknowledged(task: &hubuum_storage_core::StorageTask) {
+    use hubuum_storage_core::StorageTaskExecutionPhase;
+    let Some(reason) = task.control().terminal_reason() else {
+        return;
+    };
+    if let Some(metrics) = current() {
+        let attrs = [
+            KeyValue::new("kind", task.kind().as_str()),
+            KeyValue::new("reason", reason.as_str()),
+        ];
+        metrics.task_stop_acknowledgements.add(1, &attrs);
+        if let Some((request, end)) = task.control().cancellation().zip(task.finished_at()) {
+            metrics.task_cancellation_acknowledgement_duration.record(
+                (end - request.requested_at()).num_milliseconds().max(0) as f64 / 1000.0,
+                &attrs,
+            );
+        }
+        if matches!(
+            task.control().phase(),
+            StorageTaskExecutionPhase::RemoteDispatched { .. }
+        ) {
+            metrics
+                .task_ambiguous_remote_stops
+                .add(1, &[KeyValue::new("reason", reason.as_str())]);
+        }
+    }
+}
+
 pub fn task_worker_config(worker_count: usize, poll_interval: Duration) {
     if let Some(metrics) = current() {
         metrics

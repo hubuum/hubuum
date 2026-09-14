@@ -62,6 +62,7 @@ where
         let planning = plan_import(backend, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
+        super::control::checkpoint()?;
         let planning_time = planning_timer.finish(metrics::ImportMetricOutcome::Success);
 
         info!(
@@ -95,10 +96,13 @@ where
                 total_time = ?total_timer.elapsed()
             );
             crate::storage::storage_handle(pool)
-                .record_import_results(results)
+                .record_claimed_import_results(crate::storage::FencedImportResults::try_new(
+                    task.lease().clone(),
+                    results,
+                )?)
                 .await?;
             let summary = format!("Import validation failed for {failed_count} item(s)");
-            finalize_task(
+            let status = finalize_task(
                 pool,
                 task,
                 TerminalTaskUpdate {
@@ -111,7 +115,7 @@ where
             .await?;
             metrics::import_items(failed_count, 0, failed_count);
             total_timer.finish(metrics::ImportMetricOutcome::Failed);
-            return Ok(TaskStatus::Failed);
+            return Ok(status);
         }
 
         let super::types::PlanningOutcome {
@@ -173,6 +177,7 @@ where
                 flush_import_result_batches(pool, task, &mut accumulator, false).await?;
             }
             for item in &planned_items {
+                super::control::checkpoint()?;
                 accumulator.push_success(task.id, &item.result, "planned");
                 flush_import_result_batches(pool, task, &mut accumulator, false).await?;
             }
@@ -234,7 +239,7 @@ where
             total_time = ?total_timer.elapsed()
         );
 
-        finalize_task(
+        let status = finalize_task(
             pool,
             task,
             TerminalTaskUpdate {
@@ -254,7 +259,11 @@ where
             accumulator.success,
             accumulator.failed,
         );
-        total_timer.finish(metric_outcome);
+        total_timer.finish(if status == TaskStatus::Cancelled {
+            metrics::ImportMetricOutcome::Error
+        } else {
+            metric_outcome
+        });
 
         Ok(status)
     }
@@ -267,8 +276,7 @@ async fn finalize_task(
     task: &ClaimedTask,
     terminal: TerminalTaskUpdate,
 ) -> Result<TaskStatus, ApiError> {
-    let status = terminal.status;
-    complete_task(
+    let finished = complete_task(
         pool,
         task,
         TaskStateChange::new(terminal.status, terminal.counts)
@@ -282,7 +290,7 @@ async fn finalize_task(
         StorageTaskCompletionPayload::Import,
     )
     .await?;
-    Ok(status)
+    TaskStatus::from_db(&finished.status)
 }
 
 fn fenced_import_plan(

@@ -80,9 +80,10 @@ where
     )
     .await?;
 
-    let result = execute_remote_call(backend, task.id, user, scopes, &request).await;
+    let result = execute_remote_call(backend, task, user, scopes, &request).await;
     match result {
         Ok(success) => finalize_remote_task(backend, task, success).await,
+        Err(error @ ApiError::TaskStopped(_)) => Err(error),
         Err(error) => {
             let sanitized = crate::tasks::helpers::sanitize_error_for_storage(&error);
             warn!(
@@ -132,7 +133,7 @@ struct RemoteFailureContext {
 
 async fn execute_remote_call<C>(
     backend: &C,
-    task_id: i32,
+    task: &ClaimedTask,
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &StoredRemoteCallTaskPayload,
@@ -164,7 +165,7 @@ where
     .await?;
     let start = Instant::now();
     let failure_context = RemoteFailureContext {
-        task_id,
+        task_id: task.id,
         target_id: target.id,
         subject_type: resolved.subject_type,
         subject_id: resolved.subject_id,
@@ -195,7 +196,21 @@ where
 
     let local_test_target = local_remote_targets_enabled_for_tests();
 
-    let response_result = OutboundRequest::new(
+    super::control::checkpoint()?;
+    use hubuum_storage_core::{StorageTaskRemoteDispatch, TaskExecutionStorage};
+    crate::storage::storage_handle(backend)
+        .begin_remote_dispatch(StorageTaskRemoteDispatch::new(
+            task.lease().clone(),
+            StorageRemoteCallArtifactTarget::new(
+                Some(request.target_id),
+                subject_type_to_storage(resolved.subject_type),
+                resource_id_to_storage(resolved.subject_id),
+                Some(http_method_to_storage(target.method)),
+                normalized_rendered_url.clone(),
+            ),
+        ))
+        .await?;
+    let outbound = OutboundRequest::new(
         outbound_method(target.method),
         normalized_rendered_url.clone(),
         std::time::Duration::from_millis(timeout_ms),
@@ -205,9 +220,9 @@ where
     .max_response_bytes(preview_limit)
     .allow_private_targets(allow_private_targets)
     .dangerous_accept_invalid_certs(local_test_target)
-    .dangerous_allow_localhost(local_test_target)
-    .send()
-    .await;
+    .dangerous_allow_localhost(local_test_target);
+
+    let response_result = super::control::cancellable(async { Ok(outbound.send().await) }).await?;
 
     match response_result {
         Ok(response) => {
@@ -378,7 +393,7 @@ async fn finalize_remote_task(
     } else {
         TaskStatus::Failed
     };
-    complete_task(
+    let finished = complete_task(
         backend,
         task,
         TaskStateChange::new(
@@ -398,7 +413,7 @@ async fn finalize_remote_task(
         StorageTaskCompletionPayload::RemoteCall(outcome.artifact),
     )
     .await?;
-    Ok(status)
+    TaskStatus::from_db(&finished.status)
 }
 
 fn invocation_context(
@@ -489,6 +504,7 @@ async fn render_remote_templates(
             })?;
         labels.push(surface.label());
     }
+    super::control::checkpoint()?;
     let outputs = batch.render(context).await.map_err(|error| {
         let label = error
             .template_index()
@@ -497,6 +513,7 @@ async fn render_remote_templates(
             .unwrap_or("template batch");
         ApiError::BadRequest(format!("Failed rendering {label}: {error}"))
     })?;
+    super::control::checkpoint()?;
     let mut outputs = outputs.into_iter().map(|output| output.into_parts().0);
     let mut next = || {
         outputs

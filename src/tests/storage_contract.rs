@@ -1,5 +1,6 @@
 mod event_delivery;
 mod schema_evolution;
+mod task_control;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};

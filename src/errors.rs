@@ -1,7 +1,8 @@
 use actix_web::{
     HttpRequest, HttpResponse, ResponseError, error::JsonPayloadError, http::StatusCode,
 };
-use serde::Serialize;
+use hubuum_task_core::TaskStopReason;
+use serde::{Serialize, Serializer};
 use serde_json::json;
 use std::fmt;
 use std::num::ParseIntError;
@@ -63,6 +64,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
     InternalServerError(String),
     Forbidden(String),
@@ -90,6 +92,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::InternalServerError(_) => "internal_server_error",
             ApiError::Forbidden(_) => "forbidden",
@@ -139,6 +142,10 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::TaskStopped(TaskStopReason::Cancelled) => "Task execution was cancelled",
+            ApiError::TaskStopped(TaskStopReason::DeadlineExceeded) => {
+                "Task execution deadline exceeded"
+            }
             ApiError::InternalServerError(_)
             | ApiError::DatabaseError(_)
             | ApiError::DbConnectionError(_)
@@ -169,6 +176,10 @@ impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
         let (kind, message, current_revision) = error.into_parts();
         match kind {
+            StorageErrorKind::TaskCancelled => Self::TaskStopped(TaskStopReason::Cancelled),
+            StorageErrorKind::TaskDeadlineExceeded => {
+                Self::TaskStopped(TaskStopReason::DeadlineExceeded)
+            }
             StorageErrorKind::AuthorizationUnavailable => {
                 Self::PermissionBackendUnavailable(message)
             }
@@ -246,6 +257,7 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ApiError::TaskStopped(_) => f.write_str(self.public_message()),
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
@@ -276,6 +288,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::TaskStopped(reason) => HttpResponse::Conflict().json(json!({
+                "error": "Task Stopped", "reason": reason.as_str(), "message": self.public_message()
+            })),
             ApiError::Conflict(message) => {
                 HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
             }
@@ -351,6 +366,7 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            ApiError::TaskStopped(_) => StatusCode::CONFLICT,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::RevisionConflict(_, _) => StatusCode::PRECONDITION_FAILED,
@@ -420,6 +436,19 @@ pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::
 pub fn path_error_handler(err: actix_web::error::PathError, _: &HttpRequest) -> actix_web::Error {
     metrics::extraction_failure("path");
     ApiError::BadRequest(err.to_string()).into()
+}
+
+fn serialize_task_stop_reason<S: Serializer>(
+    reason: &TaskStopReason,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(reason.as_str())
+}
+
+impl From<TaskStopReason> for ApiError {
+    fn from(reason: TaskStopReason) -> Self {
+        Self::TaskStopped(reason)
+    }
 }
 
 #[cfg(test)]

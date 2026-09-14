@@ -7,6 +7,12 @@
 use std::fmt;
 use std::str::FromStr;
 
+mod execution;
+pub use execution::{
+    TaskCancellationReason, TaskControlError, TaskExecutionContext, TaskExecutionLimit,
+    TaskStopHandle, TaskStopReason,
+};
+
 /// Maximum UTF-8 byte length accepted for an idempotency key.
 ///
 /// The bound keeps keys comfortably within PostgreSQL B-tree index-entry

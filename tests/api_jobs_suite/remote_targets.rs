@@ -280,6 +280,13 @@ mod tests {
     async fn spawn_https_remote_server_with_body(
         body: Vec<u8>,
     ) -> (u16, oneshot::Receiver<String>) {
+        spawn_https_remote_server_with_pause(body, None).await
+    }
+
+    async fn spawn_https_remote_server_with_pause(
+        body: Vec<u8>,
+        pause: Option<oneshot::Receiver<()>>,
+    ) -> (u16, oneshot::Receiver<String>) {
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
         let cert_der = base64::engine::general_purpose::STANDARD
             .decode(LOCALHOST_CERT_DER_B64)
@@ -333,6 +340,10 @@ mod tests {
 
             let request_text = String::from_utf8_lossy(&request).into_owned();
             request_tx.send(request_text).unwrap();
+            if let Some(pause) = pause {
+                let _ = pause.await;
+                return;
+            }
             let response = format!(
                 "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Remote-Result: accepted\r\nSet-Cookie: session=secret\r\nContent-Length: {}\r\n\r\n",
                 body.len()
@@ -349,6 +360,84 @@ mod tests {
         crate::test_support::remote_call_result(&context.pool, task_id_value)
             .await
             .unwrap()
+    }
+
+    #[actix_web::test]
+    async fn cancellation_interrupts_inflight_https_without_claiming_remote_rollback() {
+        let _local_target = crate::test_support::allow_local_remote_target();
+        let context = TestContext::new().await;
+        let (release, paused) = oneshot::channel();
+        let (port, received) = spawn_https_remote_server_with_pause(Vec::new(), Some(paused)).await;
+        let (collection, class, object) = setup_object(&context, "rt_cancel_inflight").await;
+        let target = create_target(
+            &context,
+            collection,
+            class,
+            "cancel-inflight",
+            &format!("https://localhost:{port}/hook"),
+        )
+        .await;
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_invoke_body_with_payload(
+                class,
+                object,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ),
+        )
+        .await;
+        let task: TaskResponse =
+            test::read_body_json(assert_response_status(response, StatusCode::ACCEPTED).await)
+                .await;
+        tokio::time::timeout(Duration::from_secs(10), received)
+            .await
+            .expect("remote endpoint must receive the request")
+            .unwrap();
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/tasks/{}/cancel", task.id),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(response, StatusCode::ACCEPTED).await;
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_task(&context, task.id, TaskStatus::Cancelled),
+        )
+        .await
+        .expect("worker must stop while the remote response is withheld");
+        assert_eq!(
+            serde_json::to_value(&stopped).unwrap()["remote_side_effect_state"],
+            "possibly_sent"
+        );
+        assert_eq!(stopped.terminal_reason.as_deref(), Some("cancel_requested"));
+        let result = remote_call_result(&context, task.id).await;
+        assert_eq!(result.target_id, Some(target.id));
+        assert!(result.response_status.is_none());
+        assert!(!result.success);
+        let _ = release.send(());
+        // Idempotent withdrawal keeps the same terminal task and cannot dispatch again.
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/tasks/{}/cancel", task.id),
+            serde_json::json!({}),
+        )
+        .await;
+        let repeated: TaskResponse =
+            test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
+        assert_eq!(repeated.status, TaskStatus::Cancelled);
+        assert_eq!(repeated.finished_at, stopped.finished_at);
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(task.id).unwrap(),
+        )
+        .await
+        .unwrap();
     }
 
     #[actix_web::test]

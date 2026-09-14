@@ -247,3 +247,11 @@ If Treetop returns Allow, the user is an admin. If Deny, the user is not. The bo
 - `../permissions.md` — the on-the-wire permission model that both Local and Treetop backends conform to.
 - `src/permissions/treetop/mapping.rs` — the runtime entity mappings (source of truth for the schema).
 - `src/permissions/export.rs` — the Cedar policy exporter.
+
+## Task cancellation authorization
+
+`CancelTask` authorizes `POST /api/v1/tasks/{task_id}/cancel` independently of
+`ReadTask`. Add it to the deployed schema and explicitly grant it in cancellation
+policies. Scoped tokens remain limited to their own submitted tasks. Internal
+reindex and schema tasks still require an unscoped administrator, and schema
+cancellation also requires `UpdateClass`. See [Task API](../task_api.md#cancel-a-task).

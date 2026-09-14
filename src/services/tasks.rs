@@ -174,7 +174,10 @@ pub async fn recover_expired_task_leases(
         .recover_expired_task_leases(batch_size)
         .await?
         .into_iter()
-        .map(task_from_storage)
+        .map(|task| {
+            crate::observability::metrics::task_stop_acknowledged(&task);
+            task_from_storage(task)
+        })
         .collect()
 }
 
@@ -216,11 +219,39 @@ pub(crate) async fn complete_task(
         storage_task_event(event),
         payload,
     );
-    storage_handle(backend)
-        .complete_task(completion)
-        .await
-        .map_err(ApiError::from)
-        .and_then(task_from_storage)
+    // Finalization decides the winner under the task lock. An expired local
+    // context must not prevent receipt reconciliation or terminal bookkeeping.
+    crate::storage::with_storage_execution_scope(
+        backend,
+        hubuum_storage_core::StorageExecutionScope::default().with_task_execution(None),
+        storage_handle(backend).complete_task(completion),
+    )
+    .await
+    .map_err(ApiError::from)
+    .and_then(|task| {
+        crate::observability::metrics::task_stop_acknowledged(&task);
+        task_from_storage(task)
+    })
+}
+
+pub(crate) async fn acknowledge_task_stop(
+    backend: &impl StorageContext,
+    task: &ClaimedTask,
+) -> Result<TaskRecord, ApiError> {
+    let finished = storage_handle(backend)
+        .acknowledge_task_stop(task.lease.clone())
+        .await?;
+    crate::observability::metrics::task_stop_acknowledged(&finished);
+    let duration = finished
+        .started_at()
+        .zip(finished.finished_at())
+        .and_then(|(start, end)| (end - start).to_std().ok());
+    crate::observability::metrics::task_completed(
+        finished.kind().as_str(),
+        finished.status().as_str(),
+        duration,
+    );
+    task_from_storage(finished)
 }
 
 pub(crate) async fn fail_task(
@@ -238,7 +269,10 @@ pub(crate) async fn fail_task(
         ))
         .await
         .map_err(ApiError::from)
-        .and_then(task_from_storage)
+        .and_then(|task| {
+            crate::observability::metrics::task_stop_acknowledged(&task);
+            task_from_storage(task)
+        })
 }
 
 pub(crate) async fn purge_expired_export_outputs(
@@ -695,6 +729,7 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
     let scope = task.scope_snapshot();
     let progress = task.progress();
     Ok(TaskRecord {
+        control: task.control().clone(),
         id: task.id().id(),
         kind: kind.as_str().to_string(),
         status: status.as_str().to_string(),
@@ -871,4 +906,96 @@ pub async fn execute_schema_validation(
         execution,
     );
     Ok(status)
+}
+
+/// Authorize a cancellation independently from task visibility. Scoped tokens
+/// may withdraw only work submitted with that exact token; they gain no owner-
+/// group or administrator authority over another credential's work.
+pub(crate) async fn cancel_task(
+    backend: &crate::permissions::AppContext,
+    requestor: &crate::extractors::Authenticated,
+    task_id: TaskID,
+    request: crate::models::TaskCancelRequest,
+    event: hubuum_events_core::EventContext,
+) -> Result<TaskRecord, ApiError> {
+    use crate::models::Permissions;
+    use crate::traits::{SelfAccessors, UserPermissions};
+    use hubuum_domain::ClassId;
+    use hubuum_storage_core::{SchemaEvolutionStorage, StorageTaskCancellationRequest};
+
+    let (stored, owner_group) = storage_handle(backend)
+        .get_task_access(task_id)
+        .await?
+        .into_parts();
+    let principal = PrincipalRef::load(backend, &requestor.principal).await?;
+    let is_admin = requestor.scopes().is_none() && backend.is_admin(&requestor.principal).await?;
+    let is_owner = stored
+        .submitted_by()
+        .is_some_and(|id| id.id() == principal.user_id);
+    let internal = matches!(
+        stored.kind(),
+        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+    );
+    if requestor.scopes().is_some()
+        && (!is_owner || stored.scope_snapshot().token_id() != Some(requestor.token_meta.id()))
+    {
+        if !is_owner {
+            return Err(ApiError::NotFound("Task not found".into()));
+        }
+        return Err(ApiError::Forbidden(
+            "A scoped token may cancel only tasks submitted with that token".into(),
+        ));
+    }
+    let allowed = match backend.authorization_mode() {
+        AuthorizationMode::LocalStorage => {
+            let (identity, _) = storage_handle(backend)
+                .get_authentication_identity(requestor.principal.id())
+                .await?
+                .into_parts();
+            is_admin
+                || is_owner
+                || (requestor.scopes().is_none()
+                    && identity.is_human()
+                    && owner_group.is_some_and(|id| principal.group_ids.contains(&id.id())))
+        }
+        AuthorizationMode::Delegated(policy) => {
+            policy
+                .authorize_task_cancellation(
+                    &principal,
+                    &ResourceRef::task(task_id.id(), stored.submitted_by().map(|id| id.id())),
+                )
+                .await?
+                == PermissionDecision::Allow
+        }
+    };
+    if !allowed {
+        return Err(ApiError::NotFound("Task not found".into()));
+    }
+    if internal && !is_admin {
+        return Err(ApiError::Forbidden(
+            "Reindex and schema work cancellation requires an unscoped administrator".into(),
+        ));
+    }
+    if stored.kind() == StorageTaskKind::SchemaValidation {
+        let work = storage_handle(backend).get_schema_work(task_id).await?;
+        let class = ClassId::new(work.target().class_id().id())?
+            .instance(backend)
+            .await?;
+        crate::can!(
+            backend,
+            &requestor.principal,
+            requestor.scopes(),
+            [Permissions::UpdateClass],
+            class
+        );
+    }
+    let outcome = storage_handle(backend)
+        .request_task_cancellation(
+            StorageTaskCancellationRequest::new(&stored, event)
+                .reason(request.reason())
+                .expected_status(request.expected_status().map(task_status_to_storage)),
+        )
+        .await?;
+    crate::observability::metrics::task_cancellation_requested(&outcome);
+    task_from_storage(outcome.into_task())
 }

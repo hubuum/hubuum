@@ -120,6 +120,12 @@ backend contract.
 | `HUBUUM_TASK_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for background task workers; committed task inserts normally wake workers through the selected storage backend |
 | `HUBUUM_TASK_LEASE_SECONDS` | `60` | Durable task lease duration |
 | `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Lease renewal interval; must be shorter than the lease |
+| `HUBUUM_TASK_IMPORT_EXECUTION_TIMEOUT_SECONDS` | `3600` | Maximum import execution seconds from first claim; 1 to 2592000 |
+| `HUBUUM_TASK_EXPORT_EXECUTION_TIMEOUT_SECONDS` | `900` | Maximum export execution seconds from first claim; 1 to 2592000 |
+| `HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS` | `3600` | Maximum backup execution seconds from first claim; 1 to 2592000 |
+| `HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS` | `7200` | Maximum reindex execution seconds from first claim; 1 to 2592000 |
+| `HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS` | `300` | Maximum remote-call execution seconds from first claim; 1 to 2592000 |
+| `HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS` | `7200` | Maximum schema validation execution seconds from first claim; 1 to 2592000 |
 | `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between abandoned-task recovery scans |
 | `HUBUUM_COMPUTED_REINDEX_BATCH_SIZE` | `100` | Objects processed per computed-field rebuild transaction; valid range is 1 through 1000 |
 | `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |

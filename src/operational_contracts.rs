@@ -774,6 +774,42 @@ pub(crate) const METRICS: &[MetricDefinition] = &[
         "Logical storage operation failures"
     ),
     metric!(
+        "hubuum_task_cancellation_requests_total",
+        Counter,
+        None,
+        ["kind", "result"],
+        &[],
+        Process,
+        "Durable cancellation requests by task kind and queued, active or unchanged result"
+    ),
+    metric!(
+        "hubuum_task_stop_acknowledgements_total",
+        Counter,
+        None,
+        ["kind", "reason"],
+        &[],
+        Process,
+        "Acknowledged task cancellation and deadline expiration"
+    ),
+    metric!(
+        "hubuum_task_cancellation_acknowledgement_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["kind", "reason"],
+        BACKGROUND_BUCKETS_SECONDS,
+        Process,
+        "Time from cancellation request to terminal acknowledgement"
+    ),
+    metric!(
+        "hubuum_task_ambiguous_remote_stops_total",
+        Counter,
+        None,
+        ["reason"],
+        &[],
+        Process,
+        "Remote tasks stopped after dispatch may have produced external effects"
+    ),
+    metric!(
         "hubuum_task_claims_total",
         Counter,
         None,
@@ -1492,6 +1528,12 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             storage_operation_values()
         }
         (name, "result") if name.starts_with("hubuum_storage_operation") => storage_results(),
+        ("hubuum_task_cancellation_requests_total", "result") => {
+            strings(&["queued", "active", "unchanged"])
+        }
+        (name, "reason") if name.starts_with("hubuum_task_") => {
+            strings(&["cancel_requested", "deadline_exceeded"])
+        }
         (name, "kind") if name.starts_with("hubuum_task_output_cleanup") => {
             strings(&["export", "backup"])
         }
