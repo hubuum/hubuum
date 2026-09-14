@@ -188,6 +188,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Update rustls to 0.23.45 to reject TLS 1.3 handshake messages received at the
+  wrong encryption level (RUSTSEC-2026-0285).
+
 - Principal credential, settings, and service-account management now honor the
   selected permission backend's administrator decision. Local admin-group
   membership no longer overrides external policy denial to access another
