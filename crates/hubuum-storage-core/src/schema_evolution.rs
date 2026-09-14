@@ -667,7 +667,7 @@ pub enum StorageSchemaWorkStatus {
     Superseded,
 }
 
-/// Bounded resumable scan state. Serialized only as workflow/backup metadata.
+/// Resumable state for bounded scan batches, including accumulated impact findings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "SchemaWorkSnapshot")]
 pub struct StorageSchemaWork {

@@ -164,7 +164,7 @@ struct FailureGroup {
     samples: Vec<ObjectId>,
 }
 
-/// Bounded checkpoint metadata; grouped counts describe the first failure per object.
+/// Checkpoint metadata retaining every object grouped by its first failure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "ImpactSnapshot")]
 pub struct StorageSchemaImpact {
@@ -194,7 +194,6 @@ impl TryFrom<ImpactSnapshot> for StorageSchemaImpact {
         };
         let total = impact.counts.total();
         if total.is_none()
-            || impact.failures.len() > 20
             || impact
                 .grouped_count()
                 .zip(total)
@@ -202,7 +201,6 @@ impl TryFrom<ImpactSnapshot> for StorageSchemaImpact {
             || impact.failures.iter().enumerate().any(|(index, group)| {
                 group.objects == 0
                     || group.samples.is_empty()
-                    || group.samples.len() > 5
                     || group.samples.len() as u64 > group.objects
                     || group
                         .samples
@@ -282,17 +280,13 @@ impl StorageSchemaImpact {
             .find(|group| group.reason == reason)
         {
             group.objects += 1;
-            if group.samples.len() < 5 {
-                group.samples.push(object);
-            }
-        } else if self.failures.len() < 20 {
+            group.samples.push(object);
+        } else {
             self.failures.push(FailureGroup {
                 reason,
                 objects: 1,
                 samples: vec![object],
             });
-        } else {
-            self.ungrouped_failures += 1;
         }
     }
 }
@@ -398,6 +392,49 @@ mod tests {
         let mut snapshot = serde_json::to_value(work()).unwrap();
         *snapshot.pointer_mut(path).unwrap() = replacement;
         assert!(serde_json::from_value::<StorageSchemaWork>(snapshot).is_err());
+    }
+
+    #[test]
+    fn legacy_capped_checkpoints_resume_without_discarding_findings() {
+        let mut work = work();
+        work.upper_bound = 15;
+        let baseline =
+            StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Absent).unwrap();
+        let candidate = StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Enforced(
+            json!({"type":"integer", "minimum":1}),
+        ))
+        .unwrap();
+        for id in 1..=14 {
+            let value = if id <= 7 { json!("private") } else { json!(0) };
+            work.record_impact(
+                ObjectId::new(id).unwrap(),
+                StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&value)),
+                false,
+            );
+        }
+        // Reproduce omitted IDs and groups from an older persisted checkpoint.
+        let mut snapshot = serde_json::to_value(work).unwrap();
+        let groups = snapshot["impact"]["failures"].as_array_mut().unwrap();
+        groups.truncate(1);
+        groups[0]["samples"].as_array_mut().unwrap().truncate(5);
+        snapshot["impact"]["ungrouped_failures"] = json!(7);
+        let mut restored: StorageSchemaWork = serde_json::from_value(snapshot).unwrap();
+        restored.record_impact(
+            ObjectId::new(15).unwrap(),
+            StorageSchemaInspection::new(Some(&baseline), &candidate, Some(&json!("private"))),
+            false,
+        );
+        let resumed = serde_json::to_value(restored).unwrap();
+        assert_eq!(
+            resumed["impact"]["failures"],
+            json!([{
+                "reason": {"keyword":"type", "schema_path":"/type", "missing_property":null},
+                "objects":8,
+                "samples":[1,2,3,4,5,15]
+            }])
+        );
+        assert_eq!(resumed["impact"]["ungrouped_failures"], 7);
+        assert!(serde_json::from_value::<StorageSchemaWork>(resumed).is_ok());
     }
 
     #[test]

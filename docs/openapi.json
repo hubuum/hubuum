@@ -6538,7 +6538,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Administrator report with bounded redacted samples and exact/advisory population boundary",
+            "description": "Administrator report with complete grouped impact mismatches and exact/advisory population boundary",
             "content": {
               "application/json": {
                 "schema": {
@@ -29794,7 +29794,7 @@
               "type": "integer",
               "format": "int32"
             },
-            "description": "At most five object IDs per group; values and instance paths are omitted."
+            "description": "All object IDs in this group, in scan order; the field name is retained for compatibility.\nOlder reports may contain only samples. Values and instance paths are omitted."
           }
         }
       },
@@ -29886,12 +29886,12 @@
             "items": {
               "$ref": "#/components/schemas/SchemaFailureGroup"
             },
-            "description": "At most 20 groups, counting the first failure per object."
+            "description": "Every committed mismatched object, grouped by its first failure without a group limit."
           },
           "ungrouped_failures": {
             "type": "integer",
             "format": "int64",
-            "description": "Failures whose group did not fit the report limit.",
+            "description": "Failures omitted by older capped reports; zero for newly started analyses.\nRerun an older analysis to obtain its complete object lists.",
             "minimum": 0
           }
         }
@@ -30118,7 +30118,8 @@
             "items": {
               "type": "integer",
               "format": "int32"
-            }
+            },
+            "description": "Up to 20 summary IDs; impact.failures contains all committed mismatches."
           },
           "kind": {
             "$ref": "#/components/schemas/SchemaWorkKind"

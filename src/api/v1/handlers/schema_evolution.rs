@@ -285,7 +285,7 @@ pub async fn revalidate_schema(
     Ok(ApiResponse::new(result, StatusCode::ACCEPTED))
 }
 
-#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with bounded redacted samples and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with complete grouped impact mismatches and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
 #[get("/{class_id}/schema/tasks/{task_id}")]
 pub async fn get_schema_work(
     context: AppContext,

@@ -249,7 +249,7 @@ async fn completed_impact_readiness_tracks_current_state(
 #[case::memory(StorageBackendKind::Memory)]
 #[case::postgres(StorageBackendKind::Postgres)]
 #[actix_web::test]
-async fn impact_failure_groups_and_samples_remain_bounded_across_batches(
+async fn impact_reports_every_mismatched_object_and_reason_across_batches(
     #[case] backend: StorageBackendKind,
 ) {
     let mut properties = serde_json::Map::new();
@@ -272,17 +272,40 @@ async fn impact_failure_groups_and_samples_remain_bounded_across_batches(
             StorageSchemaBatchLimits::try_new(4, 8192, 4096).unwrap(),
         )
         .await;
-    let report = serde_json::to_value(&complete).unwrap();
+    let report = serde_json::to_value(
+        service::get_work(&fixture.backend, complete.task_id())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     let groups = report["impact"]["failures"].as_array().unwrap();
-    assert_eq!(groups.len(), 20);
-    for group in groups {
-        assert_eq!(group["objects"], 7);
-        assert_eq!(group["samples"].as_array().unwrap().len(), 5);
+    assert_eq!(groups.len(), 25);
+    for (index, group) in groups.iter().enumerate() {
+        let ids = fixture.resources.objects[index * 7..(index + 1) * 7]
+            .iter()
+            .map(|object| object.id().id())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            *group,
+            json!({
+                "reason": {
+                    "keyword": "type",
+                    "schema_path": format!("/properties/field{index:02}/type"),
+                    "missing_property": null
+                },
+                "objects": 7,
+                "samples": ids
+            })
+        );
     }
-    assert_eq!(report["impact"]["ungrouped_failures"], 35);
+    assert_eq!(report["impact"]["ungrouped_failures"], 0);
     assert!(!report.to_string().contains("private-instance-value"));
-    let restored: StorageSchemaWork = serde_json::from_value(report).unwrap();
+    let restored: StorageSchemaWork = serde_json::from_value(report.clone()).unwrap();
     assert_eq!(restored.examined(), 175);
+    assert_eq!(
+        serde_json::to_value(restored.impact().unwrap()).unwrap(),
+        report["impact"]
+    );
     fixture.cleanup().await;
 }
 

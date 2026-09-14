@@ -62,7 +62,7 @@ All routes below are relative to `/api/v1/classes/{class_id}/schema`.
 | `POST /revisions/{revision}/impact` | Queue bounded impact analysis |
 | `POST /revisions/{revision}/activate` | Activate with an explicit policy |
 | `POST /revisions/{revision}/revalidate` | Queue revalidation of the active revision |
-| `GET /tasks/{task_id}` | Read progress and bounded findings |
+| `GET /tasks/{task_id}` | Read progress and grouped impact findings |
 | `DELETE /tasks/{task_id}` | Cancel work and fence later batch commits |
 | `GET` | Read active revision, population epoch, and compliance counts |
 | `GET /objects` | Page compliance metadata, optionally filtered by `status` |
@@ -144,20 +144,27 @@ The `impact.baseline` reference identifies the comparison policy. The disjoint
 | `unchanged_not_required` | Neither policy requires validation |
 | `uninspectable` | Either comparison could not run, or the object changed before commit |
 
-`impact.failures` groups the first failing constraint per object, with at most
-20 groups and five object IDs per group. Each group includes `objects` and a
+`impact.failures` groups every mismatched object by its first failing constraint,
+without a limit on groups or object IDs. Each group's `samples` field contains
+all of its object IDs in scan order; the field name is retained for compatibility.
+Each group includes `objects` and a
 `reason` containing the JSON Schema `keyword` (`falseSchema` for a boolean-false
 schema), a schema-owned `schema_path`,
 and, for missing required properties, `missing_property`. No instance paths,
 unexpected property names, instance values, or validator messages are included.
 Schema paths exceeding 512 bytes and property names exceeding 128 bytes are
-omitted. `ungrouped_failures` counts failures whose group did not fit the limit;
-the overall invalid count remains complete. These are first-failure counts,
-not an exhaustive list of everything that must be repaired in each object.
+omitted. `ungrouped_failures` is retained for compatibility and is zero for newly
+started analyses. Older checkpoints may still contain capped ID lists and a
+nonzero count of omitted failures; rerun those analyses to obtain complete lists.
+Each object has one failure reason, not an exhaustive list of everything that
+must be repaired in that object. Running, cancelled, and failed tasks include
+only findings committed so far; stale or uninspectable objects have no proven
+mismatch reason and remain accounted for by their counters and readiness.
 
 For example, a report could show 43 `newly_invalid` objects, with one group of
 38 failures for missing `hostname` and another of five `type` failures at
-`/properties/hostname/type`. Use the sample IDs to inspect authorized objects,
+`/properties/hostname/type`, with all 43 IDs in their respective groups. Use these
+IDs to inspect authorized objects,
 repair them under the active policy, or stage a revised proposal. Then request
 a fresh impact task before activation.
 
@@ -187,11 +194,13 @@ After completion, cancellation, or failure, another request starts a fresh scan
 of the class, including stale and invalid objects.
 
 A checkpoint retains the target, initial population epoch, maximum object ID,
-cursor, counters, up to 20 invalid object IDs, batch count, and elapsed batch
+cursor, counters, up to 20 summary IDs in `invalid_samples`, batch count, and elapsed batch
 time. Matching start/end epochs make completed impact exact at completion;
 activation rechecks that epoch again. An analysis with population changes is
 advisory. Impact checkpoints also retain the baseline, comparison counts, and
-bounded failure groups described above. Event and audit findings retain fixed
+complete failure groups described above. Checkpoint and response sizes therefore
+grow with the number of mismatches; scan batches retain their row and byte limits.
+Event and audit findings retain fixed
 categories; their payloads omit validator messages, instance values, and paths.
 
 Each batch reads snapshots in object-ID order, validates outside its write

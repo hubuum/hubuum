@@ -19,7 +19,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Schema impact reports compare proposed and active policies against the same
   object snapshots, show changes in validity and validation requirements, and
-  group bounded, value-redacted failure examples. Readiness is recomputed as
+  group value-redacted failures by reason. Readiness is recomputed as
   compatible, incompatible, or inconclusive against current class state.
 
 - Deployment-configurable JSON Schema document, expansion, object-size, and
@@ -73,6 +73,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   stable releases. Existing installations retain their configured images.
 
 ### Fixed
+
+- Schema impact reports include every mismatched object ID grouped by its first
+  failure reason, removing the 20-group and five-ID limits while preserving the
+  response fields and diagnostic redaction. Rerun older analyses to obtain
+  complete lists; saved reports retain their original findings.
 
 - External authorization pagination preserves PostgreSQL ordering for computed
   arrays and objects on locale-collated databases, preventing skipped results.
