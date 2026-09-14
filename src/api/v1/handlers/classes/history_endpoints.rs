@@ -22,8 +22,7 @@ async fn get_class_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids,
-        resolve_history_principal_names,
+        readable_history_collection_ids, resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -81,21 +80,25 @@ async fn get_class_history(
         )
         .await?
     } else {
-        let candidate_params = history_candidate_query_options(&params);
-        let (candidates, _) = class_history_paginated_with_total_count(
-            entity_id,
-            &context,
-            &candidate_params,
-            HistoryCollectionFilter::All,
-        )
-        .await?;
         authorize_history_page(
             &context,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
-            candidates,
-            &search_params,
+            |candidate_params| {
+                let context = &context;
+                async move {
+                    class_history_paginated_with_total_count(
+                        entity_id,
+                        &context,
+                        &candidate_params,
+                        HistoryCollectionFilter::All,
+                    )
+                    .await
+                    .map(|page| page.0)
+                }
+            },
+            &params,
             |row| HistoryAuthorizationSnapshot::from(row),
         )
         .await?
@@ -217,8 +220,7 @@ async fn get_object_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids,
-        resolve_history_principal_names,
+        readable_history_collection_ids, resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -281,22 +283,26 @@ async fn get_object_history(
         )
         .await?
     } else {
-        let candidate_params = history_candidate_query_options(&params);
-        let (candidates, _) = object_history_paginated_with_total_count(
-            entity_id,
-            class_id.id(),
-            &context,
-            &candidate_params,
-            HistoryCollectionFilter::All,
-        )
-        .await?;
         authorize_history_page(
             &context,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
-            candidates,
-            &search_params,
+            |candidate_params| {
+                let context = &context;
+                async move {
+                    object_history_paginated_with_total_count(
+                        entity_id,
+                        class_id.id(),
+                        &context,
+                        &candidate_params,
+                        HistoryCollectionFilter::All,
+                    )
+                    .await
+                    .map(|page| page.0)
+                }
+            },
+            &params,
             |row| HistoryAuthorizationSnapshot::from(row),
         )
         .await?

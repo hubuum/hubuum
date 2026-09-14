@@ -43,6 +43,22 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for authorization_path in src/tests/permissions/candidate_paging.rs \
+  src/api/v1/handlers/tasks.rs tests/api_jobs_suite/tasks.rs; do
+  authorization_output="$(bash "$classifier" "$authorization_path")"
+  assert_flag "$authorization_output" code true
+  assert_flag "$authorization_output" treetop_conformance true
+done
+
+for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
+  crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/down.sql; do
+  cursor_output="$(bash "$classifier" "$cursor_input")"
+  assert_flag "$cursor_output" code true
+  assert_flag "$cursor_output" container true
+  assert_flag "$cursor_output" artifacts true
+done
+
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
   test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py; do
   corpus_output="$(bash "$classifier" "$corpus_path")"

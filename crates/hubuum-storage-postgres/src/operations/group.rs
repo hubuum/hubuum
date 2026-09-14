@@ -348,8 +348,10 @@ pub async fn list_groups(
                     group_cursor_field(&FilterField::Id)?,
                 )
             );
+            // The identity-scope join is many-to-one, so every group is already
+            // unique. DISTINCT would reject collated cursor sort expressions
+            // that are not part of the selected row.
             let groups = records
-                .distinct()
                 .load::<GroupRow>(connection)
                 .await?
                 .into_iter()

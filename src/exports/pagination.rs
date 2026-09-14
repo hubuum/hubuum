@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::pagination::{CursorPaginated, encode_cursor, prepare_db_pagination};
+use crate::pagination::{CursorBoundary, CursorPaginated, prepare_db_pagination};
 
 pub(super) const CANDIDATE_PAGE_SIZE: usize = 128;
 pub(super) const MAX_AUTHORIZATION_CANDIDATES: usize = 10_000;
@@ -36,25 +36,28 @@ where
         let has_more = candidates.len() > page_size;
         candidates.truncate(page_size);
         scanned += candidates.len();
-        let cursor = candidates
+        let next_boundary = candidates
             .last()
-            .map(|row| encode_cursor(row, options.sort()))
-            .transpose()?;
+            .map(|row| CursorBoundary::from_item(row, options.sort()));
         output.extend(
             authorize(candidates)
                 .await?
                 .into_iter()
                 .take(wanted - output.len()),
         );
-        if !has_more {
+        if output.len() == wanted || !has_more {
             break;
         }
-        if output.len() < wanted && scanned == MAX_AUTHORIZATION_CANDIDATES {
+        if scanned == MAX_AUTHORIZATION_CANDIDATES {
             return Err(ApiError::BadRequest(format!(
                 "export authorization exceeded {MAX_AUTHORIZATION_CANDIDATES} candidates; narrow the export query"
             )));
         }
-        options.set_cursor(cursor)?;
+        options.set_continuation(
+            next_boundary
+                .expect("a nonempty export page with look-ahead has a boundary")?
+                .into_continuation()?,
+        );
     }
     Ok(output)
 }
@@ -102,7 +105,7 @@ mod tests {
             &query,
             async |options| {
                 assert!(options.limit().unwrap() <= CANDIDATE_PAGE_SIZE + 1);
-                assert_eq!(options.cursor().is_some(), pages.get() > 0);
+                assert_eq!(options.has_cursor(), pages.get() > 0);
                 let start = pages.get() as i32 * CANDIDATE_PAGE_SIZE as i32 + 1;
                 pages.set(pages.get() + 1);
                 Ok((start..start + options.limit().unwrap() as i32)
@@ -119,6 +122,66 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result[0].0, allowed_from);
+        assert_eq!(pages.get(), expected_pages);
+    }
+
+    #[rstest]
+    #[case::full_before_boundary(1, 1)]
+    #[case::denied_boundary(129, 2)]
+    #[actix_web::test]
+    async fn export_preserves_oversized_internal_sort_values(
+        #[case] allowed_from: i32,
+        #[case] expected_pages: usize,
+    ) {
+        use crate::models::{Collection, ResourceRevision};
+        use crate::pagination::paginate_in_memory;
+
+        let candidates = (1..=129)
+            .map(|id| Collection {
+                id,
+                name: format!("export-{id:03}"),
+                description: format!(
+                    "{id:03}{}",
+                    if id == 128 {
+                        "x".repeat(50_000)
+                    } else {
+                        String::new()
+                    }
+                ),
+                created_at: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+                updated_at: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+                parent_collection_id: None,
+                revision: ResourceRevision::INITIAL,
+            })
+            .collect::<Vec<_>>();
+        let query = QueryOptions::new(
+            vec![],
+            vec![SortParam::new(FilterField::Description, false)],
+            Some(1),
+            None,
+            false,
+        )
+        .unwrap();
+        let pages = Cell::new(0);
+        let result = authorized_storage_page(
+            &query,
+            async |options| {
+                pages.set(pages.get() + 1);
+                paginate_in_memory(candidates.clone(), &options)
+            },
+            async |rows: Vec<Collection>| {
+                Ok(rows
+                    .into_iter()
+                    .filter(|row| row.id >= allowed_from)
+                    .collect())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![allowed_from]
+        );
         assert_eq!(pages.get(), expected_pages);
     }
 

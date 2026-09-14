@@ -266,6 +266,9 @@ pub async fn list_users(
                     user_cursor_field(&FilterField::Id)?,
                 )
             );
+            // Principal and identity-scope joins preserve one row per user.
+            // Avoid DISTINCT, which disallows collated cursor sort expressions
+            // that are not part of the selected row.
             let rows = records
                 .select((
                     UserRow::as_select(),
@@ -277,7 +280,6 @@ pub async fn list_users(
                     crate::schema::principals::last_sync_success_at,
                     crate::schema::principals::revision,
                 ))
-                .distinct()
                 .load::<(
                     UserRow,
                     String,

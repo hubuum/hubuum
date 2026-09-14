@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use actix_web::{
     Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web,
 };
@@ -20,10 +18,13 @@ use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
     prepare_db_pagination,
 };
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::visibility::{
+    authorize_all_candidates, authorize_cursor_page_from_storage,
+    filter_authorized_cursor_page_from_storage,
+};
 use crate::permissions::{AppContext, AuthzTarget, PrincipalRef, ResourceRef, authorize_resources};
 use crate::services::authorization_resources::{
-    class_relation_authorization_resources, object_relation_authorization_resources,
+    authorize_class_relation_candidates, authorize_object_relation_candidates,
 };
 use crate::services::catalog as catalog_service;
 use crate::services::computed_objects::enrich_objects_with_computed;
@@ -343,20 +344,24 @@ async fn get_classes(
         if !scope_allows(requestor.scopes(), &[Permissions::ReadClass]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let (candidates, _) =
-            catalog_service::list_classes(&context, user.id().id(), true, None, candidate_options)
-                .await?;
         let principal = PrincipalRef::load(&context, user).await?;
-        let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
-        let page = authorize_cursor_page(
+        let page = authorize_cursor_page_from_storage(
             context.permission_backend(),
             &principal,
-            candidates,
             requestor.scopes(),
             vec![Permissions::ReadClass],
-            &search_params,
+            &params,
+            |candidate_options| async {
+                catalog_service::list_classes(
+                    &context,
+                    user.id().id(),
+                    true,
+                    None,
+                    candidate_options,
+                )
+                .await
+                .map(|page| page.0)
+            },
             |class| ResourceRef::class(class.id, class.collection.id, Some(class.name.clone())),
         )
         .await?;

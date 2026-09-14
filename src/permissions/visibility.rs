@@ -5,8 +5,8 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Permissions, TokenScope};
 use crate::pagination::{
-    effective_page_limit, encode_cursor, item_is_after_cursor, known_count_or_skipped,
-    paginate_in_memory, prepare_db_pagination,
+    CursorBoundary, CursorValue, decode_cursor_values, effective_page_limit, item_is_after_cursor,
+    known_count_or_skipped, prepare_db_pagination,
 };
 use crate::traits::{CursorPaginated, scope_allows, scope_allows_resource};
 
@@ -18,6 +18,28 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, Resource
 /// Backends may apply a smaller wire-level limit of their own.
 const MAX_AUTHORIZATION_CHECKS_PER_BATCH: usize = 512;
 const STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE: usize = 128;
+
+/// Start small for dense policies, then amortize storage and policy round trips
+/// when more candidates are needed. Growth never exceeds the existing bound.
+pub(crate) struct AuthorizationCandidateBatch {
+    limit: usize,
+}
+
+impl AuthorizationCandidateBatch {
+    pub(crate) fn new(response_slots: usize) -> Self {
+        Self {
+            limit: response_slots.clamp(1, STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE),
+        }
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub(crate) fn grow(&mut self) {
+        self.limit = (self.limit * 2).min(STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE);
+    }
+}
 
 /// A page of authorized rows plus the total authorized count.
 ///
@@ -67,16 +89,6 @@ impl AuthorizedObjectIds {
 
     pub(crate) fn contains(&self, object_id: i32) -> bool {
         self.0.binary_search(&object_id).is_ok()
-    }
-
-    pub(crate) fn intersection(&self, other: &Self) -> Self {
-        Self(
-            self.0
-                .iter()
-                .copied()
-                .filter(|object_id| other.contains(*object_id))
-                .collect(),
-        )
     }
 
     pub(crate) fn as_slice(&self) -> &[i32] {
@@ -242,43 +254,6 @@ where
     Ok(authorized)
 }
 
-pub async fn authorize_cursor_page<T, F>(
-    backend: &dyn PermissionBackend,
-    principal: &PrincipalRef,
-    candidates: Vec<T>,
-    scope: Option<&TokenScope>,
-    permissions: Vec<Permissions>,
-    query_options: &QueryOptions,
-    to_resource: F,
-) -> Result<AuthorizedPage<T>, ApiError>
-where
-    T: CursorPaginated,
-    F: Fn(&T) -> ResourceRef,
-{
-    let start = Instant::now();
-    let backend_kind = backend.kind();
-    let candidate_count = candidates.len();
-    let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
-    let mut authorized = Vec::new();
-    let authorized_count =
-        visit_authorized_candidates(backend, principal, candidates, &permissions, |candidate| {
-            authorized.push(candidate)
-        })
-        .await?;
-    let total_count = known_count_or_skipped(query_options, authorized_count as i64);
-    let rows = paginate_in_memory(authorized, query_options)?;
-    record_paginate_authorized(
-        backend_kind,
-        candidate_count,
-        authorized_count,
-        0,
-        query_options.limit().unwrap_or(usize::MAX),
-        rows.len(),
-        start.elapsed(),
-    );
-    Ok(AuthorizedPage { rows, total_count })
-}
-
 /// Authorize a storage-backed candidate enumeration without materializing the
 /// complete pre-authorization result set.
 ///
@@ -287,13 +262,16 @@ where
 /// visited, but only the requested authorized page is retained. When totals are
 /// skipped, enumeration stops as soon as one response page plus look-ahead has
 /// been authorized.
+/// Scalar storage ordering must follow `CursorValue` ordering, including
+/// bytewise strings. JSON boundaries are located by storage itself because
+/// nested strings and object keys can use a database-specific collation.
 pub async fn authorize_cursor_page_from_storage<T, Fetch, FetchFuture, ToResource>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
     scope: Option<&TokenScope>,
     permissions: Vec<Permissions>,
     query_options: &QueryOptions,
-    mut fetch: Fetch,
+    fetch: Fetch,
     to_resource: ToResource,
 ) -> Result<AuthorizedPage<T>, ApiError>
 where
@@ -302,78 +280,167 @@ where
     FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
     ToResource: Fn(&T) -> ResourceRef,
 {
+    filter_authorized_cursor_page_from_storage(backend, query_options, fetch, |candidates| {
+        authorize_all_candidates(
+            backend,
+            principal,
+            candidates,
+            scope,
+            permissions.clone(),
+            &to_resource,
+        )
+    })
+    .await
+}
+
+/// Enumerate raw storage pages, then apply an order-preserving authorization
+/// filter. Filtering must happen here, after the storage continuation is captured:
+/// a page containing only denied rows must not be mistaken for storage exhaustion.
+/// The filter may resolve bounded relation metadata or evaluate related predicates.
+pub(crate) async fn filter_authorized_cursor_page_from_storage<
+    T,
+    Fetch,
+    FetchFuture,
+    Filter,
+    FilterFuture,
+>(
+    backend: &dyn PermissionBackend,
+    query_options: &QueryOptions,
+    mut fetch: Fetch,
+    mut filter: Filter,
+) -> Result<AuthorizedPage<T>, ApiError>
+where
+    T: CursorPaginated,
+    Fetch: FnMut(QueryOptions) -> FetchFuture,
+    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
+    Filter: FnMut(Vec<T>) -> FilterFuture,
+    FilterFuture: Future<Output = Result<Vec<T>, ApiError>>,
+{
+    let prepared = prepare_db_pagination::<T>(query_options)?;
+    let has_json_boundary = prepared
+        .cursor()
+        .map(|cursor| decode_cursor_values(cursor, prepared.sort()))
+        .transpose()?
+        .is_some_and(|values| {
+            values
+                .iter()
+                .any(|value| matches!(value, CursorValue::Json(_)))
+        });
+
+    if query_options.include_total() && has_json_boundary {
+        // A global count starts before the requested cursor. Rust cannot locate
+        // a JSONB boundary in that scan using its bytewise JSON comparator.
+        // Count in bounded batches, then let storage seek the response page.
+        // This also works if the object that produced the cursor was deleted.
+        let mut count_query = query_options.clone();
+        count_query.clear_cursor();
+        let total_count = scan_authorized_cursor_page_from_storage(
+            backend,
+            &count_query,
+            &mut fetch,
+            &mut filter,
+        )
+        .await?
+        .total_count;
+        let mut response_query = query_options.clone();
+        response_query.set_include_total(false);
+        let mut page = scan_authorized_cursor_page_from_storage(
+            backend,
+            &response_query,
+            &mut fetch,
+            &mut filter,
+        )
+        .await?;
+        page.total_count = total_count;
+        return Ok(page);
+    }
+
+    scan_authorized_cursor_page_from_storage(backend, query_options, fetch, filter).await
+}
+
+async fn scan_authorized_cursor_page_from_storage<T, Fetch, FetchFuture, Filter, FilterFuture>(
+    backend: &dyn PermissionBackend,
+    query_options: &QueryOptions,
+    mut fetch: Fetch,
+    mut filter: Filter,
+) -> Result<AuthorizedPage<T>, ApiError>
+where
+    T: CursorPaginated,
+    Fetch: FnMut(QueryOptions) -> FetchFuture,
+    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
+    Filter: FnMut(Vec<T>) -> FilterFuture,
+    FilterFuture: Future<Output = Result<Vec<T>, ApiError>>,
+{
     let start = Instant::now();
     let backend_kind = backend.kind();
     let response_limit = effective_page_limit(query_options)?.saturating_add(1);
-    let mut candidate_source = query_options.clone();
+    // Validate the caller's cursor even when exact totals restart enumeration
+    // before it, including queries whose candidate set is empty.
+    let mut candidate_query = prepare_db_pagination::<T>(query_options)?;
     if query_options.include_total() {
-        candidate_source.clear_cursor();
+        candidate_query.clear_cursor();
     }
-    let mut candidate_query = prepare_db_pagination::<T>(&candidate_source)?;
     candidate_query.set_include_total(false);
-    candidate_query.set_limit(Some(
-        STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE.saturating_add(1),
-    ))?;
 
     let mut rows = Vec::with_capacity(response_limit);
     let mut candidate_count = 0_usize;
     let mut authorized_count = 0_usize;
+    let mut batch = AuthorizationCandidateBatch::new(if query_options.include_total() {
+        STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE
+    } else {
+        response_limit
+    });
 
     loop {
+        let candidate_limit = batch.limit();
+        let maximum_rows = candidate_limit.saturating_add(1);
+        candidate_query.set_limit(Some(maximum_rows))?;
         let mut candidates = fetch(candidate_query.clone()).await?;
-        let maximum_rows = STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE.saturating_add(1);
+        record_candidate_fetch(candidates.len());
         if candidates.len() > maximum_rows {
             return Err(ApiError::InternalServerError(format!(
                 "Storage returned {} authorization candidates for a page limited to {maximum_rows}",
                 candidates.len()
             )));
         }
-        let has_more = candidates.len() > STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE;
+        let has_more = candidates.len() > candidate_limit;
         if has_more {
-            candidates.truncate(STORAGE_AUTHORIZATION_CANDIDATE_PAGE_SIZE);
+            candidates.truncate(candidate_limit);
         }
-        let next_cursor = if has_more {
+        let next_boundary = if has_more {
             candidates
                 .last()
-                .map(|candidate| encode_cursor(candidate, candidate_query.sort()))
-                .transpose()?
+                .map(|candidate| CursorBoundary::from_item(candidate, candidate_query.sort()))
         } else {
             None
         };
         candidate_count = candidate_count.saturating_add(candidates.len());
 
-        let candidates = candidates
-            .into_iter()
-            .map(|candidate| {
-                let belongs_to_response = query_options
+        let authorized = filter(candidates).await?;
+        authorized_count = authorized_count.saturating_add(authorized.len());
+        for candidate in authorized {
+            // Without a global count, storage has already applied the caller's
+            // cursor. Rechecking here can disagree with its JSON collation.
+            let belongs_to_response = !query_options.include_total()
+                || query_options
                     .cursor()
                     .map(|cursor| item_is_after_cursor(&candidate, cursor, candidate_query.sort()))
                     .transpose()?
                     .unwrap_or(true);
-                Ok((candidate, belongs_to_response))
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?;
-        let candidates =
-            resource_scoped_candidates(candidates, scope, &|(candidate, _)| to_resource(candidate));
-        authorized_count = authorized_count.saturating_add(
-            visit_authorized_candidates(
-                backend,
-                principal,
-                candidates,
-                &permissions,
-                |(candidate, belongs_to_response)| {
-                    if belongs_to_response && rows.len() < response_limit {
-                        rows.push(candidate);
-                    }
-                },
-            )
-            .await?,
-        );
+            if belongs_to_response && rows.len() < response_limit {
+                rows.push(candidate);
+            }
+        }
 
         if (!query_options.include_total() && rows.len() >= response_limit) || !has_more {
             break;
         }
-        candidate_query.set_cursor(next_cursor)?;
+        candidate_query.set_continuation(
+            next_boundary
+                .expect("a nonempty storage page with look-ahead has a boundary")?
+                .into_continuation()?,
+        );
+        batch.grow();
     }
 
     let total_count = known_count_or_skipped(query_options, authorized_count as i64);
@@ -387,6 +454,32 @@ where
         start.elapsed(),
     );
     Ok(AuthorizedPage { rows, total_count })
+}
+
+fn record_candidate_fetch(rows: usize) {
+    tracing::debug!(target: "hubuum::permissions", fetched_rows = rows, "authorization_candidate_page");
+    #[cfg(test)]
+    let _ = CANDIDATE_FETCHES.try_with(|fetches| fetches.borrow_mut().push(rows));
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    static CANDIDATE_FETCHES: std::cell::RefCell<Vec<usize>>;
+}
+
+#[cfg(test)]
+pub(crate) async fn capture_candidate_fetches<T>(
+    future: impl Future<Output = T>,
+) -> (T, Vec<usize>) {
+    CANDIDATE_FETCHES
+        .scope(std::cell::RefCell::new(Vec::new()), async {
+            let result = future.await;
+            (
+                result,
+                CANDIDATE_FETCHES.with(|fetches| fetches.borrow().clone()),
+            )
+        })
+        .await
 }
 
 /// Generic candidate-then-authorize visibility filter.

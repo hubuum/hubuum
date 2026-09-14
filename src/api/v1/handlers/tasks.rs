@@ -6,13 +6,12 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
 use crate::models::{
-    BackupOutputLookup, ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse,
-    TaskStatus,
+    BackupOutputLookup, ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskRecord,
+    TaskResponse, TaskStatus,
 };
-use crate::pagination::{
-    count_query_options, known_count_or_skipped, paginate_in_memory, prepare_db_pagination,
-};
+use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::permissions::visibility::filter_authorized_cursor_page_from_storage;
 use crate::permissions::{PermissionDecision, PrincipalRef};
 use crate::services::tasks::{
     backup_output_summary, export_output_summary, list_backup_output_summaries,
@@ -129,26 +128,45 @@ pub async fn get_tasks(
         )
         .await?
     } else {
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let (candidates, _) = list_tasks(
-            &context,
-            submitted_by_filter,
-            filters.kind,
-            filters.status,
-            (!is_admin || requestor.scopes().is_some()).then_some(TaskKind::SchemaValidation),
-            candidate_options,
+        let page = filter_authorized_cursor_page_from_storage(
+            backend,
+            &params,
+            |options| async {
+                list_tasks(
+                    &context,
+                    submitted_by_filter,
+                    filters.kind,
+                    filters.status,
+                    (!is_admin || requestor.scopes().is_some())
+                        .then_some(TaskKind::SchemaValidation),
+                    options,
+                )
+                .await
+                .map(|page| page.0)
+            },
+            |candidates: Vec<TaskRecord>| {
+                let principal = &principal;
+                async move {
+                    let resources = candidates.iter().map(task_resource).collect::<Vec<_>>();
+                    let decisions = backend.authorize_tasks(principal, &resources).await?;
+                    if decisions.len() != candidates.len() {
+                        return Err(ApiError::InternalServerError(
+                            "Permission backend returned an unexpected number of task decisions"
+                                .to_string(),
+                        ));
+                    }
+                    Ok(candidates
+                        .into_iter()
+                        .zip(decisions)
+                        .filter_map(|(task, decision)| {
+                            (decision == PermissionDecision::Allow).then_some(task)
+                        })
+                        .collect())
+                }
+            },
         )
         .await?;
-        let resources = candidates.iter().map(task_resource).collect::<Vec<_>>();
-        let decisions = backend.authorize_tasks(&principal, &resources).await?;
-        let authorized = candidates
-            .into_iter()
-            .zip(decisions)
-            .filter_map(|(task, decision)| (decision == PermissionDecision::Allow).then_some(task))
-            .collect::<Vec<_>>();
-        let total_count = known_count_or_skipped(&params, authorized.len() as i64);
-        (paginate_in_memory(authorized, &search_params)?, total_count)
+        (page.rows, page.total_count)
     };
     let export_task_ids = tasks
         .iter()

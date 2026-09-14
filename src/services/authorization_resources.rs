@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
-use crate::models::{HubuumClassRelation, HubuumObjectRelation};
-use crate::permissions::ResourceRef;
+use crate::models::{HubuumClassRelation, HubuumObjectRelation, Permissions, TokenScope};
+use crate::permissions::visibility::authorize_all_candidates;
+use crate::permissions::{PermissionBackend, PrincipalRef, ResourceRef};
 use crate::services::catalog;
 use crate::services::storage_boundary::resource_id_to_storage;
 use crate::storage::{
@@ -203,4 +204,54 @@ pub(crate) async fn object_relation_authorization_resources(
             ))
         })
         .collect()
+}
+
+/// Authorize one bounded relation page using its captured endpoint metadata.
+pub(crate) async fn authorize_class_relation_candidates(
+    storage: &impl StorageContext,
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    scope: Option<&TokenScope>,
+    permissions: Vec<Permissions>,
+    candidates: Vec<HubuumClassRelation>,
+) -> Result<Vec<HubuumClassRelation>, ApiError> {
+    let resources = class_relation_authorization_resources(storage, &candidates).await?;
+    let candidates = candidates.into_iter().zip(resources).collect();
+    Ok(authorize_all_candidates(
+        backend,
+        principal,
+        candidates,
+        scope,
+        permissions,
+        |(_, resource)| resource.clone(),
+    )
+    .await?
+    .into_iter()
+    .map(|(relation, _)| relation)
+    .collect())
+}
+
+/// Authorize one bounded relation page using its captured endpoint metadata.
+pub(crate) async fn authorize_object_relation_candidates(
+    storage: &impl StorageContext,
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    scope: Option<&TokenScope>,
+    permissions: Vec<Permissions>,
+    candidates: Vec<HubuumObjectRelation>,
+) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+    let resources = object_relation_authorization_resources(storage, &candidates).await?;
+    let candidates = candidates.into_iter().zip(resources).collect();
+    Ok(authorize_all_candidates(
+        backend,
+        principal,
+        candidates,
+        scope,
+        permissions,
+        |(_, resource)| resource.clone(),
+    )
+    .await?
+    .into_iter()
+    .map(|(relation, _)| relation)
+    .collect())
 }

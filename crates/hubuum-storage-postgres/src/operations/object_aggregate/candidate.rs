@@ -5,6 +5,7 @@ use futures_util::TryStreamExt;
 use serde::Serialize;
 
 use super::bounded_json::ObjectAggregateJsonBound;
+use hubuum_domain::CollectionId;
 use hubuum_query::{CursorValue, FilterField, QueryOptions, SortParam, encode_cursor_values};
 use hubuum_storage_core::{StorageObjectAggregateSpec, StorageResourceScope};
 
@@ -13,6 +14,7 @@ use crate::operations::catalog::{apply_object_filters, object_query};
 use crate::operations::computed_objects::query::{
     ComputedQuerySnapshot, computed_filter_predicate,
 };
+use crate::operations::visibility::CollectionVisibility;
 use crate::{PostgresConnection, PostgresStorageError};
 
 #[derive(Debug, Clone, Queryable, Serialize)]
@@ -132,7 +134,7 @@ pub(super) async fn load_aggregate_candidate_batch(
         include_object_data,
         computed_filter_snapshot,
     } = candidate_query;
-    let collection_ids = [collection_id];
+    let collection_ids = CollectionVisibility::for_collection(CollectionId::new(collection_id)?);
     let mut query = apply_object_filters(
         object_query(&collection_ids, resource_scope),
         query_options,

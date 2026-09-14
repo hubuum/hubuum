@@ -14,7 +14,7 @@ use crate::operations::catalog::{apply_object_filters, object_query};
 use crate::operations::dynamic_sql::BoundSqlPredicate;
 use crate::operations::object::ObjectRow;
 use crate::operations::related_filter::related_object_filter_predicate;
-use crate::operations::visibility::{authorized_collection_ids, required_permissions};
+use crate::operations::visibility::{CollectionVisibility, required_permissions};
 use crate::{PostgresRuntime, PostgresStorageError};
 
 mod enrichment;
@@ -87,7 +87,7 @@ pub async fn list_computed_objects(
                 ],
             )?;
             let collection_ids =
-                authorized_collection_ids(connection, &visibility, &permissions).await?;
+                CollectionVisibility::resolve(connection, &visibility, &permissions).await?;
             let related_predicate =
                 related_object_filter_predicate(connection, options.filters(), &visibility).await?;
 
@@ -138,7 +138,7 @@ pub async fn list_computed_objects(
                 operation = "list_computed_objects",
                 filter_count = options.filters().len(),
                 sort_count = options.sort().len(),
-                has_cursor = options.cursor().is_some(),
+                has_cursor = options.has_cursor(),
                 include_total,
                 "executing PostgreSQL computed-object query"
             );
@@ -215,7 +215,7 @@ fn query_visibility(
 }
 
 fn filtered_object_query<'query>(
-    collection_ids: &'query [i32],
+    collection_ids: &'query CollectionVisibility,
     visibility: &'query StorageVisibility,
     class_id: i32,
     authorized_object_ids: Option<&'query [i32]>,

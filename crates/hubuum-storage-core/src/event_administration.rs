@@ -308,7 +308,7 @@ impl fmt::Debug for StorageAuditEventListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }
@@ -489,7 +489,7 @@ impl fmt::Debug for StorageEventSinkListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }
@@ -1020,7 +1020,7 @@ impl fmt::Debug for StorageEventSubscriptionListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }
@@ -1761,7 +1761,7 @@ impl fmt::Debug for StorageEventDeliveryListQuery {
             .field("filter_count", &self.options.filters().len())
             .field("sort_count", &self.options.sort().len())
             .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.cursor().is_some())
+            .field("has_cursor", &self.options.has_cursor())
             .field("include_total", &self.options.include_total())
             .finish()
     }

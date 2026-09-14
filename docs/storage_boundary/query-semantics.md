@@ -55,7 +55,7 @@ For every pageable operation:
 6. Malformed cursors, unknown filters, unknown sorts, and operators that are
    invalid for a recognized field return `InvalidInput`. Every documented
    query behavior is mandatory for a complete backend.
-7. Limits and cursor byte budgets are enforced before native query execution.
+7. Limits and public cursor byte budgets are enforced before native query execution.
    Contract-specific oversized input uses `InputTooLarge` where documented.
 8. An empty match returns an empty page and an exact total of zero when a total
    was requested. It is not `NotFound`.
@@ -81,6 +81,18 @@ authorized response page plus look-ahead. An exact total visits all candidate
 pages but retains only that bounded response window. Unified-search candidates
 carry the adapter-owned rank cursor with every row so application code does not
 reconstruct native ordering.
+
+Ordinary candidate queries carry either a bounded public `QueryCursor` token or
+a private-fielded `QueryContinuation` with validated sort values. Adapters must
+use `QueryOptions::cursor_values` with the normalized execution sort to support
+both forms; reading only `cursor()` would ignore an internal continuation.
+Continuations preserve stored values without applying the public token byte
+budget, while scalar validation and adapter type checks still apply. This keeps
+oversized denied rows and exact-total boundaries from rejecting valid pages.
+Clearing or replacing a cursor replaces either form. Capability-specific
+cursor formats, including aggregate and ranked search cursors, keep their own
+codecs. Skipped-total candidate batches start at the response size plus
+look-ahead and grow to the fixed candidate cap when authorization is sparse.
 
 An operation that must return a complete authorized set requires an explicit,
 validated total candidate bound. It returns an error when the enumeration would

@@ -17,8 +17,8 @@ use crate::models::{
     ExportTemplateRunRequest, HistoryAuthorizationSnapshot, NewExportTemplate, Permissions,
     TaskResponse, TokenID, UpdateExportTemplate,
 };
-use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::pagination::prepare_db_pagination;
+use crate::permissions::visibility::authorize_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef, authorize_resources};
 use crate::services::history::{
     HistoryCollectionFilter, export_template_as_of,
@@ -144,18 +144,17 @@ pub async fn get_templates(
         if !scope_allows(requestor.scopes(), &[Permissions::ReadTemplate]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let mut candidate_options = count_query_options(&params);
-        candidate_options.set_include_total(false);
-        let candidates = ExportTemplate::list_candidates(&context, &candidate_options).await?;
         let principal = PrincipalRef::load(&context, user).await?;
-        let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
-        let page = authorize_cursor_page(
+        let page = authorize_cursor_page_from_storage(
             context.permission_backend(),
             &principal,
-            candidates,
             requestor.scopes(),
             vec![Permissions::ReadTemplate],
-            &search_params,
+            &params,
+            |candidate_options| {
+                let context = &context;
+                async move { ExportTemplate::list_candidates(context, &candidate_options).await }
+            },
             |template| {
                 ResourceRef::template(
                     template.id,
@@ -426,8 +425,7 @@ pub async fn get_template_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids,
-        resolve_history_principal_names,
+        readable_history_collection_ids, resolve_history_principal_names,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -487,21 +485,25 @@ pub async fn get_template_history(
         )
         .await?
     } else {
-        let candidate_params = history_candidate_query_options(&params);
-        let (candidates, _) = export_template_history_paginated_with_total_count(
-            entity_id,
-            &context,
-            &candidate_params,
-            HistoryCollectionFilter::All,
-        )
-        .await?;
         authorize_history_page(
             &context,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
-            candidates,
-            &search_params,
+            |candidate_params| {
+                let context = &context;
+                async move {
+                    export_template_history_paginated_with_total_count(
+                        entity_id,
+                        &context,
+                        &candidate_params,
+                        HistoryCollectionFilter::All,
+                    )
+                    .await
+                    .map(|page| page.0)
+                }
+            },
+            &params,
             |row| HistoryAuthorizationSnapshot::from(row),
         )
         .await?

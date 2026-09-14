@@ -32,6 +32,7 @@ use crate::permissions::visibility::{
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
 };
+use crate::traits::CursorPaginated;
 use crate::utilities::auth::generate_random_password;
 
 #[test]
@@ -49,14 +50,6 @@ fn authorized_object_ids_reject_non_positive_values() {
         error,
         ApiError::InternalServerError("Authorized object ids must be positive".to_string())
     );
-}
-
-#[test]
-fn authorized_object_ids_intersection_preserves_sorted_unique_ids() {
-    let left = AuthorizedObjectIds::new([1, 2, 4]).unwrap();
-    let right = AuthorizedObjectIds::new([2, 3, 4]).unwrap();
-
-    assert_eq!(left.intersection(&right).as_slice(), &[2, 4]);
 }
 
 fn candidate_collection(id: i32) -> Collection {
@@ -116,7 +109,8 @@ async fn storage_backed_authorization_stops_after_one_bounded_candidate_page() {
         "only the response look-ahead is retained"
     );
     assert_eq!(page.total_count, crate::pagination::SKIPPED_TOTAL_COUNT);
-    assert_eq!(*fetch_sizes.lock().unwrap(), vec![129]);
+    assert_eq!(*fetch_sizes.lock().unwrap(), vec![5]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![4]);
 }
 
 #[actix_test]
@@ -167,6 +161,163 @@ async fn storage_backed_authorization_keeps_exact_total_global_after_a_cursor() 
         *fetch_sizes.lock().unwrap(),
         vec![129, 129, 129, 129, 129, 60]
     );
+}
+
+#[rstest::rstest]
+#[actix_web::test]
+async fn storage_json_cursor_uses_backend_order_even_without_the_boundary_row(
+    #[values(false, true)] include_total: bool,
+    #[values(false, true)] deleted_boundary: bool,
+) {
+    use crate::models::search::{FilterField, SortParam};
+    use crate::pagination::{CursorValue, decode_cursor_values, encode_cursor};
+
+    #[derive(Clone)]
+    struct JsonRow {
+        id: i32,
+        value: &'static str,
+    }
+    impl CursorPaginated for JsonRow {
+        fn supports_sort(field: &FilterField) -> bool {
+            matches!(field, FilterField::Description | FilterField::Id)
+        }
+        fn default_sort() -> Vec<SortParam> {
+            vec![SortParam::new(FilterField::Description, false)]
+        }
+        fn tie_breaker_sort() -> Vec<SortParam> {
+            vec![SortParam::new(FilterField::Id, false)]
+        }
+        fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+            match field {
+                FilterField::Description => Ok(CursorValue::Json(serde_json::json!([self.value]))),
+                FilterField::Id => Ok(CursorValue::Integer(i64::from(self.id))),
+                _ => unreachable!("unsupported test sort"),
+            }
+        }
+    }
+
+    let backend = MockTreetopBackend::new();
+    allow_all_collection_reads(&backend);
+    let principal = PrincipalRef::new(1, [7]);
+    let boundary = JsonRow { id: 1, value: "a" };
+    let sorts = [JsonRow::default_sort(), JsonRow::tie_breaker_sort()].concat();
+    let query = QueryOptions::new(
+        vec![],
+        sorts.clone(),
+        Some(1),
+        Some(encode_cursor(&boundary, &sorts).unwrap()),
+        include_total,
+    )
+    .unwrap();
+    // The fake storage order deliberately differs from Rust on every test host,
+    // including CI databases initialized with C collation.
+    let candidates = [boundary, JsonRow { id: 2, value: "Z" }]
+        .into_iter()
+        .filter(|row| !deleted_boundary || row.id != 1)
+        .collect::<Vec<_>>();
+    let page = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |query| {
+            let after_id = query
+                .cursor()
+                .map(|cursor| {
+                    let values = decode_cursor_values(cursor, query.sort()).unwrap();
+                    let CursorValue::Integer(id) = values[1] else {
+                        panic!("missing tie breaker")
+                    };
+                    id
+                })
+                .unwrap_or(0);
+            std::future::ready(Ok(candidates
+                .iter()
+                .filter(|row| i64::from(row.id) > after_id)
+                .take(query.limit().unwrap())
+                .cloned()
+                .collect()))
+        },
+        |row: &JsonRow| ResourceRef::collection(row.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(
+        page.total_count,
+        if include_total {
+            candidates.len() as i64
+        } else {
+            crate::pagination::SKIPPED_TOTAL_COUNT
+        }
+    );
+}
+
+#[rstest::rstest]
+#[case::unused_look_ahead(false, false)]
+#[case::needed_for_exact_total(true, true)]
+#[case::needed_after_denial(false, true)]
+#[actix_web::test]
+async fn storage_continuation_accepts_oversized_non_response_boundaries(
+    #[case] include_total: bool,
+    #[case] deny_look_ahead: bool,
+) {
+    let backend = MockTreetopBackend::new();
+    for id in [1, 2, 3] {
+        if id == 2 && deny_look_ahead {
+            continue;
+        }
+        backend.add_rule(MockAllowRule {
+            group_id: 7,
+            action: Permissions::ReadCollection,
+            resource_kind: ResourceKind::Collection,
+            resource_id: Some(id),
+            attrs: ResourceFields::default(),
+        });
+    }
+    let principal = PrincipalRef::new(1, [7]);
+    // With exact totals the continuation falls at the full batch boundary;
+    // skipped totals use just the response plus one authorized look-ahead.
+    let count = if include_total { 129 } else { 3 };
+    let boundary = count - 1;
+    let candidates = (1..=count)
+        .map(|id| {
+            let mut row = candidate_collection(id);
+            row.description = if id == boundary {
+                "b".repeat(50_000)
+            } else if id == count {
+                "c".to_string()
+            } else {
+                format!("a{id:03}")
+            };
+            row
+        })
+        .collect::<Vec<_>>();
+    let query = crate::models::search::parse_query_parameter(&format!(
+        "sort=description&limit=1&include_total={include_total}"
+    ))
+    .unwrap();
+    let result = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |query| std::future::ready(paginate_in_memory(candidates.clone(), &query)),
+        |collection| ResourceRef::collection(collection.id),
+    )
+    .await;
+    let result = result.expect("stored sort values must not be constrained by HTTP token limits");
+    if include_total {
+        assert_eq!(result.total_count, 2);
+    }
+    let page = finalize_page(result.rows, &query).unwrap();
+    assert_eq!(page.items[0].id, 1);
+    assert!(page.next_cursor.is_some());
 }
 
 #[actix_test]
@@ -504,4 +655,154 @@ async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
     assert_eq!(page.total_count, 2);
     assert_eq!(page.rows.len(), 1);
     assert_eq!(page.rows[0].id, ns_c.collection.id);
+}
+
+#[rstest::rstest]
+#[case::all_denied(false)]
+#[case::resource_scope(true)]
+#[actix_web::test]
+async fn storage_pages_continue_through_denied_candidates(#[case] scoped: bool) {
+    use crate::models::{TokenResourceScope, TokenScope};
+    let backend = MockTreetopBackend::new();
+    if scoped {
+        allow_all_collection_reads(&backend);
+    }
+    let scope = TokenScope::from_request_parts(
+        None,
+        Some(vec![
+            TokenResourceScope::Collection(CollectionID::new(9_999).unwrap()),
+            TokenResourceScope::Collection(CollectionID::new(10_000).unwrap()),
+        ]),
+    )
+    .unwrap();
+    let principal = PrincipalRef::new(1, [7]);
+    let query = QueryOptions::new(vec![], vec![], Some(1), None, false).unwrap();
+    let (page, fetched) = crate::permissions::visibility::capture_candidate_fetches(
+        authorize_cursor_page_from_storage(
+            &backend,
+            &principal,
+            if scoped { scope.as_ref() } else { None },
+            vec![Permissions::ReadCollection],
+            &query,
+            |query| {
+                std::future::ready(paginate_in_memory(
+                    (1..=10_000).map(candidate_collection).collect(),
+                    &query,
+                ))
+            },
+            |collection| ResourceRef::collection(collection.id),
+        ),
+    )
+    .await;
+    let page = page.unwrap();
+    assert_eq!(
+        page.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        if scoped { vec![9_999, 10_000] } else { vec![] }
+    );
+    // At most a handful of growing probes followed by full bounded batches,
+    // rather than 5,000 two-candidate round trips for this request.
+    assert!(
+        fetched.len() <= 85,
+        "candidate fetch count: {}",
+        fetched.len()
+    );
+    assert!(fetched.iter().all(|count| *count <= 129));
+    assert!(backend.authorization_batch_sizes().len() <= 85);
+    assert_eq!(
+        backend.authorization_batch_sizes().iter().sum::<usize>(),
+        if scoped { 2 } else { 10_000 }
+    );
+}
+
+#[actix_test]
+async fn exact_total_rejects_mismatched_cursor_even_without_candidates() {
+    let backend = MockTreetopBackend::new();
+    let principal = PrincipalRef::new(1, [7]);
+    let mut query = crate::models::search::parse_query_parameter("sort=name&limit=1").unwrap();
+    let wrong_cursor =
+        crate::pagination::encode_cursor(&candidate_collection(1), &Collection::default_sort())
+            .unwrap();
+    query.set_cursor(Some(wrong_cursor)).unwrap();
+    let result = authorize_cursor_page_from_storage::<Collection, _, _, _>(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |_| async { panic!("invalid cursors must fail before fetching") },
+        |collection| ResourceRef::collection(collection.id),
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::BadRequest(_))));
+}
+
+#[actix_test]
+async fn exact_totals_retain_only_a_candidate_batch_and_response_page() {
+    use crate::models::search::{FilterField, SortParam};
+    use crate::traits::{CursorPaginated, CursorValue};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Tracked {
+        collection: Collection,
+        live: Arc<AtomicUsize>,
+    }
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            self.live.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    impl CursorPaginated for Tracked {
+        fn supports_sort(field: &FilterField) -> bool {
+            Collection::supports_sort(field)
+        }
+        fn default_sort() -> Vec<SortParam> {
+            Collection::default_sort()
+        }
+        fn tie_breaker_sort() -> Vec<SortParam> {
+            Collection::tie_breaker_sort()
+        }
+        fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+            self.collection.cursor_value(field)
+        }
+    }
+    let backend = MockTreetopBackend::new();
+    allow_all_collection_reads(&backend);
+    let principal = PrincipalRef::new(1, [7]);
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = AtomicUsize::new(0);
+    let query = QueryOptions::new(vec![], vec![], Some(3), None, true).unwrap();
+    let page = authorize_cursor_page_from_storage(
+        &backend,
+        &principal,
+        None,
+        vec![Permissions::ReadCollection],
+        &query,
+        |query| {
+            let rows =
+                paginate_in_memory((1..=700).map(candidate_collection).collect(), &query).unwrap();
+            peak.fetch_max(
+                live.fetch_add(rows.len(), Ordering::SeqCst) + rows.len(),
+                Ordering::SeqCst,
+            );
+            std::future::ready(Ok(rows
+                .into_iter()
+                .map(|collection| Tracked {
+                    collection,
+                    live: live.clone(),
+                })
+                .collect()))
+        },
+        |row: &Tracked| ResourceRef::collection(row.collection.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.total_count, 700);
+    assert_eq!(live.load(Ordering::SeqCst), 4);
+    assert_eq!(peak.load(Ordering::SeqCst), 133);
+    assert_eq!(
+        backend.authorization_batch_sizes(),
+        vec![128, 128, 128, 128, 128, 60]
+    );
+    drop(page);
+    assert_eq!(live.load(Ordering::SeqCst), 0);
 }

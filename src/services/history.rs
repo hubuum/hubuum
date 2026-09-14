@@ -8,6 +8,7 @@ use crate::models::{
     CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
     RemoteTargetHistory, ResourceRevision,
 };
+use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
     HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord, StorageContext,
     StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
@@ -23,7 +24,10 @@ pub enum HistoryCollectionFilter<'a> {
     Visible(&'a [i32]),
 }
 
-fn exact_history_total(total: Option<i64>) -> Result<i64, ApiError> {
+fn history_total(total: Option<i64>, options: &QueryOptions) -> Result<i64, ApiError> {
+    if !options.include_total() {
+        return Ok(SKIPPED_TOTAL_COUNT);
+    }
     total.ok_or_else(|| {
         ApiError::InternalServerError(
             "Storage history query omitted its required exact total".to_string(),
@@ -296,7 +300,7 @@ macro_rules! history_service {
                 .into_parts();
             Ok((
                 rows.into_iter().map($from).collect::<Result<_, _>>()?,
-                exact_history_total(total_count)?,
+                history_total(total_count, query_options)?,
             ))
         }
 
@@ -370,7 +374,7 @@ pub async fn object_history_paginated_with_total_count(
         rows.into_iter()
             .map(object_from_storage)
             .collect::<Result<_, _>>()?,
-        exact_history_total(total_count)?,
+        history_total(total_count, query_options)?,
     ))
 }
 

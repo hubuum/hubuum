@@ -6,6 +6,8 @@ use base64::Engine as _;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+use hubuum_query::QueryContinuation;
+
 use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
 use crate::models::search::{QueryOptions, SortParam};
@@ -147,9 +149,9 @@ where
     let limit = page_limits()?.resolve(query_options.limit())?;
     let sorts = normalized_sorts::<T>(query_options.sort())?;
 
-    if let Some(cursor) = query_options.cursor() {
-        let _ = decode_cursor_values(cursor, &sorts)?;
-    }
+    let _ = query_options
+        .cursor_values(&sorts)
+        .map_err(cursor_codec_error)?;
 
     let mut prepared = query_options.clone();
     let mut requested_sorts = sorts;
@@ -210,8 +212,9 @@ where
     Ok(Page { items, next_cursor })
 }
 
-/// Apply the same stable ordering and cursor semantics as the SQL pagination
-/// macros to rows synthesized or authorized outside PostgreSQL. `limit` is
+/// Apply stable ordering and cursor semantics to rows synthesized or authorized
+/// in memory. JSON strings use byte ordering, which can differ from PostgreSQL's
+/// database collation; storage-backed JSON pages must seek in storage. `limit` is
 /// applied last; callers should pass the prepared `limit + 1` value so
 /// [`finalize_page`] can produce the next cursor normally.
 pub fn paginate_in_memory<T>(
@@ -223,10 +226,8 @@ where
 {
     let sorts = normalized_sorts::<T>(query_options.sort())?;
     let cursor_values = query_options
-        .cursor()
-        .map(|cursor| cursor.as_str())
-        .map(|cursor| decode_cursor_values(cursor, &sorts))
-        .transpose()?;
+        .cursor_values(&sorts)
+        .map_err(cursor_codec_error)?;
     paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
 }
 
@@ -283,6 +284,8 @@ fn compare_cursor_values(
     Ordering::Equal
 }
 
+/// Compare a boundary using in-memory ordering. Storage-backed callers must
+/// handle JSON boundaries in storage, where nested strings may be collated.
 pub(crate) fn item_is_after_cursor<T>(
     item: &T,
     cursor: &str,
@@ -356,16 +359,42 @@ pub(crate) fn encode_cursor<T>(item: &T, sorts: &[SortParam]) -> Result<String, 
 where
     T: CursorPaginated,
 {
-    let values = sorts
-        .iter()
-        .map(|sort| item.cursor_value(&sort.field))
-        .collect::<Result<Vec<_>, _>>()?;
-    for value in &values {
-        if let CursorValue::Json(value) = value {
-            validate_postgres_jsonb_cursor_value(value)?;
-        }
+    CursorBoundary::from_item(item, sorts)?.encode()
+}
+
+/// Capture a boundary before consuming its row. Encode public response cursors
+/// or preserve typed values when another internal storage page is needed.
+pub(crate) struct CursorBoundary {
+    sorts: Vec<SortParam>,
+    values: Vec<CursorValue>,
+}
+
+impl CursorBoundary {
+    pub(crate) fn from_item<T: CursorPaginated>(
+        item: &T,
+        sorts: &[SortParam],
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            sorts: sorts.to_vec(),
+            values: sorts
+                .iter()
+                .map(|sort| item.cursor_value(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
-    hubuum_query::encode_cursor_values(sorts, values).map_err(cursor_codec_error)
+
+    pub(crate) fn encode(self) -> Result<String, ApiError> {
+        for value in &self.values {
+            if let CursorValue::Json(value) = value {
+                validate_postgres_jsonb_cursor_value(value)?;
+            }
+        }
+        hubuum_query::encode_cursor_values(&self.sorts, self.values).map_err(cursor_codec_error)
+    }
+
+    pub(crate) fn into_continuation(self) -> Result<QueryContinuation, ApiError> {
+        QueryContinuation::new(&self.sorts, self.values).map_err(cursor_codec_error)
+    }
 }
 
 pub fn decode_cursor_values(

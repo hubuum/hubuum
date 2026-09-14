@@ -15,7 +15,7 @@ use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
 use crate::pagination::{
-    effective_page_limit, encode_cursor, item_is_after_cursor, known_count_or_skipped,
+    CursorBoundary, effective_page_limit, item_is_after_cursor, known_count_or_skipped,
     prepare_db_pagination,
 };
 use crate::storage::{
@@ -487,11 +487,10 @@ impl PermissionBackend for TreetopPermissionBackend {
                 .map(group_from_storage)
                 .collect::<Result<Vec<_>, _>>()?;
             candidate_count = candidate_count.saturating_add(groups.len());
-            let next_cursor = if has_more {
+            let next_boundary = if has_more {
                 groups
                     .last()
-                    .map(|group| encode_cursor(group, candidate_options.sort()))
-                    .transpose()?
+                    .map(|group| CursorBoundary::from_item(group, candidate_options.sort()))
             } else {
                 None
             };
@@ -547,7 +546,11 @@ impl PermissionBackend for TreetopPermissionBackend {
             if (!page.include_total() && rows.len() >= response_limit) || !has_more {
                 break;
             }
-            candidate_options.set_cursor(next_cursor)?;
+            candidate_options.set_continuation(
+                next_boundary
+                    .expect("a nonempty group page with look-ahead has a boundary")?
+                    .into_continuation()?,
+            );
         }
 
         let total_count = known_count_or_skipped(page, authorized_count as i64);

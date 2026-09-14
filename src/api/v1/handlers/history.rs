@@ -1,6 +1,8 @@
 //! Shared building blocks for the per-resource history read API:
 //! a response wrapper that adds the actor's username and `as_of` query parsing.
 
+use std::future::Future;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -12,8 +14,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     HistoryAuthorizationSnapshot, Permissions, TemporalHistoryProvenance, TokenScope,
 };
-use crate::pagination::count_query_options;
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::visibility::authorize_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::history::resolve_principal_names;
 use crate::traits::scope_allows;
@@ -87,14 +88,13 @@ where
     .await
 }
 
-/// Filter complete historical candidates through the configured policy backend,
-/// then count and paginate only the visible rows.
-pub async fn authorize_history_page<S, T, F>(
+/// Fetch bounded historical pages and authorize their stored resource snapshots.
+pub async fn authorize_history_page<S, T, F, Fetch, FetchFuture>(
     context: &AppContext,
     subject: &S,
     scopes: Option<&TokenScope>,
     permission: Permissions,
-    candidates: Vec<T>,
+    fetch: Fetch,
     query_options: &QueryOptions,
     to_snapshot: F,
 ) -> Result<(Vec<T>, i64), ApiError>
@@ -102,18 +102,20 @@ where
     S: AuthzSubject + ?Sized,
     T: CursorPaginated,
     F: Fn(&T) -> HistoryAuthorizationSnapshot,
+    Fetch: FnMut(QueryOptions) -> FetchFuture,
+    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
 {
     if !scope_allows(scopes, &[permission]) {
         return Err(ApiError::Forbidden("Permission denied".to_string()));
     }
     let principal = PrincipalRef::load(context, subject).await?;
-    let page = authorize_cursor_page(
+    let page = authorize_cursor_page_from_storage(
         context.permission_backend(),
         &principal,
-        candidates,
         scopes,
         vec![permission],
         query_options,
+        fetch,
         |candidate| {
             to_snapshot(candidate)
                 .into_resource()
@@ -122,13 +124,6 @@ where
     )
     .await?;
     Ok((page.rows, page.total_count))
-}
-
-/// Load every non-permission-filtered candidate before external authorization.
-pub fn history_candidate_query_options(query_options: &QueryOptions) -> QueryOptions {
-    let mut candidates = count_query_options(query_options);
-    candidates.set_include_total(false);
-    candidates
 }
 
 /// Resolve the collection ids visible through the local SQL permission store.
@@ -193,7 +188,7 @@ mod tests {
     use super::*;
     use crate::models::HubuumClassHistory;
     use crate::models::search::parse_query_parameter;
-    use crate::pagination::prepare_db_pagination;
+    use crate::pagination::paginate_in_memory;
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceFields, ResourceKind};
     use crate::tests::{TestContext, create_test_group};
@@ -332,14 +327,14 @@ mod tests {
             ..visible.clone()
         };
         let params = parse_query_parameter("limit=10").unwrap();
-        let query_options = prepare_db_pagination::<HubuumClassHistory>(&params).unwrap();
+        let candidates = vec![visible, hidden];
         let (rows, total_count) = authorize_history_page(
             &context,
             &test.normal_user,
             None,
             Permissions::ReadClass,
-            vec![visible, hidden],
-            &query_options,
+            |query| std::future::ready(paginate_in_memory(candidates.clone(), &query)),
+            &params,
             |row| HistoryAuthorizationSnapshot::from(row),
         )
         .await
