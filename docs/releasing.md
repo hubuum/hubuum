@@ -71,7 +71,7 @@ Once the tag is pushed, the CI workflow will:
 
 ## Rust package compatibility
 
-The seven crates in the experimental storage adapter SDK are public and allow
+The eight crates in the experimental storage adapter SDK are public and allow
 crates.io publication. They are released together under the separate process
 documented in [Storage Adapter SDK Compatibility](storage_adapter_sdk.md). All
 other workspace packages remain internal and set `publish = false`. The

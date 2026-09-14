@@ -4,7 +4,12 @@ mod budget;
 mod impact;
 mod limits;
 
-pub use impact::{SchemaFailure, SchemaImpactInspection};
+pub use hubuum_schema_diagnostics::SchemaFailure;
+pub use hubuum_schema_diagnostics::{
+    SchemaActualValue, SchemaDiagnosticInspection, SchemaDiagnosticOmission, SchemaDiagnostics,
+    SchemaExpectedValue, SchemaIssue,
+};
+pub use impact::SchemaImpactInspection;
 pub use limits::{JsonSchemaLimits, JsonSchemaLimitsBuilder, JsonSchemaLimitsError};
 
 use budget::{SchemaBudget, validate_document_size};
@@ -28,6 +33,17 @@ pub(crate) struct BudgetedSchema {
 }
 
 impl BudgetedSchema {
+    pub(crate) fn inspect_diagnostics(
+        &self,
+        document: &Value,
+        value: &Value,
+    ) -> SchemaDiagnosticInspection {
+        if self.budget.check_instance(value).is_err() {
+            return SchemaDiagnosticInspection::Uninspectable;
+        }
+        SchemaDiagnosticInspection::from_errors(document, value, self.validator.iter_errors(value))
+    }
+
     pub(crate) fn validate(&self, value: &Value) -> Result<(), JsonSchemaError> {
         self.budget.check_instance(value)?;
         self.validator

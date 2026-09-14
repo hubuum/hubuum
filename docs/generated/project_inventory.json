@@ -21,6 +21,11 @@
       "rust_version": "1.88"
     },
     {
+      "name": "hubuum-schema-diagnostics",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
       "name": "hubuum-storage-conformance",
       "version": "0.3.0",
       "rust_version": "1.88"

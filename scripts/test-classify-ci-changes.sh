@@ -523,6 +523,7 @@ assert_flag "$batch_benchmark" benchmarks true
 
 for schema_input in scripts/check-json-schema-budget.py \
   crates/hubuum-domain/src/json_schema.rs \
+  crates/hubuum-schema-diagnostics/src/lib.rs \
   crates/hubuum-domain/src/json_schema/budget.rs \
   crates/hubuum-domain/src/json_schema/limits.rs \
   crates/hubuum-domain/src/json_schema/impact.rs \
@@ -538,6 +539,13 @@ schema_inputs_output="$(bash "$classifier" \
   src/tests/storage_contract/schema_evolution/native.rs)"
 assert_flag "$schema_inputs_output" code true
 assert_flag "$schema_inputs_output" benchmarks true
+
+diagnostics_readme="$(bash "$classifier" crates/hubuum-schema-diagnostics/README.md)"
+assert_flag "$diagnostics_readme" code true
+assert_flag "$diagnostics_readme" container true
+assert_flag "$diagnostics_readme" markdown true
+
+
 
 for impact_input in crates/hubuum-storage-core/src/schema_evolution/impact.rs \
   src/tests/storage_contract/schema_evolution/impact.rs; do

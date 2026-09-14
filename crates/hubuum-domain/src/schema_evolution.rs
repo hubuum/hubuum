@@ -145,6 +145,11 @@ impl CompiledSchema {
     pub fn inspect_impact(&self, value: &Value) -> SchemaImpactInspection {
         self.validator.inspect_impact(&self.document, value)
     }
+
+    /// Collect bounded repair issues without retaining scalar instance values.
+    pub fn inspect_diagnostics(&self, value: &Value) -> crate::SchemaDiagnosticInspection {
+        self.validator.inspect_diagnostics(&self.document, value)
+    }
 }
 
 impl fmt::Debug for CompiledSchema {
@@ -195,6 +200,22 @@ mod tests {
         assert!(schema.inspect(&json!("small")).is_ok());
         let error = schema.inspect(&json!("x".repeat(1_048_576))).unwrap_err();
         assert_eq!(error.category(), "schema_mismatch");
+    }
+
+    #[test]
+    fn diagnostic_collection_retains_instance_admission_limits() {
+        let schema = CompiledSchema::try_new_with_limits(
+            json!({"type":"integer"}),
+            JsonSchemaLimits::builder()
+                .instance_work(1024)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            schema.inspect_diagnostics(&json!("x".repeat(2048))),
+            crate::SchemaDiagnosticInspection::Uninspectable
+        ));
     }
 
     #[test]

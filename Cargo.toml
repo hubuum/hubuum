@@ -35,6 +35,7 @@ members = [
     "crates/hubuum-scale-benchmark",
     "crates/hubuum-scale-core",
     "crates/hubuum-secrets",
+    "crates/hubuum-schema-diagnostics",
     "crates/hubuum-storage-core",
     "crates/hubuum-storage-conformance",
     "crates/hubuum-storage-memory",
