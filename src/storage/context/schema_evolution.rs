@@ -154,6 +154,22 @@ impl SchemaEvolutionStorage for StorageHandle {
         )
         .await
     }
+    async fn get_schema_work_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaWorkReport, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::SchemaEvolution,
+            "get_schema_work_report",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_schema_work_report(task_id).await
+                })
+            },
+        )
+        .await
+    }
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,

@@ -76,8 +76,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Schema impact reports include every mismatched object ID grouped by its first
   failure reason, removing the 20-group and five-ID limits while preserving the
-  response fields and diagnostic redaction. Rerun older analyses to obtain
+  response fields and diagnostic redaction. Findings are appended per batch and
+  grouped when reading the report, keeping checkpoints bounded and avoiding
+  quadratic database traffic as analyses grow. Rerun older analyses to obtain
   complete lists; saved reports retain their original findings.
+  Drain old workers and run the new findings-table migration before starting
+  matching server and administrator binaries.
+- **Breaking experimental storage SDK 0.3:** adapters must implement
+  `SchemaEvolutionStorage::get_schema_work_report` and atomically append the
+  findings returned by `StorageSchemaWork::record_impact` with each checkpoint.
+  Keep worker checkpoints bounded and assemble complete reports from a consistent
+  snapshot. Update adapters and rerun conformance; see the storage adapter SDK
+  upgrade guide.
 
 - External authorization pagination preserves PostgreSQL ordering for computed
   arrays and objects on locale-collated databases, preventing skipped results.

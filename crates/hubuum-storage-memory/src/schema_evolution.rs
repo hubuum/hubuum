@@ -966,6 +966,27 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Schema work was not found"))
     }
 
+    async fn get_schema_work_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaWorkReport, StorageError> {
+        let state = self.state.read().await;
+        let work = state
+            .schema_work
+            .get(&task_id.id())
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("Schema work was not found"))?;
+        let cursor = work.cursor();
+        let mut report = StorageSchemaWorkReport::builder(work);
+        for (_, finding) in state
+            .schema_findings
+            .range((task_id.id(), 0)..=(task_id.id(), cursor))
+        {
+            report.push(finding.clone()).map_err(schema_error)?;
+        }
+        report.finish().map_err(schema_error)
+    }
+
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,
@@ -1146,7 +1167,11 @@ impl SchemaEvolutionStorage for MemoryStorage {
                     }
                 }
                 if let Some(inspection) = inspection {
-                    work.record_impact(id, inspection, stale);
+                    if let Some(finding) = work.record_impact(id, inspection, stale) {
+                        state
+                            .schema_findings
+                            .insert((work.task_id().id(), id.id()), finding);
+                    }
                 } else {
                     work.record(id, status, stale);
                 }
@@ -1181,6 +1206,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ok_or_else(invalid_task_lease)?;
         guard.tasks.extend(state.tasks);
         guard.schema_work.extend(state.schema_work);
+        guard.schema_findings.extend(state.schema_findings);
         for id in touched {
             match state.schema_evidence.remove(&id) {
                 Some(evidence) => {

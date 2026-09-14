@@ -1990,6 +1990,12 @@ impl SchemaEvolutionStorage for CompleteExternalAdapter {
     async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError> {
         fixture_result()
     }
+    async fn get_schema_work_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaWorkReport, StorageError> {
+        fixture_result()
+    }
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,

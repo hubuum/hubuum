@@ -275,7 +275,12 @@ Required trait: `SchemaEvolutionStorage`.
 Owns immutable schema revisions, explicit activation, population-fenced impact
 proofs, object compliance projections, and resumable validation checkpoints.
 Impact checkpoints retain the immutable baseline, disjoint before/after counts,
-and all mismatched object IDs grouped by their first failure.
+and the count of separately persisted findings. `get_schema_work` returns this
+bounded checkpoint; `get_schema_work_report` assembles all mismatched object IDs
+grouped by their first failure from one consistent checkpoint/findings snapshot.
+Every batch appends only its new findings, atomically with its checkpoint, without
+reading or rewriting accumulated findings. Report assembly uses a hash index for
+grouping so its work grows linearly with the findings.
 `get_schema_impact_boundary` reads current
 schema identities, target lifecycle, and population epoch without scanning
 objects, so report polling can recompute readiness at constant query cost.

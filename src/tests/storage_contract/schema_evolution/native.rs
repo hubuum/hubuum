@@ -1,5 +1,5 @@
 use super::*;
-use diesel::sql_types::{Integer, Text};
+use diesel::sql_types::{BigInt, Integer, Text};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{capture_queries, with_connection, with_transaction};
 
@@ -226,8 +226,13 @@ async fn schema_activation_has_a_constant_query_budget_and_large_batches_bound_j
     fixture.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::impact(StorageSchemaWorkKind::Impact)]
+#[case::revalidation(StorageSchemaWorkKind::Revalidation)]
 #[actix_web::test]
-async fn postgres_worker_cannot_publish_evidence_for_an_object_changed_after_inspection() {
+async fn postgres_worker_cannot_publish_results_for_an_object_changed_after_inspection(
+    #[case] kind: StorageSchemaWorkKind,
+) {
     struct ScanObserver(Notify);
     impl PostgresObserver for ScanObserver {
         fn operation_finished(
@@ -243,17 +248,23 @@ async fn postgres_worker_cannot_publish_evidence_for_an_object_changed_after_ins
         }
     }
     let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({"n":1})]).await;
-    let revision = fixture.stage(json!({"required":["n"]}), true).await;
-    let activation = fixture
-        .activate(
-            &revision,
-            SchemaRevision::INITIAL,
-            StorageSchemaActivationPolicy::AllowPending,
-            None,
-        )
-        .await
-        .unwrap();
-    let lease = fixture.claim(activation.task_id().unwrap(), 60_000).await;
+    let revision = fixture.stage(json!({"required":["missing"]}), true).await;
+    let task_id = if kind == StorageSchemaWorkKind::Impact {
+        fixture.request(revision.reference(), kind).await.task_id()
+    } else {
+        fixture
+            .activate(
+                &revision,
+                SchemaRevision::INITIAL,
+                StorageSchemaActivationPolicy::AllowPending,
+                None,
+            )
+            .await
+            .unwrap()
+            .task_id()
+            .unwrap()
+    };
+    let lease = fixture.claim(task_id, 60_000).await;
     let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
         unreachable!()
     };
@@ -283,10 +294,17 @@ async fn postgres_worker_cannot_publish_evidence_for_an_object_changed_after_ins
     .unwrap();
     let result = task.await.unwrap().unwrap();
     assert_eq!(result.stale(), 1);
-    assert_eq!(
-        fixture.compliance().await[0].status(),
-        StorageComplianceStatus::Pending
-    );
+    if kind == StorageSchemaWorkKind::Impact {
+        let report = crate::services::schema_evolution::get_work(&fixture.backend, task_id)
+            .await
+            .unwrap();
+        assert!(report.impact.unwrap().failures.is_empty());
+    } else {
+        assert_eq!(
+            fixture.compliance().await[0].status(),
+            StorageComplianceStatus::Pending
+        );
+    }
     fixture.cleanup().await;
 }
 
@@ -328,5 +346,173 @@ async fn postgres_rolls_back_schema_checkpoint_when_task_failure_cannot_commit()
     fixture
         .finish_claimed(lease, StorageSchemaBatchLimits::default())
         .await;
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::four_batches(256)]
+#[case::thirty_two_batches(2048)]
+#[actix_web::test]
+async fn schema_impact_batch_traffic_is_independent_of_prior_findings(#[case] objects: i32) {
+    let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![]).await;
+    let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
+        unreachable!()
+    };
+    with_connection(pool, async |connection| {
+        diesel::sql_query("INSERT INTO hubuumobject(name,description,collection_id,hubuum_class_id,data) SELECT 'mismatch_'||n,'impact traffic fixture',$1,$2,'{}'::jsonb FROM generate_series(1,$3) n")
+            .bind::<Integer,_>(fixture.collection_id().id()).bind::<Integer,_>(fixture.class_id().id()).bind::<Integer,_>(objects)
+            .execute(connection).await.map_err(hubuum_storage_postgres::PostgresStorageError::from)
+    }).await.unwrap();
+    let candidate = fixture.stage(json!({"required":["missing"]}), true).await;
+    let work = fixture
+        .request(candidate.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 300_000).await;
+    let mut total_bytes = 0;
+    for batch in 1..=objects / 64 {
+        let (work, capture) = capture_queries(
+            fixture
+                .backend
+                .process_schema_work(lease.clone(), StorageSchemaBatchLimits::default()),
+        )
+        .await;
+        let work = work.unwrap();
+        assert_eq!(work.examined(), (batch * 64) as u64);
+        assert_eq!(
+            capture.queries_matching("FROM schema_impact_findings"),
+            0,
+            "workers must not reload prior findings"
+        );
+        assert_eq!(
+            capture.queries_matching("INSERT INTO schema_impact_findings"),
+            1
+        );
+        let checkpoint_bytes = capture.rendered_bytes_matching("UPDATE schema_validation_work");
+        let finding_bytes = capture.rendered_bytes_matching("INSERT INTO schema_impact_findings");
+        assert!(
+            checkpoint_bytes > 0 && checkpoint_bytes < 4096,
+            "batch {batch}: checkpoint writes grew to {checkpoint_bytes} bytes"
+        );
+        assert!(
+            finding_bytes > 0 && finding_bytes < 64 * 512,
+            "batch {batch}: finding writes grew to {finding_bytes} bytes"
+        );
+        total_bytes += checkpoint_bytes + finding_bytes;
+    }
+    assert!(
+        total_bytes < objects as usize * 576,
+        "traffic must grow linearly with inspected objects"
+    );
+    let (report, capture) = capture_queries(crate::services::schema_evolution::get_work(
+        &fixture.backend,
+        work.task_id(),
+    ))
+    .await;
+    let report = report.unwrap();
+    assert!(capture.domain_queries() <= 3, "{capture:?}");
+    assert_eq!(capture.queries_matching("hubuumobject"), 0);
+    assert_eq!(
+        report.impact.unwrap().failures[0].samples.len(),
+        objects as usize
+    );
+    fixture.cleanup().await;
+}
+
+#[actix_web::test]
+async fn failed_schema_batch_rolls_back_findings_with_its_checkpoint() {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type=BigInt)]
+        count: i64,
+    }
+    let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({})]).await;
+    let candidate = fixture.stage(json!(false), true).await;
+    let work = fixture
+        .request(candidate.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 60_000).await;
+    let result = PostgresFaultController::failing(PostgresFaultPoint::SchemaImpactAfterFindings)
+        .run(
+            fixture
+                .backend
+                .process_schema_work(lease.clone(), StorageSchemaBatchLimits::default()),
+        )
+        .await;
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Backend);
+    let checkpoint = fixture
+        .backend
+        .get_schema_work(work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(checkpoint).unwrap(),
+        serde_json::to_value(&work).unwrap()
+    );
+    let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
+        unreachable!()
+    };
+    let rows = with_connection(pool, async |connection| {
+        diesel::sql_query("SELECT count(*) AS count FROM schema_impact_findings WHERE task_id=$1")
+            .bind::<Integer, _>(work.task_id().id())
+            .get_result::<Count>(connection)
+            .await
+            .map_err(hubuum_storage_postgres::PostgresStorageError::from)
+    })
+    .await
+    .unwrap();
+    assert_eq!(rows.count, 0);
+    fixture
+        .finish_claimed(lease, StorageSchemaBatchLimits::default())
+        .await;
+    let report = crate::services::schema_evolution::get_work(&fixture.backend, work.task_id())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.impact.unwrap().failures[0].samples,
+        vec![fixture.resources.objects[0].id().id()]
+    );
+    fixture.cleanup().await;
+}
+
+#[actix_web::test]
+async fn schema_report_reads_findings_from_the_checkpoints_snapshot() {
+    let fixture = SchemaFixture::new(StorageBackendKind::Postgres, vec![json!({}); 2]).await;
+    let candidate = fixture.stage(json!(false), true).await;
+    let work = fixture
+        .request(candidate.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let lease = fixture.claim(work.task_id(), 60_000).await;
+    let limits = StorageSchemaBatchLimits::try_new(1, 2048, 1024).unwrap();
+    fixture
+        .backend
+        .process_schema_work(lease.clone(), limits)
+        .await
+        .unwrap();
+    let gate = PostgresFaultController::pausing(PostgresFaultPoint::SchemaReportAfterCheckpoint);
+    let backend = fixture.backend.clone();
+    let reader_gate = gate.clone();
+    let reader = tokio::spawn(async move {
+        reader_gate
+            .run(crate::services::schema_evolution::get_work(
+                &backend,
+                work.task_id(),
+            ))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), gate.wait_until_reached())
+        .await
+        .unwrap();
+    fixture
+        .backend
+        .process_schema_work(lease, limits)
+        .await
+        .unwrap();
+    gate.resume();
+    let report = reader.await.unwrap().unwrap();
+    assert_eq!(report.examined, 1);
+    assert_eq!(
+        report.impact.unwrap().failures[0].samples,
+        vec![fixture.resources.objects[0].id().id()]
+    );
     fixture.cleanup().await;
 }

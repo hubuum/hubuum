@@ -30,6 +30,7 @@ use crate::models::{
     Permissions, RestoreTimestamps,
 };
 use crate::permissions::AuthorizationContext;
+use crate::services::schema_evolution;
 use crate::services::storage_boundary::{
     class_id_to_storage, collection_id_to_storage, object_id_to_storage,
 };
@@ -1367,16 +1368,13 @@ where
         if let Some(activation) = &input.schema_activation {
             let impact = if let Some(task) = activation.impact_task_id {
                 Some(
-                    hubuum_storage_core::SchemaEvolutionStorage::get_schema_work(
-                        &storage_handle(pool),
-                        task,
-                    )
-                    .await
-                    .map_err(|error| PlanningFailure {
-                        kind: FailureKind::Validation,
-                        item: result.clone(),
-                        message: error.to_string(),
-                    })?,
+                    schema_evolution::get_work(pool, task)
+                        .await
+                        .map_err(|error| PlanningFailure {
+                            kind: FailureKind::Validation,
+                            item: result.clone(),
+                            message: error.to_string(),
+                        })?,
                 )
             } else {
                 None

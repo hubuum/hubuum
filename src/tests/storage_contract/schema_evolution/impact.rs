@@ -300,10 +300,11 @@ async fn impact_reports_every_mismatched_object_and_reason_across_batches(
     }
     assert_eq!(report["impact"]["ungrouped_failures"], 0);
     assert!(!report.to_string().contains("private-instance-value"));
-    let restored: StorageSchemaWork = serde_json::from_value(report.clone()).unwrap();
-    assert_eq!(restored.examined(), 175);
+    let restored: crate::models::schema_evolution::SchemaWorkResponse =
+        serde_json::from_value(report.clone()).unwrap();
+    assert_eq!(restored.examined, 175);
     assert_eq!(
-        serde_json::to_value(restored.impact().unwrap()).unwrap(),
+        serde_json::to_value(restored.impact.unwrap()).unwrap(),
         report["impact"]
     );
     fixture.cleanup().await;

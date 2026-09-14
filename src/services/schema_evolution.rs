@@ -118,11 +118,21 @@ pub async fn get_work(
     context: &impl StorageContext,
     task_id: TaskId,
 ) -> Result<SchemaWorkResponse, ApiError> {
-    work_response(
-        context,
-        storage_handle(context).get_schema_work(task_id).await?,
-    )
-    .await
+    let report = storage_handle(context)
+        .get_schema_work_report(task_id)
+        .await?;
+    let work = report.work();
+    let mut result: SchemaWorkResponse = response(work)?;
+    result.impact = report.impact().map(response).transpose()?;
+    if work.kind() == StorageSchemaWorkKind::Impact {
+        let boundary = storage_handle(context)
+            .get_schema_impact_boundary(work.target())
+            .await?;
+        result.readiness = Some(response(work.impact_readiness(&boundary))?);
+        result.current_epoch = Some(boundary.epoch());
+        result.current_active_schema = Some(boundary.active());
+    }
+    Ok(result)
 }
 pub async fn cancel_work(
     context: &impl StorageContext,
@@ -172,14 +182,5 @@ async fn work_response(
     context: &impl StorageContext,
     work: StorageSchemaWork,
 ) -> Result<SchemaWorkResponse, ApiError> {
-    let mut result: SchemaWorkResponse = response(&work)?;
-    if work.kind() == StorageSchemaWorkKind::Impact {
-        let boundary = storage_handle(context)
-            .get_schema_impact_boundary(work.target())
-            .await?;
-        result.readiness = Some(response(work.impact_readiness(&boundary))?);
-        result.current_epoch = Some(boundary.epoch());
-        result.current_active_schema = Some(boundary.active());
-    }
-    Ok(result)
+    get_work(context, work.task_id()).await
 }
