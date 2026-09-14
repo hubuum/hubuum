@@ -111,6 +111,10 @@ fn timestamp(
         .map_err(|_| invalid(format!("Invalid finite task timestamp '{field}'")))
 }
 
+fn invalid(error: impl std::fmt::Display) -> StorageValidationError {
+    StorageValidationError::invalid(error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,7 +150,4 @@ mod tests {
         let row = StorageBackupRow::try_from_value(value).unwrap();
         assert!(StorageTaskControl::from_snapshot(StorageTaskKind::Import, &row).is_err());
     }
-}
-fn invalid(error: impl std::fmt::Display) -> StorageValidationError {
-    StorageValidationError::invalid(error.to_string())
 }
