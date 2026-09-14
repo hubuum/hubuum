@@ -133,3 +133,119 @@ fn persisted_omissions_must_describe_the_saved_issue(#[case] omissions: Value) {
     result["issues"][0]["omissions"] = omissions;
     assert!(serde_json::from_value::<SchemaDiagnostics>(result).is_err());
 }
+
+#[rstest]
+#[case::relative_resource("child")]
+#[case::absolute_resource("https://example.org/child")]
+fn referenced_resource_metadata_is_not_read_from_the_root(#[case] reference: &str) {
+    let schema = json!({
+        "$id": "https://example.org/root",
+        "$defs": {"child": {"$id": "child", "type": "integer"}},
+        "type": "object",
+        "properties": {"value": {"$ref": reference}}
+    });
+    let result = inspect(schema, json!({"value": "private-value"}));
+    let issue = &result["issues"][0];
+    assert_eq!(issue["instance_path"], "/value");
+    assert_eq!(issue["reason"]["schema_path"], Value::Null);
+    assert_eq!(issue["expected"], json!({"status": "omitted"}));
+    assert!(
+        issue["omissions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("schema_constraint_unavailable_or_too_large"))
+    );
+}
+
+#[test]
+fn referenced_required_property_is_not_attributed_to_the_root() {
+    let schema = json!({
+        "$id": "https://example.org/root",
+        "$defs": {"child": {"$id": "child", "required": ["child-required"]}},
+        "required": ["child-required"],
+        "properties": {"value": {"$ref": "child"}}
+    });
+    let value = json!({"child-required": true, "value": {}});
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let failure =
+        SchemaFailure::from_error(&schema, &validator.iter_errors(&value).next().unwrap());
+    assert_eq!(
+        serde_json::to_value(failure).unwrap(),
+        json!({
+            "keyword": "required", "schema_path": null, "missing_property": null
+        })
+    );
+}
+
+#[test]
+fn property_name_wrapper_preserves_the_child_resource_boundary() {
+    let result = inspect(
+        json!({
+            "$id": "https://example.org/root",
+            "$defs": {"child": {"$id": "child", "maxLength": 2}},
+            "maxLength": 99,
+            "propertyNames": {"$ref": "child"}
+        }),
+        json!({"private-key": 1}),
+    );
+    let issue = &result["issues"][0];
+    assert_eq!(issue["reason"]["keyword"], "propertyNames");
+    assert_eq!(issue["reason"]["schema_path"], Value::Null);
+    assert_eq!(issue["expected"], json!({"status": "omitted"}));
+}
+
+#[test]
+fn external_reference_in_an_alternative_omits_foreign_metadata() {
+    let registry = jsonschema::Registry::new()
+        .add("urn:child", json!({"type": "integer"}))
+        .unwrap()
+        .prepare()
+        .unwrap();
+    let schema = json!({
+        "type": "object",
+        "properties": {"value": {"anyOf": [{"$ref": "urn:child"}, {"type": "boolean"}]}}
+    });
+    let value = json!({"value": "private-value"});
+    let validator = jsonschema::options()
+        .with_registry(&registry)
+        .build(&schema)
+        .unwrap();
+    let SchemaDiagnosticInspection::Invalid(diagnostics) =
+        SchemaDiagnosticInspection::from_errors(&schema, &value, validator.iter_errors(&value))
+    else {
+        panic!("expected diagnostics");
+    };
+    let issue = &diagnostics.issues()[1];
+    assert!(issue.alternative());
+    assert_eq!(issue.reason().keyword(), "type");
+    assert_eq!(issue.reason().schema_path(), None);
+    assert!(matches!(issue.expected(), SchemaExpectedValue::Omitted));
+}
+
+#[rstest]
+#[case::root(json!({"propertyNames": {"maxLength": 2}}), json!({"secret-key": 1}), "")]
+#[case::nested(json!({"properties": {"payload": {"propertyNames": {"maxLength": 2}}}}), json!({"payload": {"secret-key": 1}}), "/payload")]
+#[case::alternatives(json!({"propertyNames": {"anyOf": [{"maxLength": 2}, {"pattern": "^a"}]}}), json!({"secret-key": 1}), "")]
+fn property_name_repairs_keep_the_containing_object_context(
+    #[case] schema: Value,
+    #[case] value: Value,
+    #[case] path: &str,
+) {
+    let result = inspect(schema, value);
+    let decoded: SchemaDiagnostics = serde_json::from_value(result).unwrap();
+    let [issue] = decoded.issues() else {
+        panic!("a property-name failure must remain one qualified issue");
+    };
+    assert_eq!(issue.reason().keyword(), "propertyNames");
+    assert_eq!(issue.instance_path(), Some(path));
+    assert!(matches!(
+        issue.actual(),
+        SchemaActualValue::Object { properties: 1 }
+    ));
+    assert!(issue.message().contains("rename the property"));
+    assert!(
+        !serde_json::to_string(&decoded)
+            .unwrap()
+            .contains("secret-key")
+    );
+}

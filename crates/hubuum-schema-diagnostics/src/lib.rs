@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod failure;
+use failure::DocumentSchemaLocation;
 pub use failure::{SchemaFailure, evaluation_failed};
 
 const MAX_ISSUES: usize = 32;
@@ -253,8 +254,10 @@ impl SchemaDiagnostics {
         }
         let path = error.instance_path().as_str();
         let instance_path = safe_instance_path(path, value, names).then(|| path.to_owned());
-        let constraint = document.pointer(error.schema_path().as_str());
-        let expected = constraint
+        let location = DocumentSchemaLocation::from_error(document, error);
+        let expected = location
+            .as_ref()
+            .map(DocumentSchemaLocation::constraint)
             .filter(|value| value.to_string().len() <= MAX_EXPECTED_BYTES)
             .cloned();
         let mut omissions = vec![SchemaDiagnosticOmission::ActualValueRedacted];
@@ -265,7 +268,7 @@ impl SchemaDiagnostics {
             omissions.push(SchemaDiagnosticOmission::SchemaConstraintUnavailableOrTooLarge);
         }
         self.issues.push(SchemaIssue {
-            reason: SchemaFailure::from_error(document, error),
+            reason: SchemaFailure::from_location(error, location.as_ref()),
             instance_path,
             message: explanation(error.kind()).into(),
             expected: expected.map_or(SchemaExpectedValue::Omitted, SchemaExpectedValue::Available),
@@ -283,9 +286,9 @@ impl SchemaDiagnostics {
                     }
                 }
             }
-            ValidationErrorKind::PropertyNames { error } => {
-                self.push(document, value, names, error, alternative)
-            }
+            // PropertyNames children validate a synthetic key string at the
+            // object's path. Keep the qualified wrapper rather than emitting
+            // those children as value repairs at that same object location.
             _ => {}
         }
     }
@@ -378,7 +381,7 @@ fn explanation(kind: &ValidationErrorKind) -> &'static str {
         }
         Not { .. } => "The value matches a schema that is explicitly prohibited.",
         PropertyNames { .. } => {
-            "A property name does not satisfy the naming constraint; instance-owned names are redacted."
+            "A property name in this object violates the naming constraint; rename the property. Instance-owned names are redacted."
         }
         ContentEncoding { .. } | FromUtf8 { .. } => {
             "The value does not use the required content encoding."

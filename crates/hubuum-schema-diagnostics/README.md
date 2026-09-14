@@ -37,6 +37,14 @@ and JSON Pointer escaping. Each omission is explicit. Schema documents themselve
 must be safe to disclose to the diagnostic reader; schema constraints are not
 treated as secrets.
 
+For errors reached through references, schema locations and expected constraints
+are retained only when the document uses fragment-only references and has no
+nested resource identifiers. Otherwise that metadata is explicitly omitted;
+the caller's reference registry is not available to resolve another resource.
+Property-name failures remain one qualified issue at the containing object,
+with instructions to rename a property. Their synthetic key-string errors are
+not emitted as value repairs at the object's location.
+
 Collection retains at most 32 issues, including explanatory alternative-branch
 issues. One lookahead detects additional failures and sets `truncated`; the
 remaining number is deliberately unknown. Paths are limited to 512 bytes and

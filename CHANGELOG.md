@@ -10,7 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 
 - A standalone-capable `hubuum-schema-diagnostics` workspace crate for structured
-  diagnostics from the Rust `jsonschema` validator. Publication is deferred.
+  diagnostics from the Rust `jsonschema` validator. Referenced schema metadata
+  is omitted when its source cannot be established, and property-name repairs
+  retain their containing-object context. Publication is deferred.
 
 - Task cancellation through `POST /api/v1/tasks/{task_id}/cancel`, with durable
   cross-replica intent, idempotent queued withdrawal, cooperative executor cleanup,
