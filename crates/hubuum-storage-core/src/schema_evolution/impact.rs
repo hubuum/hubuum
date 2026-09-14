@@ -1,11 +1,15 @@
-use hubuum_domain::{ObjectId, SchemaFailure, SchemaImpactInspection, SchemaReference};
+use chrono::{SubsecRound, Utc};
+use hubuum_domain::{
+    ObjectId, ResourceRevision, SchemaDiagnosticInspection, SchemaFailure, SchemaImpactInspection,
+    SchemaReference,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod report;
 pub use report::{
-    StorageSchemaImpactFinding, StorageSchemaImpactReport, StorageSchemaWorkReport,
-    StorageSchemaWorkReportBuilder,
+    StorageSchemaDiagnosticSnapshot, StorageSchemaImpactFinding, StorageSchemaImpactReport,
+    StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
 };
 
 use super::{
@@ -70,6 +74,7 @@ pub struct StorageSchemaInspection {
     before: Option<StorageComplianceStatus>,
     after: Option<StorageComplianceStatus>,
     failure: Option<SchemaFailure>,
+    snapshot: Option<StorageSchemaDiagnosticSnapshot>,
 }
 
 impl StorageSchemaInspection {
@@ -83,6 +88,50 @@ impl StorageSchemaInspection {
             before: baseline.and_then(|policy| Self::inspect(policy, value).0),
             after,
             failure,
+            snapshot: None,
+        }
+    }
+
+    /// Inspect a revisioned snapshot once and carry the proof through batch commit.
+    pub fn inspect_snapshot(
+        baseline: Option<&StorageValidatedSchemaPolicy>,
+        candidate: &StorageValidatedSchemaPolicy,
+        value: Option<&Value>,
+        revision: ResourceRevision,
+    ) -> Self {
+        let before = baseline.and_then(|policy| Self::inspect(policy, value).0);
+        let Some(schema) = &candidate.compiled else {
+            return Self {
+                before,
+                after: Some(StorageComplianceStatus::NotRequired),
+                failure: None,
+                snapshot: None,
+            };
+        };
+        let inspected_at = Utc::now().trunc_subsecs(6);
+        match value.map(|value| schema.inspect_diagnostics(value)) {
+            Some(SchemaDiagnosticInspection::Valid) => Self {
+                before,
+                after: Some(StorageComplianceStatus::Valid),
+                failure: None,
+                snapshot: None,
+            },
+            Some(SchemaDiagnosticInspection::Invalid(diagnostics)) => Self {
+                before,
+                after: Some(StorageComplianceStatus::Invalid),
+                failure: Some(diagnostics.first_failure().clone()),
+                snapshot: Some(StorageSchemaDiagnosticSnapshot::new(
+                    revision,
+                    inspected_at,
+                    diagnostics,
+                )),
+            },
+            _ => Self {
+                before,
+                after: None,
+                failure: None,
+                snapshot: None,
+            },
         }
     }
 
@@ -296,7 +345,11 @@ impl StorageSchemaImpact {
         self.counts.record(inspection.before, inspection.after);
         let reason = inspection.failure?;
         self.persisted_findings += 1;
-        Some(StorageSchemaImpactFinding::new(object, reason))
+        let finding = StorageSchemaImpactFinding::new(object, reason);
+        Some(match inspection.snapshot {
+            Some(snapshot) => finding.with_snapshot(snapshot),
+            None => finding,
+        })
     }
 }
 
@@ -486,6 +539,7 @@ mod tests {
                     before: Some(StorageComplianceStatus::NotRequired),
                     after: Some(StorageComplianceStatus::Invalid),
                     failure: Some(reasons[(id as usize - 1) % reasons.len()].clone()),
+                    snapshot: None,
                 },
                 false,
             ));

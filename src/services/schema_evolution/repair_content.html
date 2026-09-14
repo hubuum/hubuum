@@ -1,0 +1,51 @@
+<main class="schema-repair-report">
+<h1>Schema repair report</h1>
+<p class="notice">This report records saved analysis findings. Objects may have changed since inspection. Object links open current frontend pages. This report does not establish that activation is currently safe; run a fresh analysis after repairs.</p>
+{% if partial %}<p class="notice"><strong>Partial analysis: {{ analysis.status }}.</strong> Only committed findings are available. Compatibility has not been established.</p>{% endif %}
+{% if analysis.readiness == "inconclusive" or not analysis.readiness %}<p class="notice"><strong>Inconclusive compatibility.</strong> The analysis may be unfinished, stale, uninspectable, or missing comparison metadata. Review the counters and population boundaries below.</p>{% endif %}
+{% if omitted_objects %}<p class="notice"><strong>Legacy sampled report:</strong> {{ omitted_objects }} affected object IDs were not retained. They cannot be recovered from this analysis. Run a fresh analysis to obtain all IDs.</p>{% endif %}
+{% if legacy_objects %}<p class="notice">{{ legacy_objects }} retained objects have legacy diagnostics: only the first failure or a sampled ID is available. Exact data locations, inspected object revisions, and additional issues were not recorded. This is not a complete list of repairs.</p>{% endif %}
+<h2>Analysis provenance and compatibility</h2>
+<dl>
+<dt>Class</dt><dd>{{ class_name }} (name at report generation), #{{ analysis.target.class_id }}</dd>
+<dt>Proposed revision</dt><dd>{{ analysis.target.revision }}</dd>
+<dt>Baseline revision</dt><dd>{% if analysis.impact %}{{ analysis.impact.baseline.revision }}{% else %}Not retained in this legacy analysis{% endif %}</dd>
+<dt>Source analysis/task</dt><dd>#{{ analysis.task_id }}</dd>
+<dt>Analysis status</dt><dd>{{ analysis.status }}</dd>
+<dt>Analysis started (UTC)</dt><dd>{{ analysis.created_at }}</dd>
+<dt>Report generated / status observed (UTC)</dt><dd>{{ generated_at }}</dd>
+<dt>Compatibility at report generation</dt><dd>{{ analysis.readiness or "inconclusive" }}; this is an observation, not an activation guarantee</dd>
+<dt>Population epoch at analysis start / end / report generation</dt><dd>{{ analysis.start_epoch }} / {{ analysis.end_epoch }} / {{ analysis.current_epoch }}</dd>
+<dt>Active schema observed at report generation</dt><dd>{{ analysis.current_active_schema|tojson }}</dd>
+</dl>
+<table><thead><tr><th>Population outcome</th><th>Objects</th></tr></thead><tbody>
+<tr><td>Examined</td><td>{{ analysis.examined }}</td></tr>
+<tr><td>Invalid under proposed policy</td><td>{{ analysis.invalid }}</td></tr>
+<tr><td>Retained affected IDs listed below</td><td>{{ retained_objects }}</td></tr>
+<tr><td>Affected IDs omitted from legacy storage</td><td>{{ omitted_objects }}</td></tr>
+<tr><td>Uninspectable under proposed policy</td><td>{{ analysis.uninspectable }}</td></tr>
+<tr><td>Changed before findings could commit</td><td>{{ analysis.stale }}</td></tr>
+{% if analysis.impact %}{% for name, count in analysis.impact.counts|items %}<tr><td>Comparison: {{ name }}</td><td>{{ count }}</td></tr>{% endfor %}{% endif %}
+</tbody></table>
+<h2>Retained affected objects</h2>
+<p>Locations are JSON Pointers into the inspected data; an empty pointer means the root. Array indexes start at zero: <code>/interfaces/3/address</code> is the fourth interface's address. Actual scalar values are redacted; only their types and sizes are retained. Dynamic property names and overlong paths may also be omitted explicitly.</p>
+{% for object in objects %}
+<article id="object-{{ object.id }}"><h3><a href="{{ object.url }}" target="_blank" rel="noopener noreferrer">Object #{{ object.id }}</a></h3>
+{% if object.snapshot %}
+<p>Inspected object revision {{ object.snapshot.object_revision }} at {{ object.snapshot.inspected_at }}.</p>
+{% if object.snapshot.diagnostics.truncated %}<p class="notice"><strong>Diagnostic limit reached.</strong> At least one additional issue was omitted; the remaining number is unknown. The retained list is incomplete.</p>{% endif %}
+{% for issue in object.snapshot.diagnostics.issues %}
+<div class="issue"><p>{% if issue.alternative %}<strong>Alternative branch explanation:</strong> {% endif %}{{ issue.message }}</p>
+<dl><dt>Data location</dt><dd>{% if issue.instance_path is none %}Omitted (sensitive dynamic property name or path limit){% elif issue.instance_path == "" %}Root (empty JSON Pointer){% else %}<code>{{ issue.instance_path }}</code>{% endif %}</dd>
+<dt>Schema constraint</dt><dd>{{ issue.reason.keyword }} at <code>{{ issue.reason.schema_path|tojson }}</code> (null means omitted/unavailable)</dd>
+{% if issue.reason.missing_property is not none %}<dt>Missing property</dt><dd><code>{{ issue.reason.missing_property|tojson }}</code></dd>{% endif %}
+<dt>Expected schema value</dt><dd>{% if issue.expected.status == "available" %}<code>{{ issue.expected.value|tojson }}</code>{% else %}Omitted (see omissions){% endif %}</dd>
+<dt>Actual value context</dt><dd><code>{{ issue.actual|tojson }}</code>; scalar content redacted</dd>
+<dt>Omissions</dt><dd>{{ issue.omissions|join(", ") }}</dd></dl></div>
+{% endfor %}
+{% else %}<p>Legacy finding; only the first failure or sampled ID was retained.</p>
+{% if object.reason %}<p>First failing constraint: <code>{{ object.reason.keyword }}</code> at schema pointer <code>{{ object.reason.schema_path|tojson }}</code>.</p>{% if object.reason.missing_property is not none %}<p>Required property <code>{{ object.reason.missing_property|tojson }}</code> is missing.</p>{% endif %}{% endif %}
+{% endif %}
+</article>
+{% else %}<p>No affected object IDs were retained. For partial or inconclusive analyses this does not establish compatibility.</p>{% endfor %}
+</main>

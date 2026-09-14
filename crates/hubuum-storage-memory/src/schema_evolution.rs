@@ -988,6 +988,40 @@ impl SchemaEvolutionStorage for MemoryStorage {
         report.finish().map_err(schema_error)
     }
 
+    async fn save_schema_repair_report(
+        &self,
+        request: StorageSchemaRepairReportWrite,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        let report = request.report();
+        state
+            .check_schema_collection(report.target().class_id(), request.authorized_collection())?;
+        let work = state
+            .schema_work
+            .get(&report.task_id().id())
+            .ok_or_else(|| StorageError::not_found("Schema work was not found"))?;
+        if work.target() != report.target() || work.kind() != StorageSchemaWorkKind::Impact {
+            return Err(StorageError::invalid_input(
+                "Report source is not the requested impact analysis",
+            ));
+        }
+        state
+            .schema_repair_reports
+            .insert(report.task_id().id(), request.into_report());
+        Ok(())
+    }
+    async fn get_schema_repair_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaRepairReport, StorageError> {
+        self.state
+            .read()
+            .await
+            .schema_repair_reports
+            .get(&task_id.id())
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("Schema repair report was not found"))
+    }
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,
@@ -1071,10 +1105,11 @@ impl SchemaEvolutionStorage for MemoryStorage {
                     id,
                     revision,
                     if work.kind() == StorageSchemaWorkKind::Impact {
-                        Some(StorageSchemaInspection::new(
+                        Some(StorageSchemaInspection::inspect_snapshot(
                             baseline.as_ref().map(|revision| revision.policy()),
                             active.policy(),
                             object.as_ref(),
+                            revision,
                         ))
                     } else {
                         None

@@ -62,7 +62,9 @@ All routes below are relative to `/api/v1/classes/{class_id}/schema`.
 | `POST /revisions/{revision}/impact` | Queue bounded impact analysis |
 | `POST /revisions/{revision}/activate` | Activate with an explicit policy |
 | `POST /revisions/{revision}/revalidate` | Queue revalidation of the active revision |
-| `GET /tasks/{task_id}` | Read progress and grouped impact findings |
+| `GET /tasks/{task_id}` | Read progress, grouped impact findings, and saved diagnostics |
+| `POST /tasks/{task_id}/report` | Generate and retain HTML from saved impact findings |
+| `GET /tasks/{task_id}/report` | View retained HTML; add `?download=true` to download |
 | `DELETE /tasks/{task_id}` | Cancel work and fence later batch commits |
 | `GET` | Read active revision, population epoch, and compliance counts |
 | `GET /objects` | Page compliance metadata, optionally filtered by `status` |
@@ -150,16 +152,29 @@ all of its object IDs in scan order; the field name is retained for compatibilit
 Each group includes `objects` and a
 `reason` containing the JSON Schema `keyword` (`falseSchema` for a boolean-false
 schema), a schema-owned `schema_path`,
-and, for missing required properties, `missing_property`. No instance paths,
-unexpected property names, instance values, or validator messages are included.
-Schema paths exceeding 512 bytes and property names exceeding 128 bytes are
-omitted. `ungrouped_failures` is retained for compatibility and is zero for newly
-started analyses. Older checkpoints may still contain capped ID lists and a
-nonzero count of omitted failures; rerun those analyses to obtain complete lists.
-Each object has one failure reason, not an exhaustive list of everything that
-must be repaired in that object. Running, cancelled, and failed tasks include
-only findings committed so far; stale or uninspectable objects have no proven
-mismatch reason and remain accounted for by their counters and readiness.
+and, for missing required properties, `missing_property`. The grouping key stays independent of instance data. Schema paths exceeding
+512 bytes and property names exceeding 128 bytes are omitted.
+`ungrouped_failures` is retained for compatibility and is zero for newly started
+analyses. Older checkpoints may contain capped ID lists and omitted groups.
+
+`impact.findings` adds one record per persisted mismatched object. Its `snapshot`
+contains the inspected `object_revision`, UTC `inspected_at`, and `diagnostics`.
+Diagnostics retain up to 32 issues with an explanation, JSON Pointer
+`instance_path`, first-failure-style `reason`, bounded `expected` constraint,
+and `actual` type/size context. `expected.status` distinguishes an available
+constraint (including JSON null) from an omitted one. Scalar values are always redacted, and
+instance-owned property names not declared in the schema are omitted from paths.
+Schema constraints themselves are visible to the authorized reader. An empty
+instance pointer means the root; `/interfaces/3/address` identifies the fourth
+interface's address. Alternative-branch issues are labeled as explanations of
+alternatives, not independent required repairs.
+
+Every issue lists its `omissions`. Expected constraints exceeding 1,024 bytes
+are omitted. `diagnostics.truncated` means at least one further issue exists;
+the unvisited remainder is not counted. Legacy findings have a null `snapshot`:
+no current data is fetched to invent missing historical diagnostics. Running,
+cancelled, and failed tasks contain only findings committed so far. Stale or
+uninspectable objects remain accounted for by counters and readiness.
 
 For example, a report could show 43 `newly_invalid` objects, with one group of
 38 failures for missing `hostname` and another of five `type` failures at
@@ -186,6 +201,66 @@ task. Revalidation responses have no impact comparison or readiness.
 Polling assembles the committed findings with the task checkpoint and reads
 indexed schema state; it does not scan objects or recompute compliance totals.
 Its response size and assembly work grow with the number of reported mismatches.
+
+### HTML repair reports
+
+Post to `/tasks/{task_id}/report` with an absolute frontend URL template:
+
+```json
+{
+  "object_url_template": "https://inventory.example/objects/{object_id}",
+  "template_id": null
+}
+```
+
+The frontend supplies its actual route, including any deployment subpath or hash
+routing. Exactly one `{object_id}` placeholder is required. URLs must use HTTP
+or HTTPS and cannot contain credentials. Links therefore work from downloaded
+files as well as from the application. Generation returns `text/html` directly
+and retains that exact output. It reads saved findings and does not rerun an
+analysis, activate a schema, or update object data.
+
+View the retained artifact with `GET /tasks/{task_id}/report`; append
+`?download=true` for an attachment. These operations require the same unscoped
+administrator and configured `ReadClass` authorization as the analysis itself,
+including when reading an existing artifact. No generic export endpoint exposes
+these reports. The latest successful generation replaces the previous rendering;
+failed generation leaves the previous artifact available. Reports live with the
+source task and are not included in logical backups/restores of schema work.
+
+Reports include class identity, proposed and baseline revisions, source task,
+status, analysis start and per-object inspection times, report generation time,
+compatibility and population boundaries, counters, every retained affected ID,
+and its available diagnostics. Legacy sampled IDs and first-failure-only records
+are explicitly qualified. Unfinished analyses are partial; stale or uninspectable
+analyses are inconclusive. Later object edits do not alter retained diagnostics
+or HTML, and a report is never a current activation guarantee.
+
+For reusable layouts, select a stored `text/html` template with `template_id`.
+It and its collection siblings must be readable through the configured permission
+backend. The same include/import/extends machinery, HTML escaping, strict missing
+values, and isolated rendering limits apply. The layout receives `analysis`,
+`objects`, `class_name`, `generated_at`, completeness counters, and a
+`report_content` slot. Render that slot exactly once; it inserts the canonical
+provenance, warnings, and all retained findings. Add branding, shared fragments,
+and CSS around the slot without rewriting the diagnostic renderer:
+
+```html
+{% include "repair-header.html" %}
+<style>.schema-repair-report h2 { color: #235a71; }</style>
+{{ report_content }}
+```
+
+The server supplies the outer HTML document and a restrictive Content Security
+Policy for both inline and downloaded viewing. Layouts should be HTML body
+fragments; scripts, remote images, and forms are disabled. Treat retained HTML as
+sensitive analysis output when sharing downloaded files.
+
+Output obeys `HUBUUM_EXPORT_MAX_OUTPUT_BYTES`, capped at 16 MiB. Exceeding the
+limit returns `413` and saves no partial rendering; increase the configured
+limit for larger reports. Template fuel, recursion, or execution failures also
+fail the whole generation explicitly. Per-object diagnostic omissions already
+present in the source are labeled inside a successfully generated report.
 
 ### Checkpoints and execution
 
@@ -316,7 +391,7 @@ existing fenced rebuild work. `SchemaReference` is the reusable dependency
 identity for future indexes and effective/inherited schemas. This change does
 not add declarative indexes, inheritance, or automatic JSON transformations.
 
-The seven coordinated SDK crates move from 0.2 to 0.3 because the mandatory
+The coordinated SDK crates move from 0.2 to 0.3 because the mandatory
 capability, task/event vocabularies, import DTO, and backup sections change.
 Adapters must implement every required schema method, including the separate
 `get_schema_work_report` projection, handle `schema_validation`,

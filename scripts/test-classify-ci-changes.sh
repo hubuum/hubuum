@@ -545,7 +545,9 @@ assert_flag "$diagnostics_readme" code true
 assert_flag "$diagnostics_readme" container true
 assert_flag "$diagnostics_readme" markdown true
 
-
+repair_template_output="$(bash "$classifier" src/services/schema_evolution/repair_content.html)"
+assert_flag "$repair_template_output" code true
+assert_flag "$repair_template_output" container true
 
 for impact_input in crates/hubuum-storage-core/src/schema_evolution/impact.rs \
   src/tests/storage_contract/schema_evolution/impact.rs; do

@@ -42,6 +42,8 @@ struct FindingRow {
     object_id: i32,
     #[diesel(sql_type=Jsonb)]
     reason: Value,
+    #[diesel(sql_type=Nullable<Jsonb>)]
+    snapshot: Option<Value>,
 }
 #[derive(QueryableByName)]
 struct StateRow {
@@ -462,18 +464,57 @@ pub async fn get_schema_work_report(
         let mut report = StorageSchemaWorkReport::builder(work);
         if has_findings {
             // Stream bounded rows rather than building a PostgreSQL JSON aggregate.
-            let mut rows = diesel::sql_query("SELECT object_id, reason FROM schema_impact_findings WHERE task_id=$1 AND object_id<=$2 ORDER BY object_id")
+            let mut rows = diesel::sql_query("SELECT object_id, reason, snapshot FROM schema_impact_findings WHERE task_id=$1 AND object_id<=$2 ORDER BY object_id")
                 .bind::<Integer,_>(task_id.id()).bind::<Integer,_>(cursor)
                 .load_stream::<FindingRow>(connection).await?;
             while let Some(row) = rows.try_next().await? {
-                report.push(StorageSchemaImpactFinding::new(
+                let finding = StorageSchemaImpactFinding::try_from_parts(
                     ObjectId::new(row.object_id)?,
                     serde_json::from_value(row.reason).map_err(invalid)?,
-                )).map_err(invalid)?;
+                    row.snapshot.map(serde_json::from_value).transpose().map_err(invalid)?,
+                ).map_err(invalid)?;
+                report.push(finding).map_err(invalid)?;
             }
         }
         report.finish().map_err(invalid)
     }).await
+}
+
+pub async fn save_schema_repair_report(
+    runtime: &PostgresRuntime,
+    request: StorageSchemaRepairReportWrite,
+) -> Result<(), PostgresStorageError> {
+    runtime.with_transaction(async move |connection| {
+        let report = request.report();
+        let class = lock_class(connection, report.target().class_id()).await?;
+        check_collection(&class, request.authorized_collection())?;
+        let work = work_on(connection, report.task_id()).await?;
+        if work.target() != report.target() || work.kind() != StorageSchemaWorkKind::Impact {
+            return Err(PostgresStorageError::invalid_input("Report source is not the requested impact analysis"));
+        }
+        diesel::sql_query("INSERT INTO schema_repair_reports(task_id,document) VALUES ($1,$2) ON CONFLICT(task_id) DO UPDATE SET document=excluded.document")
+            .bind::<Integer,_>(report.task_id().id())
+            .bind::<Jsonb,_>(serde_json::to_value(report).map_err(invalid)?)
+            .execute(connection).await?;
+        Ok(())
+    }).await
+}
+
+pub async fn get_schema_repair_report(
+    runtime: &PostgresRuntime,
+    task_id: TaskId,
+) -> Result<StorageSchemaRepairReport, PostgresStorageError> {
+    runtime
+        .with_read_connection(async move |connection| {
+            let row = diesel::sql_query(
+                "SELECT document AS value FROM schema_repair_reports WHERE task_id=$1",
+            )
+            .bind::<Integer, _>(task_id.id())
+            .get_result::<JsonRow>(connection)
+            .await?;
+            serde_json::from_value(row.value).map_err(invalid)
+        })
+        .await
 }
 
 pub async fn activate_schema_revision(
@@ -752,11 +793,13 @@ pub async fn process_schema_work(
         .into_iter()
         .map(|snapshot| {
             crate::runtime::task_execution_checkpoint()?;
+            let resource_revision = ResourceRevision::new(snapshot.revision).map_err(invalid)?;
             let inspection = (work.kind() == StorageSchemaWorkKind::Impact).then(|| {
-                StorageSchemaInspection::new(
+                StorageSchemaInspection::inspect_snapshot(
                     baseline.as_ref().map(|revision| revision.policy()),
                     revision.policy(),
                     snapshot.data.as_ref(),
+                    resource_revision,
                 )
             });
             let status = if let Some(inspection) = &inspection {
@@ -793,7 +836,7 @@ pub async fn process_schema_work(
             }
             task_execution::runnable_claimed_task(connection,claimed).await?;
             if !findings.is_empty() {
-                diesel::sql_query("INSERT INTO schema_impact_findings(task_id,object_id,reason) SELECT $1,object_id,reason FROM jsonb_to_recordset($2) AS finding(object_id integer,reason jsonb)")
+                diesel::sql_query("INSERT INTO schema_impact_findings(task_id,object_id,reason,snapshot) SELECT $1,object_id,reason,snapshot FROM jsonb_to_recordset($2) AS finding(object_id integer,reason jsonb,snapshot jsonb)")
                     .bind::<Integer,_>(work.task_id().id())
                     .bind::<Jsonb,_>(serde_json::to_value(findings).map_err(invalid)?)
                     .execute(connection).await?;

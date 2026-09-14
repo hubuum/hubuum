@@ -307,6 +307,12 @@ locking behavior.
 
 ## Schema evolution
 
+`SchemaEvolutionStorage::save_schema_repair_report` is a context-free artifact
+write. It replaces the latest complete rendering for an existing impact task,
+rechecks its class collection, and changes no source checkpoint, object, schema,
+or domain audit history. Its paired read returns only the saved artifact; API
+consumers must enforce the source analysis authorization on every access.
+
 `SchemaEvolutionStorage` belongs to the workflow family. Staging, abandonment,
 activation and work requests return durable audit receipts. The context-free
 `SchemaEvolutionStorage::process_schema_work` operation uses its live task lease and captured initiator

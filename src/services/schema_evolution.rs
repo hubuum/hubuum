@@ -9,6 +9,11 @@ use crate::{
     storage::{StorageContext, storage_handle},
 };
 
+mod repair;
+pub use repair::{
+    RepairReportGeneration, RepairReportLayout, generate_repair_report, retained_repair_report,
+};
+
 fn response<T: DeserializeOwned>(value: impl Serialize) -> Result<T, ApiError> {
     serde_json::to_value(value)
         .and_then(serde_json::from_value)

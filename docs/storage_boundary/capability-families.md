@@ -281,6 +281,12 @@ grouped by their first failure from one consistent checkpoint/findings snapshot.
 Every batch appends only its new findings, atomically with its checkpoint, without
 reading or rewriting accumulated findings. Report assembly uses a hash index for
 grouping so its work grows linearly with the findings.
+Findings may also retain bounded diagnostics, the inspected object revision,
+and its inspection time. Legacy findings remain readable without inventing
+missing details. `save_schema_repair_report` stores a complete rendering under
+the source impact task, rechecking the authorized class collection; it replaces
+only the prior rendering. `get_schema_repair_report` returns that artifact
+without consulting live object data or rerunning validation.
 `get_schema_impact_boundary` reads current
 schema identities, target lifecycle, and population epoch without scanning
 objects, so report polling can recompute readiness at constant query cost.

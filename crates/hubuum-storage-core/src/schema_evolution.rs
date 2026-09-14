@@ -1,11 +1,13 @@
 //! Versioned schema lifecycle, compatibility analysis and fenced validation evidence.
 
 mod impact;
+mod repair;
 pub use impact::{
-    StorageSchemaImpact, StorageSchemaImpactBoundary, StorageSchemaImpactFinding,
-    StorageSchemaImpactReadiness, StorageSchemaImpactReport, StorageSchemaInspection,
-    StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
+    StorageSchemaDiagnosticSnapshot, StorageSchemaImpact, StorageSchemaImpactBoundary,
+    StorageSchemaImpactFinding, StorageSchemaImpactReadiness, StorageSchemaImpactReport,
+    StorageSchemaInspection, StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
 };
+pub use repair::{StorageSchemaRepairReport, StorageSchemaRepairReportWrite};
 
 use async_trait::async_trait;
 use chrono::{DateTime, SubsecRound, Utc};
@@ -1009,6 +1011,15 @@ pub trait SchemaEvolutionStorage: Send + Sync {
         &self,
         task_id: TaskId,
     ) -> Result<StorageSchemaWorkReport, StorageError>;
+    /// Retain the latest complete rendering without changing the source analysis.
+    async fn save_schema_repair_report(
+        &self,
+        request: StorageSchemaRepairReportWrite,
+    ) -> Result<(), StorageError>;
+    async fn get_schema_repair_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaRepairReport, StorageError>;
     async fn process_schema_work(
         &self,
         lease: StorageTaskLease,

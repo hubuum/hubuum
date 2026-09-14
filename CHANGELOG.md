@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Schema-impact analyses now retain multiple actionable diagnostics per object,
+  including nested and array locations, expected constraints, redacted value
+  context, inspected object revisions, and explicit diagnostic-limit notices.
+  Generate, view, and download retained HTML repair reports from saved analyses,
+  with absolute frontend links and reusable stored HTML layouts. Legacy sampled,
+  unfinished, stale, and uninspectable analyses are clearly qualified.
 - A standalone-capable `hubuum-schema-diagnostics` workspace crate for structured
   diagnostics from the Rust `jsonschema` validator. Referenced schema metadata
   is omitted when its source cannot be established, and property-name repairs
@@ -61,6 +67,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   history, aggregate compliance metrics, and bounded large-object validation.
 
 ### Changed
+
+- **Breaking storage SDK change:** `SchemaEvolutionStorage` adapters must implement
+  `save_schema_repair_report` and `get_schema_repair_report`, preserve diagnostic
+  snapshots atomically with batch findings, and retain complete report output
+  under the source analysis. The new diagnostic dependency joins the SDK's
+  coordinated `0.3` train. Rebuild external adapters against the updated contract.
+- **Worker upgrade requirement:** Drain old schema workers, apply migration
+  `20260914000003`, then start upgraded API and worker processes. Older findings
+  remain readable but require a fresh analysis for full diagnostics.
 
 - **Breaking storage SDK change:** `TaskExecutionStorage` adapters must implement
   cancellation requests, deadline admission/polling, fenced stop acknowledgement,
