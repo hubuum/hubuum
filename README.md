@@ -8,8 +8,8 @@
 
 Hubuum is a REST service that provides a shared interface for your resources.
 
-The latest release is [Hubuum `0.0.14`](https://github.com/hubuum/hubuum/releases/tag/v0.0.14),
-published on September 10, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.15`](https://github.com/hubuum/hubuum/releases/tag/v0.0.15),
+published on September 15, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -30,7 +30,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.14
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.15
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -289,6 +289,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.15](https://github.com/hubuum/hubuum/releases/tag/v0.0.15) | 2026-09-15 | Adds staged schema evolution, detailed impact and HTML repair reports, task cancellation, and execution limits. Hardens external authorization, schema validation, and event delivery. Introduces backup format 6 and new migrations. |
 | [0.0.14](https://github.com/hubuum/hubuum/releases/tag/v0.0.14) | 2026-09-10 | Keeps subsequent backups restorable after restoring without history. Makes memory backup and restore preserve resource state, retained history, and task artifacts. Retains backup format 5. |
 | [0.0.13](https://github.com/hubuum/hubuum/releases/tag/v0.0.13) | 2026-09-09 | Fixes full-restore coordination with live servers and preserves JSON `null` during PostgreSQL restores. Existing format 5 backups remain compatible. |
 | [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
@@ -299,16 +300,26 @@ Before upgrading:
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
   CI certifies upgrades and application rollbacks only between adjacent stable
   releases; application rollback retains the migrated database.
-- Version `0.0.14` retains backup format 5 and adds no database migration. Update
-  the restore executor together with the server to apply the history-free restore
-  fix; existing history-free artifacts can be restored directly with the fixed executor.
-- Create and verify a version 5 backup. Installations on `0.0.9` or older must
-  first upgrade to `0.0.10` or `0.0.11` and create a version 5 backup there;
-  follow the [existing deployment upgrade path](docs/backup-restore.md#existing-deployment-upgrade-path).
-- Run migrations before rolling API and worker processes, install matching server,
-  administrator, and template worker binaries, and update the separate restore
-  executor. Since `0.0.12`, web restore confirmation returns `202 Accepted`;
-  clients must poll the restore status endpoint until completion.
+- For `0.0.15`, drain old task and schema workers, schedule a quiet migration
+  window, and run `hubuum-admin --migrate` before starting upgraded processes.
+  Install matching server, administrator, and template worker binaries and update
+  the separately supervised restore executor. Existing enforced objects start
+  pending; request schema revalidation after migration.
+- Keep a verified `0.0.14` backup before upgrading. Backup format 6 replaces
+  format 5: restore an older artifact with its matching release, migrate the
+  restored database, then create and verify a new format 6 backup. There is no
+  artifact converter. See the
+  [existing deployment upgrade path](docs/backup-restore.md#existing-deployment-upgrade-path).
+- Update clients that change schema policy on nonempty classes to stage a
+  revision, request impact analysis, and explicitly activate it. Review the
+  [JSON Schema limits](docs/json_schema_validation.md) for unsupported schemas
+  and work budgets. Restart string-sorted pagination after upgrading.
+- Treetop deployments must add `CancelTask` policies. Review the external
+  authorization query limits and storage SDK `0.3` changes in the changelog.
+  Repository tooling now requires Python 3.11 or newer.
+- Set matching backup and execution limits on API, worker, and administrator
+  processes. Backups default to a 256 MiB byte ceiling and 1,000,000 captured rows;
+  provision resources before raising these limits.
 
 Full release notes are maintained in [CHANGELOG.md](CHANGELOG.md). Pushing an annotated
 `vX.Y.Z` tag for a commit that has passed CI on `main` publishes a GitHub Release with

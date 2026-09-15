@@ -223,8 +223,8 @@ upgrade actions are in the [runtime hardening guide](runtime_hardening.md).
 
 ## Upgrading from 0.2 to 0.3
 
-Update all seven SDK dependencies to exactly 0.3.0 together. Implement every required
-methods of the new required `SchemaEvolutionStorage` capability in the workflow
+Update all SDK dependencies to exactly 0.3.0 together. Implement every required
+method of the new `SchemaEvolutionStorage` capability in the workflow
 family. Carry `SchemaReference`, compiled policy proof, authorized collection,
 object resource revision, and task lease through the operation boundary. Publish
 schema/evidence changes and their audit/outbox records atomically.
