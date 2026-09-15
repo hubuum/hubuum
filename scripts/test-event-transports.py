@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """Run production event adapters against disposable, verified-TLS fixtures."""
 
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "Hubuum tooling requires Python 3.11 or newer; found "
+        + sys.version.split()[0]
+        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
+    )
+
 import base64
 import contextlib
 import http.server
@@ -10,16 +19,12 @@ from pathlib import Path
 import secrets
 import ssl
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-
-if sys.version_info < (3, 11):
-    sys.exit("Hubuum tooling requires Python 3.11 or newer")
 
 ROOT = Path(__file__).resolve().parents[1]
 RABBITMQ = (
