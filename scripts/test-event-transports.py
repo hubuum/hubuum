@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -144,6 +145,16 @@ def mapped_port(container, port):
     return int(command("docker", "port", container, str(port)).rsplit(":", 1)[1])
 
 
+def loopback_ports(count):
+    # Select distinct unused ports, then publish those explicit numbers. Docker
+    # may allocate new host ports after a restart when the mapping omits them.
+    with contextlib.ExitStack() as sockets:
+        listeners = [sockets.enter_context(socket.socket()) for _ in range(count)]
+        for listener in listeners:
+            listener.bind(("127.0.0.1", 0))
+        return [listener.getsockname()[1] for listener in listeners]
+
+
 def wait_until_ready(probe, label):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
@@ -182,18 +193,21 @@ def run(root, containers, servers, networks):
     # also avoids rebinding rootless Podman's host forwarder during recovery.
     networks.append(network)
     command("docker", "network", "create", network)
+    amqp_port, management_port, valkey_port = loopback_ports(3)
     containers.append(rabbit)
     command(
         "docker", "run", "--detach", "--name", rabbit,
         "--network", network,
-        "--publish", "127.0.0.1::5671", "--publish", "127.0.0.1::15672",
+        "--publish", f"127.0.0.1:{amqp_port}:5671",
+        "--publish", f"127.0.0.1:{management_port}:15672",
         "--volume", f"{tls}:/fixtures:ro,z", "--volume", f"{config}:/etc/rabbitmq/rabbitmq.conf:ro,Z",
         "--env", "RABBITMQ_DEFAULT_USER=contract", "--env", f"RABBITMQ_DEFAULT_PASS={password}",
         RABBITMQ,
     )
     containers.append(valkey)
     command(
-        "docker", "run", "--detach", "--name", valkey, "--publish", "127.0.0.1::6379",
+        "docker", "run", "--detach", "--name", valkey,
+        "--publish", f"127.0.0.1:{valkey_port}:6379",
         "--network", network,
         "--volume", f"{tls}:/fixtures:ro,z", VALKEY, "valkey-server", "--port", "0",
         "--tls-port", "6379", "--tls-cert-file", "/fixtures/server.pem",
