@@ -197,6 +197,17 @@ impl CollectionStorage for MemoryStorage {
             StorageHistoryOperation::Delete,
             context,
         )?;
+        let classes = state
+            .classes
+            .values()
+            .filter(|class| class.collection_id() == id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for class in classes {
+            let target = StorageResolvedClass::try_new(StorageClassSelector::Id(class.id()), class)
+                .map_err(invalid_contract_value)?;
+            delete_class_in_state(&mut state, &target, context)?.into_value();
+        }
         state.collections.remove(&id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
@@ -542,83 +553,7 @@ impl ClassStorage for MemoryStorage {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let mut state = self.state.write().await;
-        let id = target.class().id();
-        let current = state
-            .classes
-            .get(&id.id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Class was not found"))?;
-        if &current != target.class() {
-            return Err(StorageError::not_found(
-                "Class no longer matches the resolved route target",
-            ));
-        }
-        let document = AuditDocument::builder(format!("Class '{}' deleted", current.name()))
-            .before(current.audit_snapshot())
-            .try_build()
-            .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        let receipt = append_memory_event!(
-            state,
-            EntityType::Class,
-            id.id(),
-            Some(current.name()),
-            Some(current.collection_id()),
-            Action::Deleted,
-            context,
-            document,
-            Some(current.revision()),
-            None,
-        )?;
-        state.append_history(
-            MemoryHistoryValue::Class(current.clone()),
-            StorageHistoryOperation::Delete,
-            context,
-        )?;
-        state.classes.remove(&id.id());
-        let objects = state
-            .objects
-            .values()
-            .filter(|object| object.class_id() == id)
-            .cloned()
-            .collect::<Vec<_>>();
-        let relations = state
-            .class_relations
-            .values()
-            .filter(|relation| relation.from_class_id() == id || relation.to_class_id() == id)
-            .cloned()
-            .collect::<Vec<_>>();
-        for object in objects {
-            delete_object_relations(
-                &mut state,
-                |relation| {
-                    relation.from_object_id() == object.id()
-                        || relation.to_object_id() == object.id()
-                },
-                context,
-            )?;
-            state.append_history(
-                MemoryHistoryValue::Object(object.clone()),
-                StorageHistoryOperation::Delete,
-                context,
-            )?;
-            state.objects.remove(&object.id().id());
-        }
-        for relation in relations {
-            let relation_id = ClassRelationId::from(relation.metadata().id());
-            delete_object_relations(
-                &mut state,
-                |relation| relation.class_relation_id() == relation_id,
-                context,
-            )?;
-            crate::backup::record_class_relation_history(
-                &mut state,
-                &relation,
-                StorageHistoryOperation::Delete,
-                context,
-            )?;
-            state.class_relations.remove(&relation_id.id());
-        }
-        Ok(StorageMutationOutcome::committed((), receipt))
+        delete_class_in_state(&mut state, target, context)
     }
 
     async fn resolve_class_names(
@@ -1520,4 +1455,89 @@ fn delete_object_relations(
             .remove(&relation.metadata().id().id());
     }
     Ok(())
+}
+
+// Shared by direct deletion and the collection foreign-key cascade.
+fn delete_class_in_state(
+    state: &mut MemoryState,
+    target: &StorageResolvedClass,
+    context: &EventContext,
+) -> Result<StorageMutationOutcome<()>, StorageError> {
+    let id = target.class().id();
+    let current = state
+        .classes
+        .get(&id.id())
+        .cloned()
+        .ok_or_else(|| StorageError::not_found("Class was not found"))?;
+    if &current != target.class() {
+        return Err(StorageError::not_found(
+            "Class no longer matches the resolved route target",
+        ));
+    }
+    let document = AuditDocument::builder(format!("Class '{}' deleted", current.name()))
+        .before(current.audit_snapshot())
+        .try_build()
+        .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+    let receipt = append_memory_event!(
+        state,
+        EntityType::Class,
+        id.id(),
+        Some(current.name()),
+        Some(current.collection_id()),
+        Action::Deleted,
+        context,
+        document,
+        Some(current.revision()),
+        None,
+    )?;
+    state.append_history(
+        MemoryHistoryValue::Class(current.clone()),
+        StorageHistoryOperation::Delete,
+        context,
+    )?;
+    state.classes.remove(&id.id());
+    let objects = state
+        .objects
+        .values()
+        .filter(|object| object.class_id() == id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let relations = state
+        .class_relations
+        .values()
+        .filter(|relation| relation.from_class_id() == id || relation.to_class_id() == id)
+        .cloned()
+        .collect::<Vec<_>>();
+    for object in objects {
+        delete_object_relations(
+            state,
+            |relation| {
+                relation.from_object_id() == object.id() || relation.to_object_id() == object.id()
+            },
+            context,
+        )?;
+        state.append_history(
+            MemoryHistoryValue::Object(object.clone()),
+            StorageHistoryOperation::Delete,
+            context,
+        )?;
+        state.objects.remove(&object.id().id());
+    }
+    for relation in relations {
+        let relation_id = ClassRelationId::from(relation.metadata().id());
+        delete_object_relations(
+            state,
+            |relation| relation.class_relation_id() == relation_id,
+            context,
+        )?;
+        crate::backup::record_class_relation_history(
+            state,
+            &relation,
+            StorageHistoryOperation::Delete,
+            context,
+        )?;
+        state.class_relations.remove(&relation_id.id());
+    }
+    state.schema_epochs.remove(&id.id());
+    Ok(StorageMutationOutcome::committed((), receipt))
 }

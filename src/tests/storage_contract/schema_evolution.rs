@@ -1663,3 +1663,4 @@ async fn schema_task_metric_counts(backend: &StorageHandle, status: &str) -> (f6
 mod budgets;
 
 mod impact;
+mod repair;

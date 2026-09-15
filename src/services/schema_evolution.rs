@@ -9,6 +9,11 @@ use crate::{
     storage::{StorageContext, storage_handle},
 };
 
+mod repair;
+pub use repair::{
+    RepairReportGeneration, RepairReportLayout, generate_repair_report, retained_repair_report,
+};
+
 fn response<T: DeserializeOwned>(value: impl Serialize) -> Result<T, ApiError> {
     serde_json::to_value(value)
         .and_then(serde_json::from_value)
@@ -118,8 +123,16 @@ pub async fn get_work(
     context: &impl StorageContext,
     task_id: TaskId,
 ) -> Result<SchemaWorkResponse, ApiError> {
+    get_work_with_budget(context, task_id, StorageSchemaReportBudget::default()).await
+}
+
+async fn get_work_with_budget(
+    context: &impl StorageContext,
+    task_id: TaskId,
+    budget: StorageSchemaReportBudget,
+) -> Result<SchemaWorkResponse, ApiError> {
     let report = storage_handle(context)
-        .get_schema_work_report(task_id)
+        .get_schema_work_report(task_id, budget)
         .await?;
     let work = report.work();
     let mut result: SchemaWorkResponse = response(work)?;

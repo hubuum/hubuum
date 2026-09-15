@@ -6412,6 +6412,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6586,6 +6596,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6664,6 +6684,187 @@
           },
           "409": {
             "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/tasks/{task_id}/report": {
+      "get": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Schema Tasks By Task Id Report",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/schema/tasks/{task_id}/report.",
+        "operationId": "getApiV1ClassesByClassIdSchemaTasksByTaskIdReport",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Source impact analysis",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TaskID"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "description": "Download the retained HTML",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Same retained HTML without reanalysis or rerendering",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Source analysis access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Analysis or retained report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "schema evolution"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Schema Tasks By Task Id Report",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/tasks/{task_id}/report.",
+        "operationId": "postApiV1ClassesByClassIdSchemaTasksByTaskIdReport",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Source impact analysis",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TaskID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaRepairReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Generated and retained complete HTML rendering of saved findings",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid URL, layout or rendering budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Source analysis or template access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Impact analysis not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Complete report exceeds assembly or output limit; previous report is retained",
             "content": {
               "application/json": {
                 "schema": {
@@ -29803,6 +30004,89 @@
           }
         }
       },
+      "SchemaActualValue": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "null"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "boolean"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "number"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "string"
+            ],
+            "properties": {
+              "string": {
+                "type": "object",
+                "required": [
+                  "characters"
+                ],
+                "properties": {
+                  "characters": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "array"
+            ],
+            "properties": {
+              "array": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "object"
+            ],
+            "properties": {
+              "object": {
+                "type": "object",
+                "required": [
+                  "properties"
+                ],
+                "properties": {
+                  "properties": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "Context deliberately includes types and sizes, never actual scalar values."
+      },
       "SchemaComplianceCounts": {
         "type": "object",
         "required": [
@@ -29855,6 +30139,89 @@
             "description": "Resume after the last inspected candidate, including hidden candidates."
           }
         }
+      },
+      "SchemaDiagnosticOmission": {
+        "type": "string",
+        "enum": [
+          "actual_value_redacted",
+          "instance_path_redacted_or_too_long",
+          "schema_constraint_unavailable_or_too_large"
+        ]
+      },
+      "SchemaDiagnosticSnapshotResponse": {
+        "type": "object",
+        "required": [
+          "object_revision",
+          "inspected_at",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "$ref": "#/components/schemas/SchemaDiagnostics"
+          },
+          "inspected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "object_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        }
+      },
+      "SchemaDiagnostics": {
+        "type": "object",
+        "description": "Diagnostics belong to one inspected snapshot, never to current object data.",
+        "required": [
+          "issues",
+          "truncated"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaIssue"
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "At least one further issue exists; the unvisited remainder is not counted."
+          }
+        }
+      },
+      "SchemaExpectedValue": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              },
+              "value": {}
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "omitted"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Distinguishes an expected JSON null from an omitted schema constraint."
       },
       "SchemaFailure": {
         "type": "object",
@@ -29966,6 +30333,32 @@
           }
         }
       },
+      "SchemaImpactFindingResponse": {
+        "type": "object",
+        "required": [
+          "object_id",
+          "reason"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SchemaFailure"
+          },
+          "snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaDiagnosticSnapshotResponse"
+              }
+            ]
+          }
+        }
+      },
       "SchemaImpactReadiness": {
         "type": "string",
         "enum": [
@@ -29996,6 +30389,13 @@
             },
             "description": "Every committed mismatched object, grouped by its first failure without a group limit."
           },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaImpactFindingResponse"
+            },
+            "description": "Saved diagnostics, object revision and inspection time. Older findings have no snapshot."
+          },
           "ungrouped_failures": {
             "type": "integer",
             "format": "int64",
@@ -30003,6 +30403,53 @@
             "minimum": 0
           }
         }
+      },
+      "SchemaIssue": {
+        "type": "object",
+        "description": "JSON Pointers use zero-based array indexes; an empty pointer means the root.",
+        "required": [
+          "reason",
+          "message",
+          "expected",
+          "actual",
+          "alternative",
+          "omissions"
+        ],
+        "properties": {
+          "actual": {
+            "$ref": "#/components/schemas/SchemaActualValue"
+          },
+          "alternative": {
+            "type": "boolean",
+            "description": "A failed alternative is explanatory, not an independently required repair."
+          },
+          "expected": {
+            "$ref": "#/components/schemas/SchemaExpectedValue"
+          },
+          "instance_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "omissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaDiagnosticOmission"
+            }
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SchemaFailure"
+          }
+        }
+      },
+      "SchemaObjectUrlTemplate": {
+        "type": "string",
+        "description": "Absolute frontend URL containing exactly one `{object_id}` placeholder.",
+        "example": "https://inventory.example/objects/{object_id}"
       },
       "SchemaReference": {
         "type": "object",
@@ -30019,6 +30466,29 @@
             "$ref": "#/components/schemas/SchemaRevision"
           }
         }
+      },
+      "SchemaRepairReportRequest": {
+        "type": "object",
+        "required": [
+          "object_url_template"
+        ],
+        "properties": {
+          "object_url_template": {
+            "$ref": "#/components/schemas/SchemaObjectUrlTemplate"
+          },
+          "template_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportTemplateID",
+                "description": "Optional stored HTML layout. It must render `report_content` exactly once."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "SchemaRevision": {
         "type": "integer",

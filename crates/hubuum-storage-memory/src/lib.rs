@@ -338,6 +338,7 @@ struct MemoryState {
     schema_evidence: BTreeMap<i32, StorageSchemaEvidence>,
     schema_work: BTreeMap<i32, StorageSchemaWork>,
     schema_findings: BTreeMap<(i32, i32), StorageSchemaImpactFinding>,
+    schema_repair_reports: BTreeMap<i32, StorageSchemaRepairReport>,
     next_collection_id: i32,
     next_class_id: i32,
     next_object_id: i32,

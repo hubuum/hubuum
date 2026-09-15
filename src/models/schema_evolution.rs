@@ -1,8 +1,15 @@
-use hubuum_domain::{ClassId, SchemaFailure, SchemaReference, SchemaRevision, TaskId};
+use chrono::{DateTime, Utc};
+use hubuum_domain::{
+    ClassId, ResourceRevision, SchemaDiagnostics, SchemaFailure, SchemaReference, SchemaRevision,
+    TaskId,
+};
 use hubuum_storage_core::{StorageComplianceStatus, StorageSchemaActivationPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
+
+mod repair;
+pub use repair::{SchemaObjectUrlTemplate, SchemaRepairReportQuery, SchemaRepairReportRequest};
 
 #[derive(Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -182,6 +189,23 @@ pub struct SchemaImpactResponse {
     /// Failures omitted by older capped reports; zero for newly started analyses.
     /// Rerun an older analysis to obtain its complete object lists.
     pub ungrouped_failures: u64,
+    /// Saved diagnostics, object revision and inspection time. Older findings have no snapshot.
+    #[serde(default)]
+    pub findings: Vec<SchemaImpactFindingResponse>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SchemaImpactFindingResponse {
+    pub object_id: i32,
+    pub reason: SchemaFailure,
+    pub snapshot: Option<SchemaDiagnosticSnapshotResponse>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SchemaDiagnosticSnapshotResponse {
+    pub object_revision: ResourceRevision,
+    pub inspected_at: DateTime<Utc>,
+    pub diagnostics: SchemaDiagnostics,
 }
 
 /// Disjoint outcomes; counts sum to examined objects, including unknown comparisons.

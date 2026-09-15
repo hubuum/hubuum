@@ -727,6 +727,14 @@ diesel::table! {
         task_id -> Int4,
         object_id -> Int4,
         reason -> Jsonb,
+        snapshot -> Nullable<Jsonb>,
+    }
+}
+
+diesel::table! {
+    schema_repair_reports (task_id) {
+        task_id -> Int4,
+        document -> Jsonb,
     }
 }
 
@@ -920,6 +928,7 @@ diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
 diesel::joinable!(schema_impact_findings -> schema_validation_work (task_id));
+diesel::joinable!(schema_repair_reports -> schema_validation_work (task_id));
 diesel::joinable!(schema_validation_work -> hubuumclass (class_id));
 diesel::joinable!(schema_validation_work -> tasks (task_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
@@ -978,6 +987,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     restore_jobs,
     restore_success_receipts,
     schema_impact_findings,
+    schema_repair_reports,
     schema_validation_work,
     server_instances,
     service_accounts,

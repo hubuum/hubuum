@@ -157,6 +157,7 @@ impl SchemaEvolutionStorage for StorageHandle {
     async fn get_schema_work_report(
         &self,
         task_id: TaskId,
+        budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -164,7 +165,39 @@ impl SchemaEvolutionStorage for StorageHandle {
             "get_schema_work_report",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.get_schema_work_report(task_id).await
+                    backend.get_schema_work_report(task_id, budget).await
+                })
+            },
+        )
+        .await
+    }
+    async fn save_schema_repair_report(
+        &self,
+        request: StorageSchemaRepairReportWrite,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::SchemaEvolution,
+            "save_schema_repair_report",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.save_schema_repair_report(request).await
+                })
+            },
+        )
+        .await
+    }
+    async fn get_schema_repair_report(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageSchemaRepairReport, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::SchemaEvolution,
+            "get_schema_repair_report",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_schema_repair_report(task_id).await
                 })
             },
         )

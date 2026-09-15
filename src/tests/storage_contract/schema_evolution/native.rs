@@ -393,14 +393,16 @@ async fn schema_impact_batch_traffic_is_independent_of_prior_findings(#[case] ob
             checkpoint_bytes > 0 && checkpoint_bytes < 4096,
             "batch {batch}: checkpoint writes grew to {checkpoint_bytes} bytes"
         );
+        // Each fixture finding now includes its revision, time, and one diagnostic.
+        // The per-batch ceiling must remain independent of already saved batches.
         assert!(
-            finding_bytes > 0 && finding_bytes < 64 * 512,
+            finding_bytes > 0 && finding_bytes < 64 * 1024,
             "batch {batch}: finding writes grew to {finding_bytes} bytes"
         );
         total_bytes += checkpoint_bytes + finding_bytes;
     }
     assert!(
-        total_bytes < objects as usize * 576,
+        total_bytes < objects as usize * 1088,
         "traffic must grow linearly with inspected objects"
     );
     let (report, capture) = capture_queries(crate::services::schema_evolution::get_work(
@@ -497,7 +499,7 @@ async fn schema_report_reads_findings_from_the_checkpoints_snapshot(#[case] remo
     let task_id = work.task_id();
     let reader = tokio::spawn(async move {
         reader_gate
-            .run(backend.get_schema_work_report(task_id))
+            .run(backend.get_schema_work_report(task_id, StorageSchemaReportBudget::default()))
             .await
     });
     tokio::time::timeout(Duration::from_secs(10), gate.wait_until_reached())

@@ -1,4 +1,6 @@
+use crate::models::HubuumClass;
 use crate::services::schema_evolution as service;
+use crate::storage::storage_handle;
 use crate::{
     api::{openapi::ApiErrorResponse, response::ApiResponse},
     can,
@@ -8,9 +10,106 @@ use crate::{
     permissions::AppContext,
     traits::{SelfAccessors, UserPermissions},
 };
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, post, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, http::StatusCode, post, web};
 use hubuum_domain::{ClassId, CollectionId, SchemaReference, SchemaRevision, TaskId};
-use hubuum_storage_core::StorageSchemaWorkKind;
+use hubuum_storage_core::{
+    SchemaEvolutionStorage, StorageSchemaRepairReport, StorageSchemaWork, StorageSchemaWorkKind,
+};
+
+async fn authorized_report_source(
+    context: &AppContext,
+    requestor: &Authenticated,
+    class_id: ClassId,
+    task_id: TaskId,
+) -> Result<(HubuumClass, StorageSchemaWork), ApiError> {
+    let class = class_id.instance(context).await?;
+    can!(
+        context,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
+    require_admin(context, requestor).await?;
+    let work = storage_handle(context).get_schema_work(task_id).await?;
+    if work.target().class_id() != class_id || work.kind() != StorageSchemaWorkKind::Impact {
+        return Err(ApiError::NotFound(
+            "Impact analysis was not found in this class".into(),
+        ));
+    }
+    Ok((class, work))
+}
+
+fn repair_report_response(report: StorageSchemaRepairReport, download: bool) -> HttpResponse {
+    let disposition = if download { "attachment" } else { "inline" };
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header(("Content-Disposition", format!("{disposition}; filename=\"schema-impact-{}.html\"", report.task_id())))
+        .insert_header(("Cache-Control", "private, no-store"))
+        .insert_header(("X-Content-Type-Options", "nosniff"))
+        .insert_header(("Content-Security-Policy", "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"))
+        .insert_header(("X-Hubuum-Report-Generated-At", report.generated_at().to_rfc3339()))
+        .body(report.into_html())
+}
+
+#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}/report",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("task_id"=TaskId,Path,description="Source impact analysis")),request_body=SchemaRepairReportRequest,responses((status=200,description="Generated and retained complete HTML rendering of saved findings",body=String,content_type="text/html"),(status=400,description="Invalid URL, layout or rendering budget",body=ApiErrorResponse),(status=403,description="Source analysis or template access denied",body=ApiErrorResponse),(status=404,description="Impact analysis not found",body=ApiErrorResponse),(status=413,description="Complete report exceeds assembly or output limit; previous report is retained",body=ApiErrorResponse)))]
+#[post("/{class_id}/schema/tasks/{task_id}/report")]
+pub async fn generate_schema_repair_report(
+    context: AppContext,
+    requestor: Authenticated,
+    path: web::Path<(ClassId, TaskId)>,
+    request: web::Json<SchemaRepairReportRequest>,
+) -> Result<impl Responder, ApiError> {
+    let (class_id, task_id) = path.into_inner();
+    let (class, work) = authorized_report_source(&context, &requestor, class_id, task_id).await?;
+    let request = request.into_inner();
+    let layout = if let Some(id) = request.template_id {
+        let template = id.instance(&context).await?;
+        can!(
+            &context,
+            &requestor.principal,
+            requestor.scopes(),
+            [Permissions::ReadTemplate],
+            template
+        );
+        let siblings = template.collection_siblings(&context).await?;
+        for sibling in &siblings {
+            can!(
+                &context,
+                &requestor.principal,
+                requestor.scopes(),
+                [Permissions::ReadTemplate],
+                sibling
+            );
+        }
+        Some(service::RepairReportLayout::try_new(template, siblings)?)
+    } else {
+        None
+    };
+    let generation = service::RepairReportGeneration::new(
+        work,
+        class.name,
+        CollectionId::new(class.collection_id)?,
+        request,
+    )
+    .with_layout(layout);
+    let report = service::generate_repair_report(&context, generation).await?;
+    Ok(repair_report_response(report, false))
+}
+
+#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}/report",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("task_id"=TaskId,Path,description="Source impact analysis"),("download"=Option<bool>,Query,description="Download the retained HTML")),responses((status=200,description="Same retained HTML without reanalysis or rerendering",body=String,content_type="text/html"),(status=403,description="Source analysis access denied",body=ApiErrorResponse),(status=404,description="Analysis or retained report not found",body=ApiErrorResponse)))]
+#[get("/{class_id}/schema/tasks/{task_id}/report")]
+pub async fn get_schema_repair_report(
+    context: AppContext,
+    requestor: Authenticated,
+    path: web::Path<(ClassId, TaskId)>,
+    query: web::Query<SchemaRepairReportQuery>,
+) -> Result<impl Responder, ApiError> {
+    let (class_id, task_id) = path.into_inner();
+    let (_, work) = authorized_report_source(&context, &requestor, class_id, task_id).await?;
+    let report = service::retained_repair_report(&context, work.target(), task_id).await?;
+    Ok(repair_report_response(report, query.download))
+}
 
 #[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/objects",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("after"=Option<i64>,Query,description="Last inspected object ID"),("limit"=Option<usize>,Query,description="1 to 100 candidates"),("status"=Option<ComplianceStatus>,Query,description="Effective active-revision compliance")),responses((status=200,description="Authorized compliance page; totals and hidden objects are omitted",body=SchemaCompliancePage),(status=403,description="Forbidden",body=ApiErrorResponse)))]
 #[get("/{class_id}/schema/objects")]
@@ -225,7 +324,7 @@ pub async fn activate_schema_revision(
     Ok(ApiResponse::new(result, StatusCode::OK))
 }
 
-#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/revisions/{revision}/impact",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("revision"=SchemaRevision,Path,description="Positive immutable identity")),responses((status=202,description="Queue bounded impact analysis; advisory results cannot authorize strict activation",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/revisions/{revision}/impact",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("revision"=SchemaRevision,Path,description="Positive immutable identity")),responses((status=202,description="Queue bounded impact analysis; advisory results cannot authorize strict activation",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[post("/{class_id}/schema/revisions/{revision}/impact")]
 pub async fn analyze_schema_impact(
     context: AppContext,
@@ -285,7 +384,7 @@ pub async fn revalidate_schema(
     Ok(ApiResponse::new(result, StatusCode::ACCEPTED))
 }
 
-#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with complete grouped impact mismatches and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with complete grouped impact mismatches and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[get("/{class_id}/schema/tasks/{task_id}")]
 pub async fn get_schema_work(
     context: AppContext,
@@ -311,7 +410,7 @@ pub async fn get_schema_work(
     Ok(ApiResponse::new(result, StatusCode::OK))
 }
 
-#[utoipa::path(delete,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Cancel schema work atomically; completed batches remain and later batch commits are fenced",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(delete,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Cancel schema work atomically; completed batches remain and later batch commits are fenced",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[delete("/{class_id}/schema/tasks/{task_id}")]
 pub async fn cancel_schema_work(
     context: AppContext,
@@ -328,13 +427,13 @@ pub async fn cancel_schema_work(
         [Permissions::UpdateClass],
         class
     );
-    let existing = service::get_work(&context, task_id).await?;
-    if existing.target.class_id() != class_id {
+    require_admin(&context, &requestor).await?;
+    let existing = storage_handle(&context).get_schema_work(task_id).await?;
+    if existing.target().class_id() != class_id {
         return Err(ApiError::NotFound(
             "Schema task was not found in this class".into(),
         ));
     }
-    require_admin(&context, &requestor).await?;
     let result = service::cancel_work(
         &context,
         CollectionId::new(class.collection_id)?,
