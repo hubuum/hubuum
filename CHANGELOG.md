@@ -123,6 +123,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- PostgreSQL scale fixtures initialize active schema revisions, population state,
+  and retained schema provenance when bypassing ordinary database triggers.
+  Object mutation scenarios can update newly created objects after schema
+  evolution migrations, and fixture backups retain the required schema state.
+
 - Memory storage removes retained schema reports and findings when their source
   class or collection is deleted, matching PostgreSQL cleanup.
 
