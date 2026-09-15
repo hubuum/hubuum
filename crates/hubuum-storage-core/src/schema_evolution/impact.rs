@@ -6,7 +6,9 @@ use hubuum_domain::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod budget;
 mod report;
+pub use budget::StorageSchemaReportBudget;
 pub use report::{
     StorageSchemaDiagnosticSnapshot, StorageSchemaImpactFinding, StorageSchemaImpactReport,
     StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
@@ -497,8 +499,10 @@ mod tests {
             )
             .unwrap();
         let restored = serde_json::from_value(serde_json::to_value(restored).unwrap()).unwrap();
-        let mut builder = StorageSchemaWorkReport::builder(restored);
-        builder.push(finding).unwrap();
+        let mut builder =
+            StorageSchemaWorkReport::builder(restored, StorageSchemaReportBudget::default())
+                .unwrap();
+        builder.push(&finding).unwrap();
         let resumed = serde_json::to_value(builder.finish().unwrap().impact().unwrap()).unwrap();
         assert_eq!(
             resumed["failures"],
@@ -520,6 +524,47 @@ mod tests {
         snapshot.as_object_mut().unwrap().remove("impact");
         let restored: StorageSchemaWork = serde_json::from_value(snapshot).unwrap();
         assert!(!restored.proves_compatible(work.target(), baseline, 0));
+    }
+
+    #[test]
+    fn report_budget_stops_enumeration_at_the_first_oversized_snapshot() {
+        let mut work = work();
+        work.upper_bound = 3;
+        let candidate = StorageValidatedSchemaPolicy::try_new(StorageClassSchemaPolicy::Enforced(
+            json!({"items":{"const":"x".repeat(990)}}),
+        ))
+        .unwrap();
+        let value = json!(vec![false; 32]);
+        let findings = (1..=3)
+            .map(|id| {
+                work.record_impact(
+                    ObjectId::new(id).unwrap(),
+                    StorageSchemaInspection::inspect_snapshot(
+                        None,
+                        &candidate,
+                        Some(&value),
+                        ResourceRevision::INITIAL,
+                    ),
+                    false,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut report =
+            StorageSchemaWorkReport::builder(work, StorageSchemaReportBudget::new(4096).unwrap())
+                .unwrap();
+        let mut enumerated = 0;
+        let error = findings
+            .iter()
+            .inspect(|_| enumerated += 1)
+            .try_for_each(|finding| report.push(finding))
+            .unwrap_err();
+        assert_eq!(error.kind(), crate::StorageErrorKind::InputTooLarge);
+        assert_eq!(enumerated, 1, "later snapshots must remain unread");
+        assert!(
+            report.finish().is_err(),
+            "a rejected row cannot yield a partial report"
+        );
     }
 
     #[rstest]
@@ -553,9 +598,10 @@ mod tests {
                 work = serde_json::from_slice(&checkpoint).unwrap();
             }
         }
-        let mut report = StorageSchemaWorkReport::builder(work);
+        let mut report =
+            StorageSchemaWorkReport::builder(work, StorageSchemaReportBudget::default()).unwrap();
         for finding in findings {
-            report.push(finding).unwrap();
+            report.push(&finding).unwrap();
         }
         let report = report.finish().unwrap();
         let impact = serde_json::to_value(report.impact().unwrap()).unwrap();
@@ -605,10 +651,11 @@ mod tests {
             }
             _ => unreachable!(),
         }
-        let mut report = StorageSchemaWorkReport::builder(work);
+        let mut report =
+            StorageSchemaWorkReport::builder(work, StorageSchemaReportBudget::default()).unwrap();
         let outcome = findings
             .into_iter()
-            .try_for_each(|finding| report.push(finding))
+            .try_for_each(|finding| report.push(&finding))
             .and_then(|()| report.finish().map(|_| ()));
         assert!(outcome.is_err());
     }

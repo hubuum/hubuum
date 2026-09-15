@@ -455,13 +455,14 @@ pub async fn get_schema_work(
 pub async fn get_schema_work_report(
     runtime: &PostgresRuntime,
     task_id: TaskId,
+    budget: StorageSchemaReportBudget,
 ) -> Result<StorageSchemaWorkReport, PostgresStorageError> {
     runtime.with_read_only_snapshot(async move |connection| {
         let work = work_on(connection, task_id).await?;
         crate::reach_fault_point(crate::PostgresFaultPoint::SchemaReportAfterCheckpoint, Some(connection)).await?;
         let cursor = work.cursor();
         let has_findings = work.impact().is_some_and(|impact| impact.persisted_findings() > 0);
-        let mut report = StorageSchemaWorkReport::builder(work);
+        let mut report = StorageSchemaWorkReport::builder(work, budget)?;
         if has_findings {
             // Stream bounded rows rather than building a PostgreSQL JSON aggregate.
             let mut rows = diesel::sql_query("SELECT object_id, reason, snapshot FROM schema_impact_findings WHERE task_id=$1 AND object_id<=$2 ORDER BY object_id")
@@ -473,10 +474,10 @@ pub async fn get_schema_work_report(
                     serde_json::from_value(row.reason).map_err(invalid)?,
                     row.snapshot.map(serde_json::from_value).transpose().map_err(invalid)?,
                 ).map_err(invalid)?;
-                report.push(finding).map_err(invalid)?;
+                report.push(&finding)?;
             }
         }
-        report.finish().map_err(invalid)
+        report.finish().map_err(PostgresStorageError::from)
     }).await
 }
 

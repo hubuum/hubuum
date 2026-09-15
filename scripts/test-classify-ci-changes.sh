@@ -555,6 +555,10 @@ for impact_input in crates/hubuum-storage-core/src/schema_evolution/impact.rs \
   assert_flag "$impact_output" code true
 done
 
+report_budget_output="$(bash "$classifier" crates/hubuum-storage-core/src/schema_evolution/impact/budget.rs)"
+assert_flag "$report_budget_output" code true
+assert_flag "$report_budget_output" container true
+
 schema_manifests_output="$(bash "$classifier" Cargo.toml Cargo.lock crates/hubuum-storage-core/Cargo.toml)"
 assert_flag "$schema_manifests_output" code true
 assert_flag "$schema_manifests_output" container true

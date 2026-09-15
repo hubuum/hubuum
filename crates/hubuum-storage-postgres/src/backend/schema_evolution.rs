@@ -89,8 +89,9 @@ impl SchemaEvolutionStorage for PostgresStorage {
     async fn get_schema_work_report(
         &self,
         task_id: TaskId,
+        budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError> {
-        schema_evolution::get_schema_work_report(self.runtime(), task_id)
+        schema_evolution::get_schema_work_report(self.runtime(), task_id, budget)
             .await
             .map_err(StorageError::from)
     }

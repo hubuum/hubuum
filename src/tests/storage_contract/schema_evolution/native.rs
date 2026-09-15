@@ -499,7 +499,7 @@ async fn schema_report_reads_findings_from_the_checkpoints_snapshot(#[case] remo
     let task_id = work.task_id();
     let reader = tokio::spawn(async move {
         reader_gate
-            .run(backend.get_schema_work_report(task_id))
+            .run(backend.get_schema_work_report(task_id, StorageSchemaReportBudget::default()))
             .await
     });
     tokio::time::timeout(Duration::from_secs(10), gate.wait_until_reached())

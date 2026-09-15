@@ -328,6 +328,22 @@ impl MemoryState {
         for task_id in task_ids {
             self.finish_schema_task(task_id, StorageSchemaWorkStatus::Cancelled)?;
         }
+        // Match PostgreSQL's class -> work -> findings/report cascades while
+        // holding the resource deletion lock. Preserve the history recorded above.
+        let source_tasks = self
+            .schema_work
+            .values()
+            .filter(|work| work.target().class_id() == class.id())
+            .map(|work| work.task_id().id())
+            .collect::<BTreeSet<_>>();
+        self.schema_work
+            .retain(|task_id, _| !source_tasks.contains(task_id));
+        self.schema_findings
+            .retain(|(task_id, _), _| !source_tasks.contains(task_id));
+        self.schema_repair_reports
+            .retain(|task_id, _| !source_tasks.contains(task_id));
+        self.schema_revisions
+            .retain(|(id, _), _| *id != class.id().id());
         Ok(())
     }
 
@@ -970,6 +986,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
     async fn get_schema_work_report(
         &self,
         task_id: TaskId,
+        budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError> {
         let state = self.state.read().await;
         let work = state
@@ -978,14 +995,14 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .cloned()
             .ok_or_else(|| StorageError::not_found("Schema work was not found"))?;
         let cursor = work.cursor();
-        let mut report = StorageSchemaWorkReport::builder(work);
+        let mut report = StorageSchemaWorkReport::builder(work, budget)?;
         for (_, finding) in state
             .schema_findings
             .range((task_id.id(), 0)..=(task_id.id(), cursor))
         {
-            report.push(finding.clone()).map_err(schema_error)?;
+            report.push(finding)?;
         }
-        report.finish().map_err(schema_error)
+        report.finish()
     }
 
     async fn save_schema_repair_report(

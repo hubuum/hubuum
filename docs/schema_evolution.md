@@ -146,8 +146,9 @@ The `impact.baseline` reference identifies the comparison policy. The disjoint
 | `unchanged_not_required` | Neither policy requires validation |
 | `uninspectable` | Either comparison could not run, or the object changed before commit |
 
-`impact.failures` groups every mismatched object by its first failing constraint,
-without a limit on groups or object IDs. Each group's `samples` field contains
+`impact.failures` groups every mismatched object by its first failing constraint.
+Reports exceeding the assembly budget fail in full instead of sampling groups
+or object IDs. Each group's `samples` field contains
 all of its object IDs in scan order; the field name is retained for compatibility.
 Each group includes `objects` and a
 `reason` containing the JSON Schema `keyword` (`falseSchema` for a boolean-false
@@ -200,7 +201,13 @@ before comparison metadata was available remain inconclusive and need a fresh
 task. Revalidation responses have no impact comparison or readiness.
 Polling assembles the committed findings with the task checkpoint and reads
 indexed schema state; it does not scan objects or recompute compliance totals.
-Its response size and assembly work grow with the number of reported mismatches.
+Its response size and assembly work grow with the number of reported mismatches,
+up to a 16 MiB logical assembly budget. Storage counts serialized checkpoint,
+finding, and grouping data before retaining each row and stops at the first
+over-budget row. Oversized JSON reports return `413`; findings remain persisted,
+and workers can continue processing without loading the report. Clients must
+handle this error, including when a cancellation succeeds but its response
+projection exceeds the budget.
 
 ### HTML repair reports
 
@@ -257,8 +264,14 @@ fragments; scripts, remote images, and forms are disabled. Treat retained HTML a
 sensitive analysis output when sharing downloaded files.
 
 Output obeys `HUBUUM_EXPORT_MAX_OUTPUT_BYTES`, capped at 16 MiB. Exceeding the
-limit returns `413` and saves no partial rendering; increase the configured
-limit for larger reports. Template fuel, recursion, or execution failures also
+limit returns `413` and saves no partial rendering. Finding assembly additionally
+uses the smaller of this setting and 4 MiB; the template context, including both
+diagnostic projections and expanded object URLs, has a 4 MiB logical budget.
+These checks happen before isolated rendering, while rows and context entries
+are collected. Increase the configured output limit for larger reports within
+these assembly ceilings. Exceeding either budget preserves the previous HTML
+artifact. Deleting the source class or its collection removes the retained
+report on both storage backends. Template fuel, recursion, or execution failures also
 fail the whole generation explicitly. Per-object diagnostic omissions already
 present in the source are labeled inside a successfully generated report.
 
@@ -394,7 +407,8 @@ not add declarative indexes, inheritance, or automatic JSON transformations.
 The coordinated SDK crates move from 0.2 to 0.3 because the mandatory
 capability, task/event vocabularies, import DTO, and backup sections change.
 Adapters must implement every required schema method, including the separate
-`get_schema_work_report` projection, handle `schema_validation`,
+`get_schema_work_report` projection with its mandatory `StorageSchemaReportBudget`,
+handle `schema_validation`,
 map the new event entities and logical sections, and preserve the schema
 transaction and lease semantics. See the storage boundary inventories.
 

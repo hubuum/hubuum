@@ -52,7 +52,7 @@ fn repair_report_response(report: StorageSchemaRepairReport, download: bool) -> 
         .body(report.into_html())
 }
 
-#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}/report",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("task_id"=TaskId,Path,description="Source impact analysis")),request_body=SchemaRepairReportRequest,responses((status=200,description="Generated and retained complete HTML rendering of saved findings",body=String,content_type="text/html"),(status=400,description="Invalid URL, layout or rendering budget",body=ApiErrorResponse),(status=403,description="Source analysis or template access denied",body=ApiErrorResponse),(status=404,description="Impact analysis not found",body=ApiErrorResponse),(status=413,description="Complete report exceeds output limit; previous report is retained",body=ApiErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}/report",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("task_id"=TaskId,Path,description="Source impact analysis")),request_body=SchemaRepairReportRequest,responses((status=200,description="Generated and retained complete HTML rendering of saved findings",body=String,content_type="text/html"),(status=400,description="Invalid URL, layout or rendering budget",body=ApiErrorResponse),(status=403,description="Source analysis or template access denied",body=ApiErrorResponse),(status=404,description="Impact analysis not found",body=ApiErrorResponse),(status=413,description="Complete report exceeds assembly or output limit; previous report is retained",body=ApiErrorResponse)))]
 #[post("/{class_id}/schema/tasks/{task_id}/report")]
 pub async fn generate_schema_repair_report(
     context: AppContext,
@@ -324,7 +324,7 @@ pub async fn activate_schema_revision(
     Ok(ApiResponse::new(result, StatusCode::OK))
 }
 
-#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/revisions/{revision}/impact",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("revision"=SchemaRevision,Path,description="Positive immutable identity")),responses((status=202,description="Queue bounded impact analysis; advisory results cannot authorize strict activation",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/classes/{class_id}/schema/revisions/{revision}/impact",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("revision"=SchemaRevision,Path,description="Positive immutable identity")),responses((status=202,description="Queue bounded impact analysis; advisory results cannot authorize strict activation",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[post("/{class_id}/schema/revisions/{revision}/impact")]
 pub async fn analyze_schema_impact(
     context: AppContext,
@@ -384,7 +384,7 @@ pub async fn revalidate_schema(
     Ok(ApiResponse::new(result, StatusCode::ACCEPTED))
 }
 
-#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with complete grouped impact mismatches and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Administrator report with complete grouped impact mismatches and exact/advisory population boundary",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[get("/{class_id}/schema/tasks/{task_id}")]
 pub async fn get_schema_work(
     context: AppContext,
@@ -410,7 +410,7 @@ pub async fn get_schema_work(
     Ok(ApiResponse::new(result, StatusCode::OK))
 }
 
-#[utoipa::path(delete,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Cancel schema work atomically; completed batches remain and later batch commits are fenced",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
+#[utoipa::path(delete,path="/api/v1/classes/{class_id}/schema/tasks/{task_id}",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"), ("task_id"=TaskId,Path,description="Positive immutable identity")),responses((status=200,description="Cancel schema work atomically; completed batches remain and later batch commits are fenced",body=SchemaWorkResponse),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse),(status=413,description="Report exceeds the 16 MiB assembly budget; saved work is retained",body=ApiErrorResponse)))]
 #[delete("/{class_id}/schema/tasks/{task_id}")]
 pub async fn cancel_schema_work(
     context: AppContext,
@@ -427,13 +427,13 @@ pub async fn cancel_schema_work(
         [Permissions::UpdateClass],
         class
     );
-    let existing = service::get_work(&context, task_id).await?;
-    if existing.target.class_id() != class_id {
+    require_admin(&context, &requestor).await?;
+    let existing = storage_handle(&context).get_schema_work(task_id).await?;
+    if existing.target().class_id() != class_id {
         return Err(ApiError::NotFound(
             "Schema task was not found in this class".into(),
         ));
     }
-    require_admin(&context, &requestor).await?;
     let result = service::cancel_work(
         &context,
         CollectionId::new(class.collection_id)?,

@@ -505,3 +505,221 @@ async fn retained_reports_use_configured_authorization(
     delete_backend_user(&fixture.backend, user).await;
     fixture.cleanup().await;
 }
+
+#[rstest::rstest]
+#[case::memory(StorageBackendKind::Memory)]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[actix_web::test]
+async fn rich_report_reads_enforce_the_callers_assembly_budget(
+    #[case] backend: StorageBackendKind,
+) {
+    let fixture = SchemaFixture::new(backend, vec![json!(vec![false; 32]); 3]).await;
+    let revision = fixture
+        .stage(json!({"items":{"const":"x".repeat(990)}}), true)
+        .await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let work = fixture
+        .finish(work, StorageSchemaBatchLimits::default())
+        .await;
+    let error = fixture
+        .backend
+        .get_schema_work_report(
+            work.task_id(),
+            StorageSchemaReportBudget::new(4096).unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
+    let complete = fixture
+        .backend
+        .get_schema_work_report(work.task_id(), StorageSchemaReportBudget::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(complete.impact()).unwrap()["findings"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::memory(StorageBackendKind::Memory)]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[actix_web::test]
+async fn oversized_diagnostics_fail_before_rendering_and_preserve_retained_html(
+    #[case] backend: StorageBackendKind,
+) {
+    // Each 193-byte document produces about 40 KiB of bounded diagnostics.
+    // The population exceeds even the maximum HTML assembly budget.
+    let fixture = SchemaFixture::new(backend, vec![json!(vec![false; 32]); 128]).await;
+    let revision = fixture
+        .stage(json!({"items":{"const":"x".repeat(990)}}), true)
+        .await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let previous =
+        service::generate_repair_report(&fixture.backend, generation(&fixture, work.clone()))
+            .await
+            .unwrap();
+    let work = fixture
+        .finish(work, StorageSchemaBatchLimits::default())
+        .await;
+    let result =
+        service::generate_repair_report(&fixture.backend, generation(&fixture, work.clone())).await;
+    let Err(ApiError::PayloadTooLarge(message)) = result else {
+        panic!("large diagnostics must fail with PayloadTooLarge: {result:?}");
+    };
+    assert!(
+        message.contains("assembly budget"),
+        "must reject during assembly, before template execution: {message}"
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .get_schema_repair_report(work.task_id())
+            .await
+            .unwrap()
+            .html(),
+        previous.html()
+    );
+    fixture.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::class(false)]
+#[case::collection(true)]
+#[actix_web::test]
+async fn deleting_a_report_source_removes_its_retained_schema_data(
+    #[case] delete_collection: bool,
+    #[values(StorageBackendKind::Memory, StorageBackendKind::Postgres)] backend: StorageBackendKind,
+) {
+    let fixture = SchemaFixture::new(backend, vec![json!({})]).await;
+    let revision = fixture.stage(json!(false), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let work = fixture
+        .finish(work, StorageSchemaBatchLimits::default())
+        .await;
+    let saved =
+        service::generate_repair_report(&fixture.backend, generation(&fixture, work.clone()))
+            .await
+            .unwrap();
+
+    let other =
+        create_backend_object_fixture(&fixture.backend, &prefix("retained_schema_report"), vec![])
+            .await;
+    let other_work = fixture
+        .backend
+        .request_schema_work(StorageSchemaWorkRequest::new(
+            other.collection.id(),
+            SchemaReference::new(other.class.id(), SchemaRevision::INITIAL),
+            StorageSchemaWorkKind::Impact,
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value();
+    let other_report = StorageSchemaRepairReport::try_new(
+        &other_work,
+        chrono::Utc::now(),
+        "<p>Other class</p>".into(),
+    )
+    .unwrap();
+    fixture
+        .backend
+        .save_schema_repair_report(StorageSchemaRepairReportWrite::new(
+            other_report.clone(),
+            other.collection.id(),
+        ))
+        .await
+        .unwrap();
+
+    if delete_collection {
+        fixture
+            .backend
+            .collection_store()
+            .delete_collection(fixture.collection_id(), &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+    } else {
+        let resolved = fixture
+            .backend
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(fixture.class_id()))
+            .await
+            .unwrap();
+        fixture
+            .backend
+            .class_store()
+            .delete_class(&resolved, &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+    }
+    assert_eq!(
+        fixture
+            .backend
+            .get_schema_repair_report(work.task_id())
+            .await
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::NotFound
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .get_schema_work_report(work.task_id(), StorageSchemaReportBudget::default())
+            .await
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::NotFound
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .save_schema_repair_report(StorageSchemaRepairReportWrite::new(
+                saved,
+                fixture.collection_id()
+            ))
+            .await
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::NotFound
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .get_schema_repair_report(other_work.task_id())
+            .await
+            .unwrap()
+            .html(),
+        other_report.html()
+    );
+
+    if !delete_collection {
+        fixture
+            .backend
+            .collection_store()
+            .delete_collection(fixture.collection_id(), &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+    }
+    if let Some(group) = fixture.resources.owned_group.as_ref() {
+        fixture
+            .backend
+            .delete_group(group.id(), &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+    }
+    delete_backend_object_fixture(&fixture.backend, other).await;
+}

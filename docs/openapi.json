@@ -6412,6 +6412,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6586,6 +6596,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6664,6 +6684,16 @@
           },
           "409": {
             "description": "Stale revision, incompatible activation or invalid lifecycle transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Report exceeds the 16 MiB assembly budget; saved work is retained",
             "content": {
               "application/json": {
                 "schema": {
@@ -6834,7 +6864,7 @@
             }
           },
           "413": {
-            "description": "Complete report exceeds output limit; previous report is retained",
+            "description": "Complete report exceeds assembly or output limit; previous report is retained",
             "content": {
               "application/json": {
                 "schema": {

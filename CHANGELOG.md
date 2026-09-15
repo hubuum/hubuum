@@ -71,8 +71,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking storage SDK change:** `SchemaEvolutionStorage` adapters must implement
   `save_schema_repair_report` and `get_schema_repair_report`, preserve diagnostic
   snapshots atomically with batch findings, and retain complete report output
-  under the source analysis. The new diagnostic dependency joins the SDK's
+  under the source analysis. `get_schema_work_report` now accepts a mandatory
+  `StorageSchemaReportBudget`; use the shared builder to stop reading findings
+  before exceeding it and return `InputTooLarge`. The new diagnostic dependency joins the SDK's
   coordinated `0.3` train. Rebuild external adapters against the updated contract.
+- **Breaking report resource limits:** JSON schema impact reports now have a
+  16 MiB logical assembly budget; clients must handle `413` for larger analyses.
+  HTML generation bounds finding assembly by the smaller of the configured
+  output limit and 4 MiB, and template context assembly by 4 MiB. Increase
+  `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` for larger HTML within these ceilings. Failed
+  generation preserves the previous artifact and all saved findings.
 - **Worker upgrade requirement:** Drain old schema workers, apply migration
   `20260914000003`, then start upgraded API and worker processes. Older findings
   remain readable but require a fresh analysis for full diagnostics.
@@ -114,6 +122,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   stable releases. Existing installations retain their configured images.
 
 ### Fixed
+
+- Memory storage removes retained schema reports and findings when their source
+  class or collection is deleted, matching PostgreSQL cleanup.
 
 - Schema impact reports include every mismatched object ID grouped by its first
   failure reason, removing the 20-group and five-ID limits while preserving the

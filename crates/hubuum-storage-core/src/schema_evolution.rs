@@ -5,7 +5,8 @@ mod repair;
 pub use impact::{
     StorageSchemaDiagnosticSnapshot, StorageSchemaImpact, StorageSchemaImpactBoundary,
     StorageSchemaImpactFinding, StorageSchemaImpactReadiness, StorageSchemaImpactReport,
-    StorageSchemaInspection, StorageSchemaWorkReport, StorageSchemaWorkReportBuilder,
+    StorageSchemaInspection, StorageSchemaReportBudget, StorageSchemaWorkReport,
+    StorageSchemaWorkReportBuilder,
 };
 pub use repair::{StorageSchemaRepairReport, StorageSchemaRepairReportWrite};
 
@@ -1007,9 +1008,12 @@ pub trait SchemaEvolutionStorage: Send + Sync {
     ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError>;
     async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError>;
     /// Read one consistent checkpoint and its separately persisted findings.
+    /// Charge the budget before retaining rows and abort with InputTooLarge on
+    /// exhaustion. Use the shared report builder to preserve these semantics.
     async fn get_schema_work_report(
         &self,
         task_id: TaskId,
+        budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError>;
     /// Retain the latest complete rendering without changing the source analysis.
     async fn save_schema_repair_report(

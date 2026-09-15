@@ -2024,6 +2024,7 @@ impl SchemaEvolutionStorage for CompleteExternalAdapter {
     async fn get_schema_work_report(
         &self,
         task_id: TaskId,
+        budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError> {
         fixture_result()
     }

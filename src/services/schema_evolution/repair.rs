@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use chrono::{DateTime, Utc};
 use hubuum_domain::{CollectionId, ObjectId, SchemaReference, TaskId};
 use hubuum_storage_core::{
     SchemaEvolutionStorage, StorageSchemaRepairReport, StorageSchemaRepairReportWrite,
-    StorageSchemaWork,
+    StorageSchemaReportBudget, StorageSchemaWork,
 };
 use hubuum_templates::{MissingDataPolicy, TemplateAutoEscape, TemplateExecution, TemplateLimits};
 use serde_json::{Value, json};
@@ -21,6 +21,7 @@ use crate::{
     utilities::exporting::render_template,
 };
 
+const MAX_CONTEXT_BYTES: usize = 4 * 1024 * 1024;
 const CONTENT: &str = include_str!("repair_content.html");
 const DOCUMENT_START: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Schema repair report</title><style>body{font:16px system-ui,sans-serif;line-height:1.5;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#182230}h1,h2,h3{line-height:1.2}article{border-top:1px solid #b9c3ce;margin-top:2rem;padding-top:1rem}code,pre{overflow-wrap:anywhere;white-space:pre-wrap}table{border-collapse:collapse}th,td{padding:.4rem .8rem;text-align:left;border:1px solid #ccd3dc}.notice{background:#fff3d3;padding:1rem}.issue{margin:1rem 0;padding-left:1rem;border-left:3px solid #a33721}dt{font-weight:bold}dd{margin-bottom:.5rem}a{color:#12549a}</style></head><body>";
 const DOCUMENT_END: &str = "</body></html>";
@@ -91,14 +92,6 @@ pub async fn generate_repair_report(
     } = generation;
     let storage = storage_handle(context);
     let task_id = work.task_id();
-    let analysis = super::get_work(context, task_id).await?;
-    let generated_at = Utc::now();
-    let render_context = report_context(
-        &analysis,
-        &class_name,
-        &request.object_url_template,
-        generated_at,
-    )?;
     let (limit, recursion, fuel) = get_config()
         .map(|config| {
             (
@@ -114,6 +107,20 @@ pub async fn generate_repair_report(
             DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
             DEFAULT_EXPORT_TEMPLATE_FUEL,
         ));
+    // Leave room inside the isolated worker's input ceiling for templates and
+    // serialization framing. Enforce this while storage enumerates findings,
+    // before materializing the response or its duplicate layout projection.
+    let input_limit = limit.min(MAX_CONTEXT_BYTES);
+    let budget = StorageSchemaReportBudget::new(input_limit)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let analysis = super::get_work_with_budget(context, task_id, budget).await?;
+    let generated_at = Utc::now();
+    let render_context = report_context(
+        &analysis,
+        &class_name,
+        &request.object_url_template,
+        generated_at,
+    )?;
     let limits = TemplateLimits::new(recursion, fuel).with_max_output_bytes(limit);
     let content = render_content(&render_context, limits).await?;
     let body = if let Some(layout) = layout {
@@ -181,22 +188,32 @@ fn report_context(
             "Only schema impact analyses have repair reports".into(),
         ));
     }
+    // The layout exposes analysis and objects, including their saved snapshots.
+    // Charge both copies and expanded URLs before retaining each object.
+    let mut budget = StorageSchemaReportBudget::new(MAX_CONTEXT_BYTES)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    budget.charge(&(analysis, class_name, generated_at))?;
     let mut objects = BTreeMap::new();
     if let Some(impact) = &analysis.impact {
         for group in &impact.failures {
             for id in &group.samples {
-                objects.insert(*id, json!({"id":id,"url":urls.object_url(ObjectId::new(*id)?),"reason":group.reason,"snapshot":null}));
+                let object = json!({"id":id,"url":urls.object_url(ObjectId::new(*id)?),"reason":group.reason,"snapshot":null});
+                budget.charge(&object)?;
+                objects.insert(*id, object);
             }
         }
         for finding in &impact.findings {
-            objects.insert(finding.object_id, json!({"id":finding.object_id,"url":urls.object_url(ObjectId::new(finding.object_id)?),"reason":finding.reason,"snapshot":finding.snapshot}));
+            let object = json!({"id":finding.object_id,"url":urls.object_url(ObjectId::new(finding.object_id)?),"reason":finding.reason,"snapshot":finding.snapshot});
+            budget.charge(&object)?;
+            objects.insert(finding.object_id, object);
         }
     }
     for id in &analysis.invalid_samples {
-        let url = urls.object_url(ObjectId::new(*id)?);
-        objects
-            .entry(*id)
-            .or_insert_with(|| json!({"id":id,"url":url,"reason":null,"snapshot":null}));
+        if let Entry::Vacant(entry) = objects.entry(*id) {
+            let object = json!({"id":id,"url":urls.object_url(ObjectId::new(*id)?),"reason":null,"snapshot":null});
+            budget.charge(&object)?;
+            entry.insert(object);
+        }
     }
     let omitted_objects = analysis.invalid.saturating_sub(objects.len() as u64);
     let legacy_objects = objects

@@ -68,3 +68,17 @@ fn document_wrapper_counts_toward_the_output_limit() {
         Err(ApiError::PayloadTooLarge(_))
     ));
 }
+
+#[test]
+fn expanded_object_urls_cannot_exceed_the_context_assembly_budget() {
+    let mut analysis = legacy("complete");
+    let impact = analysis.impact.as_mut().unwrap();
+    impact.failures[0].samples = (1..=3000).collect();
+    let urls = SchemaObjectUrlTemplate::try_new(format!(
+        "https://example.test/{}/{{object_id}}",
+        "x".repeat(1900),
+    ))
+    .unwrap();
+    let result = report_context(&analysis, "Class", &urls, Utc::now());
+    assert!(matches!(result, Err(ApiError::PayloadTooLarge(_))));
+}
