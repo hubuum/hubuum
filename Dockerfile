@@ -28,6 +28,7 @@ COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
 COPY crates/hubuum-scale-benchmark/Cargo.toml ./crates/hubuum-scale-benchmark/Cargo.toml
 COPY crates/hubuum-scale-core/Cargo.toml ./crates/hubuum-scale-core/Cargo.toml
 COPY crates/hubuum-secrets/Cargo.toml ./crates/hubuum-secrets/Cargo.toml
+COPY crates/hubuum-schema-diagnostics/Cargo.toml ./crates/hubuum-schema-diagnostics/Cargo.toml
 COPY crates/hubuum-storage-core/Cargo.toml ./crates/hubuum-storage-core/Cargo.toml
 COPY crates/hubuum-storage-conformance/Cargo.toml ./crates/hubuum-storage-conformance/Cargo.toml
 COPY crates/hubuum-storage-memory/Cargo.toml ./crates/hubuum-storage-memory/Cargo.toml

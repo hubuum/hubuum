@@ -41,6 +41,7 @@ for path in "$@"; do
       openapi=true
       ;;
     crates/hubuum-domain/src/json_schema.rs | crates/hubuum-domain/src/json_schema/* | \
+      crates/hubuum-schema-diagnostics/src/* | \
       benches/template_schema_concurrency/*)
       runtime_benchmark=true
       ;;
@@ -84,7 +85,7 @@ for path in "$@"; do
     docs/openapi.json)
       openapi=true
       ;;
-    docs/export_template_guide.md)
+    docs/export_template_guide.md | crates/hubuum-schema-diagnostics/README.md)
       code=true
       container=true
       artifacts=true

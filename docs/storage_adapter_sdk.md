@@ -4,17 +4,22 @@ Status: accepted; current experimental release train is `0.3`.
 
 ## Supported Crate Graph
 
-The statically linked storage adapter SDK consists of exactly these crates:
+The statically linked storage adapter SDK consists of these crates:
 
 | Crate | Supported purpose | Supported features |
 | --- | --- | --- |
 | `hubuum-computed-fields` | Validated computed-field definitions and deterministic evaluation | Default only |
+| `hubuum-schema-diagnostics` | Generic bounded diagnostics for `jsonschema` errors | Default; `openapi` |
 | `hubuum-domain` | Validated identifiers, revisions, JSON Patch, and domain values | Default; `openapi` |
 | `hubuum-events-core` | Event catalog, envelopes, filters, and mutation provenance | Default; `schema` |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
 | `hubuum-task-core` | Task identity, idempotency, validated execution limits and cooperative stop contexts | Default only |
 | `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default only |
 | `hubuum-storage-conformance` | Reusable behavioral certification for complete adapters | Default only |
+
+The diagnostic crate is independently usable and has no Hubuum dependencies.
+It is currently a publishable prerequisite in this train; actual standalone
+publication and a separate release cadence require a later review.
 
 Their publication graph is closed:
 
@@ -30,9 +35,11 @@ hubuum-storage-core
     |       |       +------------------ hubuum-events-core
     |       +-------------------------- hubuum-domain
     +---------------------------------- hubuum-computed-fields
+
+hubuum-domain --> hubuum-schema-diagnostics
 ```
 
-Every in-graph dependency uses an exact version requirement. The seven packages
+Every in-graph dependency uses an exact version requirement. The eight packages
 share one version and are released together. The root application and
 `hubuum-storage-postgres` are not part of the supported SDK. PostgreSQL remains
 the in-repository reference implementation, while an external adapter depends
@@ -48,7 +55,7 @@ The SDK remains `experimental-public` during the `0.x` series:
 
 - a patch release is source compatible with its minor line;
 - a minor release may make a documented breaking change;
-- all seven crates still advance together, even when only one crate changes; and
+- all eight crates still advance together, even when only one crate changes; and
 - adapter manifests use an exact requirement for `hubuum-storage-core` and the
   matching `hubuum-storage-conformance` release.
 
@@ -106,6 +113,8 @@ closed set is:
 - `hubuum-domain`: `EventDeliveryStatus`, `JsonPatchErrorKind`,
   `JsonSchemaErrorKind`, `MaintenanceState`, `PrincipalKind`,
   `ResourceRevisionError`, and `StorageJsonValidationError`;
+- `hubuum-schema-diagnostics`: `SchemaActualValue`, `SchemaDiagnosticInspection`,
+  `SchemaDiagnosticOmission`, and `SchemaExpectedValue`;
 - `hubuum-events-core`: `Action`, `ActorKind`, `EntityType`,
   `EventCatalogError`, `EventFilterError`, and `EventSinkSecretError`;
 - `hubuum-query`: `ComputedFieldScope`, `ComputedQueryValueType`,
@@ -140,7 +149,7 @@ versions, and the safest available migration.
 
 SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 
-1. choose one version for all seven packages and update every exact in-graph
+1. choose one version for all eight packages and update every exact in-graph
    dependency plus `Cargo.lock`;
 2. record supported additions, changes, deprecations, and every breaking
    migration in `CHANGELOG.md`;
