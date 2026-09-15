@@ -334,6 +334,33 @@ async fn load_classes_and_objects(
             seed = profile.seed
         ))
         .await?;
+    // Bulk loading disables triggers. Mirror the schema projection and its
+    // provenance before ordinary API writes and backups use these classes.
+    connection
+        .batch_execute(
+            r#"
+            INSERT INTO class_schema_revisions (
+                class_id, revision, json_schema, validate_schema, status,
+                created_at, activated_at, activation_policy
+            )
+            SELECT id, 1, json_schema, validate_schema, 'active',
+                timestamptz '2026-01-01 00:00:00+00',
+                timestamptz '2026-01-01 00:00:00+00', 'reject_incompatible'
+            FROM hubuumclass ORDER BY id;
+
+            INSERT INTO class_schema_state (
+                class_id, active_revision, last_revision, object_count, object_epoch
+            )
+            SELECT id, 1, 1, object_count, 0 FROM scale_class_plan ORDER BY id;
+
+            INSERT INTO class_schema_history (
+                id, class_id, revision, snapshot, operation, occurred_at
+            )
+            SELECT class_id, class_id, revision, to_jsonb(schema_revision), 'create', created_at
+            FROM class_schema_revisions schema_revision ORDER BY class_id;
+            "#,
+        )
+        .await?;
     Ok(())
 }
 
@@ -898,6 +925,7 @@ async fn reset_sequences(
              SELECT setval(pg_get_serial_sequence('collections', 'id'), (SELECT max(id) FROM collections), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumclass', 'id'), (SELECT max(id) FROM hubuumclass), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumobject', 'id'), (SELECT max(id) FROM hubuumobject), true);\n\
+             SELECT setval(pg_get_serial_sequence('class_schema_history', 'id'), (SELECT max(id) FROM class_schema_history), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumclass_relation', 'id'), (SELECT max(id) FROM hubuumclass_relation), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumobject_relation', 'id'), (SELECT max(id) FROM hubuumobject_relation), true);\n\
              SELECT setval(pg_get_serial_sequence('permissions', 'id'), (SELECT max(id) FROM permissions), true);\n\
@@ -934,6 +962,21 @@ async fn verify_loaded_dataset(
             "objects",
             "SELECT count(*) AS value FROM hubuumobject",
             profile.totals.objects,
+        ),
+        (
+            "schema revision baselines",
+            "SELECT count(*) AS value FROM class_schema_revisions",
+            profile.totals.classes,
+        ),
+        (
+            "schema state baselines",
+            "SELECT count(*) AS value FROM class_schema_state",
+            profile.totals.classes,
+        ),
+        (
+            "schema history baselines",
+            "SELECT count(*) AS value FROM class_schema_history",
+            profile.totals.classes,
         ),
         (
             "class relations",
@@ -1012,6 +1055,31 @@ async fn verify_loaded_dataset(
                 "loaded {label} count is {actual}, expected {expected}"
             )));
         }
+    }
+
+    let schema_mismatches = scalar(
+        pool,
+        r#"
+        SELECT count(*) AS value
+        FROM hubuumclass class
+        LEFT JOIN class_schema_state state ON state.class_id = class.id
+        LEFT JOIN class_schema_revisions policy
+            ON policy.class_id = class.id AND policy.revision = state.active_revision
+        LEFT JOIN class_schema_history history ON history.id = class.id
+        WHERE state.class_id IS NULL OR policy.class_id IS NULL
+            OR state.object_count <> (
+                SELECT count(*) FROM hubuumobject WHERE hubuum_class_id = class.id
+            )
+            OR policy.json_schema IS DISTINCT FROM class.json_schema
+            OR policy.validate_schema IS DISTINCT FROM class.validate_schema
+            OR history.snapshot IS DISTINCT FROM to_jsonb(policy)
+        "#,
+    )
+    .await?;
+    if schema_mismatches != 0 {
+        return Err(invalid_data(format!(
+            "loaded schema baselines disagree with {schema_mismatches} classes"
+        )));
     }
 
     let objects = distribution(
@@ -1406,8 +1474,68 @@ fn operation_error(operation: &str, error: impl std::fmt::Display) -> Error {
 #[cfg(all(test, feature = "integration-test-support"))]
 mod tests {
     use super::*;
+    use crate::operations::object::ObjectRow;
+    use crate::operations::schema_evolution::record_object_schema_on;
+    use crate::schema::hubuumobject;
     use crate::test_support::integration_test_pool;
+    use diesel::{QueryDsl, SelectableHelper};
+    use hubuum_domain::JsonSchemaLimits;
+    use hubuum_events_core::EventContext;
+    use hubuum_scale_core::ProfileName;
     use rstest::rstest;
+
+    #[rstest]
+    #[case::schema_free(1)]
+    #[case::advisory_schema(20)]
+    #[tokio::test]
+    async fn loaded_objects_accept_schema_recording(#[case] class_id: u64) {
+        let pool = integration_test_pool(1);
+        with_transaction(
+            &pool,
+            async |connection| -> std::result::Result<(), PostgresStorageError> {
+                // Temporary copies exercise the bulk loader without changing
+                // another parallel test's classes, evidence, or sequences.
+                for table in [
+                    "hubuumclass",
+                    "hubuumobject",
+                    "class_schema_revisions",
+                    "class_schema_state",
+                    "class_schema_history",
+                    "object_schema_evidence",
+                ] {
+                    connection
+                        .batch_execute(&format!(
+                            "CREATE TEMP TABLE {table} (LIKE public.{table}) ON COMMIT DROP"
+                        ))
+                        .await?;
+                }
+                let plan = [ClassPlan {
+                    id: class_id,
+                    collection_id: 1,
+                    region: DatasetRegion::Balanced,
+                    object_count: 2,
+                    first_object_id: Some(1),
+                }];
+                load_class_plan(connection, &plan).await?;
+                let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
+                load_classes_and_objects(connection, &profile).await?;
+                let object = hubuumobject::table
+                    .select(ObjectRow::as_select())
+                    .first(connection)
+                    .await?;
+                record_object_schema_on(
+                    JsonSchemaLimits::default(),
+                    connection,
+                    &object,
+                    &EventContext::system(),
+                )
+                .await?;
+                Ok(())
+            },
+        )
+        .await
+        .expect("bulk-loaded objects must support the schema recording used by PATCH");
+    }
 
     async fn shadow_temporal_tables(
         connection: &mut diesel_async::AsyncPgConnection,
