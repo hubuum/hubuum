@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-09-15
+
 ### Added
 
 - Schema-impact analyses now retain multiple actionable diagnostics per object,
@@ -274,22 +276,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   after provisioning resources for workloads that exceed the defaults.
 - **Breaking experimental storage SDK 0.3:** adapter implementations and callers
   of `capture_backup_snapshot` must accept/pass `StorageBackupBudget` and enforce
-  it during enumeration. Update the seven SDK dependencies together and rerun
+  it during enumeration. Update all SDK dependencies together and rerun
   conformance; see the storage adapter SDK upgrade guide.
 
-- Schema PATCH and legacy import overwrites that change policy on a nonempty
-  class now return a conflict. Clients must stage a revision, request impact,
-  and explicitly activate it. Pending activation and aggregate reports require
+- **Breaking schema-policy updates:** Schema PATCH and legacy import overwrites
+  that change policy on a nonempty class now return a conflict. Clients must
+  stage a revision, request impact, and explicitly activate it. Pending activation and aggregate reports require
   administrator authority. Imports select the staged revision with
   `schema_activation` and must provide its exact class policy.
-- Backup format 6 replaces format 5 and adds schema revisions, state, evidence,
-  and history. Restore older artifacts with their matching old release before
-  migrating the database and creating a format 6 backup. No artifact converter
+- **Breaking backup format:** Format 6 replaces format 5 and adds schema revisions,
+  state, evidence, and history. Restore older artifacts with their matching old
+  release before migrating the database and creating a format 6 backup. No artifact converter
   is provided. Install matching server, administrator, and restore-executor
   binaries, drain old workers, and run migrations before starting new processes.
   Existing enforced objects start pending; request revalidation after migration.
-- The seven storage SDK crates advance together from 0.2.0 to 0.3.0. External
-  adapters must implement `SchemaEvolutionStorage`, support the new task/event
+- The storage SDK advances together from 0.2.0 to 0.3.0, with the new
+  `hubuum-schema-diagnostics` crate joining the coordinated train. External adapters
+  must implement `SchemaEvolutionStorage`, support the new task/event
   vocabularies and import activation input, and map the new logical backup
   sections. Update exact SDK dependencies together and rerun conformance; see
   the storage adapter SDK upgrade guide.
