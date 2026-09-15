@@ -166,7 +166,7 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    src/tests/* | tests/*)
+    scripts/test-event-transports.py | src/tests/* | tests/*)
       code=true
       ;;
     src/*)

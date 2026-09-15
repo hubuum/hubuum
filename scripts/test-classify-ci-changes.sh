@@ -43,6 +43,11 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for transport_path in scripts/test-event-transports.py tests/event_transport_contract.rs; do
+  transport_output="$(bash "$classifier" "$transport_path")"
+  assert_flag "$transport_output" code true
+done
+
 for authorization_path in src/tests/permissions/candidate_paging.rs \
   src/api/v1/handlers/tasks.rs tests/api_jobs_suite/tasks.rs; do
   authorization_output="$(bash "$classifier" "$authorization_path")"
