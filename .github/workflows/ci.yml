@@ -825,6 +825,30 @@ jobs:
           cargo test --locked --lib
           'middlewares::rate_limit::tests::' -- --ignored
 
+  event-transport-contract:
+    name: Event transport TLS contracts
+    needs: changes
+    if: >-
+      !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_full_ci == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Cache Cargo and target directories
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Test production transports against pinned TLS fixtures
+        run: python3 scripts/test-event-transports.py
+
   treetop-authorization-conformance:
     name: Treetop authorization conformance
     needs: changes
@@ -1403,6 +1427,7 @@ jobs:
       - operational-contract
       - feature-permutations
       - valkey-rate-limit-contract
+      - event-transport-contract
       - treetop-authorization-conformance
       - test
       - all-features-release-build
@@ -1466,6 +1491,7 @@ jobs:
       needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
       needs.operational-contract.result == 'success' &&
+      needs.event-transport-contract.result == 'success' &&
       needs.treetop-authorization-conformance.result == 'success' &&
       needs.container-build.result == 'success'
     needs:
@@ -1475,6 +1501,7 @@ jobs:
       - rust-api-policy
       - openapi-contract
       - operational-contract
+      - event-transport-contract
       - treetop-authorization-conformance
       - container-build
     runs-on: ubuntu-24.04

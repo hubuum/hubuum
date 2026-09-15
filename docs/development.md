@@ -66,6 +66,32 @@ cargo clippy --all-targets --fix
 cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 ```
 
+## Event transport contract tests
+
+Run the production AMQP, Valkey Streams, and webhook adapters against disposable
+TLS fixtures with Python 3.11+, Docker or its Podman compatibility command, and
+OpenSSL on `PATH`:
+
+```sh
+python3 scripts/test-event-transports.py
+```
+
+The runner uses digest-pinned RabbitMQ and Valkey images and a source-controlled
+HTTPS fixture. It generates a private CA, verifies certificates through the
+production clients, and removes its containers and temporary credentials after
+the run. Ports bind only to loopback. No Python packages are required.
+
+The suite checks AMQP publisher acknowledgements, mandatory unroutable delivery,
+event identity and payload, Valkey exact trimming, and recovery of reused sink
+instances after service restart. HTTPS cases cover trusted and untrusted
+certificates, redirects, server errors, response limits, and timeouts.
+
+Ordinary local `cargo test` leaves these fixture-dependent tests ignored. The
+runner explicitly enables them; missing fixture settings fail the tests. The
+`Event transport TLS contracts` CI job runs for full validation and release tags,
+and contributes to the required CI gate. LDAP, SMTP, and the broader integration
+matrix remain tracked in [#248](https://github.com/hubuum/hubuum/issues/248).
+
 ## Architecture Overview
 
 The codebase is incrementally split into application services, backend-neutral
