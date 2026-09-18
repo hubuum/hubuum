@@ -1,9 +1,11 @@
 use crate::errors::ApiError;
+use crate::services::authorization_resources::task_authorization_resources;
 use chrono::Utc;
+use hubuum_storage_core::StorageAuthorizationResourceKey;
 use hubuum_storage_core::{
     TaskDiscoveryPredicate as P, TaskDiscoverySearch, TaskRemoteSideEffectState,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub(super) const FILTERS: &[&str] = &[
     "class_id",
@@ -109,7 +111,7 @@ pub(super) fn parse(values: &HashMap<String, String>) -> Result<TaskDiscoverySea
 
 use crate::extractors::Authenticated;
 use crate::models::{Permissions, TaskRecord};
-use crate::permissions::{AppContext, AuthzTarget, ResourceRef, authorize_resources};
+use crate::permissions::{AppContext, authorize_resources};
 use hubuum_storage_core::{TaskExplicitTarget, TaskMetadataDetails};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -118,62 +120,38 @@ enum Reference {
     Template(hubuum_domain::ExportTemplateId),
     Remote(hubuum_domain::RemoteTargetId),
 }
-async fn authorize(
-    context: &AppContext,
-    requestor: &Authenticated,
-    reference: Reference,
-) -> Result<(), ApiError> {
-    let (resource, permission) = resolve(context, reference).await?;
-    authorize_resources(
-        context.permission_backend(),
-        context,
-        &requestor.principal,
-        requestor.scopes(),
-        vec![permission],
-        vec![resource],
-    )
-    .await
-}
-async fn resolve(
-    context: &AppContext,
-    reference: Reference,
-) -> Result<(ResourceRef, Permissions), ApiError> {
-    Ok(match reference {
-        Reference::Target(TaskExplicitTarget::Class { class_id }) => (
-            class_id.to_resource_ref(context).await?,
-            Permissions::ReadClass,
-        ),
-        Reference::Target(TaskExplicitTarget::Object { object_id, .. }) => (
-            object_id.to_resource_ref(context).await?,
-            Permissions::ReadObject,
-        ),
-        Reference::Target(TaskExplicitTarget::Collection { collection_id }) => (
-            collection_id.to_resource_ref(context).await?,
-            Permissions::ReadCollection,
-        ),
-        Reference::Target(TaskExplicitTarget::ClassRelation { relation_id }) => (
-            relation_id.to_resource_ref(context).await?,
-            Permissions::ReadClassRelation,
-        ),
-        Reference::Target(TaskExplicitTarget::ObjectRelation { relation_id }) => (
-            relation_id.to_resource_ref(context).await?,
-            Permissions::ReadObjectRelation,
-        ),
-        Reference::Template(id) => (
-            id.to_resource_ref(context).await?,
-            Permissions::ReadTemplate,
-        ),
-        Reference::Remote(id) => {
-            let target =
-                crate::services::remote_targets::get_remote_target(context, id.id()).await?;
-            (
-                ResourceRef::remote_target(target.id, target.collection_id, Some(target.name)),
-                Permissions::ReadRemoteTarget,
-            )
+impl Reference {
+    fn key(self) -> StorageAuthorizationResourceKey {
+        use StorageAuthorizationResourceKey as K;
+        match self {
+            Self::Target(TaskExplicitTarget::Class { class_id }) => K::Class(class_id),
+            Self::Target(TaskExplicitTarget::Object { object_id, .. }) => K::Object(object_id),
+            Self::Target(TaskExplicitTarget::Collection { collection_id }) => {
+                K::Collection(collection_id)
+            }
+            Self::Target(TaskExplicitTarget::ClassRelation { relation_id }) => {
+                K::ClassRelation(relation_id)
+            }
+            Self::Target(TaskExplicitTarget::ObjectRelation { relation_id }) => {
+                K::ObjectRelation(relation_id)
+            }
+            Self::Template(id) => K::ExportTemplate(id),
+            Self::Remote(id) => K::RemoteTarget(id),
         }
-    })
+    }
 }
-
+fn reference_permission(key: StorageAuthorizationResourceKey) -> Permissions {
+    use StorageAuthorizationResourceKey as K;
+    match key {
+        K::Class(_) => Permissions::ReadClass,
+        K::Object(_) => Permissions::ReadObject,
+        K::Collection(_) => Permissions::ReadCollection,
+        K::ClassRelation(_) => Permissions::ReadClassRelation,
+        K::ObjectRelation(_) => Permissions::ReadObjectRelation,
+        K::ExportTemplate(_) => Permissions::ReadTemplate,
+        K::RemoteTarget(_) => Permissions::ReadRemoteTarget,
+    }
+}
 pub(super) async fn authorize_filters(
     context: &AppContext,
     requestor: &Authenticated,
@@ -182,6 +160,7 @@ pub(super) async fn authorize_filters(
     let Some(discovery) = search.discovery() else {
         return Ok(());
     };
+    let mut references = Vec::new();
     for predicate in discovery.predicates() {
         let reference = match predicate {
             P::Class(id) => Reference::Target(TaskExplicitTarget::Class { class_id: *id }),
@@ -202,7 +181,23 @@ pub(super) async fn authorize_filters(
             P::RemoteTarget(id) => Reference::Remote(*id),
             _ => continue,
         };
-        authorize(context, requestor, reference).await?;
+        references.push(reference.key());
+    }
+    let resources = task_authorization_resources(context, references.iter().copied()).await?;
+    for key in references {
+        let resource = resources
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Task discovery resource was not found".into()))?;
+        authorize_resources(
+            context.permission_backend(),
+            context,
+            &requestor.principal,
+            requestor.scopes(),
+            vec![reference_permission(key)],
+            vec![resource],
+        )
+        .await?;
     }
     Ok(())
 }
@@ -236,80 +231,38 @@ fn references(task: &TaskRecord) -> Vec<Reference> {
     references
 }
 
-/// Resolve class/object facts and authorize a whole page in batches. Repeated
-/// references share a decision; missing resources never disclose associations.
+/// Resolve and authorize a whole page in batches. Repeated references share a
+/// decision; missing resources never disclose associations.
 pub(crate) async fn redact(
     context: &AppContext,
     requestor: &Authenticated,
     tasks: &mut [TaskRecord],
 ) -> Result<(), ApiError> {
     use crate::permissions::{PermissionDecision, PermissionRequest, PrincipalRef};
-    use crate::services::authorization_resources::{
-        schema_compliance_authorization_resources, task_class_authorization_resources,
-    };
     use crate::traits::{scope_allows, scope_allows_resource};
-    let mut unique = Vec::new();
-    for reference in tasks.iter().flat_map(references) {
-        if !unique.contains(&reference) {
-            unique.push(reference);
-        }
-    }
+    let unique: BTreeSet<_> = tasks
+        .iter()
+        .flat_map(references)
+        .map(Reference::key)
+        .collect();
     if unique.is_empty() {
         return Ok(());
     }
-    let class_ids = unique
-        .iter()
-        .filter_map(|reference| match reference {
-            Reference::Target(TaskExplicitTarget::Class { class_id }) => Some(class_id.id()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let object_ids = unique
-        .iter()
-        .filter_map(|reference| match reference {
-            Reference::Target(TaskExplicitTarget::Object { object_id, .. }) => Some(object_id.id()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let classes = if class_ids.is_empty() {
-        HashMap::new()
-    } else {
-        task_class_authorization_resources(context, requestor.principal.id().id(), &class_ids)
-            .await?
-    };
-    let objects = if object_ids.is_empty() {
-        HashMap::new()
-    } else {
-        schema_compliance_authorization_resources(context, object_ids).await?
-    };
-    let mut allowed = vec![false; unique.len()];
+    let resources = task_authorization_resources(context, unique.iter().copied()).await?;
+    let mut allowed = HashSet::new();
     let mut indexes = Vec::new();
     let mut requests = Vec::new();
-    for (index, reference) in unique.iter().enumerate() {
-        let resolved = match reference {
-            Reference::Target(TaskExplicitTarget::Class { class_id }) => classes
-                .get(&class_id.id())
-                .cloned()
-                .map(|r| (r, Permissions::ReadClass)),
-            Reference::Target(TaskExplicitTarget::Object { object_id, .. }) => objects
-                .get(&object_id.id())
-                .cloned()
-                .map(|r| (r, Permissions::ReadObject)),
-            _ => match resolve(context, *reference).await {
-                Ok(value) => Some(value),
-                Err(ApiError::NotFound(_) | ApiError::Forbidden(_)) => None,
-                Err(error) => return Err(error),
-            },
-        };
-        let Some((resource, permission)) = resolved else {
+    for key in unique {
+        let permission = reference_permission(key);
+        let Some(resource) = resources.get(&key) else {
             continue;
         };
         if !scope_allows(requestor.scopes(), &[permission])
-            || !scope_allows_resource(requestor.scopes(), &resource)
+            || !scope_allows_resource(requestor.scopes(), resource)
         {
             continue;
         }
-        indexes.push(index);
+        indexes.push(key);
         requests.push(PermissionRequest {
             resource: resource.normalized_for_permission(permission),
             permissions: vec![permission],
@@ -327,16 +280,15 @@ pub(crate) async fn redact(
             ));
         }
         for (index, decision) in indexes.into_iter().zip(decisions) {
-            allowed[index] = decision == PermissionDecision::Allow;
+            if decision == PermissionDecision::Allow {
+                allowed.insert(index);
+            }
         }
     }
     for task in tasks {
-        task.discovery_authorized = references(task).iter().all(|reference| {
-            unique
-                .iter()
-                .position(|v| v == reference)
-                .is_some_and(|index| allowed[index])
-        });
+        task.discovery_authorized = references(task)
+            .into_iter()
+            .all(|reference| allowed.contains(&reference.key()));
     }
     Ok(())
 }

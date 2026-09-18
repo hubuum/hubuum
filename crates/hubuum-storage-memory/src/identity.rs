@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
 impl AuthenticationStorage for MemoryStorage {
@@ -1780,6 +1781,84 @@ impl TokenStorage for MemoryStorage {
 
 #[async_trait]
 impl AuthorizationDataStorage for MemoryStorage {
+    async fn load_authorization_resources(
+        &self,
+        query: StorageAuthorizationResourcesQuery,
+    ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
+        use StorageAuthorizationResource as R;
+        use hubuum_storage_core::StorageAuthorizationResourceKey as K;
+        let state = self.state.read().await;
+        let class = |id: ClassId| {
+            state
+                .classes
+                .get(&id.id())
+                .map(|c| StorageAuthorizationClassResource::new(c.id(), c.collection_id()))
+        };
+        let object = |id: ObjectId| {
+            state.objects.get(&id.id()).map(|o| {
+                StorageAuthorizationObjectResource::new(
+                    o.id(),
+                    o.collection_id(),
+                    o.class_id(),
+                    o.name(),
+                )
+            })
+        };
+        Ok(query
+            .keys()
+            .iter()
+            .filter_map(|key| {
+                Some(match key {
+                    K::Class(id) => {
+                        let c = state.classes.get(&id.id())?;
+                        R::Class {
+                            resource: class(*id)?,
+                            name: c.name().into(),
+                        }
+                    }
+                    K::Object(id) => R::Object(object(*id)?),
+                    K::Collection(id) => R::Collection {
+                        id: *id,
+                        name: state.collections.get(&id.id())?.name().into(),
+                    },
+                    K::ExportTemplate(id) => {
+                        let t = state.export_templates.get(&id.id())?;
+                        R::ExportTemplate {
+                            id: *id,
+                            collection_id: t.collection_id(),
+                            name: t.name().into(),
+                        }
+                    }
+                    K::RemoteTarget(id) => {
+                        let t = state.remote_targets.get(&id.id())?;
+                        R::RemoteTarget {
+                            id: *id,
+                            collection_id: t.collection_id(),
+                            name: t.name().into(),
+                        }
+                    }
+                    K::ClassRelation(id) => {
+                        let r = state.class_relations.get(&id.id())?;
+                        R::ClassRelation {
+                            id: *id,
+                            from: class(r.from_class_id())?,
+                            to: class(r.to_class_id())?,
+                        }
+                    }
+                    K::ObjectRelation(id) => {
+                        let r = state.object_relations.get(&id.id())?;
+                        R::ObjectRelation {
+                            id: *id,
+                            from: object(r.from_object_id())?,
+                            to: object(r.to_object_id())?,
+                            class_relation_id: r.class_relation_id(),
+                        }
+                    }
+                })
+            })
+            .collect())
+    }
+
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -1842,6 +1921,24 @@ impl AuthorizationDataStorage for MemoryStorage {
                     object.collection_id(),
                     object.class_id(),
                     object.name(),
+                )
+            })
+            .collect())
+    }
+
+    async fn authorize_local_collection_batch(
+        &self,
+        queries: Vec<StorageAuthorizationCollectionAccessQuery>,
+    ) -> Result<Vec<bool>, StorageError> {
+        let state = self.state.read().await;
+        Ok(queries
+            .iter()
+            .map(|query| {
+                principal_has_collection_permissions(
+                    &state,
+                    query.principal_id(),
+                    query.collection_id(),
+                    query.permissions(),
                 )
             })
             .collect())

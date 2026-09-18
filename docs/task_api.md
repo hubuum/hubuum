@@ -364,6 +364,11 @@ links are suppressed when access cannot be established; basic authorized task
 status remains available. Result endpoints enforce the same resource access.
 
 Deploy migration `2026-09-18-000001_task_discovery` before starting the new server.
+Schedule a quiet deployment window: the atomic backfill and index builds take table
+write locks, with a five-second lock timeout and a sixty-second timeout per SQL
+statement. A timeout rolls back the entire migration; resolve contention or capacity
+limits before retrying. The metadata constraint is added as `NOT VALID` and validated
+separately after backfill.
 Backfill uses only retained payloads, schema work and artifacts, so historical
 coverage is incomplete. Backups retain metadata; older backups without it remain
 accepted. Task success remains distinct from domain findings and current schema

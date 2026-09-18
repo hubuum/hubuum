@@ -985,3 +985,39 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageSchemaPage"
 profile = "schema_compliance"
+
+[collection_profiles.authorization_resource_facts]
+shape = "batch"
+ordering = "unspecified; callers key results by resource kind and id"
+duplicate_inputs = "sorted and coalesced by the carrier"
+missing_inputs = "missing resources or relation endpoints are omitted"
+multiplicity = "at most one resource per unique kind and id"
+completeness = "all existing requested resource facts; no policy filtering"
+bounds = "bounded by the normalized carrier keys; at most one query per kind"
+visibility = "internal authorization facts only; the configured backend decides permission"
+snapshot = "coherent per-kind facts and relation endpoints; no cross-kind snapshot guarantee"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[collection_profiles.ordered_collection_decisions]
+shape = "batch"
+ordering = "input order, including repeated checks"
+duplicate_inputs = "preserved and repeated in output"
+missing_inputs = "missing collection or missing grant returns false for that input"
+multiplicity = "exactly one boolean per input; empty input returns empty output"
+completeness = "all decisions or an error; empty permission sets still require a grant"
+bounds = "bounded by input principals and collections; one grant query"
+visibility = "direct principal group grants; one grant must contain all required permissions"
+snapshot = "one read snapshot for all decisions"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."AuthorizationDataStorage::load_authorization_resources"]
+effect = "batch_read"
+carrier = "StorageAuthorizationResourcesQuery"
+profile = "authorization_resource_facts"
+
+[methods."AuthorizationDataStorage::authorize_local_collection_batch"]
+effect = "batch_read"
+carrier = "Vec<StorageAuthorizationCollectionAccessQuery>"
+profile = "ordered_collection_decisions"

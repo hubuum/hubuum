@@ -44,20 +44,6 @@ impl LocalPermissionBackend {
             admin_groupname,
         }
     }
-
-    async fn collection_allows(
-        &self,
-        principal: &PrincipalRef,
-        collection_id: i32,
-        permissions: Vec<Permissions>,
-    ) -> Result<bool, ApiError> {
-        let query = StorageAuthorizationCollectionAccessQuery::new(
-            principal_id_to_storage(principal.user_id),
-            collection_id_to_storage(collection_id),
-            permissions.into_iter().map(permission_to_storage),
-        );
-        Ok(self.storage.authorize_local_collection(query).await?)
-    }
 }
 
 #[async_trait]
@@ -73,53 +59,63 @@ impl PermissionBackend for LocalPermissionBackend {
         let request_count = requests.len();
         let is_admin = self.is_admin(principal).await?;
 
-        let mut decisions = Vec::with_capacity(requests.len());
-        for request in requests {
-            if is_admin {
-                decisions.push(PermissionDecision::Allow);
-                continue;
+        let decisions = if is_admin {
+            vec![PermissionDecision::Allow; request_count]
+        } else {
+            let mut checks = Vec::new();
+            let mut ranges = Vec::with_capacity(request_count);
+            for request in requests {
+                let collections = match request.resource.kind() {
+                    ResourceKind::System => None,
+                    ResourceKind::ClassRelation | ResourceKind::ObjectRelation => {
+                        match (
+                            request.resource.fields().from_collection_id,
+                            request.resource.fields().to_collection_id,
+                        ) {
+                            (Some(from), Some(to)) if from == to => Some(vec![from]),
+                            (Some(from), Some(to)) => Some(vec![from, to]),
+                            _ => None,
+                        }
+                    }
+                    _ => request.resource.collection_id().map(|id| vec![id]),
+                };
+                ranges.push(collections.map(|collections| {
+                    let start = checks.len();
+                    for collection in collections {
+                        checks.push(StorageAuthorizationCollectionAccessQuery::new(
+                            principal_id_to_storage(principal.user_id),
+                            collection_id_to_storage(collection),
+                            request
+                                .permissions
+                                .iter()
+                                .copied()
+                                .map(permission_to_storage),
+                        ));
+                    }
+                    start..checks.len()
+                }));
             }
-
-            let allowed = match request.resource.kind() {
-                ResourceKind::System => false,
-                ResourceKind::ClassRelation | ResourceKind::ObjectRelation => {
-                    match (
-                        request.resource.fields().from_collection_id,
-                        request.resource.fields().to_collection_id,
-                    ) {
-                        (Some(from_ns_id), Some(to_ns_id)) if from_ns_id == to_ns_id => {
-                            self.collection_allows(principal, from_ns_id, request.permissions)
-                                .await?
-                        }
-                        (Some(from_ns_id), Some(to_ns_id)) => {
-                            self.collection_allows(
-                                principal,
-                                from_ns_id,
-                                request.permissions.clone(),
-                            )
-                            .await?
-                                && self
-                                    .collection_allows(principal, to_ns_id, request.permissions)
-                                    .await?
-                        }
-                        _ => false,
+            let expected = checks.len();
+            let allowed = self
+                .storage
+                .authorize_local_collection_batch(checks)
+                .await?;
+            if allowed.len() != expected {
+                return Err(ApiError::InternalServerError(
+                    "Storage returned an unexpected number of collection decisions".into(),
+                ));
+            }
+            ranges
+                .into_iter()
+                .map(|range| {
+                    if range.is_some_and(|range| allowed[range].iter().all(|allowed| *allowed)) {
+                        PermissionDecision::Allow
+                    } else {
+                        PermissionDecision::Deny
                     }
-                }
-                _ => match request.resource.collection_id() {
-                    Some(collection_id) => {
-                        self.collection_allows(principal, collection_id, request.permissions)
-                            .await?
-                    }
-                    None => false,
-                },
-            };
-
-            decisions.push(if allowed {
-                PermissionDecision::Allow
-            } else {
-                PermissionDecision::Deny
-            });
-        }
+                })
+                .collect::<Vec<_>>()
+        };
 
         let allow_count = decisions
             .iter()

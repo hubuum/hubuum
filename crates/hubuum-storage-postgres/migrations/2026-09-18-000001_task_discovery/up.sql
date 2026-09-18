@@ -1,3 +1,10 @@
+-- Discovery backfill and indexes are installed atomically with the new column.
+-- Deploy during a quiet period: the table/index builds take write locks.
+-- Bounded lock waits and statements abort and roll back the whole migration;
+-- retry after resolving contention or provisioning capacity for retained history.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 ALTER TABLE tasks ADD COLUMN discovery_metadata jsonb;
 CREATE FUNCTION valid_task_discovery(metadata jsonb, task_kind text) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -74,21 +81,8 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END;
 $$;
-ALTER TABLE tasks ADD CONSTRAINT tasks_discovery_metadata_shape CHECK (valid_task_discovery(discovery_metadata, kind));
-CREATE INDEX tasks_discovery_class_idx ON tasks
-    ((COALESCE(discovery_metadata->'data'->>'class_id', discovery_metadata->'data'->'target'->>'class_id')), id);
-CREATE INDEX tasks_discovery_object_idx ON tasks
-    ((discovery_metadata->'data'->'target'->>'object_id'), id);
-CREATE INDEX tasks_discovery_collection_idx ON tasks
-    ((discovery_metadata->'data'->'target'->>'collection_id'), id);
-CREATE INDEX tasks_discovery_relation_idx ON tasks
-    (((discovery_metadata->'data'->'target'->>'type') || ':' || (discovery_metadata->'data'->'target'->>'relation_id')), id);
-CREATE INDEX tasks_discovery_remote_target_idx ON tasks
-    ((discovery_metadata->'data'->>'remote_target_id'), id);
-CREATE INDEX tasks_discovery_template_idx ON tasks
-    ((discovery_metadata->'data'->>'template_id'), id);
-CREATE INDEX schema_validation_work_history_idx ON schema_validation_work
-    (class_id, schema_revision, kind, task_id);
+ALTER TABLE tasks ADD CONSTRAINT tasks_discovery_metadata_shape CHECK (valid_task_discovery(discovery_metadata, kind)) NOT VALID;
+
 
 -- Artifact insertion already occurs inside the fenced finalization transaction.
 -- Keep summaries on the task when retention subsequently deletes the artifact.
@@ -195,3 +189,20 @@ WITH candidates AS (
 )
 UPDATE tasks t SET discovery_metadata = c.metadata FROM candidates c
 WHERE c.id = t.id AND valid_task_discovery(c.metadata,c.kind);
+
+ALTER TABLE tasks VALIDATE CONSTRAINT tasks_discovery_metadata_shape;
+
+CREATE INDEX tasks_discovery_class_idx ON tasks
+    ((COALESCE(discovery_metadata->'data'->>'class_id', discovery_metadata->'data'->'target'->>'class_id')), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX tasks_discovery_object_idx ON tasks
+    ((discovery_metadata->'data'->'target'->>'object_id'), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX tasks_discovery_collection_idx ON tasks
+    ((discovery_metadata->'data'->'target'->>'collection_id'), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX tasks_discovery_relation_idx ON tasks
+    (((discovery_metadata->'data'->'target'->>'type') || ':' || (discovery_metadata->'data'->'target'->>'relation_id')), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX tasks_discovery_remote_target_idx ON tasks
+    ((discovery_metadata->'data'->>'remote_target_id'), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX tasks_discovery_template_idx ON tasks
+    ((discovery_metadata->'data'->>'template_id'), id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX schema_validation_work_history_idx ON schema_validation_work
+    (class_id, schema_revision, kind, task_id); -- hubuum-compat: bounded-transactional-index

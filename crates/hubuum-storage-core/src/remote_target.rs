@@ -304,6 +304,11 @@ pub struct StorageRemoteTarget {
 
 impl StorageRemoteTarget {
     #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
         collection_id: CollectionId,

@@ -1,3 +1,4 @@
+mod authorization_resources;
 mod event_delivery;
 mod schema_evolution;
 mod task_control;

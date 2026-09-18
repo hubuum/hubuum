@@ -264,3 +264,72 @@ pub(crate) async fn authorize_object_relation_candidates(
     .map(|(relation, _)| relation)
     .collect())
 }
+
+/// Load a page's current authorization facts without per-resource lookups.
+pub(crate) async fn task_authorization_resources(
+    backend: &impl StorageContext,
+    keys: impl IntoIterator<Item = hubuum_storage_core::StorageAuthorizationResourceKey>,
+) -> Result<HashMap<hubuum_storage_core::StorageAuthorizationResourceKey, ResourceRef>, ApiError> {
+    use hubuum_storage_core::{
+        StorageAuthorizationResource as R, StorageAuthorizationResourcesQuery,
+    };
+    Ok(storage_handle(backend)
+        .load_authorization_resources(StorageAuthorizationResourcesQuery::new(keys))
+        .await?
+        .into_iter()
+        .map(|resource| {
+            let key = resource.key();
+            let resource = match resource {
+                R::Class { resource, name } => ResourceRef::class(
+                    resource.id().id(),
+                    resource.collection_id().id(),
+                    Some(name),
+                ),
+                R::Object(resource) => ResourceRef::object(
+                    resource.id().id(),
+                    ClassResourceEndpoint::new(
+                        resource.collection_id().id(),
+                        resource.class_id().id(),
+                    ),
+                    Some(resource.name().to_owned()),
+                ),
+                R::Collection { id, name } => ResourceRef::named_collection(id.id(), Some(name)),
+                R::ExportTemplate {
+                    id,
+                    collection_id,
+                    name,
+                } => ResourceRef::template(id.id(), collection_id.id(), Some(name)),
+                R::RemoteTarget {
+                    id,
+                    collection_id,
+                    name,
+                } => ResourceRef::remote_target(id.id(), collection_id.id(), Some(name)),
+                R::ClassRelation { id, from, to } => ResourceRef::class_relation(
+                    Some(id.id()),
+                    ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
+                    ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
+                ),
+                R::ObjectRelation {
+                    id,
+                    from,
+                    to,
+                    class_relation_id,
+                } => ResourceRef::object_relation(
+                    Some(id.id()),
+                    ObjectResourceEndpoint::new(
+                        from.collection_id().id(),
+                        from.class_id().id(),
+                        from.id().id(),
+                    ),
+                    ObjectResourceEndpoint::new(
+                        to.collection_id().id(),
+                        to.class_id().id(),
+                        to.id().id(),
+                    ),
+                    class_relation_id.id(),
+                ),
+            };
+            (key, resource)
+        })
+        .collect())
+}

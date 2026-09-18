@@ -5,6 +5,7 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod authorization;
+mod authorization_resources;
 mod backend;
 mod backup_snapshot;
 pub mod capabilities;
@@ -63,6 +64,10 @@ pub use authorization::{
     StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
     StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
     StorageAuthorizationResourceIds,
+};
+pub use authorization_resources::{
+    StorageAuthorizationResource, StorageAuthorizationResourceKey,
+    StorageAuthorizationResourcesQuery,
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
