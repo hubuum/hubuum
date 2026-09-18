@@ -250,6 +250,7 @@ pub struct StorageTaskCreateRequest {
     kind: StorageTaskKind,
     submitted_by: PrincipalId,
     request_payload: Value,
+    metadata: Option<crate::StorageTaskMetadata>,
     total_items: i32,
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
@@ -259,6 +260,11 @@ pub struct StorageTaskCreateRequest {
 }
 
 impl StorageTaskCreateRequest {
+    #[must_use]
+    pub const fn metadata(&self) -> Option<&crate::StorageTaskMetadata> {
+        self.metadata.as_ref()
+    }
+
     #[must_use]
     pub fn builder(
         kind: StorageTaskKind,
@@ -270,6 +276,7 @@ impl StorageTaskCreateRequest {
             kind,
             submitted_by,
             request_payload,
+            metadata: None,
             total_items,
             idempotency_key: None,
             request_hash: None,
@@ -344,6 +351,7 @@ pub struct StorageTaskCreateRequestBuilder {
     kind: StorageTaskKind,
     submitted_by: PrincipalId,
     request_payload: Value,
+    metadata: Option<crate::StorageTaskMetadata>,
     total_items: i32,
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
@@ -352,6 +360,12 @@ pub struct StorageTaskCreateRequestBuilder {
 }
 
 impl StorageTaskCreateRequestBuilder {
+    #[must_use]
+    pub fn metadata(mut self, metadata: Option<crate::StorageTaskMetadata>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     #[must_use]
     pub fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
         self.idempotency_key = idempotency_key;
@@ -380,6 +394,13 @@ impl StorageTaskCreateRequestBuilder {
         self,
         maximum_active_tasks: usize,
     ) -> Result<StorageTaskCreateRequest, StorageError> {
+        if self
+            .metadata
+            .as_ref()
+            .is_some_and(|value| value.kind() != self.kind)
+        {
+            return Err(StorageError::invalid_input("Task metadata kind mismatch"));
+        }
         if self.total_items < 0 {
             return Err(StorageError::invalid_input(
                 "Task total_items must not be negative",
@@ -395,6 +416,7 @@ impl StorageTaskCreateRequestBuilder {
             kind: self.kind,
             submitted_by: self.submitted_by,
             request_payload: self.request_payload,
+            metadata: self.metadata,
             total_items: self.total_items,
             idempotency_key: self.idempotency_key,
             request_hash: self.request_hash,
@@ -414,6 +436,8 @@ pub struct StorageTask {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
+    metadata: Option<crate::StorageTaskMetadata>,
+    discovery_state: crate::StorageTaskDiscoveryState,
     summary: Option<String>,
     progress: StorageTaskProgress,
     scope_snapshot: StorageTaskScopeSnapshot,
@@ -433,6 +457,19 @@ pub struct StorageTask {
 
 impl StorageTask {
     #[must_use]
+    pub const fn discovery_state(&self) -> &crate::StorageTaskDiscoveryState {
+        &self.discovery_state
+    }
+    pub fn set_discovery_state(&mut self, state: crate::StorageTaskDiscoveryState) {
+        self.discovery_state = state;
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> Option<&crate::StorageTaskMetadata> {
+        self.metadata.as_ref()
+    }
+
+    #[must_use]
     pub fn builder(
         id: TaskId,
         kind: StorageTaskKind,
@@ -449,6 +486,8 @@ impl StorageTask {
                 idempotency_key: None,
                 request_hash: None,
                 request_payload: None,
+                metadata: None,
+                discovery_state: crate::StorageTaskDiscoveryState::default(),
                 summary: None,
                 progress: StorageTaskProgress::default(),
                 scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
@@ -607,6 +646,12 @@ pub struct StorageTaskBuilder {
 
 impl StorageTaskBuilder {
     #[must_use]
+    pub fn metadata(mut self, metadata: Option<crate::StorageTaskMetadata>) -> Self {
+        self.task.metadata = metadata;
+        self
+    }
+
+    #[must_use]
     pub fn control(mut self, control: StorageTaskControl) -> Self {
         self.task.control = control;
         self
@@ -712,6 +757,17 @@ impl StorageTaskBuilder {
 
     /// Validate and build a task projection returned by a storage adapter.
     pub fn try_build(self) -> Result<StorageTask, StorageValidationError> {
+        if self
+            .task
+            .metadata
+            .as_ref()
+            .is_some_and(|value| value.kind() != self.task.kind)
+        {
+            return Err(StorageValidationError::invalid(
+                "Task metadata kind mismatch",
+            ));
+        }
+
         if self.task.control.kind() != self.task.kind {
             return Err(StorageValidationError::invalid(
                 "Task control kind must match the task",
@@ -845,6 +901,7 @@ impl StorageTaskAccess {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskListQuery {
+    search: Option<crate::StorageTaskSearch>,
     submitted_by: Option<PrincipalId>,
     kind: Option<StorageTaskKind>,
     excluded_kind: Option<StorageTaskKind>,
@@ -864,9 +921,21 @@ impl StorageTaskListQuery {
             submitted_by,
             kind,
             excluded_kind: None,
+            search: None,
             status,
             options,
         }
+    }
+
+    #[must_use]
+    pub fn searching(mut self, search: crate::StorageTaskSearch) -> Self {
+        self.search = Some(search);
+        self
+    }
+
+    #[must_use]
+    pub fn search(&self) -> Option<&crate::StorageTaskSearch> {
+        self.search.as_ref()
     }
 
     /// Exclude a restricted kind before counting or applying pagination.

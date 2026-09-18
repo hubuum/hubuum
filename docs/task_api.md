@@ -292,19 +292,82 @@ Sorting:
 
 Filters:
 
-- `kind` (optional): `import`, `export`, `backup`, `reindex`, `remote_call`
-- `status` (optional): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
+- `kind` (optional, comma-separated): `import`, `export`, `backup`, `reindex`, `remote_call`, `schema_validation`
+- `status` (optional, comma-separated): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
 - `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
+- `terminal`: `true` selects succeeded, failed, partially succeeded, or cancelled;
+  `false` selects queued, validating, or running. Explicit statuses must agree.
+- `created_after`, `created_before`, `started_after`, `started_before`,
+  `finished_after`, `finished_before`: timezone-qualified RFC 3339 timestamps.
+  Lower bounds are inclusive; upper bounds are exclusive. Null timestamps do
+  not match a range. Paired bounds must have `after < before`.
+- `cancel_requested`: boolean matching durable cancellation intent.
+- `terminal_reason`: `cancel_requested` or `deadline_exceeded`.
+- `trace_id`: a nonzero 32-digit hexadecimal originating trace ID.
+
+Different filters combine with AND; kinds and statuses within their respective
+comma-separated lists combine with OR. Single-value requests remain supported.
+Duplicate filter parameters, empty lists, invalid values, unsupported filters,
+and statuses that contradict `terminal` return `400`. Keep all filters when
+following cursors. Schema tasks remain restricted to unscoped administrators.
 
 Example:
 
 ```text
 GET /api/v1/tasks?kind=import&status=running&submitted_by=7&sort=id.desc&limit=25
+GET /api/v1/tasks?kind=export,backup&terminal=true&sort=finished_at.desc,id.desc
 ```
 
 ### Details
 
-`details` is reserved for typed task-kind-specific data.
+`details` contains exactly one typed task-kind variant when its associated
+resources are authorized. It now includes `schema_validation`, `reindex` and
+`remote_call`; exhaustive client decoders must handle these variants.
+Schema details expose the captured class/revision and, while work is retained,
+its kind, status and existing JSON results URL. Polling never assembles reports.
+Rebuild details contain class and computation revision. Remote-call details
+contain the configuration identity and explicit subject.
+
+Import, export and backup details include a `retained` object containing captured
+options. Export retained facts include scope, explicit target, resolved template
+identity, effective limits, warning count, truncation and output state. These
+facts survive payload redaction and artifact purge until the task is deleted.
+Missing historical facts are null, not false. Import and full-system backup
+searches never infer per-resource targets from their contents.
+
+Additional task filters:
+
+| Parameters | Meaning |
+| --- | --- |
+| `class_id`, `object_id`, `collection_id` | Explicit operation target or captured class context |
+| `relation_type`, `relation_id` | Both required; type is `class_relation` or `object_relation` |
+| `schema_revision` | Target revision; requires `class_id` |
+| `schema_work_kind`, `schema_work_status` | Kind/status of retained schema work |
+| `computation_revision` | Target computation revision; requires `class_id` |
+| `remote_target_id`, `remote_side_effect_state` | Configuration identity; `not_sent`, `possibly_sent`, `legacy_unknown` |
+| `export_scope_kind`, `export_template_id` | Captured scope and resolved template identity |
+| `export_has_warnings`, `export_truncated` | Known boolean outcomes |
+| `import_dry_run`, `import_atomicity`, `import_collision_policy`, `import_permission_policy`, `import_has_failed_items` | Retained effective options and known terminal outcome |
+| `backup_include_history` | Effective backup history option |
+| `output_state` | `available`, `expired`, `not_produced`, `unknown`; exports/backups only |
+
+Task-specific filters imply applicable kinds. Conflicting kind restrictions return
+`400`. Boolean predicates match known values only. Output expiry uses one instant
+per list request. `available` means a retained downloadable artifact; `expired`
+means output was produced but is no longer downloadable; `not_produced` means
+known absence of output; `unknown` means historical evidence is unavailable.
+
+Resource searches do not infer present-day class/collection membership or parse
+export query text for targets. Resource and configuration references require
+current authorization before matching or counting. Associated details and output
+links are suppressed when access cannot be established; basic authorized task
+status remains available. Result endpoints enforce the same resource access.
+
+Deploy migration `2026-09-18-000001_task_discovery` before starting the new server.
+Backfill uses only retained payloads, schema work and artifacts, so historical
+coverage is incomplete. Backups retain metadata; older backups without it remain
+accepted. Task success remains distinct from domain findings and current schema
+applicability.
 
 Current example:
 

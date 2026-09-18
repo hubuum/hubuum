@@ -7,6 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Task discovery across all six task kinds: durable explicit targets, retained
+  options, schema-work result links, export outcomes and output retention state.
+  Search by resources, operation options and revisions alongside comma-separated
+  lifecycle states, timestamp ranges, cancellation intent and trace IDs.
+  Searches authorize referenced resources before exposing matches and counts.
+- **Breaking storage SDK contract change:** adapters must persist validated
+  `StorageTaskMetadata`, project retained schema-work and artifact state, and
+  apply `StorageTaskSearch` (including `TaskDiscoverySearch`) before counting
+  or pagination. Upgrade adapters before using the new search parameters.
+- **Upgrade requirement:** apply migration `2026-09-18-000001_task_discovery`
+  before starting the upgraded server. Historical coverage depends on retained
+  payloads, schema work and artifacts; unavailable facts remain unknown.
+  Older backups without discovery metadata remain accepted. Clients with
+  exhaustive task-detail decoders must add schema-validation, rebuild and
+  remote-call variants.
+
 ## [0.0.15] - 2026-09-15
 
 ### Added

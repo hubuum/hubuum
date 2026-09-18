@@ -54,6 +54,7 @@ pub(crate) struct TaskRow {
     pub(super) import_effects_committed_at: Option<NaiveDateTime>,
     pub(super) remote_dispatched_at: Option<NaiveDateTime>,
     pub(super) terminal_reason: Option<String>,
+    pub(super) discovery_metadata: Option<Value>,
 }
 
 impl TaskRow {
@@ -76,6 +77,15 @@ impl TaskRow {
         )?;
         let trace_link = self.trace_link()?;
         let control = self.control(kind)?;
+        let metadata = self
+            .discovery_metadata
+            .map(|value| {
+                crate::validate_persisted(
+                    "task metadata",
+                    hubuum_storage_core::StorageTaskMetadata::from_persisted(kind, value),
+                )
+            })
+            .transpose()?;
         let task = StorageTask::builder(
             TaskId::new(self.id)?,
             kind,
@@ -88,6 +98,7 @@ impl TaskRow {
         .idempotency_key(self.idempotency_key)
         .request_hash(self.request_hash)
         .request_payload(self.request_payload)
+        .metadata(metadata)
         .summary(self.summary)
         .progress(progress)
         .scope_snapshot(StorageTaskScopeSnapshot::new(
@@ -265,6 +276,7 @@ mod tests {
             import_effects_committed_at: None,
             remote_dispatched_at: None,
             terminal_reason: None,
+            discovery_metadata: None,
         }
     }
 

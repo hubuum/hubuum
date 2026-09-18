@@ -1664,3 +1664,79 @@ mod budgets;
 
 mod impact;
 mod repair;
+
+#[rstest::rstest]
+#[case::memory(StorageBackendKind::Memory)]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[actix_web::test]
+async fn retained_schema_work_is_discoverable_without_assembling_reports(
+    #[case] backend: StorageBackendKind,
+    #[values(false, true)] completed: bool,
+) {
+    use hubuum_storage_core::{
+        StorageTaskSearch, TaskDiscoveryPredicate as P, TaskDiscoverySearch,
+    };
+    let fixture = SchemaFixture::new(backend, vec![json!({"value": 1})]).await;
+    let revision = fixture.stage(json!({"type": "object"}), true).await;
+    let work = fixture
+        .request(revision.reference(), StorageSchemaWorkKind::Impact)
+        .await;
+    let work = if completed {
+        fixture
+            .finish(work, StorageSchemaBatchLimits::default())
+            .await
+    } else {
+        work
+    };
+    let search = StorageTaskSearch::default()
+        .discovering(
+            TaskDiscoverySearch::try_new(
+                vec![
+                    P::Class(fixture.class_id()),
+                    P::SchemaRevision(revision.reference().revision()),
+                    P::SchemaWorkKind(StorageSchemaWorkKind::Impact),
+                    P::SchemaWorkStatus(work.status()),
+                ],
+                chrono::Utc::now(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let query = StorageTaskListQuery::new(
+        None,
+        None,
+        None,
+        QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, true).unwrap(),
+    )
+    .searching(search);
+    let pending = fixture.backend.list_tasks(query);
+    let page = if backend == StorageBackendKind::Postgres {
+        let (result, queries) = hubuum_storage_postgres::capture_queries(pending).await;
+        assert_eq!(queries.domain_queries(), 3, "{:?}", queries.query_counts());
+        assert_eq!(queries.queries_matching("schema_impact_findings"), 0);
+        assert_eq!(queries.queries_matching("schema_repair_reports"), 0);
+        result.unwrap()
+    } else {
+        pending.await.unwrap()
+    };
+    let (mut tasks, count) = page.into_parts();
+    assert_eq!(count, Some(1));
+    assert_eq!(tasks.len(), 1);
+    let response = crate::services::tasks::task_from_storage(tasks.remove(0))
+        .unwrap()
+        .to_response()
+        .unwrap();
+    let Some(crate::models::TaskDetails::SchemaValidation(details)) = response.details else {
+        panic!("expected schema task discovery details");
+    };
+    assert_eq!(details.work_status, Some(work.status()));
+    assert_eq!(
+        details.results_url,
+        Some(format!(
+            "/api/v1/classes/{}/schema/tasks/{}",
+            fixture.class_id().id(),
+            work.task_id().id()
+        ))
+    );
+    fixture.cleanup().await;
+}

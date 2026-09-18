@@ -269,9 +269,15 @@ pub async fn run_template_export(
     )
     .template(template)
     .idempotency_key(idempotency_key);
-    let task = submit_export_task(&context, user, submission).await?;
+    let mut task = submit_export_task(&context, user, submission).await?;
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     kick_task_worker(context.clone());
-    let response = task.to_response()?;
+    let output = crate::services::tasks::export_output_summary(
+        &context,
+        crate::models::TaskID::new(task.id)?,
+    )
+    .await?;
+    let response = task.to_response_with_export_output(output.as_ref())?;
 
     Ok(ApiResponse::accepted_at(
         response,

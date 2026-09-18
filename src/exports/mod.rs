@@ -1131,8 +1131,22 @@ fn validate_export_submission(runtime: &ExportRuntime) -> Result<(), ApiError> {
 
 fn runtime_to_task_payload(runtime: &ExportRuntime) -> Result<StoredExportTaskPayload, ApiError> {
     validate_export_submission(runtime)?;
+    let mut export = runtime.export.clone();
+    let max_items = prepare_query_options(&export)?
+        .limit()
+        .map(|limit| limit.saturating_sub(1));
+    let max_output_bytes = export
+        .limits
+        .as_ref()
+        .and_then(|limits| limits.max_output_bytes)
+        .unwrap_or_else(configured_export_max_output_bytes);
+    export.limits = Some(crate::models::ExportLimits {
+        max_items,
+        max_output_bytes: Some(max_output_bytes),
+    });
+    export.missing_data_policy = Some(runtime.missing_data_policy);
     Ok(StoredExportTaskPayload {
-        export: runtime.export.clone(),
+        export,
         template_id: runtime.template.as_ref().map(|template| template.id),
     })
 }

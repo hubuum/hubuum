@@ -1706,6 +1706,9 @@ fn validated_facts_remain_typed_across_application_storage_boundaries() {
             "Backup".to_string(),
             "Export".to_string(),
             "Import".to_string(),
+            "SchemaValidation".to_string(),
+            "Reindex".to_string(),
+            "RemoteCall".to_string(),
         ]),
         "task details must use mutually exclusive variants"
     );

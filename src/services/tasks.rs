@@ -29,6 +29,7 @@ use crate::storage::{
     StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
+use hubuum_storage_core::StorageTaskSearch;
 
 pub(crate) struct TaskSubmission {
     kind: TaskKind,
@@ -365,23 +366,28 @@ pub(crate) async fn submit_task(
         task.kind = task_kind.as_str(),
         task.outcome = field::Empty,
     );
+    let metadata = super::task_discovery::capture(task_kind, &submission.payload)?;
     let request = StorageTaskCreateRequest::builder(
         task_kind,
         principal_id_to_storage(submission.submitted_by.id()),
         submission.payload,
         submission.total_items,
     )
+    .metadata(Some(metadata))
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
     .trace_link(telemetry::trace_link_from_span(&span))
     .try_build(submission.maximum_active_tasks)?;
     async move {
-        let result = storage_handle(backend)
-            .create_task(request)
-            .await
-            .map_err(ApiError::from)
-            .and_then(task_from_storage);
+        let result = async {
+            let task = storage_handle(backend).create_task(request).await?;
+            if task.status().is_terminal() {
+                return find_task(backend, task.id()).await;
+            }
+            task_from_storage(task)
+        }
+        .await;
         tracing::Span::current().record(
             "task.outcome",
             if result.is_ok() {
@@ -543,8 +549,7 @@ where
 pub(crate) async fn list_tasks(
     backend: &impl StorageContext,
     submitted_by: Option<i32>,
-    kind: Option<TaskKind>,
-    status: Option<TaskStatus>,
+    search: StorageTaskSearch,
     excluded_kind: Option<TaskKind>,
     options: QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
@@ -552,11 +557,12 @@ pub(crate) async fn list_tasks(
         .list_tasks(
             StorageTaskListQuery::new(
                 submitted_by.map(principal_id_to_storage),
-                kind.map(task_kind_to_storage),
-                status.map(task_status_to_storage),
+                None,
+                None,
                 options,
             )
-            .excluding_kind(excluded_kind.map(task_kind_to_storage)),
+            .excluding_kind(excluded_kind.map(task_kind_to_storage))
+            .searching(search),
         )
         .await?
         .into_parts();
@@ -729,6 +735,9 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
     let scope = task.scope_snapshot();
     let progress = task.progress();
     Ok(TaskRecord {
+        discovery_metadata: task.metadata().cloned(),
+        discovery_state: task.discovery_state().clone(),
+        discovery_authorized: true,
         control: task.control().clone(),
         id: task.id().id(),
         kind: kind.as_str().to_string(),
@@ -997,5 +1006,5 @@ pub(crate) async fn cancel_task(
         )
         .await?;
     crate::observability::metrics::task_cancellation_requested(&outcome);
-    task_from_storage(outcome.into_task())
+    find_task(backend, outcome.task().id()).await
 }

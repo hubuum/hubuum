@@ -193,6 +193,7 @@ struct NewInternalTaskRow {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
+    discovery_metadata: Option<Value>,
     summary: Option<String>,
     total_items: i32,
     processed_items: i32,
@@ -1474,6 +1475,26 @@ async fn insert_internal_task_with_event(
     actor_id: Option<i32>,
     record_queue_event: bool,
 ) -> Result<TaskRow, PostgresStorageError> {
+    let data = match kind {
+        StorageTaskKind::SchemaValidation => {
+            json!({"kind":"schema_validation", "class_id":payload["class_id"], "schema_revision":payload["schema_revision"], "work_kind":payload["kind"]})
+        }
+        StorageTaskKind::Reindex => {
+            json!({"kind":"reindex", "class_id":payload["class_id"], "computation_revision":payload["target_revision"]})
+        }
+        _ => {
+            return Err(PostgresStorageError::database(
+                "Unexpected internal task kind",
+            ));
+        }
+    };
+    let metadata = crate::validate_persisted(
+        "internal task metadata",
+        hubuum_storage_core::StorageTaskMetadata::from_persisted(
+            kind,
+            json!({"version":1,"data":data}),
+        ),
+    )?;
     let trace_link = crate::runtime::ambient_mutation_trace_link();
     let task = diesel::insert_into(crate::schema::tasks::table)
         .values(NewInternalTaskRow {
@@ -1483,6 +1504,7 @@ async fn insert_internal_task_with_event(
             idempotency_key: None,
             request_hash: None,
             request_payload: Some(payload),
+            discovery_metadata: Some(metadata.to_value()),
             summary: None,
             total_items,
             processed_items: 0,

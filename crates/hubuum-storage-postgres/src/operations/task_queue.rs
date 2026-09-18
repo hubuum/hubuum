@@ -6,7 +6,8 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{BigInt, Bool};
 use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
@@ -21,7 +22,7 @@ use hubuum_storage_core::{
     StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
     StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskDurations,
     StorageTaskEvent, StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskStatus,
+    StorageTaskSearch, StorageTaskStatus,
 };
 use serde_json::{Value, json};
 
@@ -43,6 +44,7 @@ struct NewTaskRow {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
+    discovery_metadata: Option<Value>,
     summary: Option<String>,
     total_items: i32,
     processed_items: i32,
@@ -73,6 +75,7 @@ impl NewTaskRow {
                 .map(|key| key.as_str().to_string()),
             request_hash: request.request_hash().map(str::to_string),
             request_payload: Some(request.request_payload().clone()),
+            discovery_metadata: request.metadata().map(|metadata| metadata.to_value()),
             summary: None,
             total_items: request.total_items(),
             processed_items: 0,
@@ -395,11 +398,13 @@ pub async fn get_task_access(
                     .optional()?,
                 None => None,
             };
+            let mut task = task.into_storage()?;
+            super::task_discovery::enrich(connection, std::slice::from_mut(&mut task)).await?;
             Ok::<_, PostgresStorageError>((task, owner_group_id))
         })
         .await?;
     Ok(StorageTaskAccess::new(
-        task.into_storage()?,
+        task,
         owner_group_id.map(GroupId::new).transpose()?,
     ))
 }
@@ -408,6 +413,7 @@ pub async fn list_tasks(
     runtime: &PostgresRuntime,
     query: StorageTaskListQuery,
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
+    let search = query.search().cloned().unwrap_or_default();
     let excluded_kind = query.excluded_kind();
     let (submitted_by, kind, status, options) = query.into_parts();
     let submitted_by = submitted_by.map(PrincipalId::id);
@@ -422,6 +428,7 @@ pub async fn list_tasks(
                     kind,
                     status,
                     excluded_kind,
+                    &search,
                     &options,
                 )
                 .await
@@ -436,6 +443,7 @@ pub async fn list_tasks(
                     kind,
                     status,
                     excluded_kind,
+                    &search,
                     &options,
                 )
                 .await
@@ -617,6 +625,7 @@ fn build_task_query(
     kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
     excluded_kind: Option<StorageTaskKind>,
+    search: &StorageTaskSearch,
 ) -> crate::schema::tasks::BoxedQuery<'static, diesel::pg::Pg> {
     use crate::schema::tasks::dsl as stored;
     let mut query = stored::tasks.into_boxed();
@@ -632,7 +641,99 @@ fn build_task_query(
     if let Some(excluded_kind) = excluded_kind {
         query = query.filter(stored::kind.ne(excluded_kind.as_str()));
     }
+    if let Some(values) = search.kinds() {
+        query = query
+            .filter(stored::kind.eq_any(values.iter().map(|v| v.as_str()).collect::<Vec<_>>()));
+    }
+    if let Some(values) = search.statuses() {
+        query = query
+            .filter(stored::status.eq_any(values.iter().map(|v| v.as_str()).collect::<Vec<_>>()));
+    }
+    if let Some(value) = search.cancel_requested() {
+        if value {
+            query = query.filter(stored::cancel_requested_at.is_not_null());
+        } else {
+            query = query.filter(stored::cancel_requested_at.is_null());
+        }
+    }
+    if let Some(value) = search.terminal_reason() {
+        query = query.filter(stored::terminal_reason.eq(value.as_str()));
+    }
+    if let Some(value) = search.trace_id() {
+        query = query.filter(stored::trace_id.eq(value.to_owned()));
+    }
+    if let Some(value) = search.created().after() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::created_at.ge(value)),
+            None => query.filter(sql::<Bool>("FALSE")),
+        };
+    }
+    if let Some(value) = search.created().before() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::created_at.lt(value)),
+            None => query.filter(stored::created_at.is_not_null()),
+        };
+    }
+    if let Some(value) = search.started().after() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::started_at.ge(value)),
+            None => query.filter(sql::<Bool>("FALSE")),
+        };
+    }
+    if let Some(value) = search.started().before() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::started_at.lt(value)),
+            None => query.filter(stored::started_at.is_not_null()),
+        };
+    }
+    if let Some(value) = search.finished().after() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::finished_at.ge(value)),
+            None => query.filter(sql::<Bool>("FALSE")),
+        };
+    }
+    if let Some(value) = search.finished().before() {
+        query = match task_search_timestamp(value) {
+            Some(value) => query.filter(stored::finished_at.lt(value)),
+            None => query.filter(stored::finished_at.is_not_null()),
+        };
+    }
+    if let Some(discovery) = search.discovery() {
+        for predicate in discovery.predicates() {
+            if let Some((expression, value)) =
+                super::task_discovery::predicate_expression(predicate)
+            {
+                query = query.filter(
+                    sql::<Bool>(&format!("({expression}) = "))
+                        .bind::<diesel::sql_types::Text, _>(value),
+                );
+            } else if let hubuum_storage_core::TaskDiscoveryPredicate::OutputState(state) =
+                predicate
+            {
+                let state = match state {
+                    hubuum_storage_core::TaskOutputState::Available => "available",
+                    hubuum_storage_core::TaskOutputState::Expired => "expired",
+                    hubuum_storage_core::TaskOutputState::NotProduced => "not_produced",
+                    hubuum_storage_core::TaskOutputState::Unknown => "unknown",
+                };
+                query = query.filter(sql::<Bool>("(CASE WHEN tasks.discovery_metadata->'data'->'output'->>'state' = 'produced' THEN CASE WHEN (tasks.discovery_metadata->'data'->'output'->>'expires_at')::timestamptz > ")
+                    .bind::<diesel::sql_types::Timestamptz,_>(discovery.evaluated_at())
+                    .sql(" AND (EXISTS (SELECT 1 FROM export_task_outputs e WHERE e.task_id = tasks.id) OR EXISTS (SELECT 1 FROM backup_task_outputs b WHERE b.task_id = tasks.id)) THEN 'available' ELSE 'expired' END WHEN tasks.discovery_metadata->'data'->'output'->>'state' = 'not_produced' THEN 'not_produced' ELSE 'unknown' END) = ")
+                    .bind::<diesel::sql_types::Text,_>(state.to_string()));
+            }
+        }
+    }
     query
+}
+
+// PostgreSQL stores microseconds. Both >= lower and < upper need a ceiling,
+// otherwise Diesel's truncation would change nanosecond boundary semantics.
+fn task_search_timestamp(value: DateTime<Utc>) -> Option<NaiveDateTime> {
+    let remainder = value.timestamp_subsec_nanos() % 1_000;
+    let adjustment = (1_000 - remainder) % 1_000;
+    value
+        .checked_add_signed(Duration::nanoseconds(i64::from(adjustment)))
+        .map(|value| value.naive_utc())
 }
 
 async fn list_tasks_on(
@@ -641,10 +742,11 @@ async fn list_tasks_on(
     kind: Option<StorageTaskKind>,
     status: Option<StorageTaskStatus>,
     excluded_kind: Option<StorageTaskKind>,
+    search: &StorageTaskSearch,
     options: &QueryOptions,
 ) -> Result<StoragePage<StorageTask>, PostgresStorageError> {
     let total = if options.include_total() {
-        let total = build_task_query(submitted_by, kind, status, excluded_kind)
+        let total = build_task_query(submitted_by, kind, status, excluded_kind, search)
             .count()
             .get_result::<i64>(connection)
             .await?;
@@ -654,7 +756,7 @@ async fn list_tasks_on(
     } else {
         None
     };
-    let mut storage_query = build_task_query(submitted_by, kind, status, excluded_kind);
+    let mut storage_query = build_task_query(submitted_by, kind, status, excluded_kind, search);
     let sql_fields = task_cursor_fields(options)?;
     crate::apply_query_options_with_fields!(
         storage_query,
@@ -666,12 +768,13 @@ async fn list_tasks_on(
             task_cursor_field(&FilterField::Id)?,
         )
     );
-    let tasks = storage_query
+    let mut tasks = storage_query
         .load::<TaskRow>(connection)
         .await?
         .into_iter()
         .map(TaskRow::into_storage)
         .collect::<Result<Vec<_>, _>>()?;
+    super::task_discovery::enrich(connection, &mut tasks).await?;
     crate::persisted_page(tasks, total)
 }
 

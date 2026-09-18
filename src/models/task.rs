@@ -213,6 +213,9 @@ pub use hubuum_domain::TaskId as TaskID;
 
 #[derive(Clone)]
 pub struct TaskRecord {
+    pub(crate) discovery_metadata: Option<hubuum_storage_core::StorageTaskMetadata>,
+    pub(crate) discovery_state: hubuum_storage_core::StorageTaskDiscoveryState,
+    pub(crate) discovery_authorized: bool,
     pub(crate) control: hubuum_storage_core::StorageTaskControl,
     pub id: i32,
     pub kind: String,
@@ -354,11 +357,13 @@ pub struct TaskLinks {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportTaskDetails {
+    pub retained: Option<RetainedImportDetails>,
     pub results_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportTaskDetails {
+    retained: Option<RetainedExportDetails>,
     output_url: String,
     state: ExportTaskOutputState,
 }
@@ -384,6 +389,7 @@ enum ExportTaskOutputState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 struct ExportTaskDetailsWire {
+    retained: Option<RetainedExportDetails>,
     output_url: String,
     output_available: bool,
     /// True when output was produced but has since passed its retention window. Distinguishes an
@@ -422,7 +428,11 @@ impl ExportTaskDetails {
             }
             ExportOutputLookup::Missing => ExportTaskOutputState::Missing,
         };
-        Self { output_url, state }
+        Self {
+            output_url,
+            state,
+            retained: None,
+        }
     }
 
     #[must_use]
@@ -458,6 +468,7 @@ impl ExportTaskDetails {
 
     fn into_wire(self) -> ExportTaskDetailsWire {
         let mut wire = ExportTaskDetailsWire {
+            retained: self.retained,
             output_url: self.output_url,
             output_available: false,
             output_expired: false,
@@ -603,6 +614,7 @@ impl<'de> Deserialize<'de> for ExportTaskDetails {
         };
         Ok(Self {
             output_url: wire.output_url,
+            retained: wire.retained,
             state,
         })
     }
@@ -618,6 +630,7 @@ impl ToSchema for ExportTaskDetails {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupTaskDetails {
+    retained: Option<RetainedBackupDetails>,
     output_url: String,
     state: BackupTaskOutputState,
 }
@@ -637,6 +650,7 @@ enum BackupTaskOutputState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 struct BackupTaskDetailsWire {
+    retained: Option<RetainedBackupDetails>,
     output_url: String,
     output_available: bool,
     output_expired: bool,
@@ -661,7 +675,11 @@ impl BackupTaskDetails {
             }
             BackupOutputLookup::Missing => BackupTaskOutputState::Missing,
         };
-        Self { output_url, state }
+        Self {
+            output_url,
+            state,
+            retained: None,
+        }
     }
 
     #[must_use]
@@ -685,6 +703,7 @@ impl BackupTaskDetails {
 
     fn into_wire(self) -> BackupTaskDetailsWire {
         let mut wire = BackupTaskDetailsWire {
+            retained: self.retained,
             output_url: self.output_url,
             output_available: false,
             output_expired: false,
@@ -775,6 +794,7 @@ impl<'de> Deserialize<'de> for BackupTaskDetails {
         };
         Ok(Self {
             output_url: wire.output_url,
+            retained: wire.retained,
             state,
         })
     }
@@ -788,11 +808,123 @@ impl PartialSchema for BackupTaskDetails {
 
 impl ToSchema for BackupTaskDetails {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TaskDiscoveryTarget {
+    Collection {
+        collection_id: crate::models::CollectionID,
+    },
+    Class {
+        class_id: crate::models::HubuumClassID,
+    },
+    Object {
+        class_id: Option<crate::models::HubuumClassID>,
+        object_id: crate::models::HubuumObjectID,
+    },
+    ClassRelation {
+        relation_id: crate::models::HubuumClassRelationID,
+    },
+    ObjectRelation {
+        relation_id: crate::models::HubuumObjectRelationID,
+    },
+}
+impl From<hubuum_storage_core::TaskExplicitTarget> for TaskDiscoveryTarget {
+    fn from(value: hubuum_storage_core::TaskExplicitTarget) -> Self {
+        use hubuum_storage_core::TaskExplicitTarget as T;
+        match value {
+            T::Collection { collection_id } => Self::Collection { collection_id },
+            T::Class { class_id } => Self::Class { class_id },
+            T::Object {
+                class_id,
+                object_id,
+            } => Self::Object {
+                class_id,
+                object_id,
+            },
+            T::ClassRelation { relation_id } => Self::ClassRelation { relation_id },
+            T::ObjectRelation { relation_id } => Self::ObjectRelation { relation_id },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct SchemaTaskDetails {
+    pub class_id: Option<crate::models::HubuumClassID>,
+    pub schema_revision: Option<hubuum_domain::SchemaRevision>,
+    #[schema(value_type = Option<crate::models::schema_evolution::SchemaWorkKind>)]
+    pub work_kind: Option<hubuum_storage_core::StorageSchemaWorkKind>,
+    #[schema(value_type = Option<crate::models::schema_evolution::SchemaWorkStatus>)]
+    pub work_status: Option<hubuum_storage_core::StorageSchemaWorkStatus>,
+    pub results_url: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RebuildTaskDetails {
+    pub class_id: Option<crate::models::HubuumClassID>,
+    pub computation_revision: Option<i64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RemoteCallTaskDetails {
+    pub remote_target_id: Option<crate::models::RemoteTargetID>,
+    pub target: Option<TaskDiscoveryTarget>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RetainedImportDetails {
+    pub dry_run: Option<bool>,
+    #[schema(value_type = Option<crate::models::ImportAtomicity>)]
+    pub atomicity: Option<hubuum_storage_core::TaskImportAtomicity>,
+    #[schema(value_type = Option<crate::models::ImportCollisionPolicy>)]
+    pub collision_policy: Option<hubuum_storage_core::TaskImportCollisionPolicy>,
+    #[schema(value_type = Option<crate::models::ImportPermissionPolicy>)]
+    pub permission_policy: Option<hubuum_storage_core::TaskImportPermissionPolicy>,
+    pub has_failed_items: Option<bool>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOutputDiscoveryState {
+    Available,
+    Expired,
+    NotProduced,
+    Unknown,
+}
+impl From<hubuum_storage_core::TaskOutputState> for TaskOutputDiscoveryState {
+    fn from(value: hubuum_storage_core::TaskOutputState) -> Self {
+        use hubuum_storage_core::TaskOutputState as S;
+        match value {
+            S::Available => Self::Available,
+            S::Expired => Self::Expired,
+            S::NotProduced => Self::NotProduced,
+            S::Unknown => Self::Unknown,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RetainedExportDetails {
+    #[schema(value_type = Option<crate::models::ExportScopeKind>)]
+    pub scope_kind: Option<hubuum_storage_core::TaskExportScopeKind>,
+    pub target: Option<TaskDiscoveryTarget>,
+    pub template_id: Option<crate::models::ExportTemplateID>,
+    #[schema(value_type = Option<crate::models::ExportMissingDataPolicy>)]
+    pub missing_data_policy: Option<hubuum_storage_core::TaskExportMissingDataPolicy>,
+    pub max_items: Option<u64>,
+    pub max_output_bytes: Option<u64>,
+    pub warning_count: Option<i32>,
+    pub truncated: Option<bool>,
+    pub output_state: TaskOutputDiscoveryState,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RetainedBackupDetails {
+    pub include_history: Option<bool>,
+    pub output_state: TaskOutputDiscoveryState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskDetails {
     Import(ImportTaskDetails),
     Export(ExportTaskDetails),
     Backup(BackupTaskDetails),
+    SchemaValidation(SchemaTaskDetails),
+    Reindex(RebuildTaskDetails),
+    RemoteCall(RemoteCallTaskDetails),
 }
 
 impl TaskDetails {
@@ -800,7 +932,7 @@ impl TaskDetails {
     pub const fn as_import(&self) -> Option<&ImportTaskDetails> {
         match self {
             Self::Import(details) => Some(details),
-            Self::Export(_) | Self::Backup(_) => None,
+            _ => None,
         }
     }
 
@@ -808,7 +940,7 @@ impl TaskDetails {
     pub const fn as_export(&self) -> Option<&ExportTaskDetails> {
         match self {
             Self::Export(details) => Some(details),
-            Self::Import(_) | Self::Backup(_) => None,
+            _ => None,
         }
     }
 
@@ -816,7 +948,7 @@ impl TaskDetails {
     pub const fn as_backup(&self) -> Option<&BackupTaskDetails> {
         match self {
             Self::Backup(details) => Some(details),
-            Self::Import(_) | Self::Export(_) => None,
+            _ => None,
         }
     }
 
@@ -824,7 +956,7 @@ impl TaskDetails {
     pub fn into_import(self) -> Option<ImportTaskDetails> {
         match self {
             Self::Import(details) => Some(details),
-            Self::Export(_) | Self::Backup(_) => None,
+            _ => None,
         }
     }
 
@@ -832,7 +964,7 @@ impl TaskDetails {
     pub fn into_export(self) -> Option<ExportTaskDetails> {
         match self {
             Self::Export(details) => Some(details),
-            Self::Import(_) | Self::Backup(_) => None,
+            _ => None,
         }
     }
 
@@ -840,16 +972,20 @@ impl TaskDetails {
     pub fn into_backup(self) -> Option<BackupTaskDetails> {
         match self {
             Self::Backup(details) => Some(details),
-            Self::Import(_) | Self::Export(_) => None,
+            _ => None,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(deny_unknown_fields)]
 struct TaskDetailsWire {
     import: Option<ImportTaskDetails>,
     export: Option<ExportTaskDetails>,
     backup: Option<BackupTaskDetails>,
+    schema_validation: Option<SchemaTaskDetails>,
+    reindex: Option<RebuildTaskDetails>,
+    remote_call: Option<RemoteCallTaskDetails>,
 }
 
 impl Serialize for TaskDetails {
@@ -862,16 +998,31 @@ impl Serialize for TaskDetails {
                 import: Some(details.clone()),
                 export: None,
                 backup: None,
+                ..Default::default()
             },
             Self::Export(details) => TaskDetailsWire {
                 import: None,
                 export: Some(details.clone()),
                 backup: None,
+                ..Default::default()
             },
             Self::Backup(details) => TaskDetailsWire {
                 import: None,
                 export: None,
                 backup: Some(details.clone()),
+                ..Default::default()
+            },
+            Self::SchemaValidation(details) => TaskDetailsWire {
+                schema_validation: Some(details.clone()),
+                ..Default::default()
+            },
+            Self::Reindex(details) => TaskDetailsWire {
+                reindex: Some(details.clone()),
+                ..Default::default()
+            },
+            Self::RemoteCall(details) => TaskDetailsWire {
+                remote_call: Some(details.clone()),
+                ..Default::default()
             },
         };
         wire.serialize(serializer)
@@ -884,14 +1035,31 @@ impl<'de> Deserialize<'de> for TaskDetails {
         D: Deserializer<'de>,
     {
         let wire = TaskDetailsWire::deserialize(deserializer)?;
-        match (wire.import, wire.export, wire.backup) {
-            (Some(details), None, None) => Ok(Self::Import(details)),
-            (None, Some(details), None) => Ok(Self::Export(details)),
-            (None, None, Some(details)) => Ok(Self::Backup(details)),
-            _ => Err(serde::de::Error::custom(
-                "task details must contain exactly one detail kind",
-            )),
+        let mut details = Vec::new();
+        if let Some(v) = wire.import {
+            details.push(Self::Import(v));
         }
+        if let Some(v) = wire.export {
+            details.push(Self::Export(v));
+        }
+        if let Some(v) = wire.backup {
+            details.push(Self::Backup(v));
+        }
+        if let Some(v) = wire.schema_validation {
+            details.push(Self::SchemaValidation(v));
+        }
+        if let Some(v) = wire.reindex {
+            details.push(Self::Reindex(v));
+        }
+        if let Some(v) = wire.remote_call {
+            details.push(Self::RemoteCall(v));
+        }
+        if details.len() != 1 {
+            return Err(serde::de::Error::custom(
+                "task details must contain exactly one detail kind",
+            ));
+        }
+        Ok(details.remove(0))
     }
 }
 
@@ -1050,6 +1218,15 @@ impl TaskRecord {
         export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
         backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
+        self.to_response_with_outputs_at(export_output, backup_output, chrono::Utc::now())
+    }
+
+    pub(crate) fn to_response_with_outputs_at(
+        &self,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
         let task_url = format!("/api/v1/tasks/{}", self.id);
@@ -1059,10 +1236,13 @@ impl TaskRecord {
         let export_url = (kind == TaskKind::Export).then(|| format!("/api/v1/exports/{}", self.id));
         let export_output_url =
             (kind == TaskKind::Export).then(|| format!("/api/v1/exports/{}/output", self.id));
-        let details = match kind {
-            TaskKind::Import => import_results
-                .clone()
-                .map(|results_url| TaskDetails::Import(ImportTaskDetails { results_url })),
+        let mut details = match kind {
+            TaskKind::Import => import_results.clone().map(|results_url| {
+                TaskDetails::Import(ImportTaskDetails {
+                    results_url,
+                    retained: None,
+                })
+            }),
             TaskKind::Export => export_output_url.clone().map(|output_url| {
                 TaskDetails::Export(ExportTaskDetails::from_lookup(output_url, export_output))
             }),
@@ -1076,6 +1256,11 @@ impl TaskRecord {
             _ => None,
         };
 
+        if self.discovery_authorized {
+            self.enrich_discovery_details(&mut details, now);
+        } else {
+            details = None;
+        }
         let remote_side_effect_state = (kind == TaskKind::RemoteCall).then(|| {
             if matches!(
                 self.control.phase(),
@@ -1133,7 +1318,7 @@ impl TaskRecord {
                 import: import_url.clone(),
                 import_results: import_results.clone(),
                 export: export_url,
-                export_output: export_output_url,
+                export_output: export_output_url.filter(|_| self.discovery_authorized),
                 backup: (kind == TaskKind::Backup).then(|| format!("/api/v1/backups/{}", self.id)),
                 backup_output: (kind == TaskKind::Backup)
                     .then(|| format!("/api/v1/backups/{}/output", self.id)),
@@ -1593,6 +1778,9 @@ mod tests {
     fn task_record_debug_redacts_request_and_scope_material() {
         let timestamp = test_timestamp();
         let task = TaskRecord {
+            discovery_metadata: None,
+            discovery_state: Default::default(),
+            discovery_authorized: true,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),
@@ -1642,6 +1830,9 @@ mod tests {
     fn export_task_details_include_persisted_phase_timings() {
         let timestamp = test_timestamp();
         let task = TaskRecord {
+            discovery_metadata: None,
+            discovery_state: Default::default(),
+            discovery_authorized: true,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),
@@ -1710,6 +1901,182 @@ mod tests {
                 render_duration_ms,
             ),
             (150, 40, 30, 70)
+        );
+    }
+}
+
+impl TaskRecord {
+    fn enrich_discovery_details(
+        &self,
+        details: &mut Option<TaskDetails>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
+        use hubuum_storage_core::TaskMetadataDetails as D;
+        let Some(metadata) = self.discovery_metadata.as_ref() else {
+            return;
+        };
+        let output_state = metadata.details().output().map(|output| {
+            TaskOutputDiscoveryState::from(output.state(now, self.discovery_state.output_present()))
+        });
+        match metadata.details() {
+            D::Import {
+                dry_run,
+                atomicity,
+                collision_policy,
+                permission_policy,
+                has_failed_items,
+            } => {
+                if let Some(TaskDetails::Import(detail)) = details {
+                    detail.retained = Some(RetainedImportDetails {
+                        dry_run: *dry_run,
+                        atomicity: *atomicity,
+                        collision_policy: *collision_policy,
+                        permission_policy: *permission_policy,
+                        has_failed_items: *has_failed_items,
+                    });
+                }
+            }
+            D::Export {
+                scope_kind,
+                target,
+                template_id,
+                missing_data_policy,
+                max_items,
+                max_output_bytes,
+                warning_count,
+                truncated,
+                ..
+            } => {
+                if let Some(TaskDetails::Export(detail)) = details {
+                    if matches!(detail.state, ExportTaskOutputState::Missing)
+                        && let Some(hubuum_storage_core::TaskOutputMetadata::Produced {
+                            expires_at,
+                        }) = metadata.details().output()
+                    {
+                        detail.state = ExportTaskOutputState::Expired {
+                            expires_at: expires_at.naive_utc(),
+                        };
+                    }
+                    detail.retained = Some(RetainedExportDetails {
+                        scope_kind: *scope_kind,
+                        target: target.map(Into::into),
+                        template_id: *template_id,
+                        missing_data_policy: *missing_data_policy,
+                        max_items: *max_items,
+                        max_output_bytes: *max_output_bytes,
+                        warning_count: *warning_count,
+                        truncated: *truncated,
+                        output_state: output_state.unwrap_or(TaskOutputDiscoveryState::Unknown),
+                    });
+                }
+            }
+            D::Backup {
+                include_history, ..
+            } => {
+                if let Some(TaskDetails::Backup(detail)) = details {
+                    if matches!(detail.state, BackupTaskOutputState::Missing)
+                        && let Some(hubuum_storage_core::TaskOutputMetadata::Produced {
+                            expires_at,
+                        }) = metadata.details().output()
+                    {
+                        detail.state = BackupTaskOutputState::Expired {
+                            expires_at: expires_at.naive_utc(),
+                        };
+                    }
+                    detail.retained = Some(RetainedBackupDetails {
+                        include_history: *include_history,
+                        output_state: output_state.unwrap_or(TaskOutputDiscoveryState::Unknown),
+                    });
+                }
+            }
+            D::SchemaValidation {
+                class_id,
+                schema_revision,
+                ..
+            } => {
+                let work = self.discovery_state.schema_work();
+                *details = Some(TaskDetails::SchemaValidation(SchemaTaskDetails {
+                    class_id: *class_id,
+                    schema_revision: *schema_revision,
+                    work_kind: work.map(|(kind, _)| kind),
+                    work_status: work.map(|(_, status)| status),
+                    results_url: work.and_then(|_| {
+                        class_id.map(|id| {
+                            format!("/api/v1/classes/{}/schema/tasks/{}", id.id(), self.id)
+                        })
+                    }),
+                }));
+            }
+            D::Reindex {
+                class_id,
+                computation_revision,
+            } => {
+                *details = Some(TaskDetails::Reindex(RebuildTaskDetails {
+                    class_id: *class_id,
+                    computation_revision: *computation_revision,
+                }))
+            }
+            D::RemoteCall {
+                remote_target_id,
+                target,
+            } => {
+                *details = Some(TaskDetails::RemoteCall(RemoteCallTaskDetails {
+                    remote_target_id: *remote_target_id,
+                    target: target.map(Into::into),
+                }))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use hubuum_storage_core::{
+        StorageTask, StorageTaskKind, StorageTaskMetadata, StorageTaskStatus,
+    };
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(StorageTaskKind::Import, "import")]
+    #[case(StorageTaskKind::Export, "export")]
+    #[case(StorageTaskKind::Backup, "backup")]
+    #[case(StorageTaskKind::SchemaValidation, "schema_validation")]
+    #[case(StorageTaskKind::Reindex, "reindex")]
+    #[case(StorageTaskKind::RemoteCall, "remote_call")]
+    fn typed_discovery_roundtrips_exactly_one_kind(
+        #[case] kind: StorageTaskKind,
+        #[case] key: &str,
+    ) {
+        let now = chrono::Utc::now();
+        let task = StorageTask::builder(
+            TaskID::new(42).unwrap(),
+            kind,
+            StorageTaskStatus::Queued,
+            now,
+            now,
+        )
+        .metadata(Some(StorageTaskMetadata::unknown(kind)))
+        .try_build()
+        .unwrap();
+        let response = crate::services::tasks::task_from_storage(task)
+            .unwrap()
+            .to_response()
+            .unwrap();
+        let value = serde_json::to_value(&response).unwrap();
+        assert!(value["details"][key].is_object());
+        assert_eq!(
+            value["details"]
+                .as_object()
+                .unwrap()
+                .values()
+                .filter(|v| !v.is_null())
+                .count(),
+            1
+        );
+        assert_eq!(
+            serde_json::from_value::<TaskResponse>(value).unwrap(),
+            response
         );
     }
 }

@@ -186,6 +186,74 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn task_search_retains_combined_filters_across_cursors(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let expected = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Succeeded,
+            "search_first",
+        )
+        .await;
+        let second = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Export,
+            TaskStatus::Failed,
+            "search_second",
+        )
+        .await;
+        create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Backup,
+            TaskStatus::Succeeded,
+            "search_excluded_kind",
+        )
+        .await;
+        create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Cancelled,
+            "search_excluded_status",
+        )
+        .await;
+        let url = format!(
+            "{TASKS_ENDPOINT}?kind=import,export&status=succeeded,failed&terminal=true&cancel_requested=false&submitted_by={}&sort=id.asc&limit=1",
+            context.normal_user.id
+        );
+        let response = get_request(&context.pool, &context.admin_token, &url).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, "X-Total-Count").as_deref(),
+            Some("2")
+        );
+        let cursor = header_value(&response, NEXT_CURSOR_HEADER).expect("second page");
+        let first: Vec<TaskResponse> = test::read_body_json(response).await;
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{url}&cursor={cursor}"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let next: Vec<TaskResponse> = test::read_body_json(response).await;
+        assert_eq!(
+            first
+                .into_iter()
+                .chain(next)
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            vec![expected, second]
+        );
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_list_tasks_admin_sorts_by_kind(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let other_user = create_test_user(&context.pool).await;
@@ -691,6 +759,100 @@ mod tests {
         )
         .await
         .unwrap();
+        fixture.cleanup().await.unwrap();
+    }
+    #[rstest]
+    #[case::local_search(false, true, false)]
+    #[case::delegated_search(true, true, false)]
+    #[case::local_details(false, false, false)]
+    #[case::local_cancellation(false, false, true)]
+    #[case::delegated_details(true, false, false)]
+    #[actix_web::test]
+    async fn task_discovery_requires_resource_access(
+        #[future(awt)] test_context: TestContext,
+        #[case] delegated: bool,
+        #[case] search: bool,
+        #[case] cancel: bool,
+    ) {
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        use crate::tests::api_operations::get_request_with_permission_backend;
+        use hubuum_storage_core::{
+            StorageTaskCreateRequest, StorageTaskKind, StorageTaskMetadata, TaskExplicitTarget,
+            TaskMetadataDetails, TaskQueueStorage,
+        };
+        use std::sync::Arc;
+        let context = test_context;
+        let fixture = context.collection_fixture("task_discovery_hidden").await;
+        let (actor, token) = if delegated {
+            (context.admin_user.id, &context.admin_token)
+        } else {
+            (context.normal_user.id, &context.normal_token)
+        };
+        let storage =
+            hubuum_storage_postgres::PostgresStorage::unobserved(context.pool.get_ref().clone());
+        let metadata = StorageTaskMetadata::new(TaskMetadataDetails::RemoteCall {
+            remote_target_id: None,
+            target: Some(TaskExplicitTarget::Collection {
+                collection_id: hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            }),
+        })
+        .unwrap();
+        let task = storage
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::RemoteCall,
+                    hubuum_domain::PrincipalId::new(actor).unwrap(),
+                    serde_json::json!({}),
+                    1,
+                )
+                .metadata(Some(metadata))
+                .try_build(100)
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = if cancel {
+            format!("/api/v1/tasks/{}/cancel", task.id().id())
+        } else if search {
+            format!(
+                "/api/v1/tasks?collection_id={}&include_total=true",
+                fixture.collection.id
+            )
+        } else {
+            format!("/api/v1/tasks/{}", task.id().id())
+        };
+        let response = if delegated {
+            let backend = Arc::new(MockTreetopBackend::new());
+            backend.add_task_read_rule(fixture.owner_group.id, None);
+            get_request_with_permission_backend(&context.pool, token, &url, backend).await
+        } else if cancel {
+            crate::tests::api_operations::post_request(
+                &context.pool,
+                token,
+                &url,
+                serde_json::json!({}),
+            )
+            .await
+        } else {
+            get_request(&context.pool, token, &url).await
+        };
+        if search {
+            assert_response_status(response, StatusCode::FORBIDDEN).await;
+        } else {
+            if cancel {
+                assert!(matches!(
+                    response.status(),
+                    StatusCode::OK | StatusCode::ACCEPTED
+                ));
+            } else {
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            let task: TaskResponse = test::read_body_json(response).await;
+            assert!(task.details.is_none());
+        }
+        hubuum_storage_postgres::test_support::delete_task(context.pool.get_ref(), task.id())
+            .await
+            .unwrap();
         fixture.cleanup().await.unwrap();
     }
 }

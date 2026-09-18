@@ -73,9 +73,15 @@ pub async fn run_export(
         requestor.scopes(),
     )
     .idempotency_key(idempotency_key_from_headers(req.headers())?);
-    let task = submit_export_task(&context, &requestor.principal, submission).await?;
+    let mut task = submit_export_task(&context, &requestor.principal, submission).await?;
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
 
-    let response = task.to_response()?;
+    let output = crate::services::tasks::export_output_summary(
+        &context,
+        crate::models::TaskID::new(task.id)?,
+    )
+    .await?;
+    let response = task.to_response_with_export_output(output.as_ref())?;
     kick_task_worker(context.clone());
 
     Ok(ApiResponse::accepted_at(
@@ -106,7 +112,8 @@ pub async fn get_export(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    let mut task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     let output = export_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
         task.to_response_with_export_output(output.as_ref())?,
@@ -146,7 +153,11 @@ pub async fn get_export_output(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    load_authorized_export(&context, &requestor.principal, task_id).await?;
+    let mut task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
+    if !task.discovery_authorized {
+        return Err(ApiError::NotFound("Export output not found".into()));
+    }
     match export_output(&context, task_id).await? {
         ExportOutputLookup::Available(output) => render_export_task_output(output),
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(

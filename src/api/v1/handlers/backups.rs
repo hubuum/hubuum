@@ -93,7 +93,8 @@ pub async fn create_backup(
         .scope_snapshot(scope_snapshot),
     )
     .await?;
-    let response = task.to_response()?;
+    let output = backup_output_summary(&context, TaskID::new(task.id)?).await?;
+    let response = task.to_response_with_backup_output(output.as_ref())?;
     kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(
         response,

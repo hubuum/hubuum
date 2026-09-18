@@ -568,6 +568,14 @@ impl MemoryState {
             submitted_by: request.context().actor_user_id(),
             idempotency_key: None,
             request_hash: None,
+            metadata: Some(
+                StorageTaskMetadata::new(TaskMetadataDetails::SchemaValidation {
+                    class_id: Some(class_id),
+                    schema_revision: Some(request.target().revision()),
+                    work_kind: Some(request.kind()),
+                })
+                .map_err(schema_error)?,
+            ),
             request_payload: Some(
                 json!({"class_id":class_id,"schema_revision":request.target().revision(),"kind":request.kind()}),
             ),
@@ -1433,6 +1441,13 @@ impl MemoryState {
             .get()
             .checked_add(1)
             .ok_or_else(|| StorageError::internal("Computation revision exhausted"))?;
+        task.metadata = Some(
+            StorageTaskMetadata::new(TaskMetadataDetails::Reindex {
+                class_id: Some(class_id),
+                computation_revision: Some(next),
+            })
+            .map_err(schema_error)?,
+        );
         let revision =
             ready_computation_state(class_id, next, previous.created_at())?.evaluation_revision();
         let state = StorageClassComputationState::try_new(

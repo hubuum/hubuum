@@ -1812,7 +1812,14 @@ mod tests {
             .as_ref()
             .and_then(|details| details.as_export())
             .expect("export details");
-        assert_eq!(details.state(), ExportTaskOutputStatus::Missing);
+        assert!(matches!(
+            details.state(),
+            ExportTaskOutputStatus::Expired { .. }
+        ));
+        let retained = serde_json::to_value(details).unwrap();
+        assert_eq!(retained["retained"]["output_state"], "expired");
+        assert_eq!(retained["retained"]["template_id"], template_id);
+        assert_eq!(retained["retained"]["warning_count"], 0);
 
         let output = get_request(
             &context.pool,

@@ -292,6 +292,7 @@ impl TaskQueueStorage for MemoryStorage {
             idempotency_key,
             request_hash: request.request_hash().map(ToOwned::to_owned),
             request_payload: Some(request.request_payload().clone()),
+            metadata: request.metadata().cloned(),
             summary: None,
             progress: StorageTaskProgress::try_new(request.total_items(), 0, 0, 0)
                 .map_err(invalid_contract_value)?,
@@ -329,13 +330,17 @@ impl TaskQueueStorage for MemoryStorage {
                 .get(&principal_id.id())
                 .map(StorageServiceAccount::owner_group_id)
         });
-        Ok(StorageTaskAccess::new(task.projection()?, owner_group_id))
+        Ok(StorageTaskAccess::new(
+            state.task_discovery_projection(task)?,
+            owner_group_id,
+        ))
     }
 
     async fn list_tasks(
         &self,
         query: StorageTaskListQuery,
     ) -> Result<StoragePage<StorageTask>, StorageError> {
+        let search = query.search().cloned().unwrap_or_default();
         let excluded_kind = query.excluded_kind();
         let (submitted_by, kind, status, options) = query.into_parts();
         let state = self.state.read().await;
@@ -347,9 +352,14 @@ impl TaskQueueStorage for MemoryStorage {
             .filter(|task| kind.is_none_or(|value| task.kind == value))
             .filter(|task| excluded_kind != Some(task.kind))
             .filter(|task| status.is_none_or(|value| task.status == value))
-            .map(MemoryTaskRecord::projection)
+            .map(|task| state.task_discovery_projection(task))
             .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
+        page(
+            rows.into_iter()
+                .filter(|task| search.matches(task))
+                .collect(),
+            &options,
+        )
     }
 
     async fn list_task_events(
@@ -821,6 +831,18 @@ impl TaskExecutionStorage for MemoryStorage {
                 state
                     .export_output_ids
                     .insert(lease.task_id().id(), output_id);
+                let task = state
+                    .tasks
+                    .get_mut(&lease.task_id().id())
+                    .expect("validated task");
+                {
+                    let metadata = task.metadata.get_or_insert_with(|| {
+                        StorageTaskMetadata::unknown(StorageTaskKind::Export)
+                    });
+                    metadata
+                        .record_export(warning_count, truncated, output_expires_at)
+                        .map_err(invalid_contract_value)?;
+                }
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
@@ -834,6 +856,18 @@ impl TaskExecutionStorage for MemoryStorage {
                     now,
                 )
                 .map_err(invalid_contract_value)?;
+                let task = state
+                    .tasks
+                    .get_mut(&lease.task_id().id())
+                    .expect("validated task");
+                {
+                    let metadata = task.metadata.get_or_insert_with(|| {
+                        StorageTaskMetadata::unknown(StorageTaskKind::Backup)
+                    });
+                    metadata
+                        .record_backup(output_expires_at)
+                        .map_err(invalid_contract_value)?;
+                }
                 state.backup_outputs.insert(lease.task_id().id(), output);
             }
         }
@@ -1999,5 +2033,22 @@ impl MemoryStorage {
             return Err(StorageError::task_stopped(reason));
         }
         Ok(())
+    }
+}
+
+impl MemoryState {
+    fn task_discovery_projection(
+        &self,
+        task: &MemoryTaskRecord,
+    ) -> Result<StorageTask, StorageError> {
+        let mut projection = task.projection()?;
+        projection.set_discovery_state(hubuum_storage_core::StorageTaskDiscoveryState::new(
+            self.schema_work
+                .get(&task.id.id())
+                .map(|work| (work.kind(), work.status())),
+            self.export_outputs.contains_key(&task.id.id())
+                || self.backup_outputs.contains_key(&task.id.id()),
+        ));
+        Ok(projection)
     }
 }
