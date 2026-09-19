@@ -401,3 +401,5 @@ impl StorageHandle {
         self.inner.resource_ports.object_relations.clone()
     }
 }
+
+use hubuum_storage_core::{StorageCredentialApprovalCreate, StorageCredentialApprovalMetadata};

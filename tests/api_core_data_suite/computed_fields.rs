@@ -19,8 +19,8 @@ mod tests {
     };
     use crate::services::tasks::{ClaimedTask, execute_computed_field_rebuild};
     use crate::tests::api_operations::{
-        get_request, get_request_with_permission_backend, patch_request,
-        patch_request_with_headers, post_request,
+        credential_post_request as post_request, get_request, get_request_with_permission_backend,
+        patch_request, patch_request_with_headers,
     };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{

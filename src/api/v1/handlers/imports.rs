@@ -1,3 +1,4 @@
+use crate::extractors::AccessEventContext;
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
@@ -24,6 +25,7 @@ use crate::tasks::{
     path = "/api/v1/imports",
     tag = "imports",
     security(("bearer_auth" = [])),
+    params(("X-Hubuum-Credential-Approval" = Option<String>, Header, description = "Required for any import carrying password or password_hash, including dry runs")),
     request_body = ImportRequest,
     responses(
         (status = 202, description = "Import task accepted", body = TaskResponse),
@@ -45,6 +47,24 @@ pub async fn create_import(
 
     let import_request = import_request.into_inner();
     import_request.validate().await?;
+    let (import_request, approval) = if import_request.contains_credentials() {
+        let approved = super::credential_approvals::approve_request(
+            &context,
+            &requestor,
+            &req,
+            crate::models::credential_approval::CredentialOperation::ImportCredentials {
+                import: Box::new(import_request),
+            },
+        )
+        .await?;
+        let (import_request, approval) = crate::services::credential_approvals::approved_import(
+            approved,
+            &requestor.event_context(&req),
+        )?;
+        (import_request, Some(approval))
+    } else {
+        (import_request, None)
+    };
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
@@ -64,7 +84,8 @@ pub async fn create_import(
         )
         .idempotency_key(idempotency_key)
         .request_hash(Some(hash))
-        .scope_snapshot(snapshot),
+        .scope_snapshot(snapshot)
+        .approval(approval),
     )
     .await?;
 

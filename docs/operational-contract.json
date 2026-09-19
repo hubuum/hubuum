@@ -374,6 +374,7 @@
             "rate_limited",
             "unavailable",
             "authentication_required",
+            "reauthentication_required",
             "validation_failed"
           ]
         }
@@ -451,6 +452,7 @@
             "rate_limited",
             "unavailable",
             "authentication_required",
+            "reauthentication_required",
             "validation_failed"
           ]
         }
@@ -1843,6 +1845,7 @@
             "create_class",
             "create_class_relation",
             "create_collection",
+            "create_credential_approval",
             "create_event_sink",
             "create_event_subscription",
             "create_export_template",
@@ -1888,6 +1891,7 @@
             "get_collection_history_as_of",
             "get_computed_field",
             "get_computed_field_state",
+            "get_credential_approval",
             "get_event_delivery",
             "get_event_delivery_health",
             "get_event_metrics_snapshot",
@@ -2107,6 +2111,7 @@
             "rate_limited",
             "unavailable",
             "authentication_required",
+            "reauthentication_required",
             "validation_failed"
           ]
         }
@@ -2231,6 +2236,7 @@
             "create_class",
             "create_class_relation",
             "create_collection",
+            "create_credential_approval",
             "create_event_sink",
             "create_event_subscription",
             "create_export_template",
@@ -2276,6 +2282,7 @@
             "get_collection_history_as_of",
             "get_computed_field",
             "get_computed_field_state",
+            "get_credential_approval",
             "get_event_delivery",
             "get_event_delivery_health",
             "get_event_metrics_snapshot",
@@ -2495,6 +2502,7 @@
             "rate_limited",
             "unavailable",
             "authentication_required",
+            "reauthentication_required",
             "validation_failed"
           ]
         }
@@ -7027,6 +7035,13 @@
           "created",
           "revoked",
           "purged"
+        ]
+      },
+      {
+        "name": "credential_approval",
+        "actions": [
+          "created",
+          "succeeded"
         ]
       },
       {

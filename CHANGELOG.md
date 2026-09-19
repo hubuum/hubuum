@@ -7,6 +7,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- **Breaking API change:** token creation/renewal, local user creation, password
+  changes, credential-bearing imports (including dry runs), and restore
+  confirmation require a fresh, operation-bound password approval. Bearer-only
+  credential management is rejected with `403 reauthentication_required`.
+  Update CLI/frontend/SDK flows to obtain a single-use approval and send
+  `X-Hubuum-Credential-Approval`; apply migration
+  `2026-09-19-000001_credential_approvals` before upgrading all API replicas
+  and workers. Quiesce protected mutations until every process is upgraded.
+  See [the client and rollout guide](docs/credential_approvals.md).
+- Retain approval evidence after consumption/expiry and emit transactional
+  `credential_approval.created` and `credential_approval.succeeded` audit events.
+  Restore completion preserves local evidence and invalidates unused approvals.
+- **Breaking storage SDK contract change:** implement approval creation/reads,
+  atomic claim consumption for identity mutations and task admission, and the
+  typed `StorageRestoreConfirmation` request. Handle the new
+  `ReauthenticationRequired` storage error and `CredentialApproval` event entity.
+  Update external adapters before upgrading application consumers.
+
 ### Added
 
 - Task discovery across all six task kinds: durable explicit targets, retained

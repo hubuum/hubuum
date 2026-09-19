@@ -11,7 +11,9 @@ mod tests {
         RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
     };
     use crate::schema::restore_jobs::dsl::{id, restore_jobs};
-    use crate::tests::api_operations::{get_request_with_headers, post_request};
+    use crate::tests::api_operations::{
+        credential_post_request as post_request, get_request_with_headers,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{TestContext, scoped_token, test_context};
     use hubuum_storage_core::{

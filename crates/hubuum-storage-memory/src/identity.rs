@@ -1229,125 +1229,22 @@ impl UserStorage for MemoryStorage {
         &self,
         request: StorageUserCreate,
     ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
-        let (identity_scope, name, password_hash, proper_name, email, context) =
-            request.into_parts();
-        let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
-        let mut state = self.state.write().await;
-        let scope = state
-            .identity_scope_by_name(&identity_scope)
-            .cloned()
-            .ok_or_else(|| {
-                StorageError::not_found(format!("Identity scope '{identity_scope}' was not found"))
-            })?;
-        if state
-            .users
-            .values()
-            .any(|record| record.identity_scope_id == scope.id() && record.name == name.as_str())
-        {
-            return Err(StorageError::conflict(format!(
-                "User '{name}' already exists in identity scope '{identity_scope}'"
-            )));
-        }
-        let principal_id =
-            PrincipalId::new(state.next_principal_id).expect("memory principal id is positive");
-        state.next_principal_id += 1;
-        let user_id = UserId::new(principal_id.id()).expect("memory user id is positive");
-        let now = Utc::now();
-        let metadata = StorageRecordMetadata::try_new(
-            ResourceId::new(principal_id.id()).expect("user resource id is positive"),
-            now,
-            now,
-            ResourceRevision::INITIAL,
-        )
-        .map_err(invalid_contract_value)?;
-        let principal =
-            StoragePrincipal::builder(metadata, PrincipalKind::Human, name.clone(), scope.id())
-                .try_build()
-                .map_err(invalid_contract_value)?;
-        let user = StorageUser::try_new(
-            user_id,
-            Some(password_hash),
-            proper_name,
-            email,
-            now,
-            now,
-            None,
-        )
-        .map_err(invalid_contract_value)?;
-        state.principals.insert(principal_id.id(), principal);
-        state.users.insert(
-            user_id.id(),
-            MemoryUserRecord {
-                user: user.clone(),
-                identity_scope_id: scope.id(),
-                name: name.clone(),
-                provider_managed: false,
-                external_subject: None,
-                last_sync_attempted_at: None,
-                last_sync_success_at: None,
-            },
-        );
-        let receipt = state.append_simple_event(
-            EntityType::User,
-            user_id.id(),
-            Some(&name),
-            Action::Created,
-            &context,
-            format!("User '{name}' created"),
-        )?;
-        Ok(StorageMutationOutcome::committed(user, receipt))
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = create_user_in_state(&mut staged, request)?;
+        *live = staged;
+        Ok(result)
     }
 
     async fn update_user(
         &self,
         request: StorageUserUpdate,
     ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
-        let (id, password_hash, proper_name, email, context) = request.into_parts();
-        let mut state = self.state.write().await;
-        let current =
-            state.users.get(&id.id()).cloned().ok_or_else(|| {
-                StorageError::not_found(format!("User {} was not found", id.id()))
-            })?;
-        if password_hash.is_none() && proper_name.is_none() && email.is_none() {
-            return Ok(StorageMutationOutcome::unchanged(current.user));
-        }
-        let parts = current.user.into_parts();
-        let now = Utc::now();
-        let user = StorageUser::try_new(
-            id,
-            password_hash.or_else(|| parts.password_hash().map(ToOwned::to_owned)),
-            proper_name.or_else(|| parts.proper_name().map(ToOwned::to_owned)),
-            email.or_else(|| parts.email().map(ToOwned::to_owned)),
-            parts.created_at(),
-            now,
-            parts.anonymized_at(),
-        )
-        .map_err(invalid_contract_value)?;
-        let record = state.users.get_mut(&id.id()).expect("updated user exists");
-        record.user = user.clone();
-        let principal = state
-            .principals
-            .get(&id.id())
-            .cloned()
-            .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
-        state.principals.insert(
-            id.id(),
-            advanced_principal(
-                &principal,
-                principal.name(),
-                principal.settings().clone(),
-                now,
-            )?,
-        );
-        let receipt = state.append_simple_event(
-            EntityType::User,
-            id.id(),
-            Some(principal.name()),
-            Action::Updated,
-            &context,
-            format!("User '{}' updated", principal.name()),
-        )?;
-        Ok(StorageMutationOutcome::committed(user, receipt))
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = update_user_in_state(&mut staged, request)?;
+        *live = staged;
+        Ok(result)
     }
 
     async fn set_user_password(
@@ -1460,6 +1357,29 @@ impl UserStorage for MemoryStorage {
 
 #[async_trait]
 impl TokenStorage for MemoryStorage {
+    async fn create_credential_approval(
+        &self,
+        request: StorageCredentialApprovalCreate,
+    ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.create_credential_approval(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn get_credential_approval(
+        &self,
+        id: i32,
+    ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
+        self.state
+            .read()
+            .await
+            .credential_approvals
+            .get(&id)
+            .map(|(_, metadata)| metadata.clone())
+            .ok_or_else(|| StorageError::not_found("Credential approval not found"))
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,
@@ -1533,101 +1453,57 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenCreate,
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
-        let request = request.into_parts();
-        let mut state = self.state.write().await;
-        if !state.principals.contains_key(&request.principal_id().id()) {
-            return Err(StorageError::not_found(format!(
-                "Principal {} was not found",
-                request.principal_id().id()
-            )));
-        }
-        if state
-            .tokens
-            .values()
-            .any(|token| request.digest().matches_lookup_value(&token.token_hash))
-        {
-            return Err(StorageError::conflict("Token credential already exists"));
-        }
-        let id = TokenId::new(state.next_token_id).expect("memory token id is positive");
-        state.next_token_id += 1;
-        let issued = Utc::now();
-        let (default_lifetime_hours, maximum_lifetime_hours) = request.policy().into_parts();
-        let maximum_expiry = issued
-            + chrono::Duration::try_hours(maximum_lifetime_hours)
-                .ok_or_else(|| StorageError::invalid_input("Token lifetime is too large"))?;
-        let expires_at = request.expires_at().unwrap_or_else(|| {
-            issued
-                + chrono::Duration::try_hours(default_lifetime_hours)
-                    .expect("validated token lifetime fits chrono duration")
-        });
-        if expires_at > maximum_expiry || expires_at <= issued {
-            return Err(StorageError::invalid_input(
-                "Token expiry is outside the issuance policy",
-            ));
-        }
-        let (token_hash, token_format, token_hash_algorithm, token_hash_key_id) =
-            request.digest().clone().into_parts();
-        let record = MemoryTokenRecord {
-            id,
-            principal_id: request.principal_id(),
-            token_hash,
-            token_format,
-            token_hash_algorithm,
-            token_hash_key_id,
-            name: request.name().map(ToOwned::to_owned),
-            description: request.description().map(ToOwned::to_owned),
-            issued,
-            expires_at: Some(expires_at),
-            last_used_at: None,
-            revoked_at: None,
-            scope: request.scope().cloned(),
-            revision: ResourceRevision::INITIAL,
-        };
-        let observation =
-            StorageTokenObservation::try_new(issued, issued).map_err(invalid_contract_value)?;
-        let metadata = record.metadata(observation)?;
-        state.tokens.insert(id.id(), record);
-        let receipt = state.append_simple_event(
-            EntityType::Token,
-            id.id(),
-            None,
-            Action::Created,
-            request.event_context(),
-            format!("Token {} created", id.id()),
-        )?;
-        Ok(StorageMutationOutcome::committed(metadata, receipt))
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = create_token_in_state(&mut staged, request)?;
+        *live = staged;
+        Ok(result)
     }
 
     async fn renew_token(
         &self,
-        request: StorageTokenRenew,
+        mut request: StorageTokenRenew,
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
+        let claim = request.take_credential_claim();
         let (source_id, principal_id, digest, expires_at, policy, context) = request.into_parts();
-        let source = self
-            .state
-            .read()
-            .await
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let approval_audit = staged.consume_credential_claim(
+            claim.as_ref(),
+            StorageCredentialOperation::RenewToken,
+            Some(principal_id),
+            &context,
+        )?;
+        let source = staged
             .tokens
             .get(&source_id.id())
             .cloned()
-            .ok_or_else(|| {
-                StorageError::not_found(format!("Token {} was not found", source_id.id()))
-            })?;
-        if source.principal_id != principal_id {
-            return Err(StorageError::not_found(format!(
-                "Token {} was not found for principal {}",
-                source_id.id(),
-                principal_id.id()
-            )));
+            .filter(|source| source.principal_id == principal_id)
+            .ok_or_else(|| StorageError::not_found("Source token not found"))?;
+        if source.revoked_at.is_some() {
+            return Err(StorageError::conflict("Revoked tokens cannot be renewed"));
         }
-        self.create_token(
+        let result = create_token_in_state(
+            &mut staged,
             StorageTokenCreate::new(principal_id, digest, policy, context)
                 .name(source.name)
                 .description(source.description)
                 .expires_at(expires_at)
                 .scope(source.scope),
-        )
-        .await
+        )?;
+        let result = match (result, approval_audit) {
+            (StorageMutationOutcome::Committed { value, audits }, Some(approval)) => {
+                let mut receipts = audits.into_vec();
+                receipts.push(approval);
+                StorageMutationOutcome::committed_with_audits(
+                    value,
+                    StorageAuditReceipts::try_from_vec(receipts).map_err(invalid_contract_value)?,
+                )
+            }
+            (result, _) => result,
+        };
+        *live = staged;
+        Ok(result)
     }
 
     async fn get_token_metadata(
@@ -2737,4 +2613,246 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
             .collect::<Result<Vec<_>, _>>()?;
         page(rows, query.query_options())
     }
+}
+
+fn create_user_in_state(
+    state: &mut MemoryState,
+    mut request: StorageUserCreate,
+) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
+    let claim = request.take_credential_claim();
+    let (identity_scope, name, password_hash, proper_name, email, context) = request.into_parts();
+    let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
+    let approval_audit = state.consume_credential_claim(
+        claim.as_ref(),
+        StorageCredentialOperation::CreateUser,
+        None,
+        &context,
+    )?;
+    let scope = state
+        .identity_scope_by_name(&identity_scope)
+        .cloned()
+        .ok_or_else(|| {
+            StorageError::not_found(format!("Identity scope '{identity_scope}' was not found"))
+        })?;
+    if state
+        .users
+        .values()
+        .any(|record| record.identity_scope_id == scope.id() && record.name == name.as_str())
+    {
+        return Err(StorageError::conflict(format!(
+            "User '{name}' already exists in identity scope '{identity_scope}'"
+        )));
+    }
+    let principal_id =
+        PrincipalId::new(state.next_principal_id).expect("memory principal id is positive");
+    state.next_principal_id += 1;
+    let user_id = UserId::new(principal_id.id()).expect("memory user id is positive");
+    let now = Utc::now();
+    let metadata = StorageRecordMetadata::try_new(
+        ResourceId::new(principal_id.id()).expect("user resource id is positive"),
+        now,
+        now,
+        ResourceRevision::INITIAL,
+    )
+    .map_err(invalid_contract_value)?;
+    let principal =
+        StoragePrincipal::builder(metadata, PrincipalKind::Human, name.clone(), scope.id())
+            .try_build()
+            .map_err(invalid_contract_value)?;
+    let user = StorageUser::try_new(
+        user_id,
+        Some(password_hash),
+        proper_name,
+        email,
+        now,
+        now,
+        None,
+    )
+    .map_err(invalid_contract_value)?;
+    state.principals.insert(principal_id.id(), principal);
+    state.users.insert(
+        user_id.id(),
+        MemoryUserRecord {
+            user: user.clone(),
+            identity_scope_id: scope.id(),
+            name: name.clone(),
+            provider_managed: false,
+            external_subject: None,
+            last_sync_attempted_at: None,
+            last_sync_success_at: None,
+        },
+    );
+    let receipt = state.append_simple_event(
+        EntityType::User,
+        user_id.id(),
+        Some(&name),
+        Action::Created,
+        &context,
+        format!("User '{name}' created"),
+    )?;
+    Ok(super::credential_approval::outcome(
+        user,
+        receipt,
+        approval_audit,
+    ))
+}
+
+fn update_user_in_state(
+    state: &mut MemoryState,
+    mut request: StorageUserUpdate,
+) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
+    let claim = request.take_credential_claim();
+    let (id, password_hash, proper_name, email, context) = request.into_parts();
+    let approval_audit = state.consume_credential_claim(
+        claim.as_ref(),
+        StorageCredentialOperation::UpdateUser,
+        Some(PrincipalId::new(id.id()).expect("validated user ID")),
+        &context,
+    )?;
+    let current = state
+        .users
+        .get(&id.id())
+        .cloned()
+        .ok_or_else(|| StorageError::not_found(format!("User {} was not found", id.id())))?;
+    if password_hash.is_none() && proper_name.is_none() && email.is_none() {
+        return Ok(match approval_audit {
+            Some(audit) => StorageMutationOutcome::committed(current.user, audit),
+            None => StorageMutationOutcome::unchanged(current.user),
+        });
+    }
+    let password_changed = password_hash.is_some();
+    if password_changed {
+        for token in state.tokens.values_mut() {
+            if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
+                token.revoked_at = Some(Utc::now());
+            }
+        }
+    }
+    let parts = current.user.into_parts();
+    let now = Utc::now();
+    let user = StorageUser::try_new(
+        id,
+        password_hash.or_else(|| parts.password_hash().map(ToOwned::to_owned)),
+        proper_name.or_else(|| parts.proper_name().map(ToOwned::to_owned)),
+        email.or_else(|| parts.email().map(ToOwned::to_owned)),
+        parts.created_at(),
+        now,
+        parts.anonymized_at(),
+    )
+    .map_err(invalid_contract_value)?;
+    let record = state.users.get_mut(&id.id()).expect("updated user exists");
+    record.user = user.clone();
+    let principal = state
+        .principals
+        .get(&id.id())
+        .cloned()
+        .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
+    state.principals.insert(
+        id.id(),
+        advanced_principal(
+            &principal,
+            principal.name(),
+            principal.settings().clone(),
+            now,
+        )?,
+    );
+    let receipt = state.append_simple_event(
+        EntityType::User,
+        id.id(),
+        Some(principal.name()),
+        Action::Updated,
+        &context,
+        format!("User '{}' updated", principal.name()),
+    )?;
+    Ok(super::credential_approval::outcome(
+        user,
+        receipt,
+        approval_audit,
+    ))
+}
+
+fn create_token_in_state(
+    state: &mut MemoryState,
+    mut request: StorageTokenCreate,
+) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
+    let claim = request.take_credential_claim();
+    let request = request.into_parts();
+    let approval_audit = state.consume_credential_claim(
+        claim.as_ref(),
+        StorageCredentialOperation::CreateToken,
+        Some(request.principal_id()),
+        request.event_context(),
+    )?;
+    if !state.principals.contains_key(&request.principal_id().id()) {
+        return Err(StorageError::not_found(format!(
+            "Principal {} was not found",
+            request.principal_id().id()
+        )));
+    }
+    if state
+        .service_accounts
+        .get(&request.principal_id().id())
+        .is_some_and(|account| account.disabled_at().is_some())
+    {
+        return Err(StorageError::conflict("Service account is disabled"));
+    }
+    if state
+        .tokens
+        .values()
+        .any(|token| request.digest().matches_lookup_value(&token.token_hash))
+    {
+        return Err(StorageError::conflict("Token credential already exists"));
+    }
+    let id = TokenId::new(state.next_token_id).expect("memory token id is positive");
+    state.next_token_id += 1;
+    let issued = Utc::now();
+    let (default_lifetime_hours, maximum_lifetime_hours) = request.policy().into_parts();
+    let maximum_expiry = issued
+        + chrono::Duration::try_hours(maximum_lifetime_hours)
+            .ok_or_else(|| StorageError::invalid_input("Token lifetime is too large"))?;
+    let expires_at = request.expires_at().unwrap_or_else(|| {
+        issued
+            + chrono::Duration::try_hours(default_lifetime_hours)
+                .expect("validated token lifetime fits chrono duration")
+    });
+    if expires_at > maximum_expiry || expires_at <= issued {
+        return Err(StorageError::invalid_input(
+            "Token expiry is outside the issuance policy",
+        ));
+    }
+    let (token_hash, token_format, token_hash_algorithm, token_hash_key_id) =
+        request.digest().clone().into_parts();
+    let record = MemoryTokenRecord {
+        id,
+        principal_id: request.principal_id(),
+        token_hash,
+        token_format,
+        token_hash_algorithm,
+        token_hash_key_id,
+        name: request.name().map(ToOwned::to_owned),
+        description: request.description().map(ToOwned::to_owned),
+        issued,
+        expires_at: Some(expires_at),
+        last_used_at: None,
+        revoked_at: None,
+        scope: request.scope().cloned(),
+        revision: ResourceRevision::INITIAL,
+    };
+    let observation =
+        StorageTokenObservation::try_new(issued, issued).map_err(invalid_contract_value)?;
+    let metadata = record.metadata(observation)?;
+    state.tokens.insert(id.id(), record);
+    let receipt = state.append_simple_event(
+        EntityType::Token,
+        id.id(),
+        None,
+        Action::Created,
+        request.event_context(),
+        format!("Token {} created", id.id()),
+    )?;
+    Ok(super::credential_approval::outcome(
+        metadata,
+        receipt,
+        approval_audit,
+    ))
 }

@@ -24,3 +24,5 @@ pub mod tasks;
 pub mod users;
 
 pub mod schema_evolution;
+
+pub mod credential_approvals;

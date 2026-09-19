@@ -342,6 +342,21 @@ pub async fn create_task(
     let create_result = runtime
         .with_transaction(async move |connection| {
             acquire_capacity_lock(connection, submitted_by, kind).await?;
+            // A concurrent matching submission may have committed while this
+            // transaction waited. Reading it must not consume the approval again.
+            if let Some(key) = new_task.idempotency_key.as_deref() {
+                use crate::schema::tasks::dsl as stored;
+                if let Some(existing) = stored::tasks
+                    .filter(stored::submitted_by.eq(Some(submitted_by)))
+                    .filter(stored::idempotency_key.eq(key))
+                    .select(TaskRow::as_select())
+                    .first::<TaskRow>(connection).await.optional()? {
+                    if existing.kind != kind.as_str() || existing.request_hash != new_task.request_hash {
+                        return Err(PostgresStorageError::conflict("Idempotency-Key is already in use for a different task submission"));
+                    }
+                    return Ok(existing);
+                }
+            }
             let active_count = count_active_tasks(connection, submitted_by, kind).await?;
             if active_count >= maximum_active_tasks {
                 return Err(PostgresStorageError::rate_limited(format!(
@@ -349,7 +364,14 @@ pub async fn create_task(
                     kind.as_str()
                 )));
             }
-            insert_queued_task(connection, new_task).await
+            let task = insert_queued_task(connection, new_task).await?;
+            if let Some(approval) = request.approval() {
+                if kind != hubuum_storage_core::StorageTaskKind::Import || approval.claim().actor_id() != request.submitted_by() {
+                    return Err(PostgresStorageError::reauthentication_required());
+                }
+                super::credential_approval::consume(connection, Some(approval.claim()), hubuum_storage_core::StorageCredentialOperation::ImportCredentials, None, &approval.context().clone().with_task_id(TaskId::new(task.id)?)).await?;
+            }
+            Ok(task)
         })
         .await;
 

@@ -57,3 +57,5 @@ pub mod token_retention;
 pub mod unified_search;
 pub mod user;
 pub(crate) mod visibility;
+
+pub mod credential_approval;

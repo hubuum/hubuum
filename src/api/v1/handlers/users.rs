@@ -1,15 +1,19 @@
+use super::credential_approvals::approve_request;
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
+use crate::extractors::Authenticated;
 use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
+use crate::models::credential_approval::CredentialOperation;
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{
     NewUser, UpdateUser, UserID, UserPointResponse, UserResponse, UserWithName,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::services::credential_approvals;
 use crate::storage::with_revision_precondition;
 use crate::traits::UserIdApplicationExt;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
@@ -59,11 +63,13 @@ pub async fn get_users(
     path = "/api/v1/iam/users",
     tag = "users",
     security(("bearer_auth" = [])),
+    params(("X-Hubuum-Credential-Approval" = String, Header, description = "Single-use create_user approval")),
     request_body = NewUser,
     responses(
         (status = 201, description = "User created", body = UserPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Administrator authority and fresh credential approval required", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
     )
 )]
@@ -74,6 +80,7 @@ pub async fn create_user(
     context: AppContext,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
+    authenticated: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
@@ -83,7 +90,16 @@ pub async fn create_user(
     );
 
     let event_context = requestor.event_context(&req);
-    let user = new_user.into_inner().save(&context, &event_context).await?;
+    let approved = approve_request(
+        &context,
+        &authenticated,
+        &req,
+        CredentialOperation::CreateUser {
+            user: new_user.into_inner(),
+        },
+    )
+    .await?;
+    let user = credential_approvals::write_user(&context, approved, &event_context).await?;
     let response = user.to_point_response(&context).await?;
 
     let location = api_locations::user(user.id)?;
@@ -127,6 +143,7 @@ pub async fn get_user(
     tag = "users",
     security(("bearer_auth" = [])),
     params(
+        ("X-Hubuum-Credential-Approval" = Option<String>, Header, description = "Required when the patch supplies a password"),
         ("user_id" = i32, Path, description = "User ID")
     ),
     request_body = UpdateUser,
@@ -134,7 +151,7 @@ pub async fn get_user(
         (status = 200, description = "Updated user", body = UserPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Provider-managed user is read-only", body = ApiErrorResponse),
+        (status = 403, description = "Fresh credential approval required, or provider-managed user is read-only", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
 )]
@@ -144,6 +161,7 @@ pub async fn update_user(
     user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
+    authenticated: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user_id = user_id.into_inner();
@@ -161,14 +179,32 @@ pub async fn update_user(
         .await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
-    let user = with_revision_precondition(
-        &context,
-        precondition,
-        updated_user
-            .into_inner()
-            .save(user_id, &context, &event_context),
-    )
-    .await?;
+    let update = updated_user.into_inner();
+    let user = if update.password.is_some() {
+        let approved = approve_request(
+            &context,
+            &authenticated,
+            &req,
+            CredentialOperation::UpdateUser {
+                user_id,
+                user: update,
+            },
+        )
+        .await?;
+        with_revision_precondition(
+            &context,
+            precondition,
+            credential_approvals::write_user(&context, approved, &event_context),
+        )
+        .await?
+    } else {
+        with_revision_precondition(
+            &context,
+            precondition,
+            update.save(user_id, &context, &event_context),
+        )
+        .await?
+    };
     ApiResponse::ok_revisioned(user.to_point_response(&context).await?)
 }
 
@@ -183,7 +219,7 @@ pub async fn update_user(
     responses(
         (status = 204, description = "User deleted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Provider-managed user is read-only", body = ApiErrorResponse),
+        (status = 403, description = "Fresh credential approval required, or provider-managed user is read-only", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
 )]

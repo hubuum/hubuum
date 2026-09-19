@@ -575,3 +575,14 @@ done
 
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
+
+for approval_path in src/api/v1/handlers/credential_approvals.rs src/models/credential_approval.rs; do
+  approval_output="$(bash "$classifier" "$approval_path")"
+  assert_flag "$approval_output" code true
+  assert_flag "$approval_output" openapi true
+  assert_flag "$approval_output" container true
+done
+for approval_path in src/api/v1/handlers/credential_approvals.rs src/services/credential_approvals.rs; do
+  approval_output="$(bash "$classifier" "$approval_path")"
+  assert_flag "$approval_output" treetop_conformance true
+done

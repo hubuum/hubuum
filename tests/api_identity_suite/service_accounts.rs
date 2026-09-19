@@ -43,7 +43,10 @@ mod tests {
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        credential_patch_request as patch_request, credential_post_request as post_request,
+        delete_request, get_request,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         ClassFixture, TestContext, create_class_fixture, create_test_classes, create_test_group,

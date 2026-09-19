@@ -15,7 +15,10 @@ mod tests {
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::services::identity::ensure_identity_scope;
     use crate::storage::with_revision_precondition;
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        credential_patch_request as patch_request, credential_post_request as post_request,
+        delete_request, get_request,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, create_test_admin, create_test_group, create_test_user, test_context,

@@ -319,8 +319,9 @@ pub async fn list_users(
 
 pub async fn create_user(
     runtime: &PostgresRuntime,
-    request: StorageUserCreate,
+    mut request: StorageUserCreate,
 ) -> Result<StorageMutationOutcome<StorageUser>, PostgresStorageError> {
+    let credential_claim = request.take_credential_claim();
     let (identity_scope, name, password, proper_name, email, context) = request.into_parts();
     let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     if identity_scope != LOCAL_IDENTITY_SCOPE {
@@ -330,6 +331,14 @@ pub async fn create_user(
     }
     runtime
         .with_transaction(async move |connection| {
+            let approval_audit = super::credential_approval::consume(
+                connection,
+                credential_claim.as_ref(),
+                hubuum_storage_core::StorageCredentialOperation::CreateUser,
+                None,
+                &context,
+            )
+            .await?;
             let scope_id = local_identity_scope_id(connection).await?;
             let principal_id = diesel::insert_into(crate::schema::principals::table)
                 .values((
@@ -358,9 +367,10 @@ pub async fn create_user(
             )?;
             let event = user_event(&user, &name, Action::Created, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+            Ok::<_, PostgresStorageError>(super::credential_approval::outcome(
                 user.into_storage()?,
                 audit,
+                approval_audit,
             ))
         })
         .await
@@ -368,13 +378,22 @@ pub async fn create_user(
 
 pub async fn update_user(
     runtime: &PostgresRuntime,
-    request: StorageUserUpdate,
+    mut request: StorageUserUpdate,
 ) -> Result<StorageMutationOutcome<StorageUser>, PostgresStorageError> {
+    let credential_claim = request.take_credential_claim();
     let (user_id, password, proper_name, email, context) = request.into_parts();
     let user_id = user_id.id();
     validate_positive_id(user_id, "user id")?;
     runtime
         .with_transaction(async move |connection| {
+            let approval_audit = super::credential_approval::consume(
+                connection,
+                credential_claim.as_ref(),
+                hubuum_storage_core::StorageCredentialOperation::UpdateUser,
+                Some(user_id),
+                &context,
+            )
+            .await?;
             let before_revision = lock_principal_revision(connection, user_id).await?;
             ensure_user_allows_local_write(connection, user_id).await?;
             let before = load_user_row(connection, user_id).await?;
@@ -389,7 +408,10 @@ pub async fn update_user(
                     .as_ref()
                     .is_none_or(|value| Some(value) == before.email.as_ref())
             {
-                return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
+                return Ok(match approval_audit {
+                    Some(audit) => StorageMutationOutcome::committed(before.into_storage()?, audit),
+                    None => StorageMutationOutcome::unchanged(before.into_storage()?),
+                });
             }
             let password_changed = password.is_some();
             let changes = UpdateUserRow {
@@ -415,9 +437,10 @@ pub async fn update_user(
             )?;
             let event = user_event(&after, &name, Action::Updated, &context, document)?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+            Ok::<_, PostgresStorageError>(super::credential_approval::outcome(
                 after.into_storage()?,
                 audit,
+                approval_audit,
             ))
         })
         .await

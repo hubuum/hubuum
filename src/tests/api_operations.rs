@@ -397,3 +397,153 @@ where
         .await
         .map_into_boxed_body()
 }
+
+/// Explicit two-step client helper for integration tests using standard fixtures.
+/// Raw request helpers remain available for missing/invalid approval tests.
+pub async fn credential_post_request<T: Serialize>(
+    pool: &PostgresPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+) -> actix_web::dev::ServiceResponse {
+    credential_post_request_with_headers(pool, token, endpoint, content, vec![]).await
+}
+pub async fn credential_post_request_with_headers<T: Serialize>(
+    pool: &PostgresPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+    mut headers: Vec<(http::header::HeaderName, String)>,
+) -> actix_web::dev::ServiceResponse {
+    let mut body = serde_json::to_value(content).unwrap();
+    if let Some(operation) = credential_operation_for_request("POST", endpoint, &body)
+        && let Some(result) = fixture_credential_approval(pool, token, operation).await
+    {
+        let approval = match result {
+            Ok(approval) => approval,
+            Err(response) => return response,
+        };
+        if !approval["token_expires_at"].is_null() {
+            body["expires_at"] = approval["token_expires_at"].clone();
+        }
+        headers.push((
+            http::header::HeaderName::from_static("x-hubuum-credential-approval"),
+            approval["approval"].as_str().unwrap().to_string(),
+        ));
+    }
+    post_request_with_headers(pool, token, endpoint, body, headers).await
+}
+pub async fn credential_patch_request<T: Serialize>(
+    pool: &PostgresPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+) -> actix_web::dev::ServiceResponse {
+    let body = serde_json::to_value(content).unwrap();
+    let mut headers = vec![];
+    if let Some(operation) = credential_operation_for_request("PATCH", endpoint, &body)
+        && let Some(result) = fixture_credential_approval(pool, token, operation).await
+    {
+        let approval = match result {
+            Ok(approval) => approval,
+            Err(response) => return response,
+        };
+        headers.push((
+            http::header::HeaderName::from_static("x-hubuum-credential-approval"),
+            approval["approval"].as_str().unwrap().to_string(),
+        ));
+    }
+    patch_request_with_headers(pool, token, endpoint, body, headers).await
+}
+fn credential_operation_for_request(
+    method: &str,
+    endpoint: &str,
+    body: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    use serde_json::json;
+    let segments = endpoint
+        .trim_end_matches('/')
+        .split('/')
+        .collect::<Vec<_>>();
+    match (method, segments.as_slice()) {
+        ("POST", ["", "api", "v1", "iam", "principals", principal, "tokens"]) => Some(
+            json!({"kind":"create_token", "principal_id":principal.parse::<i32>().ok()?, "token":body}),
+        ),
+        (
+            "POST",
+            [
+                "",
+                "api",
+                "v1",
+                "iam",
+                "principals",
+                principal,
+                "tokens",
+                token_id,
+                "renew",
+            ],
+        ) => Some(
+            json!({"kind":"renew_token", "principal_id":principal.parse::<i32>().ok()?, "token_id":token_id.parse::<i32>().ok()?, "token":body}),
+        ),
+        ("POST", ["", "api", "v1", "iam", "users"]) => {
+            Some(json!({"kind":"create_user", "user":body}))
+        }
+        ("PATCH", ["", "api", "v1", "iam", "users", user_id])
+            if body.get("password").is_some_and(|v| !v.is_null()) =>
+        {
+            Some(json!({"kind":"update_user", "user_id":user_id.parse::<i32>().ok()?, "user":body}))
+        }
+        ("POST", ["", "api", "v1", "imports"]) => {
+            let request =
+                serde_json::from_value::<crate::models::ImportRequest>(body.clone()).ok()?;
+            request
+                .contains_credentials()
+                .then(|| json!({"kind":"import_credentials","import":body}))
+        }
+        ("POST", ["", "api", "v1", "restores", restore_id, "confirm"]) => Some(
+            json!({"kind":"confirm_restore", "restore_id":restore_id.parse::<i64>().ok()?, "confirmation":body}),
+        ),
+        _ => None,
+    }
+}
+async fn fixture_credential_approval(
+    pool: &PostgresPool,
+    token: &str,
+    operation: serde_json::Value,
+) -> Option<Result<serde_json::Value, actix_web::dev::ServiceResponse>> {
+    use hubuum_storage_postgres::diesel_async_prelude::*;
+    let digest = crate::models::Token::storage_hash_from_raw(token);
+    let password_hash = hubuum_storage_postgres::with_connection(pool, async |connection| {
+        crate::schema::tokens::table
+            .inner_join(
+                crate::schema::users::table
+                    .on(crate::schema::users::id.eq(crate::schema::tokens::principal_id)),
+            )
+            .filter(crate::schema::tokens::token.eq(digest))
+            .select(crate::schema::users::password)
+            .first::<Option<String>>(connection)
+            .await
+            .optional()
+    })
+    .await
+    .ok()???;
+    let password = if password_hash == *super::TEST_ADMIN_PASSWORD_HASH {
+        "testadminpassword"
+    } else if password_hash == *super::TEST_USER_PASSWORD_HASH {
+        "testpassword"
+    } else {
+        return None;
+    };
+    let response = post_request(
+        pool,
+        token,
+        "/api/v1/iam/credential-approvals",
+        serde_json::json!({"password":password,"operation":operation}),
+    )
+    .await;
+    if response.status() == http::StatusCode::CREATED {
+        Some(Ok(test::read_body_json(response).await))
+    } else {
+        Some(Err(response))
+    }
+}

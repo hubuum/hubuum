@@ -126,8 +126,15 @@ Staging and validation do not enter maintenance mode or lock application data.
 Confirm the validated stage with the administrator token, one-time capability,
 exact SHA-256, and destructive phrase:
 
+Before confirmation, obtain a `confirm_restore`
+[fresh authentication approval](credential_approvals.md) using the acting
+administrator's password, the staged restore ID, and the complete confirmation
+body below. The approval binds the capability, digest, and confirmation phrase.
+It is consumed atomically when confirmation enters draining maintenance.
+
 ```http
 POST /api/v1/restores/{restore_id}/confirm
+X-Hubuum-Credential-Approval: <fresh-confirm-restore-approval>
 Authorization: Bearer <admin-token>
 Content-Type: application/json
 
@@ -371,3 +378,16 @@ mechanism for a separate performance harness that varies dataset size,
 principal count, and permission topology. Benchmark measurement should remain
 separate from backup and restore code so setup cost is not mixed into query
 latency.
+
+## Retained credential approval evidence
+
+Logical backup documents exclude approval records and their digests. Restore
+preserves local approval evidence, invalidates every outstanding approval, and
+includes the consumed restore approval in completion provenance. Previously
+consumed approvals remain consumed. Normal audit history follows the existing
+restore history policy.
+
+These fresh-authentication requirements apply to the HTTP API used by frontend
+and API CLI clients. The offline `hubuum-admin` recovery workflow continues to
+use explicit privileged database credentials and its existing confirmation
+checks; it does not depend on a live human API session during recovery.

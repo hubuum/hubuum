@@ -393,7 +393,7 @@ impl UpdateUser {
 /// Struct to create a new user.
 ///
 /// The password is expected to be plaintext. `name` is the principal name.
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_user_example)]
 pub struct NewUser {
     pub identity_scope: Option<String>,

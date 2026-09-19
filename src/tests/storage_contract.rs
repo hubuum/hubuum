@@ -1,4 +1,5 @@
 mod authorization_resources;
+mod credential_approvals;
 mod event_delivery;
 mod schema_evolution;
 mod task_control;
@@ -1221,7 +1222,7 @@ impl RestoreCoordinationFaultFixture for PostgresRestoreCoordinationFaultFixture
         let job_id = job.summary().id();
         let transition_error =
             PostgresFaultController::failing(PostgresFaultPoint::RestoreAfterDrainTransition)
-                .run(backend.start_restore_draining(job_id))
+                .run(backend.start_restore_draining(job_id.into()))
                 .await
                 .err()
                 .ok_or_else(|| {

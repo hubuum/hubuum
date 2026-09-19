@@ -613,6 +613,35 @@ impl UserStorage for StorageHandle {
 
 #[async_trait]
 impl TokenStorage for StorageHandle {
+    async fn create_credential_approval(
+        &self,
+        request: StorageCredentialApprovalCreate,
+    ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Token,
+            "create_credential_approval",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .create_credential_approval(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn get_credential_approval(
+        &self,
+        id: i32,
+    ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Token,
+            "get_credential_approval",
+            async { dispatch_backend!(self, |backend| backend.get_credential_approval(id).await) },
+        )
+        .await
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,

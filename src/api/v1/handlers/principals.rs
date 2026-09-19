@@ -1,6 +1,8 @@
+use super::credential_approvals::approve_request;
+use crate::models::credential_approval::CredentialOperation;
+use crate::services::credential_approvals;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 use utoipa::ToSchema;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
@@ -18,11 +20,10 @@ use crate::models::principal::{
 use crate::models::search::{
     QueryOptions, parse_query_parameter, parse_query_parameter_with_passthrough,
 };
-use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
+use crate::models::token::revoke_token_by_id_for_principal;
 use crate::models::{
-    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, PrincipalTokenPointResponse, TokenID, TokenListState,
-    TokenScopeDetails,
+    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata,
+    PrincipalTokenPointResponse, TokenID, TokenListState,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
@@ -68,50 +69,12 @@ async fn ensure_can_manage_principal_settings(
     Err(ApiError::NotFound("Principal not found".to_string()))
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NewTokenRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    /// Requested expiry. It must be in the future and no farther from issuance
-    /// than the server's public maximum token lifetime. When omitted, the
-    /// server applies the public default lifetime.
-    pub expires_at: Option<chrono::NaiveDateTime>,
-    /// Optional permission and resource boundaries. Omit or send `null` for an
-    /// unscoped token.
-    pub scope: Option<TokenScopeDetails>,
-}
-
-impl NewTokenRequest {
-    fn into_create_request(
-        self,
-        principal_id: PrincipalID,
-    ) -> Result<PrincipalTokenCreateRequest, ApiError> {
-        let scope = self
-            .scope
-            .map(TokenScopeDetails::into_request_scope)
-            .transpose()?;
-        Ok(PrincipalTokenCreateRequest::new(principal_id)
-            .name(self.name)
-            .description(self.description)
-            .expires_at(self.expires_at)
-            .scope(scope))
-    }
-}
+pub use crate::models::credential_approval::{NewTokenRequest, RenewTokenRequest};
 
 #[derive(Debug, Deserialize)]
 struct TokenPath {
     principal_id: PrincipalID,
     token_id: TokenID,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RenewTokenRequest {
-    /// Optional expiry for the new token. When omitted, the server applies its
-    /// public default token lifetime. The source token's expiry is never
-    /// copied.
-    pub expires_at: Option<chrono::NaiveDateTime>,
 }
 
 pub(crate) fn parse_token_list_query(
@@ -134,7 +97,7 @@ pub(crate) fn parse_token_list_query(
 /// Management authz for a principal's credentials/membership:
 /// * human principal — self or admin;
 /// * service account — admin or a **human** member of its owner group.
-async fn ensure_can_manage_principal(
+pub(crate) async fn ensure_can_manage_principal(
     context: &AppContext,
     requestor: &ManagementAccess,
     principal: &Principal,
@@ -195,7 +158,7 @@ pub(crate) async fn principal_permissions_response(
     path = "/api/v1/iam/principals/{principal_id}/tokens",
     tag = "principals",
     security(("bearer_auth" = [])),
-    params(("principal_id" = i32, Path, description = "Principal id")),
+    params(("X-Hubuum-Credential-Approval" = String, Header, description = "Single-use approval for this exact operation"), ("principal_id" = i32, Path, description = "Principal id")),
     request_body = NewTokenRequest,
     responses(
         (status = 201, description = "Raw token and authoritative expiry (shown once)", body = LoginResponse),
@@ -209,6 +172,7 @@ pub(crate) async fn principal_permissions_response(
 pub async fn create_token(
     context: AppContext,
     requestor: ManagementAccess,
+    authenticated: Authenticated,
     principal_id: web::Path<PrincipalID>,
     body: web::Json<NewTokenRequest>,
     req: HttpRequest,
@@ -224,21 +188,20 @@ pub async fn create_token(
         ));
     }
 
-    let token_request = body.into_inner().into_create_request(principal_id)?;
-
-    debug!(
-        message = "Token mint requested",
-        principal = principal.id,
-        requestor = requestor.user.id,
-        scoped = token_request.is_scoped()
-    );
-
+    let approved = approve_request(
+        &context,
+        &authenticated,
+        &req,
+        CredentialOperation::CreateToken {
+            principal_id,
+            token: body.into_inner(),
+        },
+    )
+    .await?;
     let event_context = requestor.event_context(&req);
-    let issued = token_request
-        .create_issued(&context, &event_context)
-        .await?;
+    let issued = credential_approvals::mint_token(&context, approved, &event_context).await?;
 
-    Ok(ApiResponse::new(
+    Ok(ApiResponse::new_no_store(
         LoginResponse::from_issued(&issued),
         StatusCode::CREATED,
     ))
@@ -324,7 +287,7 @@ pub async fn get_token(
     path = "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew",
     tag = "principals",
     security(("bearer_auth" = [])),
-    params(
+    params(("X-Hubuum-Credential-Approval" = String, Header, description = "Single-use approval for this exact operation"),
         ("principal_id" = i32, Path, description = "Principal id"),
         ("token_id" = i32, Path, description = "Source token id")
     ),
@@ -342,6 +305,7 @@ pub async fn get_token(
 pub async fn renew_token(
     context: AppContext,
     requestor: ManagementAccess,
+    authenticated: Authenticated,
     path: web::Path<TokenPath>,
     body: web::Json<RenewTokenRequest>,
     req: HttpRequest,
@@ -351,16 +315,20 @@ pub async fn renew_token(
     ensure_can_manage_principal(&context, &requestor, &principal).await?;
 
     let event_context = requestor.event_context(&req);
-    let issued = renew_token_by_id_for_principal(
+    let approved = approve_request(
         &context,
-        path.token_id,
-        path.principal_id,
-        body.into_inner().expires_at,
-        &event_context,
+        &authenticated,
+        &req,
+        CredentialOperation::RenewToken {
+            principal_id: path.principal_id,
+            token_id: path.token_id,
+            token: body.into_inner(),
+        },
     )
     .await?;
+    let issued = credential_approvals::mint_token(&context, approved, &event_context).await?;
 
-    Ok(ApiResponse::new(
+    Ok(ApiResponse::new_no_store(
         LoginResponse::from_issued(&issued),
         StatusCode::CREATED,
     ))

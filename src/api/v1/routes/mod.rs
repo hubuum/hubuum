@@ -18,34 +18,46 @@ pub mod tasks;
 pub mod users;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(client_config::get_client_config)
-        .service(web::scope("/iam/users").configure(users::config))
-        .service(web::scope("/iam/groups").configure(groups::config))
-        .service(
-            web::scope("/iam/service-accounts")
-                .configure(crate::api::v1::handlers::service_accounts::config),
-        )
-        .service(
-            web::scope("/iam/principals").configure(crate::api::v1::handlers::principals::config),
-        )
-        .service(web::scope("/iam/me").configure(me::config))
-        .service(web::scope("/imports").configure(imports::config))
-        .service(web::scope("/backups").configure(backups::config))
-        .service(web::scope("/restores").configure(restores::config))
-        .service(
-            web::scope("/collections")
-                .configure(collections::config)
-                .configure(event_subscriptions::config),
-        )
-        .service(web::scope("/classes").configure(classes::config))
-        .service(web::scope("/search").configure(search::config))
-        .service(web::scope("/exports").configure(exports::config))
-        .service(web::scope("/event-deliveries").configure(event_deliveries::config))
-        .service(web::scope("/event-sinks").configure(event_sinks::config))
-        .service(web::scope("/tasks").configure(tasks::config))
-        .service(web::scope("/events").configure(events::config))
-        .service(web::scope("/admin").configure(crate::api::v1::handlers::runtime_config::config))
-        .service(web::scope("/export-templates").configure(export_templates::config))
-        .service(web::scope("/remote-targets").configure(remote_targets::config))
-        .service(web::scope("/relations").configure(relations::config));
+    cfg.service(
+        web::scope("/iam/credential-approvals")
+            .app_data(
+                web::JsonConfig::default()
+                    .limit(2 * 1024 * 1024 + 64 * 1024)
+                    .error_handler(|_, _| {
+                        crate::errors::ApiError::BadRequest(
+                            "Invalid credential approval request".into(),
+                        )
+                        .into()
+                    }),
+            )
+            .configure(crate::api::v1::handlers::credential_approvals::config),
+    )
+    .service(client_config::get_client_config)
+    .service(web::scope("/iam/users").configure(users::config))
+    .service(web::scope("/iam/groups").configure(groups::config))
+    .service(
+        web::scope("/iam/service-accounts")
+            .configure(crate::api::v1::handlers::service_accounts::config),
+    )
+    .service(web::scope("/iam/principals").configure(crate::api::v1::handlers::principals::config))
+    .service(web::scope("/iam/me").configure(me::config))
+    .service(web::scope("/imports").configure(imports::config))
+    .service(web::scope("/backups").configure(backups::config))
+    .service(web::scope("/restores").configure(restores::config))
+    .service(
+        web::scope("/collections")
+            .configure(collections::config)
+            .configure(event_subscriptions::config),
+    )
+    .service(web::scope("/classes").configure(classes::config))
+    .service(web::scope("/search").configure(search::config))
+    .service(web::scope("/exports").configure(exports::config))
+    .service(web::scope("/event-deliveries").configure(event_deliveries::config))
+    .service(web::scope("/event-sinks").configure(event_sinks::config))
+    .service(web::scope("/tasks").configure(tasks::config))
+    .service(web::scope("/events").configure(events::config))
+    .service(web::scope("/admin").configure(crate::api::v1::handlers::runtime_config::config))
+    .service(web::scope("/export-templates").configure(export_templates::config))
+    .service(web::scope("/remote-targets").configure(remote_targets::config))
+    .service(web::scope("/relations").configure(relations::config));
 }

@@ -76,3 +76,5 @@ pub use crate::models::unified_search::*;
 pub use crate::models::user::*;
 
 pub mod schema_evolution;
+
+pub mod credential_approval;

@@ -36,6 +36,7 @@ pub mod identity {
     pub use crate::authorization::*;
     pub use crate::authorization_resources::*;
     pub use crate::collection_authorization::*;
+    pub use crate::credential_approval::*;
     pub use crate::identity::*;
     pub use crate::identity_operations::*;
     pub use crate::identity_resources::*;

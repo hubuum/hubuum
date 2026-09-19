@@ -289,3 +289,25 @@ matches for these variants and `Action::CancelRequested`.
 The shared application contract tests exercise every registered adapter. Keep
 adapter-native coverage for SQL cancellation, receipt commit races, database
 locking, replica recovery and connection cleanup alongside those shared tests.
+
+## Fresh credential approvals
+
+The next server revision requires `TokenStorage::create_credential_approval` and
+`get_credential_approval`, plus `StorageRestoreConfirmation` on
+`RestoreStorage::start_restore_draining`. Identity write requests may carry a
+`StorageCredentialClaim`; task and restore requests carry `StorageCredentialUse`
+to preserve the claim with its event attribution. Internal login/bootstrap
+issuance remains explicit and does not attach a claim.
+
+Adapters must consume attached claims atomically with the protected write, reject
+expired/replayed/mismatched claims with `ReauthenticationRequired`, recheck the
+originating unscoped human token, and retain consumed approval metadata. A failed
+mutation or event append must roll back consumption. Emit the
+`CredentialApproval` entity's `Created` and `Succeeded` events through normal
+fanout. Matching idempotent task retrieval performs no new write or consumption.
+
+Restores preserve local approval records outside logical backup state, invalidate
+unused approvals, and attach consumed restore approval evidence to completion
+provenance. PostgreSQL and memory conformance tests cover single use, concurrency,
+rollback, expiry, origin revocation, and request binding. See the
+[wire protocol and deployment guide](credential_approvals.md).

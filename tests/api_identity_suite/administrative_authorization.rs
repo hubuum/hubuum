@@ -176,7 +176,7 @@ async fn principal_management_uses_selected_admin_policy(
     let token = persisted_test_token(&fixture.context.pool, &raw).await;
     let tokens_path = format!("{PRINCIPALS}/{principal_id}/tokens");
     let token_path = format!("{tokens_path}/{}", token.id);
-    let (request, success) = match operation {
+    let (mut request, success) = match operation {
         "create" => (
             test::TestRequest::post()
                 .uri(&tokens_path)
@@ -206,6 +206,33 @@ async fn principal_management_uses_selected_admin_policy(
             target,
             PrincipalTarget::SelfHuman | PrincipalTarget::OwnedServiceAccount
         );
+    if allowed && matches!(operation, "create" | "renew") {
+        let intent = if operation == "create" {
+            json!({"kind":"create_token", "principal_id":principal_id, "token":{}})
+        } else {
+            json!({"kind":"renew_token", "principal_id":principal_id, "token_id":token.id, "token":{}})
+        };
+        let password = if fixture.user.id == fixture.context.admin_user.id {
+            "testadminpassword"
+        } else {
+            "testpassword"
+        };
+        let response = fixture
+            .request(
+                test::TestRequest::post()
+                    .uri("/api/v1/iam/credential-approvals")
+                    .set_json(json!({"password":password, "operation":intent})),
+            )
+            .await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let approval: serde_json::Value = test::read_body_json(response).await;
+        request = request
+            .insert_header((
+                "x-hubuum-credential-approval",
+                approval["approval"].as_str().unwrap(),
+            ))
+            .set_json(json!({"expires_at":approval["token_expires_at"]}));
+    }
     let response = fixture.request(request).await;
     assert_response_status(
         response,

@@ -417,6 +417,13 @@ impl EventContext {
         )
     }
 
+    /// Attach the newly admitted task while preserving actor, request, and trace context.
+    #[must_use]
+    pub fn with_task_id(mut self, task_id: TaskId) -> Self {
+        self.mutation.task_id = Some(task_id);
+        self
+    }
+
     pub fn system() -> Self {
         Self::new(MutationProvenance::system(), None, None)
     }
@@ -490,6 +497,7 @@ pub enum EntityType {
     UserGroup,
     Permission,
     Token,
+    CredentialApproval,
     RemoteTarget,
     ExportTemplate,
     Task,
@@ -515,6 +523,7 @@ impl EntityType {
         Self::UserGroup,
         Self::Permission,
         Self::Token,
+        Self::CredentialApproval,
         Self::RemoteTarget,
         Self::ExportTemplate,
         Self::Task,
@@ -540,6 +549,7 @@ impl EntityType {
             EntityType::UserGroup => "user_group",
             EntityType::Permission => "permission",
             EntityType::Token => "token",
+            EntityType::CredentialApproval => "credential_approval",
             EntityType::RemoteTarget => "remote_target",
             EntityType::ExportTemplate => "export_template",
             EntityType::Task => "task",
@@ -566,6 +576,7 @@ impl EntityType {
             "user_group" => Ok(EntityType::UserGroup),
             "permission" => Ok(EntityType::Permission),
             "token" => Ok(EntityType::Token),
+            "credential_approval" => Ok(EntityType::CredentialApproval),
             "remote_target" => Ok(EntityType::RemoteTarget),
             "export_template" => Ok(EntityType::ExportTemplate),
             "task" => Ok(EntityType::Task),
@@ -711,6 +722,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::UserGroup => &[A::Added, A::Removed],
         E::Permission => &[A::Granted, A::Revoked],
         E::Token => &[A::Created, A::Revoked, A::Purged],
+        E::CredentialApproval => &[A::Created, A::Succeeded],
         E::Task => &[
             A::Queued,
             A::Started,

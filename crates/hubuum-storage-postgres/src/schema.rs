@@ -131,6 +131,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    credential_approvals (id) {
+        id -> Int4,
+        actor_id -> Int4,
+        token_id -> Int4,
+        operation -> Text,
+        restore_job_id -> Nullable<Int8>,
+        invalidated_at -> Nullable<Timestamp>,
+        target_id -> Nullable<Int4>,
+        secret_digest -> Text,
+        request_digest -> Text,
+        authenticated_at -> Timestamp,
+        expires_at -> Timestamp,
+        consumed_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
     event_deliveries (id) {
         id -> Int8,
         event_id -> Int8,
@@ -955,6 +972,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     collections,
     collections_history,
     computed_field_definitions,
+    credential_approvals,
     event_deliveries,
     event_related_collections,
     event_retention_batches,

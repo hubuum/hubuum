@@ -180,3 +180,7 @@ pub(crate) use operational::{
     StorageReadinessSnapshot, TokenRetentionStorage,
 };
 pub use registry::StorageBackendKind;
+
+pub use hubuum_storage_core::{
+    StorageCredentialApprovalCreate, StorageCredentialApprovalMetadata, StorageCredentialClaim,
+};
