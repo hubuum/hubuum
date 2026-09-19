@@ -1,3 +1,4 @@
+use crate::extractors::AccessEventContext;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 use bytes::BytesMut;
 use futures_util::StreamExt;
@@ -13,7 +14,7 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::restores::{
-    RestoreSettings, confirm_restore, resolve_identity_scope_name, restore_status, stage_restore,
+    RestoreSettings, resolve_identity_scope_name, restore_status, stage_restore,
 };
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
@@ -72,7 +73,7 @@ pub async fn create_restore_stage(
     path = "/api/v1/restores/{restore_id}/confirm",
     tag = "restores",
     security(("bearer_auth" = [])),
-    params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
+    params(("X-Hubuum-Credential-Approval" = String, Header, description = "Single-use confirm_restore approval"), ("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     request_body = RestoreConfirmRequest,
     responses(
         (status = 202, description = "Restore confirmed and queued for the isolated executor", body = RestoreStageResponse,
@@ -80,7 +81,7 @@ pub async fn create_restore_stage(
         ),
         (status = 400, description = "Invalid confirmation", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Administrator access required or restore capability rejected", body = ApiErrorResponse),
+        (status = 403, description = "Administrator access and fresh approval required; restore capability rejected", body = ApiErrorResponse),
         (status = 409, description = "Restore stage cannot be confirmed", body = ApiErrorResponse),
         (status = 410, description = "Restore stage expired", body = ApiErrorResponse)
     )
@@ -88,11 +89,28 @@ pub async fn create_restore_stage(
 #[post("/{restore_id}/confirm")]
 pub async fn confirm_restore_stage(
     context: AppContext,
+    requestor: crate::extractors::Authenticated,
+    req: HttpRequest,
     _admin: AdminAccess,
     restore_id: web::Path<RestoreJobID>,
     confirmation: web::Json<RestoreConfirmRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let response = confirm_restore(&context, restore_id.into_inner(), &confirmation).await?;
+    let approved = super::credential_approvals::approve_request(
+        &context,
+        &requestor,
+        &req,
+        crate::models::credential_approval::CredentialOperation::ConfirmRestore {
+            restore_id: restore_id.into_inner(),
+            confirmation: confirmation.into_inner(),
+        },
+    )
+    .await?;
+    let response = crate::services::credential_approvals::confirm_restore(
+        &context,
+        approved,
+        &requestor.event_context(&req),
+    )
+    .await?;
     Ok(HttpResponse::Accepted()
         .insert_header(("Cache-Control", "no-store"))
         .json(response))

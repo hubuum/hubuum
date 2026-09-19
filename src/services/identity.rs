@@ -187,7 +187,7 @@ fn token_metadata_from_storage(
     })
 }
 
-fn user_from_storage(user: StorageUser) -> User {
+pub(super) fn user_from_storage(user: StorageUser) -> User {
     let user = user.into_parts();
     User {
         id: user.id().id(),
@@ -265,7 +265,9 @@ pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> StorageAuthenticatio
     StorageAuthenticationTokenScope::new(permissions, resources)
 }
 
-fn token_policy(policy: crate::models::TokenIssuancePolicy) -> StorageTokenIssuancePolicy {
+pub(super) fn token_policy(
+    policy: crate::models::TokenIssuancePolicy,
+) -> StorageTokenIssuancePolicy {
     StorageTokenIssuancePolicy::try_new(
         policy.default_lifetime().hours(),
         policy.maximum_lifetime().hours(),

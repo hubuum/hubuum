@@ -32,6 +32,7 @@ use crate::traits::AuthzSubject;
 use hubuum_storage_core::StorageTaskSearch;
 
 pub(crate) struct TaskSubmission {
+    approval: Option<hubuum_storage_core::StorageCredentialUse>,
     kind: TaskKind,
     submitted_by: PrincipalID,
     payload: serde_json::Value,
@@ -307,6 +308,14 @@ pub async fn execute_computed_field_rebuild(
 }
 
 impl TaskSubmission {
+    pub(crate) fn approval(
+        mut self,
+        approval: Option<hubuum_storage_core::StorageCredentialUse>,
+    ) -> Self {
+        self.approval = approval;
+        self
+    }
+
     pub(crate) fn new(
         kind: TaskKind,
         submitted_by: PrincipalID,
@@ -315,6 +324,7 @@ impl TaskSubmission {
         maximum_active_tasks: usize,
     ) -> Self {
         Self {
+            approval: None,
             kind,
             submitted_by,
             payload,
@@ -359,6 +369,10 @@ pub(crate) async fn submit_task(
     backend: &impl StorageContext,
     submission: TaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
+    let approval_actor = submission
+        .approval
+        .as_ref()
+        .map(|approval| approval.claim().actor_id().id());
     let task_kind = task_kind_to_storage(submission.kind);
     let span = info_span!(
         "task.admission",
@@ -378,7 +392,8 @@ pub(crate) async fn submit_task(
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
     .trace_link(telemetry::trace_link_from_span(&span))
-    .try_build(submission.maximum_active_tasks)?;
+    .try_build(submission.maximum_active_tasks)?
+    .with_approval(submission.approval);
     async move {
         let result = async {
             let task = storage_handle(backend).create_task(request).await?;
@@ -388,6 +403,20 @@ pub(crate) async fn submit_task(
             task_from_storage(task)
         }
         .await;
+        if let Some(actor_id) = approval_actor {
+            match &result {
+                Ok(task) => tracing::info!(
+                    message = "Credential-approved import admitted",
+                    actor_id,
+                    task_id = task.id
+                ),
+                Err(error) => tracing::warn!(
+                    message = "Credential-approved import admission rejected",
+                    actor_id,
+                    reason = error.class()
+                ),
+            }
+        }
         tracing::Span::current().record(
             "task.outcome",
             if result.is_ok() {

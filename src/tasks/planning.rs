@@ -149,7 +149,9 @@ fn plan_system_item(
 
 fn preflight_failure_kind(error: &ApiError) -> FailureKind {
     match error {
-        ApiError::Forbidden(_) | ApiError::Unauthorized(_) => FailureKind::Permission,
+        ApiError::Forbidden(_) | ApiError::Unauthorized(_) | ApiError::ReauthenticationRequired => {
+            FailureKind::Permission
+        }
         ApiError::Conflict(_)
         | ApiError::PreconditionFailed(_, _)
         | ApiError::RevisionConflict(_, _) => FailureKind::Collision,

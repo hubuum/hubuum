@@ -29,6 +29,14 @@ Authentication:
 - Creating collections inside an import, and importing identity, template, or
   integration records, requires an unscoped runtime administrator.
 
+Imports carrying a human `password` or `password_hash`, including dry runs,
+require an unscoped human administrator to obtain an `import_credentials`
+[fresh authentication approval](credential_approvals.md). Include the complete
+import body in the approval request and send `X-Hubuum-Credential-Approval` on
+submission. Consumption commits with queue admission; queued work can execute
+after the approval's two-minute lifetime. Credential-free imports retain the
+existing flow.
+
 ## Request model
 
 Imports use client-local refs for items created in the same request and natural-key selectors for existing records.

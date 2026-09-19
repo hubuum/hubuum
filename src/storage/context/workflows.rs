@@ -607,7 +607,7 @@ impl RestoreStorage for StorageHandle {
 
     async fn start_restore_draining(
         &self,
-        job_id: RestoreJobId,
+        request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -615,7 +615,7 @@ impl RestoreStorage for StorageHandle {
             "start_restore_draining",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.start_restore_draining(job_id).await
+                    backend.start_restore_draining(request).await
                 })
             },
         )

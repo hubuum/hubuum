@@ -1,10 +1,10 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
-    backups, classes, client_config, collections, computed_fields, event_deliveries, event_sinks,
-    event_subscriptions, events, export_templates, exports, groups, imports, me, principals,
-    relations, remote_targets, restores, runtime_config, schema_evolution, search,
-    service_accounts, tasks, users,
+    backups, classes, client_config, collections, computed_fields, credential_approvals,
+    event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
+    imports, me, principals, relations, remote_targets, restores, runtime_config, schema_evolution,
+    search, service_accounts, tasks, users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -133,6 +133,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         service_accounts::update_service_account,
         service_accounts::disable_service_account,
         service_accounts::delete_service_account,
+        credential_approvals::create_approval,
+        credential_approvals::get_approval,
         principals::create_token,
         principals::list_tokens,
         principals::get_token,
@@ -593,6 +595,9 @@ pub async fn openapi_json() -> impl Responder {
 #[derive(Serialize, ToSchema)]
 #[schema(example = api_error_response_example)]
 pub struct ApiErrorResponse {
+    /// Machine-readable reason for errors with a client recovery flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub error: String,
     pub message: String,
 }
@@ -644,6 +649,7 @@ pub struct CountsResponse {
 
 fn api_error_response_example() -> ApiErrorResponse {
     ApiErrorResponse {
+        reason: None,
         error: "Unauthorized".to_string(),
         message: "Authentication failure".to_string(),
     }
@@ -1520,6 +1526,8 @@ mod tests {
             "/api/v0/meta/login-rate-limit/{id}",
             "/api/v1/config",
             "/api/v1/admin/config",
+            "/api/v1/iam/credential-approvals",
+            "/api/v1/iam/credential-approvals/{approval_id}",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
             "/api/v1/iam/users/{user_id}/events",
@@ -1683,9 +1691,12 @@ mod tests {
             ("~1api~1v1~1restores~1{restore_id}~1status", "get"),
         ] {
             assert_eq!(
-                json.pointer(&format!(
-                    "/paths/{path}/{method}/parameters/0/schema/minimum"
-                )),
+                json.pointer(&format!("/paths/{path}/{method}/parameters"))
+                    .and_then(Value::as_array)
+                    .and_then(|parameters| parameters
+                        .iter()
+                        .find(|parameter| parameter["name"] == "restore_id"))
+                    .and_then(|parameter| parameter.pointer("/schema/minimum")),
                 Some(&Value::from(1)),
                 "restore job path should document its positive-ID invariant"
             );

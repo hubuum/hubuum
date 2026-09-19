@@ -43,7 +43,10 @@ mod tests {
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        credential_patch_request as patch_request, credential_post_request as post_request,
+        delete_request, get_request,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         ClassFixture, TestContext, create_class_fixture, create_test_classes, create_test_group,
@@ -490,20 +493,58 @@ mod tests {
         assert_eq!(token.authenticate(pool).await.is_ok(), expected_valid);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[actix_web::test]
-    async fn token_mint_materializes_and_returns_the_configured_default_expiry() {
+    async fn token_mint_returns_and_persists_the_approved_expiry(#[case] explicit: bool) {
         use crate::schema::tokens::dsl::{expires_at, token as token_column, tokens};
+        use crate::tests::api_operations::post_request_with_headers;
+        use actix_web::http::header::HeaderName;
 
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
-        let lifetime_hours = integration_test_config().unwrap().token_lifetime_hours;
-
+        let lifetime =
+            chrono::Duration::hours(integration_test_config().unwrap().token_lifetime_hours);
+        let before_approval = chrono::Utc::now().naive_utc().trunc_subsecs(6);
+        let requested_expiry = explicit.then_some(
+            before_approval + lifetime - chrono::Duration::seconds(1)
+                + chrono::Duration::nanoseconds(123),
+        );
         let response = post_request(
             &context.pool,
             &context.admin_token,
+            "/api/v1/iam/credential-approvals",
+            serde_json::json!({
+                "password": "testadminpassword",
+                "operation": {
+                    "kind": "create_token", "principal_id": sa.id,
+                    "token": {"name": "default-expiry", "expires_at": requested_expiry}
+                }
+            }),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let approval: serde_json::Value = test::read_body_json(response).await;
+        let after_approval = chrono::Utc::now().naive_utc();
+        let approved_expiry =
+            serde_json::from_value::<chrono::NaiveDateTime>(approval["token_expires_at"].clone())
+                .unwrap();
+        if let Some(requested) = requested_expiry {
+            assert_eq!(approved_expiry, requested.trunc_subsecs(6));
+        } else {
+            assert!(
+                (before_approval + lifetime..=after_approval + lifetime).contains(&approved_expiry)
+            );
+        }
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
-            &serde_json::json!({ "name": "default-expiry" }),
+            serde_json::json!({ "name": "default-expiry", "expires_at": approval["token_expires_at"] }),
+            vec![(HeaderName::from_static("x-hubuum-credential-approval"), approval["approval"].as_str().unwrap().to_string())],
         )
         .await;
         let response = assert_response_status(response, StatusCode::CREATED).await;
@@ -511,22 +552,17 @@ mod tests {
         let raw_token = body["token"].as_str().unwrap();
         let returned_expiry =
             serde_json::from_value::<chrono::NaiveDateTime>(body["expires_at"].clone()).unwrap();
-
-        let (persisted_issued, persisted_expiry) = with_connection(&context.pool, async |conn| {
+        let persisted_expiry = with_connection(&context.pool, async |conn| {
             tokens
                 .filter(token_column.eq(Token::storage_hash_from_raw(raw_token)))
-                .select((crate::schema::tokens::issued, expires_at))
-                .first::<(chrono::NaiveDateTime, Option<chrono::NaiveDateTime>)>(conn)
+                .select(expires_at)
+                .first::<Option<chrono::NaiveDateTime>>(conn)
                 .await
         })
         .await
         .unwrap();
-
-        assert_eq!(persisted_expiry, Some(returned_expiry));
-        assert_eq!(
-            returned_expiry,
-            persisted_issued + chrono::Duration::hours(lifetime_hours)
-        );
+        assert_eq!(returned_expiry, approved_expiry);
+        assert_eq!(persisted_expiry, Some(approved_expiry));
     }
 
     #[actix_web::test]

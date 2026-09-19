@@ -686,6 +686,13 @@ pub struct ImportRequest {
     pub graph: ImportGraph,
 }
 
+impl ImportRequest {
+    /// Credential-bearing submissions require approval even for dry runs.
+    pub fn contains_credentials(&self) -> bool {
+        self.graph.principals.iter().any(|principal| matches!(&principal.subtype, ImportPrincipalSubtype::Human { password, password_hash, .. } if password.is_some() || password_hash.is_some()))
+    }
+}
+
 fn validate_required_selector(
     reference_present: bool,
     key_present: bool,

@@ -37,7 +37,9 @@ mod tests {
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
-    use crate::tests::api_operations::{get_request, post_request_with_headers};
+    use crate::tests::api_operations::{
+        credential_post_request_with_headers as post_request_with_headers, get_request,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,

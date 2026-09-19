@@ -1801,6 +1801,16 @@ async fn upsert_principal(
                 })
                 .unwrap_or_else(|| imported_timestamps(None));
             if let Some(existing) = existing {
+                if supplied_password.is_some() {
+                    diesel::update(
+                        crate::schema::tokens::table
+                            .filter(crate::schema::tokens::principal_id.eq(principal_id))
+                            .filter(crate::schema::tokens::revoked_at.is_null()),
+                    )
+                    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+                    .execute(connection)
+                    .await?;
+                }
                 with_imported_timestamp_override(connection, async |connection| {
                     diesel::update(
                         crate::schema::users::table

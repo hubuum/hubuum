@@ -277,8 +277,9 @@ pub async fn list_retained_tokens(
 
 pub async fn create_token(
     runtime: &PostgresRuntime,
-    request: StorageTokenCreate,
+    mut request: StorageTokenCreate,
 ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
+    let credential_claim = request.take_credential_claim();
     let parts = request.into_parts();
     let principal_id = parts.principal_id().id();
     let digest = parts.digest().clone();
@@ -295,6 +296,14 @@ pub async fn create_token(
                 StorageMutationOutcome<StorageTokenMetadata>,
                 PostgresStorageError,
             > {
+                let approval_audit = super::credential_approval::consume(
+                    connection,
+                    credential_claim.as_ref(),
+                    hubuum_storage_core::StorageCredentialOperation::CreateToken,
+                    Some(principal_id),
+                    &event_context,
+                )
+                .await?;
                 let (token, audit) = create_token_row(
                     connection,
                     TokenCreateParts {
@@ -311,9 +320,10 @@ pub async fn create_token(
                     },
                 )
                 .await?;
-                Ok(StorageMutationOutcome::committed(
+                Ok(super::credential_approval::outcome(
                     created_metadata(token, scope)?,
                     audit,
+                    approval_audit,
                 ))
             },
         )
@@ -374,8 +384,9 @@ pub async fn token_key_usage(
 
 pub async fn renew_token(
     runtime: &PostgresRuntime,
-    request: StorageTokenRenew,
+    mut request: StorageTokenRenew,
 ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, PostgresStorageError> {
+    let credential_claim = request.take_credential_claim();
     let (source_token_id, principal_id, digest, expires_at, policy, event_context) =
         request.into_parts();
     let expires_at = expires_at.map(|timestamp| timestamp.naive_utc());
@@ -389,6 +400,14 @@ pub async fn renew_token(
                 StorageMutationOutcome<StorageTokenMetadata>,
                 PostgresStorageError,
             > {
+                let approval_audit = super::credential_approval::consume(
+                    connection,
+                    credential_claim.as_ref(),
+                    hubuum_storage_core::StorageCredentialOperation::RenewToken,
+                    Some(principal_id),
+                    &event_context,
+                )
+                .await?;
                 // Disable takes the same service-account row lock before revoking
                 // tokens. Preserve that lock order so renewal cannot race disable.
                 ensure_principal_can_mint(connection, principal_id).await?;
@@ -429,9 +448,10 @@ pub async fn renew_token(
                     },
                 )
                 .await?;
-                Ok(StorageMutationOutcome::committed(
+                Ok(super::credential_approval::outcome(
                     created_metadata(token, scope)?,
                     audit,
+                    approval_audit,
                 ))
             },
         )

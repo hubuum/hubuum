@@ -21,7 +21,10 @@ mod tests {
     use hubuum_storage_postgres::with_connection;
     use rstest::rstest;
 
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        credential_patch_request as patch_request, credential_post_request as post_request,
+        delete_request, get_request,
+    };
     use crate::tests::asserts::{
         assert_paginated_collection_total_count, assert_response_status, header_value,
     };

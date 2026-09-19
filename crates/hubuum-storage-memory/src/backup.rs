@@ -215,8 +215,16 @@ pub(super) fn append_restore_event(
     let (version, created_at, source_version) = metadata.into_parts();
     let (id, _, initiator, artifact, _, _) = job.job.summary().clone().into_parts();
     let initiator = initiator.into_parts();
+    let approval = state
+        .credential_approvals
+        .values()
+        .map(|(_, metadata)| metadata)
+        .filter(|metadata| {
+            metadata.restore_job_id() == Some(id) && metadata.consumed_at().is_some()
+        })
+        .max_by_key(|metadata| metadata.consumed_at());
     let document = AuditDocument::try_new("System restore completed", None, None, json!({
-        "restore_job_id": id.id(), "backup_sha256": artifact.sha256(), "backup_version": version,
+        "restore_job_id": id.id(), "backup_sha256": artifact.sha256(), "credential_approval": approval, "backup_version": version,
         "backup_source_version": source_version, "backup_created_at": created_at, "includes_history": includes_history,
         "initiated_by": {"principal_id": initiator.principal_id().map(PrincipalId::id), "identity_scope": initiator.identity_scope(), "name": initiator.name()}
     })).map_err(|_| invalid("restore provenance"))?;

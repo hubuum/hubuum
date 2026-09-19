@@ -1,5 +1,8 @@
 # Authentication & Authorization Model
 
+Credential management, credential-bearing imports, and restore confirmation use
+[fresh authentication approvals](credential_approvals.md).
+
 This page describes *who* can authenticate to Hubuum, *how* identity is structured,
 and *how* a request is authorized. It also covers **service accounts** (non-human
 API principals) and **token scopes**, which narrow what an automated credential may
@@ -337,6 +340,10 @@ serves both kinds:
 | `GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | Direct permission rows on a single collection for the principal's groups | collection read authority |
 | `GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | Direct and inherited permission rows on a single collection for the principal's groups | collection read authority |
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
+
+Mint and renewal require [fresh authentication approval](credential_approvals.md)
+from the acting human in addition to the authority above. Resolve defaults during
+approval and copy the returned expiry into the final mutation.
 
 Mint accepts `name`, `description`, `expires_at`, and an optional `scope` object
 containing `permissions` and `resources`. If `expires_at` is omitted, Hubuum

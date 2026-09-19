@@ -995,7 +995,7 @@ pub trait RestoreStorage: Send + Sync {
     /// with a conflict without partially changing either lifecycle.
     async fn start_restore_draining(
         &self,
-        job_id: RestoreJobId,
+        request: crate::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError>;
 
     /// Replace all restorable state with the validated canonical snapshot.

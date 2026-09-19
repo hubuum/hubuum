@@ -13,6 +13,7 @@ mod catalog;
 mod collection_authorization;
 mod computed_fields;
 mod computed_objects;
+mod credential_approval;
 mod event_administration;
 mod events;
 mod execution;
@@ -99,6 +100,7 @@ pub use computed_objects::{
     StorageComputedObjectPage, StorageComputedObjectProjection, StorageComputedObjectQueryOptions,
     StorageComputedObjectVisibility, StorageComputedScope, StorageSharedComputedScope,
 };
+pub use credential_approval::*;
 pub use event_administration::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageEventDelivery,
@@ -354,12 +356,13 @@ pub enum StorageErrorKind {
     Unavailable,
     /// The operation requires an authenticated identity.
     AuthenticationRequired,
+    ReauthenticationRequired,
     /// Well-formed domain content failed semantic validation.
     ValidationFailed,
 }
 
 impl StorageErrorKind {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::TaskCancelled,
         Self::TaskDeadlineExceeded,
         Self::AuthorizationUnavailable,
@@ -375,6 +378,7 @@ impl StorageErrorKind {
         Self::RateLimited,
         Self::Unavailable,
         Self::AuthenticationRequired,
+        Self::ReauthenticationRequired,
         Self::ValidationFailed,
     ];
 
@@ -396,6 +400,7 @@ impl StorageErrorKind {
             Self::RateLimited => "rate_limited",
             Self::Unavailable => "unavailable",
             Self::AuthenticationRequired => "authentication_required",
+            Self::ReauthenticationRequired => "reauthentication_required",
             Self::ValidationFailed => "validation_failed",
         }
     }
@@ -456,6 +461,14 @@ impl StorageError {
     }
 
     #[must_use]
+    pub fn reauthentication_required() -> Self {
+        Self::new(
+            StorageErrorKind::ReauthenticationRequired,
+            CREDENTIAL_APPROVAL_REQUIRED,
+            None,
+        )
+    }
+
     pub fn permission_denied(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::PermissionDenied, message, None)
     }

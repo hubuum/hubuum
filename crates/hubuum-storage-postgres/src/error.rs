@@ -95,6 +95,14 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn reauthentication_required() -> Self {
+        Self::new(
+            StorageErrorKind::ReauthenticationRequired,
+            hubuum_storage_core::CREDENTIAL_APPROVAL_REQUIRED,
+            None,
+        )
+    }
+
     pub fn permission_denied(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::PermissionDenied, message, None)
     }
@@ -228,6 +236,7 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::InvalidInput => Self::invalid_input(message),
             StorageErrorKind::Conflict => Self::conflict(message),
             StorageErrorKind::Backend => Self::database(message),
+            StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
             StorageErrorKind::Internal => Self::internal(message),
             StorageErrorKind::NotFound => Self::not_found(message),
@@ -359,6 +368,7 @@ impl From<PostgresStorageError> for StorageError {
             StorageErrorKind::InvalidInput => Self::invalid_input(error.message),
             StorageErrorKind::Conflict => Self::conflict(error.message),
             StorageErrorKind::Backend => Self::backend_failure(error.message),
+            StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),
             StorageErrorKind::Internal => Self::internal(error.message),
             StorageErrorKind::NotFound => Self::not_found(error.message),

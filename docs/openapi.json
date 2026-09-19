@@ -13149,6 +13149,152 @@
         ]
       }
     },
+    "/api/v1/iam/credential-approvals": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Iam Credential Approvals",
+        "description": "Auto-generated documentation for POST /api/v1/iam/credential-approvals.",
+        "operationId": "postApiV1IamCredentialApprovals",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Single-use approval and retained evidence; no-store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialApprovalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human or administrative authority required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Reauthentication throttled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/credential-approvals/{approval_id}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Iam Credential Approvals By Approval Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/credential-approvals/{approval_id}.",
+        "operationId": "getApiV1IamCredentialApprovalsByApprovalId",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "description": "Retained approval identifier",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Non-secret evidence, visible to actor or administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialApprovalRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Approval not found or not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/groups": {
       "get": {
         "tags": [
@@ -15927,6 +16073,15 @@
         "operationId": "postApiV1IamPrincipalsByPrincipalIdTokens",
         "parameters": [
           {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Single-use approval for this exact operation",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "principal_id",
             "in": "path",
             "description": "Principal id",
@@ -16102,6 +16257,15 @@
         "description": "Auto-generated documentation for POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew.",
         "operationId": "postApiV1IamPrincipalsByPrincipalIdTokensByTokenIdRenew",
         "parameters": [
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Single-use approval for this exact operation",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "principal_id",
             "in": "path",
@@ -16948,6 +17112,17 @@
         "summary": "Post Api V1 Iam Users",
         "description": "Auto-generated documentation for POST /api/v1/iam/users.",
         "operationId": "postApiV1IamUsers",
+        "parameters": [
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Single-use create_user approval",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -16989,6 +17164,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator authority and fresh credential approval required",
             "content": {
               "application/json": {
                 "schema": {
@@ -17142,7 +17327,7 @@
             }
           },
           "403": {
-            "description": "Provider-managed user is read-only",
+            "description": "Fresh credential approval required, or provider-managed user is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -17179,6 +17364,18 @@
         "description": "Auto-generated documentation for PATCH /api/v1/iam/users/{user_id}.",
         "operationId": "patchApiV1IamUsersByUserId",
         "parameters": [
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Required when the patch supplies a password",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "user_id",
             "in": "path",
@@ -17249,7 +17446,7 @@
             }
           },
           "403": {
-            "description": "Provider-managed user is read-only",
+            "description": "Fresh credential approval required, or provider-managed user is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -17556,6 +17753,20 @@
         "summary": "Post Api V1 Imports",
         "description": "Auto-generated documentation for POST /api/v1/imports.",
         "operationId": "postApiV1Imports",
+        "parameters": [
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Required for any import carrying password or password_hash, including dry runs",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -19546,6 +19757,15 @@
         "operationId": "postApiV1RestoresByRestoreIdConfirm",
         "parameters": [
           {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Single-use confirm_restore approval",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "restore_id",
             "in": "path",
             "description": "Restore stage ID",
@@ -19607,7 +19827,7 @@
             }
           },
           "403": {
-            "description": "Administrator access required or restore capability rejected",
+            "description": "Administrator access and fresh approval required; restore capability rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -20967,6 +21187,13 @@
           },
           "message": {
             "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable reason for errors with a client recovery flow."
           }
         },
         "example": {
@@ -22004,6 +22231,250 @@
           "total_collections": 3,
           "total_objects": 42
         }
+      },
+      "CredentialApprovalRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "actor_id",
+          "token_id",
+          "operation",
+          "authenticated_at",
+          "expires_at"
+        ],
+        "properties": {
+          "actor_id": {
+            "$ref": "#/components/schemas/PrincipalID"
+          },
+          "authenticated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "consumed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "invalidated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "restore_job_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreJobID"
+              }
+            ]
+          },
+          "target_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              }
+            ]
+          },
+          "token_id": {
+            "$ref": "#/components/schemas/TokenID"
+          }
+        }
+      },
+      "CredentialApprovalRequest": {
+        "type": "object",
+        "required": [
+          "password",
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/CredentialOperation"
+          },
+          "password": {
+            "type": "string",
+            "description": "The acting human's current password. Never retained or logged."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialApprovalResponse": {
+        "type": "object",
+        "required": [
+          "approval",
+          "record"
+        ],
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/CredentialApprovalSecret"
+          },
+          "record": {
+            "$ref": "#/components/schemas/CredentialApprovalRecord"
+          },
+          "token_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Use this exact value as token.expires_at in the subsequent creation/renewal request.\nResolved token expiry at database microsecond precision. Copy this value\ninto the mint/renew request, including when approval used an explicit expiry."
+          }
+        }
+      },
+      "CredentialApprovalSecret": {
+        "type": "string",
+        "pattern": "^hca1\\.[0-9a-f]{64}$"
+      },
+      "CredentialOperation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "import",
+              "kind"
+            ],
+            "properties": {
+              "import": {
+                "$ref": "#/components/schemas/ImportRequest"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "import_credentials"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "restore_id",
+              "confirmation",
+              "kind"
+            ],
+            "properties": {
+              "confirmation": {
+                "$ref": "#/components/schemas/RestoreConfirmRequest"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "confirm_restore"
+                ]
+              },
+              "restore_id": {
+                "$ref": "#/components/schemas/RestoreJobID"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "principal_id",
+              "token",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "create_token"
+                ]
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              "token": {
+                "$ref": "#/components/schemas/NewTokenRequest"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "principal_id",
+              "token_id",
+              "token",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "renew_token"
+                ]
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              "token": {
+                "$ref": "#/components/schemas/RenewTokenRequest"
+              },
+              "token_id": {
+                "$ref": "#/components/schemas/TokenID"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "user",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "create_user"
+                ]
+              },
+              "user": {
+                "$ref": "#/components/schemas/NewUser"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "user_id",
+              "user",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "update_user"
+                ]
+              },
+              "user": {
+                "$ref": "#/components/schemas/UpdateUser"
+              },
+              "user_id": {
+                "$ref": "#/components/schemas/UserID"
+              }
+            }
+          }
+        ]
       },
       "CurrentTokenMetadata": {
         "type": "object",
@@ -30101,6 +30572,12 @@
         },
         "additionalProperties": false
       },
+      "RestoreJobID": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Validated positive restore job id.",
+        "minimum": 1
+      },
       "RestoreJobStatus": {
         "type": "string",
         "enum": [
@@ -33923,6 +34400,12 @@
           "password": "new-password",
           "proper_name": "Alice Doe"
         }
+      },
+      "UserID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive user id.",
+        "minimum": 1
       },
       "UserPointResponse": {
         "type": "object",

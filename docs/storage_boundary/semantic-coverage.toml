@@ -149,9 +149,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TokenStorage]
 source = "crates/hubuum-storage-core/src/identity_tokens.rs"
-methods = ["list_retained_tokens", "token_key_usage", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
-effects = { point_read = ["get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], complete_read = ["token_key_usage"], audited_mutation = ["create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
+methods = ["create_credential_approval", "get_credential_approval", "list_retained_tokens", "token_key_usage", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
+effects = { point_read = ["get_credential_approval", "get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], complete_read = ["token_key_usage"], audited_mutation = ["create_credential_approval", "create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
+shared_scenarios = ["src/tests/storage_contract/credential_approvals.rs::approvals_allow_only_one_concurrent_consumer_and_retain_evidence", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
 
 [traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"
@@ -315,7 +315,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 source = "crates/hubuum-storage-core/src/restore.rs"
 methods = ["stage_restore", "get_restore_job", "get_restore_status", "expire_restore_stage", "start_restore_draining", "apply_restore", "fail_restore_and_resume", "get_restore_coordinator_snapshot", "resume_maintenance_without_restore", "resume_terminal_restore", "tick_restore_coordinator", "get_restore_drain_state", "remove_restore_instance"]
 effects = { point_read = ["get_restore_job", "get_restore_status", "get_restore_coordinator_snapshot", "get_restore_drain_state"], workflow_mutation = ["stage_restore", "expire_restore_stage", "start_restore_draining", "apply_restore", "fail_restore_and_resume", "resume_maintenance_without_restore", "resume_terminal_restore", "tick_restore_coordinator", "remove_restore_instance"] }
-shared_scenarios = ["src/restores/mod.rs::confirm_restore", "src/restores/mod.rs::apply_restore", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
+shared_scenarios = ["src/restores/mod.rs::confirm_restore_with_approval", "src/restores/mod.rs::apply_restore", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_restore_lifecycle_and_coordination", "tests/restore_contract/mod.rs::every_selectable_backend_preserves_recovery_across_backup_generations", "tests/restore_contract/mod.rs::every_selectable_backend_rolls_back_failed_restore"]
 native_scenarios = ["tests/restore_roundtrip.rs::interrupted_restore_is_reconciled_after_the_drain_transition", "src/tests/storage_contract.rs::postgres_restore_faults_roll_back_coordination_transitions"]
 
 [traits.ImportStorage]

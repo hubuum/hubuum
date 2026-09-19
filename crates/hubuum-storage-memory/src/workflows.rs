@@ -240,7 +240,8 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         request: StorageTaskCreateRequest,
     ) -> Result<StorageTask, StorageError> {
-        let mut state = self.state.write().await;
+        let mut guard = self.state.write().await;
+        let mut state = guard.clone();
         if !state.principals.contains_key(&request.submitted_by().id()) {
             return Err(StorageError::not_found(format!(
                 "Principal {} was not found",
@@ -305,6 +306,20 @@ impl TaskQueueStorage for MemoryStorage {
             id,
             StorageTaskEventInput::new(StorageTaskStatus::Queued.as_str(), "Task queued"),
         )?;
+        if let Some(approval) = request.approval() {
+            if request.kind() != StorageTaskKind::Import
+                || approval.claim().actor_id() != request.submitted_by()
+            {
+                return Err(StorageError::reauthentication_required());
+            }
+            state.consume_credential_claim(
+                Some(approval.claim()),
+                StorageCredentialOperation::ImportCredentials,
+                None,
+                &approval.context().clone().with_task_id(id),
+            )?;
+        }
+        *guard = state;
         Ok(task)
     }
 
@@ -1058,9 +1073,22 @@ impl RestoreStorage for MemoryStorage {
 
     async fn start_restore_draining(
         &self,
-        job_id: RestoreJobId,
+        request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
-        let mut state = self.state.write().await;
+        let job_id = request.job_id();
+        let mut guard = self.state.write().await;
+        let mut state = guard.clone();
+        if let Some(approval) = request.approval() {
+            if approval.claim().restore_job_id() != Some(job_id) {
+                return Err(StorageError::reauthentication_required());
+            }
+            state.consume_credential_claim(
+                Some(approval.claim()),
+                StorageCredentialOperation::ConfirmRestore,
+                None,
+                approval.context(),
+            )?;
+        }
         if !state.maintenance_state.is_normal() {
             return Err(StorageError::conflict(
                 "Another maintenance operation is already active",
@@ -1095,6 +1123,7 @@ impl RestoreStorage for MemoryStorage {
         state.maintenance_restore_job_id = Some(job_id);
         state.maintenance_generation = state.maintenance_generation.saturating_add(1);
         state.restore_instances.clear();
+        *guard = state;
         Ok(confirmed_at)
     }
 
@@ -1129,6 +1158,12 @@ impl RestoreStorage for MemoryStorage {
                 .with_schema_limits(self.schema_limits)
                 .map_err(invalid_contract_value)?,
         )?;
+        replacement.credential_approvals = state.credential_approvals.clone();
+        for (_, approval) in replacement.credential_approvals.values_mut() {
+            approval.invalidate(Utc::now());
+        }
+        replacement.credential_approval_digests = state.credential_approval_digests.clone();
+        replacement.next_credential_approval_id = state.next_credential_approval_id;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,

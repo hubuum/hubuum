@@ -150,6 +150,7 @@ class Api:
     def __init__(self, base, token=""):
         self.base = base
         self.token = token
+        self.password = None
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(self, method, path, body=None, expected=(200,), headers=None):
@@ -177,6 +178,18 @@ class Api:
 
     def post(self, path, body=None, expected=(200, 201, 202)):
         return self.request("POST", path, body, expected)[0]
+
+    def create_user(self, body):
+        # Corpus generation also exercises older release servers. Only an absent
+        # route permits the legacy flow; authentication/approval failures fail.
+        approval, _ = self.request("POST", "/api/v1/iam/credential-approvals", {
+            "password": self.password,
+            "operation": {"kind": "create_user", "user": body},
+        }, expected=(201, 404))
+        headers = ({"X-Hubuum-Credential-Approval": approval["approval"]}
+                   if approval and "approval" in approval else {})
+        return self.request("POST", "/api/v1/iam/users", body,
+                            expected=(200, 201), headers=headers)[0]
 
     def change(self, method, path, body=None, expected=(200, 204)):
         _, headers = self.request("GET", path)
@@ -319,6 +332,7 @@ class Deployment:
         match = re.search(r"reset to: (\S+)", output)
         require(match is not None, "Administrator command did not return a reset password")
         login = Api(api.base)
+        login.password = match.group(1)
         login.token = login.post("/api/v0/auth/login", {
             "name": username, "password": match.group(1),
         })["token"]
@@ -374,7 +388,7 @@ def seed(deployment, recipe):
         ("corpus-admin", "admin"), ("corpus-editor", "corpus-editors"),
         ("corpus-reader", "corpus-readers"), ("corpus-outsider", "corpus-outsiders"),
     ):
-        user = api.post("/api/v1/iam/users", {
+        user = api.create_user({
             "name": username, "password": secrets.token_urlsafe(24),
             "proper_name": username.replace("-", " ").title(), "email": username + "@example.invalid",
         })

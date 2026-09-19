@@ -48,9 +48,9 @@ impl RestoreStorage for PostgresStorage {
 
     async fn start_restore_draining(
         &self,
-        job_id: RestoreJobId,
+        request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
-        crate::operations::restore_lifecycle::start_restore_draining(self.runtime(), job_id.id())
+        crate::operations::restore_lifecycle::start_restore_draining(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }

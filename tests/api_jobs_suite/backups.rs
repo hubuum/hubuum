@@ -11,7 +11,7 @@ mod tests {
         BackupDocument, BackupRequest, BackupTaskOutputStatus, Permissions, TaskKind, TaskResponse,
         TaskStatus,
     };
-    use crate::tests::api_operations::{get_request, post_request};
+    use crate::tests::api_operations::{credential_post_request as post_request, get_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, TestMutex, lock_test_mutex, scoped_token, test_context, test_mutex,

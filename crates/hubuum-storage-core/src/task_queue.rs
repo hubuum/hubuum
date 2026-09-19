@@ -247,6 +247,7 @@ impl fmt::Debug for StorageTaskScopeSnapshot {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskCreateRequest {
+    approval: Option<crate::StorageCredentialUse>,
     kind: StorageTaskKind,
     submitted_by: PrincipalId,
     request_payload: Value,
@@ -260,6 +261,16 @@ pub struct StorageTaskCreateRequest {
 }
 
 impl StorageTaskCreateRequest {
+    #[must_use]
+    pub fn with_approval(mut self, approval: Option<crate::StorageCredentialUse>) -> Self {
+        self.approval = approval;
+        self
+    }
+    #[must_use]
+    pub const fn approval(&self) -> Option<&crate::StorageCredentialUse> {
+        self.approval.as_ref()
+    }
+
     #[must_use]
     pub const fn metadata(&self) -> Option<&crate::StorageTaskMetadata> {
         self.metadata.as_ref()
@@ -413,6 +424,7 @@ impl StorageTaskCreateRequestBuilder {
         }
 
         Ok(StorageTaskCreateRequest {
+            approval: None,
             kind: self.kind,
             submitted_by: self.submitted_by,
             request_payload: self.request_payload,

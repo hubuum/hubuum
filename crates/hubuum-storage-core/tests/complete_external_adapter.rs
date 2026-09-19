@@ -532,6 +532,19 @@ impl UserStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl TokenStorage for CompleteExternalAdapter {
+    async fn create_credential_approval(
+        &self,
+        request: StorageCredentialApprovalCreate,
+    ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, StorageError> {
+        fixture_result()
+    }
+    async fn get_credential_approval(
+        &self,
+        id: i32,
+    ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
+        fixture_result()
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,
@@ -1699,7 +1712,7 @@ impl RestoreStorage for CompleteExternalAdapter {
 
     async fn start_restore_draining(
         &self,
-        job_id: RestoreJobId,
+        request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
         fixture_result()
     }

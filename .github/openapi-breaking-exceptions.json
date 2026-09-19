@@ -186,6 +186,20 @@
       "fingerprints": [
         "ca6ee7172865"
       ]
+    },
+    {
+      "id": "v0.0.15-fresh-credential-approvals",
+      "baseline": "v0.0.15",
+      "expires": "2027-03-31",
+      "reason": "Credential creation and renewal, local user creation, and restore confirmation now require operation-bound fresh password approval so a stolen bearer token cannot mint durable credentials or replace identity data. Password patches and credential-bearing imports have the same conditional requirement.",
+      "migration": "Update CLI/frontend/SDK flows to obtain a single-use approval",
+      "changelog_entry": "fresh, operation-bound password approval",
+      "fingerprints": [
+        "3f8067372f31",
+        "40cb084500d9",
+        "77ec4cf612af",
+        "7a4cc3401793"
+      ]
     }
   ]
 }

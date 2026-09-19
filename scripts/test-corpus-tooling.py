@@ -11,6 +11,8 @@ if sys.version_info < (3, 11):
     )
 
 import copy
+import io
+import urllib.error
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -133,6 +135,18 @@ class CorpusValidationTests(unittest.TestCase):
 
 
 class HarnessTests(unittest.TestCase):
+    def test_rejected_credential_approval_never_falls_back_to_bearer_only_creation(self):
+        api = CORPUS.Api("http://127.0.0.1:1", "test-token")
+        api.password = "test-password"
+        rejection = urllib.error.HTTPError(
+            api.base + "/api/v1/iam/credential-approvals", 403, "Forbidden", {},
+            io.BytesIO(b'{"reason":"reauthentication_required"}'),
+        )
+        with patch.object(api.opener, "open", side_effect=rejection) as request:
+            with self.assertRaisesRegex(ValueError, "received 403"):
+                api.create_user({"name": "test-user", "password": "new-test-password"})
+        self.assertEqual(request.call_count, 1)
+
     def test_pagination_rejects_repeated_cursors(self):
         api = CORPUS.Api("http://127.0.0.1:1")
         with patch.object(api, "request", return_value=([{"id": 1}], {"X-Next-Cursor": "repeated"})):

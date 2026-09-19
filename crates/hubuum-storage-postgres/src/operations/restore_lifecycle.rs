@@ -469,13 +469,27 @@ pub async fn expire_restore_stage(
 /// Confirm a staged restore and atomically enter draining maintenance.
 pub async fn start_restore_draining(
     runtime: &PostgresRuntime,
-    job_id: i64,
+    request: hubuum_storage_core::StorageRestoreConfirmation,
 ) -> Result<DateTime<Utc>, PostgresStorageError> {
+    let job_id = request.job_id().id();
     runtime
         .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
                 .execute(connection)
                 .await?;
+            if let Some(approval) = request.approval() {
+                if approval.claim().restore_job_id() != Some(request.job_id()) {
+                    return Err(PostgresStorageError::reauthentication_required());
+                }
+                super::credential_approval::consume(
+                    connection,
+                    Some(approval.claim()),
+                    hubuum_storage_core::StorageCredentialOperation::ConfirmRestore,
+                    None,
+                    approval.context(),
+                )
+                .await?;
+            }
             let confirmation_time = diesel::select(sql::<Timestamp>(DATABASE_UTC_NOW_SQL))
                 .get_result::<NaiveDateTime>(connection)
                 .await?;
@@ -483,6 +497,7 @@ pub async fn start_restore_draining(
             let confirmation_time = diesel::update(
                 crate::schema::restore_jobs::table
                     .filter(crate::schema::restore_jobs::id.eq(job_id))
+                    .filter(crate::schema::restore_jobs::expires_at.gt(confirmation_time))
                     .filter(
                         crate::schema::restore_jobs::status
                             .eq(StorageRestoreJobStatus::Validated.as_str()),
@@ -585,6 +600,7 @@ pub async fn apply_restore(
                 }
 
                 let started_at = Utc::now().naive_utc();
+                diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
                 replace_backend_state(connection, &state_sections, history_sections.as_ref())
                     .await?;
@@ -596,6 +612,7 @@ pub async fn apply_restore(
                 diesel::sql_query("SELECT set_config('hubuum.restore_events', 'off', true)")
                     .execute(connection)
                     .await?;
+                let approval = super::credential_approval::restore_evidence(connection, job.id).await?;
                 let document = AuditDocument::try_new(
                     "System restore completed",
                     None,
@@ -603,6 +620,7 @@ pub async fn apply_restore(
                     serde_json::json!({
                         "restore_job_id": job.id,
                         "backup_sha256": job.sha256,
+                        "credential_approval": approval,
                         "backup_version": backup_version,
                         "backup_source_version": backup_source_version,
                         "backup_created_at": backup_created_at,

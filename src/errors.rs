@@ -66,6 +66,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 pub enum ApiError {
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
+    ReauthenticationRequired,
     InternalServerError(String),
     Forbidden(String),
     NotAcceptable(String),
@@ -94,6 +95,7 @@ impl ApiError {
         match self {
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
+            ApiError::ReauthenticationRequired => "reauthentication_required",
             ApiError::InternalServerError(_) => "internal_server_error",
             ApiError::Forbidden(_) => "forbidden",
             ApiError::NotAcceptable(_) => "not_acceptable",
@@ -142,6 +144,7 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::ReauthenticationRequired => hubuum_storage_core::CREDENTIAL_APPROVAL_REQUIRED,
             ApiError::TaskStopped(TaskStopReason::Cancelled) => "Task execution was cancelled",
             ApiError::TaskStopped(TaskStopReason::DeadlineExceeded) => {
                 "Task execution deadline exceeded"
@@ -186,6 +189,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::InvalidInput => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
             StorageErrorKind::Backend => Self::DatabaseError(message),
+            StorageErrorKind::ReauthenticationRequired => Self::ReauthenticationRequired,
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
             StorageErrorKind::Internal => Self::InternalServerError(message),
             StorageErrorKind::NotFound => Self::NotFound(message),
@@ -270,6 +274,7 @@ impl fmt::Display for ApiError {
             ApiError::PermissionBackendUnavailable(message) => write!(f, "{message}"),
             ApiError::Forbidden(message) => write!(f, "{message}"),
             ApiError::InternalServerError(message) => write!(f, "{message}"),
+            ApiError::ReauthenticationRequired => f.write_str(self.public_message()),
             ApiError::Unauthorized(message) => write!(f, "{message}"),
             ApiError::DatabaseError(message) => write!(f, "{message}"),
             ApiError::DbConnectionError(message) => write!(f, "{message}"),
@@ -288,6 +293,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::ReauthenticationRequired => HttpResponse::Forbidden()
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":"Forbidden", "reason":"reauthentication_required", "message":self.public_message()})),
             ApiError::TaskStopped(reason) => HttpResponse::Conflict().json(json!({
                 "error": "Task Stopped", "reason": reason.as_str(), "message": self.public_message()
             })),
@@ -374,7 +382,7 @@ impl ResponseError for ApiError {
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             ApiError::PermissionBackendUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::Forbidden(_) | ApiError::ReauthenticationRequired => StatusCode::FORBIDDEN,
             ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
             ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,

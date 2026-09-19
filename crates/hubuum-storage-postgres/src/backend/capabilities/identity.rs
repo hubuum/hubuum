@@ -402,6 +402,26 @@ impl UserStorage for PostgresStorage {
 
 #[async_trait]
 impl TokenStorage for PostgresStorage {
+    async fn create_credential_approval(
+        &self,
+        request: hubuum_storage_core::StorageCredentialApprovalCreate,
+    ) -> Result<
+        StorageMutationOutcome<hubuum_storage_core::StorageCredentialApprovalMetadata>,
+        StorageError,
+    > {
+        crate::operations::credential_approval::create(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn get_credential_approval(
+        &self,
+        id: i32,
+    ) -> Result<hubuum_storage_core::StorageCredentialApprovalMetadata, StorageError> {
+        crate::operations::credential_approval::get(self.runtime(), id)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn list_retained_tokens(
         &self,
         query: StorageTokenListQuery,

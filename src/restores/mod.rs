@@ -1352,6 +1352,15 @@ pub async fn confirm_restore(
     job_id: RestoreJobID,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
+    confirm_restore_with_approval(pool, job_id, confirmation, None).await
+}
+
+pub(crate) async fn confirm_restore_with_approval(
+    pool: &impl crate::storage::StorageContext,
+    job_id: RestoreJobID,
+    confirmation: &RestoreConfirmRequest,
+    approval: Option<hubuum_storage_core::StorageCredentialUse>,
+) -> Result<RestoreStageResponse, ApiError> {
     let job = match load_restore_job(pool, job_id).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
@@ -1420,7 +1429,11 @@ pub async fn confirm_restore(
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.
     let job_id = restore_job_id_to_storage(job.id);
-    let confirmed_at = storage_handle(pool).start_restore_draining(job_id).await?;
+    let mut request = hubuum_storage_core::StorageRestoreConfirmation::from(job_id);
+    if let Some(approval) = approval {
+        request = request.with_approval(approval);
+    }
+    let confirmed_at = storage_handle(pool).start_restore_draining(request).await?;
     Ok(RestoreStageResponse {
         id: job.id,
         status: RestoreJobStatus::Confirmed,

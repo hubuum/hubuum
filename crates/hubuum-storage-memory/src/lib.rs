@@ -386,6 +386,10 @@ struct MemoryState {
     membership_sources: Vec<StorageBackupRow>,
     authorization_revisions: BTreeMap<i32, ResourceRevision>,
     tokens: BTreeMap<i32, MemoryTokenRecord>,
+    credential_approvals:
+        BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
+    credential_approval_digests: BTreeMap<String, i32>,
+    next_credential_approval_id: i32,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
@@ -800,6 +804,7 @@ mod support;
 use support::*;
 
 mod backup;
+mod credential_approval;
 mod events;
 mod execution;
 mod identity;

@@ -37,7 +37,8 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
-    src/config/running.rs)
+    src/config/running.rs | src/models/credential_approval.rs | \
+      src/api/v1/handlers/credential_approvals.rs)
       openapi=true
       ;;
     crates/hubuum-domain/src/json_schema.rs | crates/hubuum-domain/src/json_schema/* | \
@@ -59,6 +60,7 @@ for path in "$@"; do
       tests/api_jobs_suite/tasks.rs | src/tests/permissions/* | \
       src/extractors/mod.rs | src/api/v1/handlers/principals.rs | \
       src/api/v1/handlers/service_accounts.rs | \
+      src/api/v1/handlers/credential_approvals.rs | src/services/credential_approvals.rs | \
       tests/api_identity_suite/administrative_authorization.rs | \
       src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
       src/models/traits/user.rs | src/tests/search/related_objects.rs | \

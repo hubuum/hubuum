@@ -214,9 +214,20 @@ pub struct StorageTokenCreate {
     scope: Option<StorageAuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
+    credential_claim: Option<crate::StorageCredentialClaim>,
 }
 
 impl StorageTokenCreate {
+    /// Attach a fresh-authentication claim; adapters consume it in the mutation transaction.
+    #[must_use]
+    pub fn with_credential_claim(mut self, claim: crate::StorageCredentialClaim) -> Self {
+        self.credential_claim = Some(claim);
+        self
+    }
+    pub fn take_credential_claim(&mut self) -> Option<crate::StorageCredentialClaim> {
+        self.credential_claim.take()
+    }
+
     #[must_use]
     pub fn new(
         principal_id: PrincipalId,
@@ -233,6 +244,7 @@ impl StorageTokenCreate {
             scope: None,
             policy,
             event_context,
+            credential_claim: None,
         }
     }
 
@@ -300,9 +312,20 @@ pub struct StorageTokenRenew {
     expires_at: Option<DateTime<Utc>>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
+    credential_claim: Option<crate::StorageCredentialClaim>,
 }
 
 impl StorageTokenRenew {
+    /// Attach a fresh-authentication claim; adapters consume it in the mutation transaction.
+    #[must_use]
+    pub fn with_credential_claim(mut self, claim: crate::StorageCredentialClaim) -> Self {
+        self.credential_claim = Some(claim);
+        self
+    }
+    pub fn take_credential_claim(&mut self) -> Option<crate::StorageCredentialClaim> {
+        self.credential_claim.take()
+    }
+
     #[must_use]
     pub fn new(
         source_token_id: TokenId,
@@ -319,6 +342,7 @@ impl StorageTokenRenew {
             expires_at,
             policy,
             event_context,
+            credential_claim: None,
         }
     }
 
@@ -502,6 +526,17 @@ impl fmt::Debug for StoragePrincipalTokensRevoke {
 /// Complete bearer-token lifecycle required of every selectable backend.
 #[async_trait]
 pub trait TokenStorage: Send + Sync {
+    /// Persist an operation-bound approval and its audit event atomically.
+    async fn create_credential_approval(
+        &self,
+        request: crate::StorageCredentialApprovalCreate,
+    ) -> Result<StorageMutationOutcome<crate::StorageCredentialApprovalMetadata>, StorageError>;
+    /// Non-secret retained evidence; callers enforce visibility before returning it.
+    async fn get_credential_approval(
+        &self,
+        id: i32,
+    ) -> Result<crate::StorageCredentialApprovalMetadata, StorageError>;
+
     /// Return hash-free retained token metadata using the requested lifecycle
     /// state, filters, stable cursor page, and optional exact total.
     async fn list_retained_tokens(

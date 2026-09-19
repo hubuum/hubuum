@@ -488,9 +488,20 @@ pub struct StorageUserCreate {
     proper_name: Option<String>,
     email: Option<String>,
     event_context: EventContext,
+    credential_claim: Option<crate::StorageCredentialClaim>,
 }
 
 impl StorageUserCreate {
+    /// Attach a fresh-authentication claim; adapters consume it in the mutation transaction.
+    #[must_use]
+    pub fn with_credential_claim(mut self, claim: crate::StorageCredentialClaim) -> Self {
+        self.credential_claim = Some(claim);
+        self
+    }
+    pub fn take_credential_claim(&mut self) -> Option<crate::StorageCredentialClaim> {
+        self.credential_claim.take()
+    }
+
     #[must_use]
     pub fn new(
         identity_scope: Option<String>,
@@ -507,6 +518,7 @@ impl StorageUserCreate {
             proper_name,
             email,
             event_context,
+            credential_claim: None,
         }
     }
 
@@ -554,9 +566,20 @@ pub struct StorageUserUpdate {
     proper_name: Option<String>,
     email: Option<String>,
     event_context: EventContext,
+    credential_claim: Option<crate::StorageCredentialClaim>,
 }
 
 impl StorageUserUpdate {
+    /// Attach a fresh-authentication claim; adapters consume it in the mutation transaction.
+    #[must_use]
+    pub fn with_credential_claim(mut self, claim: crate::StorageCredentialClaim) -> Self {
+        self.credential_claim = Some(claim);
+        self
+    }
+    pub fn take_credential_claim(&mut self) -> Option<crate::StorageCredentialClaim> {
+        self.credential_claim.take()
+    }
+
     #[must_use]
     pub const fn new(
         id: UserId,
@@ -571,6 +594,7 @@ impl StorageUserUpdate {
             proper_name,
             email,
             event_context,
+            credential_claim: None,
         }
     }
 
