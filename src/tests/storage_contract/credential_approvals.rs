@@ -81,7 +81,17 @@ async fn approvals_allow_only_one_concurrent_consumer_and_retain_evidence() {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         let f = Fixture::new(backend).await;
-        let id = f.approve(0).await;
+        let id = f
+            .backend
+            .create_credential_approval(StorageCredentialApprovalCreate::new(
+                f.claim.clone(),
+                Utc::now(),
+                f.context.clone(),
+            ))
+            .await
+            .unwrap()
+            .into_value()
+            .id();
         let (first, second) = tokio::join!(
             f.backend.create_token(f.request()),
             f.backend.create_token(f.request())
@@ -332,6 +342,57 @@ async fn failed_restore_confirmation_rolls_back_consumed_approval_and_maintenanc
         hubuum_storage_postgres::test_support::delete_restore_job(&pool, job)
             .await
             .unwrap();
+        f.cleanup().await;
+    }
+}
+
+#[rstest]
+#[case(None)]
+#[case(Some("password"))]
+#[case(Some("password_hash"))]
+#[actix_web::test]
+async fn imported_credentials_invalidate_outstanding_approvals(
+    #[case] credential_field: Option<&str>,
+) {
+    use crate::models::ImportPrincipalInput;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let f = Fixture::new(backend).await;
+        f.approve(0).await;
+        let principal = f.backend.get_principal(f.user.principal_id).await.unwrap();
+        let mut value = serde_json::json!({
+            "name": principal.name(),
+            "kind": "human",
+            "provider_managed": false,
+            "identity_scope_key": {"name": "local"}
+        });
+        if let Some(field) = credential_field {
+            value[field] = serde_json::Value::String(if field == "password_hash" {
+                crate::tests::TEST_USER_PASSWORD_HASH.clone()
+            } else {
+                "new-imported-password".to_string()
+            });
+        }
+        let input: ImportPrincipalInput = serde_json::from_value(value).unwrap();
+        let operation = crate::services::import_boundary::import_operation_to_storage(
+            ApplicationImportOperation::UpsertPrincipal {
+                input,
+                overwrite: true,
+            },
+        )
+        .unwrap();
+        let plan =
+            StorageImportPlan::try_new(vec![StorageImportPlanItem::new(0, operation)]).unwrap();
+        f.backend.apply_import_strict(plan).await.unwrap();
+        let result = f.backend.create_token(f.request()).await;
+        if credential_field.is_some() {
+            assert_eq!(
+                result.unwrap_err().kind(),
+                StorageErrorKind::ReauthenticationRequired
+            );
+        } else {
+            result.unwrap().into_value();
+        }
         f.cleanup().await;
     }
 }

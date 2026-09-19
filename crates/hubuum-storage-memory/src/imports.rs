@@ -1554,6 +1554,23 @@ impl MemoryStorage {
                 anonymized_at,
             } => {
                 let user_id = UserId::new(id.id()).expect("principal id is a valid user id");
+                if password.is_some() && existing.is_some() {
+                    for token in state.tokens.values_mut() {
+                        if token.principal_id == id && token.revoked_at.is_none() {
+                            token.revoked_at = Some(now);
+                        }
+                    }
+                }
+                let password = password.or_else(|| {
+                    state.users.get(&id.id()).and_then(|record| {
+                        record
+                            .user
+                            .clone()
+                            .into_parts()
+                            .password_hash()
+                            .map(str::to_owned)
+                    })
+                });
                 let user = StorageUser::try_new(
                     user_id,
                     password,

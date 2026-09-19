@@ -135,6 +135,8 @@ checks. Repeating a previously accepted import's matching `Idempotency-Key`
 returns that task without consuming another approval. The approval header is
 still required at the HTTP boundary. Use task status to resolve ambiguous
 admission responses. A changed payload needs a new approval and idempotency key.
+An imported password or password hash revokes that user’s existing tokens when
+the overwrite commits, invalidating their outstanding token-bound approvals.
 
 Stage and validate a restore using the existing upload flow. Immediately before
 confirmation, obtain `confirm_restore` approval with the stage ID and the full

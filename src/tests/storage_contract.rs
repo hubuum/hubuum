@@ -4724,7 +4724,8 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
     let instance_id = uuid::Uuid::new_v4();
     let mut staged_ids = Vec::new();
 
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
         let label = prefix("restore");
         let job = backend
             .stage_restore(
@@ -4746,7 +4747,9 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
             .await
             .expect("certified backend should stage a restore artifact");
         let job_id = job.summary().id();
-        staged_ids.push(job_id);
+        if matches!(environment, BackendTestEnvironment::Postgres { .. }) {
+            staged_ids.push(job_id);
+        }
         assert_eq!(job.summary().status(), StorageRestoreJobStatus::Validated);
 
         let loaded = backend
@@ -4840,7 +4843,9 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
             .await
             .expect("certified backend should stage an expiring restore artifact");
         let expired_id = expired.summary().id();
-        staged_ids.push(expired_id);
+        if matches!(environment, BackendTestEnvironment::Postgres { .. }) {
+            staged_ids.push(expired_id);
+        }
         assert!(
             backend
                 .expire_restore_stage(expired_id)

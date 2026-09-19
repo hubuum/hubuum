@@ -21,6 +21,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retain approval evidence after consumption/expiry and emit transactional
   `credential_approval.created` and `credential_approval.succeeded` audit events.
   Restore completion preserves local evidence and invalidates unused approvals.
+  Imported password changes revoke the affected user’s existing tokens and
+  invalidate their outstanding token-bound approvals.
 - **Breaking storage SDK contract change:** implement approval creation/reads,
   atomic claim consumption for identity mutations and task admission, and the
   typed `StorageRestoreConfirmation` request. Handle the new

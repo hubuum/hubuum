@@ -1526,6 +1526,8 @@ mod tests {
             "/api/v0/meta/login-rate-limit/{id}",
             "/api/v1/config",
             "/api/v1/admin/config",
+            "/api/v1/iam/credential-approvals",
+            "/api/v1/iam/credential-approvals/{approval_id}",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
             "/api/v1/iam/users/{user_id}/events",
@@ -1689,9 +1691,12 @@ mod tests {
             ("~1api~1v1~1restores~1{restore_id}~1status", "get"),
         ] {
             assert_eq!(
-                json.pointer(&format!(
-                    "/paths/{path}/{method}/parameters/0/schema/minimum"
-                )),
+                json.pointer(&format!("/paths/{path}/{method}/parameters"))
+                    .and_then(Value::as_array)
+                    .and_then(|parameters| parameters
+                        .iter()
+                        .find(|parameter| parameter["name"] == "restore_id"))
+                    .and_then(|parameter| parameter.pointer("/schema/minimum")),
                 Some(&Value::from(1)),
                 "restore job path should document its positive-ID invariant"
             );
