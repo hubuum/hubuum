@@ -533,7 +533,7 @@ mod tests {
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
             serde_json::json!({ "name": "default-expiry", "expires_at": approval["token_expires_at"] }),
-            &[(HeaderName::from_static("x-hubuum-credential-approval"), approval["approval"].as_str().unwrap().to_string())],
+            vec![(HeaderName::from_static("x-hubuum-credential-approval"), approval["approval"].as_str().unwrap().to_string())],
         )
         .await;
         let response = assert_response_status(response, StatusCode::CREATED).await;
