@@ -1272,6 +1272,13 @@ impl fmt::Debug for StorageAuthorizationObjectResource {
 /// backend.
 #[async_trait]
 pub trait AuthorizationDataStorage: Send + Sync {
+    /// Load only authorization facts for a deduplicated batch, with bounded queries
+    /// per resource kind. Missing identities are omitted; callers enforce policy.
+    async fn load_authorization_resources(
+        &self,
+        query: crate::StorageAuthorizationResourcesQuery,
+    ) -> Result<Vec<crate::StorageAuthorizationResource>, StorageError>;
+
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -1291,6 +1298,14 @@ pub trait AuthorizationDataStorage: Send + Sync {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError>;
+
+    /// Evaluate direct collection grants in one batch, preserving input order.
+    /// Each decision requires one principal group grant containing all requested
+    /// permissions, exactly as `authorize_local_collection` does.
+    async fn authorize_local_collection_batch(
+        &self,
+        queries: Vec<StorageAuthorizationCollectionAccessQuery>,
+    ) -> Result<Vec<bool>, StorageError>;
 
     async fn authorize_local_collection(
         &self,

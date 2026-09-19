@@ -7,6 +7,38 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Task discovery across all six task kinds: durable explicit targets, retained
+  options, schema-work result links, export outcomes and output retention state.
+  Search by resources, operation options and revisions alongside comma-separated
+  lifecycle states, timestamp ranges, cancellation intent and trace IDs.
+  Searches authorize referenced resources before exposing matches and counts.
+  Mixed task pages batch authorization facts for all resource types, including
+  configuration references and relation endpoints, with bounded query counts.
+  Local grant checks are batched for non-admin callers as well. Combined resource
+  filters share one authorization batch without per-filter principal or grant queries.
+- **Breaking storage SDK contract change:** adapters must persist validated
+  `StorageTaskMetadata`, project retained schema-work and artifact state, and
+  apply `StorageTaskSearch` (including `TaskDiscoverySearch`) before counting
+  or pagination. `AuthorizationDataStorage::load_authorization_resources` must
+  batch current names, ownership and relation endpoints without loading secrets
+  or making policy decisions. Adapters must also implement
+  `authorize_local_collection_batch` with ordered, equivalent single-grant
+  decisions. Upgrade adapters before using the new search parameters.
+- **Upgrade requirement:** apply migration `2026-09-18-000001_task_discovery`
+  before starting the upgraded server. Historical coverage depends on retained
+  payloads, schema work and artifacts; unavailable facts remain unknown.
+  Older backups without discovery metadata remain accepted. Clients with
+  exhaustive task-detail decoders must add schema-validation, rebuild and
+  remote-call variants.
+
+### Fixed
+
+- Preserve the memory backend's limit of 100 active rebuild tasks per principal.
+- Recover the `false` dry-run default for historical imports whose retained
+  requests contain JSON null, so `import_dry_run=false` searches include them.
+
 ## [0.0.15] - 2026-09-15
 
 ### Added

@@ -712,12 +712,19 @@ pub(crate) fn verify_restored_backup_matches(
     restored: &BackupDocument,
 ) -> Result<(), ApiError> {
     let mut source = source.clone();
+    let mut restored = restored.clone();
     normalize_legacy_class_schema_policies(&mut source);
     if let Some(history) = &mut source.history {
         for (section, rows) in &mut history.sections {
             for row in rows {
                 row.normalize_legacy_history(*section);
             }
+        }
+    }
+    for document in [&mut source, &mut restored] {
+        if let Some(history) = &mut document.history {
+            StorageBackupSnapshot::canonicalize_discovery_history(&mut history.sections)
+                .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         }
     }
     if source.state != restored.state {

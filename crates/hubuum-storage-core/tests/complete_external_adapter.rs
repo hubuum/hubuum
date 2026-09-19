@@ -601,6 +601,13 @@ impl TokenStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl AuthorizationDataStorage for CompleteExternalAdapter {
+    async fn load_authorization_resources(
+        &self,
+        query: StorageAuthorizationResourcesQuery,
+    ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
+        fixture_result()
+    }
+
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -626,6 +633,13 @@ impl AuthorizationDataStorage for CompleteExternalAdapter {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
+        fixture_result()
+    }
+
+    async fn authorize_local_collection_batch(
+        &self,
+        queries: Vec<StorageAuthorizationCollectionAccessQuery>,
+    ) -> Result<Vec<bool>, StorageError> {
         fixture_result()
     }
 

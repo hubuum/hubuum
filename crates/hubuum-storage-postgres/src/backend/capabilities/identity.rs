@@ -1,4 +1,5 @@
 use super::super::*;
+use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
 impl AuthenticationStorage for PostgresStorage {
@@ -494,6 +495,15 @@ impl TokenStorage for PostgresStorage {
 
 #[async_trait]
 impl AuthorizationDataStorage for PostgresStorage {
+    async fn load_authorization_resources(
+        &self,
+        query: StorageAuthorizationResourcesQuery,
+    ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
+        crate::operations::authorization::load_authorization_resources(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -532,6 +542,15 @@ impl AuthorizationDataStorage for PostgresStorage {
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
         crate::operations::authorization::list_authorization_objects(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn authorize_local_collection_batch(
+        &self,
+        queries: Vec<StorageAuthorizationCollectionAccessQuery>,
+    ) -> Result<Vec<bool>, StorageError> {
+        crate::operations::authorization::authorize_local_collection_batch(self.runtime(), queries)
             .await
             .map_err(StorageError::from)
     }

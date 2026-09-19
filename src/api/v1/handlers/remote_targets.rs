@@ -352,7 +352,7 @@ pub async fn invoke_remote_target(
         Some(TokenID::new(requestor.token_meta.id().id())?),
         requestor.scopes(),
     );
-    let task = find_or_create_remote_call_task(
+    let mut task = find_or_create_remote_call_task(
         &context,
         PrincipalID::new(user.id().id())?,
         snapshot,
@@ -360,6 +360,7 @@ pub async fn invoke_remote_target(
         payload,
     )
     .await?;
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     let event_context = requestor.event_context(&req);
     remote_target_service::record_remote_target_invocation(
         &context,

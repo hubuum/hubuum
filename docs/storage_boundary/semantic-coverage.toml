@@ -155,9 +155,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"
-methods = ["get_authorization_principal", "is_authorization_principal_group_member", "list_authorization_classes", "list_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "load_authorization_collection_candidates", "load_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
-effects = { point_read = ["get_authorization_principal", "is_authorization_principal_group_member", "authorize_local_collection", "get_local_collection_grant", "get_local_collection_permission_set"], page_read = ["list_local_collection_grants"], candidate_read = ["load_authorization_collection_candidates", "load_authorization_group_candidates"], batch_read = ["list_authorization_classes", "list_authorization_objects", "authorize_local_collections"], complete_read = ["list_local_authorized_collections", "get_authorization_policy_snapshot"], audited_mutation = ["apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
+methods = ["load_authorization_resources", "authorize_local_collection_batch", "get_authorization_principal", "is_authorization_principal_group_member", "list_authorization_classes", "list_authorization_objects", "authorize_local_collection", "authorize_local_collections", "list_local_authorized_collections", "load_authorization_collection_candidates", "load_authorization_group_candidates", "get_authorization_policy_snapshot", "list_local_collection_grants", "get_local_collection_grant", "get_local_collection_permission_set", "apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"]
+effects = { point_read = ["get_authorization_principal", "is_authorization_principal_group_member", "authorize_local_collection", "get_local_collection_grant", "get_local_collection_permission_set"], page_read = ["list_local_collection_grants"], candidate_read = ["load_authorization_collection_candidates", "load_authorization_group_candidates"], batch_read = ["load_authorization_resources", "authorize_local_collection_batch", "list_authorization_classes", "list_authorization_objects", "authorize_local_collections"], complete_read = ["list_local_authorized_collections", "get_authorization_policy_snapshot"], audited_mutation = ["apply_local_collection_grant", "revoke_local_collection_grant", "revoke_all_local_collection_grants"] }
+shared_scenarios = ["src/tests/storage_contract/authorization_resources.rs::batched_authorization_facts_match_individual_resolution_on_every_backend", "src/tests/storage_contract/authorization_resources.rs::batched_collection_decisions_preserve_single_grant_conjunction_and_order", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_local_authorization_data"]
 
 [traits.CatalogStorage]
 source = "crates/hubuum-storage-core/src/catalog.rs"
@@ -441,3 +441,8 @@ scenarios = ["src/tests/storage_contract/schema_evolution.rs::strict_activation_
 source = "crates/hubuum-storage-core/src/schema_evolution.rs"
 variants = ["Valid", "Invalid", "Pending", "NotRequired"]
 scenarios = ["src/tests/storage_contract/schema_evolution.rs::permissive_schema_activation_records_object_effects_without_changing_data", "src/tests/storage_contract/schema_evolution.rs::superseded_schema_work_cannot_replace_not_required_object_effects"]
+
+[enums.StorageAuthorizationResourceKey]
+source = "crates/hubuum-storage-core/src/authorization_resources.rs"
+variants = ["Class", "Object", "Collection", "ClassRelation", "ObjectRelation", "ExportTemplate", "RemoteTarget"]
+scenarios = ["src/tests/storage_contract/authorization_resources.rs::batched_authorization_facts_match_individual_resolution_on_every_backend"]

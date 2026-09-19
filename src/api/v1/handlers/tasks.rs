@@ -1,3 +1,11 @@
+pub(crate) mod discovery;
+use std::collections::{HashMap, HashSet};
+
+use chrono::{DateTime, Utc};
+use hubuum_query::decode_query_parameter_pairs;
+use hubuum_storage_core::{StorageTaskKind, StorageTaskSearch, StorageTaskStatus, TaskTimeRange};
+use hubuum_task_core::TaskStopReason;
+
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
@@ -22,56 +30,113 @@ use crate::tasks::ensure_task_worker_running;
 
 #[derive(Debug, Default)]
 struct TaskListFilters {
-    kind: Option<TaskKind>,
-    status: Option<TaskStatus>,
+    search: StorageTaskSearch,
     submitted_by: Option<i32>,
 }
 
 fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFilters), ApiError> {
-    let (query_options, mut passthrough) =
-        parse_query_parameter_with_passthrough(query_string, &["kind", "status", "submitted_by"])?;
-
-    let kind = match passthrough.remove("kind") {
-        Some(values) if values.len() > 1 => {
-            return Err(ApiError::BadRequest("duplicate kind".into()));
+    const FILTERS: &[&str] = &[
+        "kind",
+        "status",
+        "terminal",
+        "submitted_by",
+        "created_after",
+        "created_before",
+        "started_after",
+        "started_before",
+        "finished_after",
+        "finished_before",
+        "cancel_requested",
+        "terminal_reason",
+        "trace_id",
+    ];
+    let (query_options, passthrough) = parse_query_parameter_with_passthrough(
+        query_string,
+        &[FILTERS, discovery::FILTERS].concat(),
+    )?;
+    let mut seen = HashSet::new();
+    for (key, _) in decode_query_parameter_pairs(query_string)? {
+        if !seen.insert(key.clone()) {
+            return Err(ApiError::BadRequest(format!("duplicate {key}")));
         }
-        Some(mut values) => Some(TaskKind::from_db(values.remove(0).as_str()).map_err(|_| {
-            ApiError::BadRequest(
-                "invalid kind filter; expected one of import, export, backup, reindex, remote_call, schema_validation"
-                    .to_string(),
-            )
-        })?),
-        None => None,
-    };
-
-    let status = match passthrough.remove("status") {
-        Some(values) if values.len() > 1 => return Err(ApiError::BadRequest("duplicate status".into())),
-        Some(mut values) => Some(TaskStatus::from_db(values.remove(0).as_str()).map_err(|_| {
-            ApiError::BadRequest(
-                "invalid status filter; expected one of queued, validating, running, succeeded, failed, partially_succeeded, cancelled".to_string(),
-            )
-        })?),
-        None => None,
-    };
-
-    let submitted_by = match passthrough.remove("submitted_by") {
-        Some(values) if values.len() > 1 => {
-            return Err(ApiError::BadRequest("duplicate submitted_by".into()));
+    }
+    if !query_options.filters().is_empty() {
+        return Err(ApiError::BadRequest("Unsupported task filter".into()));
+    }
+    let mut values = HashMap::new();
+    for (key, mut entries) in passthrough {
+        if entries.len() != 1 {
+            return Err(ApiError::BadRequest(format!("duplicate {key}")));
         }
-        Some(mut values) => Some(
+        values.insert(key, entries.remove(0));
+    }
+    let invalid = |name: &str| ApiError::BadRequest(format!("invalid {name} filter"));
+    let kinds = values
+        .get("kind")
+        .map(|s| {
+            s.split(',')
+                .map(|v| StorageTaskKind::from_persisted(v).ok_or_else(|| invalid("kind")))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let statuses = values
+        .get("status")
+        .map(|s| {
+            s.split(',')
+                .map(|v| StorageTaskStatus::from_persisted(v).ok_or_else(|| invalid("status")))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let boolean = |name: &str| {
+        values
+            .get(name)
+            .map(|v| v.parse::<bool>().map_err(|_| invalid(name)))
+            .transpose()
+    };
+    let range = |prefix: &str| -> Result<TaskTimeRange, ApiError> {
+        let timestamp = |suffix: &str| {
+            let key = format!("{prefix}_{suffix}");
             values
-                .remove(0)
-                .parse::<i32>()
-                .map_err(|e| ApiError::BadRequest(format!("bad submitted_by: {e}")))?,
-        ),
-        None => None,
+                .get(&key)
+                .map(|v| {
+                    DateTime::parse_from_rfc3339(v)
+                        .map(|v| v.with_timezone(&Utc))
+                        .map_err(|_| invalid(&key))
+                })
+                .transpose()
+        };
+        TaskTimeRange::try_new(timestamp("after")?, timestamp("before")?)
+            .map_err(|e| ApiError::BadRequest(e.to_string()))
     };
-
+    let reason = values
+        .get("terminal_reason")
+        .map(|v| match v.as_str() {
+            "cancel_requested" => Ok(TaskStopReason::Cancelled),
+            "deadline_exceeded" => Ok(TaskStopReason::DeadlineExceeded),
+            _ => Err(invalid("terminal_reason")),
+        })
+        .transpose()?;
+    let search = StorageTaskSearch::default()
+        .lifecycle(kinds, statuses, boolean("terminal")?)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?
+        .time_ranges(range("created")?, range("started")?, range("finished")?)
+        .operations(boolean("cancel_requested")?, reason)
+        .with_trace_id(values.get("trace_id").cloned())
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let search = search
+        .discovering(discovery::parse(&values)?)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let submitted_by = values
+        .get("submitted_by")
+        .map(|v| v.parse::<i32>().map_err(|_| invalid("submitted_by")))
+        .transpose()?;
+    if submitted_by.is_some_and(|id| id <= 0) {
+        return Err(invalid("submitted_by"));
+    }
     Ok((
         query_options,
         TaskListFilters {
-            kind,
-            status,
+            search,
             submitted_by,
         },
     ))
@@ -83,12 +148,44 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
     tag = "tasks",
     security(("bearer_auth" = [])),
     params(
-        ("kind" = String, Query, description = "Optional task kind filter (import|export|backup|reindex|remote_call|schema_validation; schema tasks require administrator access)"),
-        ("status" = String, Query, description = "Optional task status filter"),
-        ("submitted_by" = i32, Query, description = "Optional submitter user id filter (effective only for admins)"),
-        ("limit" = usize, Query, description = "Cursor page size"),
-        ("sort" = String, Query, description = "Comma-separated sort fields. Supported fields: id, kind, status, submitted_by, created_at, started_at, finished_at. Example: kind.asc,id.desc"),
-        ("cursor" = String, Query, description = "Cursor token from X-Next-Cursor")
+        ("class_id" = Option<i32>, Query, description = "Explicit target class"),
+        ("object_id" = Option<i32>, Query, description = "Explicit target object"),
+        ("collection_id" = Option<i32>, Query, description = "Explicit target collection"),
+        ("relation_type" = Option<String>, Query, description = "class_relation or object_relation; requires relation_id"),
+        ("relation_id" = Option<i32>, Query, description = "Explicit relation identity; requires relation_type"),
+        ("schema_revision" = Option<i64>, Query, description = "Target schema revision; requires class_id"),
+        ("schema_work_kind" = Option<String>, Query, description = "Retained work kind: impact or revalidation"),
+        ("schema_work_status" = Option<String>, Query, description = "Retained work status: running, failed, complete, cancelled, superseded"),
+        ("computation_revision" = Option<i64>, Query, description = "Target computation revision; requires class_id"),
+        ("remote_target_id" = Option<i32>, Query, description = "Remote target configuration identity"),
+        ("remote_side_effect_state" = Option<String>, Query, description = "not_sent, possibly_sent or legacy_unknown"),
+        ("export_scope_kind" = Option<String>, Query, description = "Captured export scope kind"),
+        ("export_template_id" = Option<i32>, Query, description = "Resolved export template identity"),
+        ("export_has_warnings" = Option<bool>, Query, description = "Known export warning outcome"),
+        ("export_truncated" = Option<bool>, Query, description = "Known export truncation outcome"),
+        ("import_dry_run" = Option<bool>, Query, description = "Captured import dry run option"),
+        ("import_atomicity" = Option<String>, Query, description = "strict or best_effort"),
+        ("import_collision_policy" = Option<String>, Query, description = "abort or overwrite"),
+        ("import_permission_policy" = Option<String>, Query, description = "abort or continue"),
+        ("import_has_failed_items" = Option<bool>, Query, description = "Known terminal import failure count is nonzero"),
+        ("backup_include_history" = Option<bool>, Query, description = "Captured backup history option"),
+        ("output_state" = Option<String>, Query, description = "available, expired, not_produced or unknown; exports and backups"),
+        ("kind" = Option<String>, Query, description = "Comma-separated task kinds (import|export|backup|reindex|remote_call|schema_validation; schema tasks require administrator access)"),
+        ("status" = Option<String>, Query, description = "Comma-separated task statuses"),
+        ("terminal" = Option<bool>, Query, description = "Restrict to terminal or nonterminal states; must agree with status"),
+        ("cancel_requested" = Option<bool>, Query, description = "Match durable cancellation intent"),
+        ("terminal_reason" = Option<String>, Query, description = "cancel_requested or deadline_exceeded"),
+        ("trace_id" = Option<String>, Query, description = "32 hexadecimal digits identifying the originating trace"),
+        ("created_after" = Option<String>, Query, description = "RFC 3339 created timestamp; inclusive lower bound"),
+        ("created_before" = Option<String>, Query, description = "RFC 3339 created timestamp; exclusive upper bound"),
+        ("started_after" = Option<String>, Query, description = "RFC 3339 started timestamp; inclusive lower bound"),
+        ("started_before" = Option<String>, Query, description = "RFC 3339 started timestamp; exclusive upper bound"),
+        ("finished_after" = Option<String>, Query, description = "RFC 3339 finished timestamp; inclusive lower bound"),
+        ("finished_before" = Option<String>, Query, description = "RFC 3339 finished timestamp; exclusive upper bound"),
+        ("submitted_by" = Option<i32>, Query, description = "Optional submitter user id filter (effective only for admins)"),
+        ("limit" = Option<usize>, Query, description = "Cursor page size"),
+        ("sort" = Option<String>, Query, description = "Comma-separated sort fields. Supported fields: id, kind, status, submitted_by, created_at, started_at, finished_at. Example: kind.asc,id.desc"),
+        ("cursor" = Option<String>, Query, description = "Cursor token from X-Next-Cursor")
     ),
     responses(
         (status = 200, description = "Visible tasks", body = [TaskResponse]),
@@ -106,6 +203,7 @@ pub async fn get_tasks(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
+    discovery::authorize_filters(&context, &requestor, &filters.search).await?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
     let backend = context.permission_backend();
     let principal = PrincipalRef::load(&context, &requestor.principal).await?;
@@ -117,12 +215,11 @@ pub async fn get_tasks(
     } else {
         None
     };
-    let (tasks, total_count) = if backend.supports_storage_visibility_filtering() {
+    let (mut tasks, total_count) = if backend.supports_storage_visibility_filtering() {
         list_tasks(
             &context,
             submitted_by_filter,
-            filters.kind,
-            filters.status,
+            filters.search.clone(),
             (!is_admin || requestor.scopes().is_some()).then_some(TaskKind::SchemaValidation),
             search_params.clone(),
         )
@@ -135,8 +232,7 @@ pub async fn get_tasks(
                 list_tasks(
                     &context,
                     submitted_by_filter,
-                    filters.kind,
-                    filters.status,
+                    filters.search.clone(),
                     (!is_admin || requestor.scopes().is_some())
                         .then_some(TaskKind::SchemaValidation),
                     options,
@@ -168,6 +264,7 @@ pub async fn get_tasks(
         .await?;
         (page.rows, page.total_count)
     };
+    discovery::redact(&context, &requestor, &mut tasks).await?;
     let export_task_ids = tasks
         .iter()
         .filter(|task| task.kind == TaskKind::Export.as_str())
@@ -188,7 +285,11 @@ pub async fn get_tasks(
         .into_iter()
         .map(|output| (output.task_id, output))
         .collect::<std::collections::HashMap<_, _>>();
-    let now = chrono::Utc::now().naive_utc();
+    let evaluated_at = filters
+        .search
+        .discovery()
+        .map_or_else(chrono::Utc::now, |d| d.evaluated_at());
+    let now = evaluated_at.naive_utc();
     let tasks = tasks
         .into_iter()
         .map(|task| {
@@ -212,7 +313,7 @@ pub async fn get_tasks(
                 },
                 None => BackupOutputLookup::Missing,
             };
-            task.to_response_with_outputs(export_output, backup_output)
+            task.to_response_with_outputs_at(export_output, backup_output, evaluated_at)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -242,7 +343,8 @@ pub async fn get_task(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    let mut task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     if task.kind == TaskKind::SchemaValidation.as_str() && requestor.scopes().is_some() {
         return Err(ApiError::NotFound("Task not found".into()));
     }
@@ -320,7 +422,7 @@ pub async fn cancel_task(
     request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let task_id = task_id.into_inner();
-    let task = crate::services::tasks::cancel_task(
+    let mut task = crate::services::tasks::cancel_task(
         &context,
         &requestor,
         task_id,
@@ -328,6 +430,7 @@ pub async fn cancel_task(
         requestor.event_context(&request),
     )
     .await?;
+    discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     let status = if TaskStatus::from_db(&task.status)?.is_terminal() {
         StatusCode::OK
     } else {
@@ -347,4 +450,45 @@ pub async fn cancel_task(
         task.to_response_with_outputs(export_output.as_ref(), backup_output.as_ref())?,
         status,
     ))
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::parse_task_list_query;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("kind=import,export&status=succeeded,failed&terminal=true")]
+    #[case("terminal=false")]
+    #[case("created_after=2026-01-01T00:00:00Z&created_before=2026-01-02T01:00:00%2B01:00")]
+    #[case("cancel_requested=false&terminal_reason=deadline_exceeded")]
+    #[case("trace_id=ABCDEF1234567890abcdef1234567890")]
+    fn accepts_search(#[case] query: &str) {
+        assert!(parse_task_list_query(query).is_ok());
+    }
+
+    #[rstest]
+    #[case("kind=")]
+    #[case("kind=import,")]
+    #[case("kind=import&kind=export")]
+    #[case("sort=id.asc&sort=kind.asc")]
+    #[case("sort=id.asc&%73ort=kind.asc")]
+    #[case("status=queued&terminal=true")]
+    #[case("status=cancelled&terminal=false")]
+    #[case("status=succeeded,queued&terminal=true")]
+    #[case("terminal=1")]
+    #[case("terminal=true&terminal=false")]
+    #[case("created_after=2026-01-01T00:00:00")]
+    #[case("started_after=2026-01-02T00:00:00Z&started_before=2026-01-01T00:00:00Z")]
+    #[case("finished_after=2026-01-01T00:00:00Z&finished_before=2026-01-01T00:00:00Z")]
+    #[case("cancel_requested=unknown")]
+    #[case("terminal_reason=succeeded")]
+    #[case("trace_id=00000000000000000000000000000000")]
+    #[case("trace_id=oops")]
+    #[case("submitted_by=0")]
+    #[case("name=anything")]
+    #[case("unsupported=true")]
+    fn rejects_invalid_search(#[case] query: &str) {
+        assert!(parse_task_list_query(query).is_err());
+    }
 }

@@ -42,6 +42,15 @@ selection and visibility; zero requests no rows. `new` and `into_parts` retain
 their signatures, so read the bound before consuming the query. External
 adapters must implement the added bound before serving delegated traversal.
 
+Task queries now optionally carry `StorageTaskSearch` through `searching` and
+`search`. The constructor and `into_parts` signatures remain compatible, but
+external adapters must read and apply the search before consuming the query.
+This is a behavioral contract change for adapters: ignoring the new predicates
+produces incorrect task rows and counts. `TaskTimeRange` validates
+half-open timestamp intervals; lifecycle sets and terminal restrictions are
+validated before storage access. No database migration is required for these
+lifecycle predicates.
+
 Application composition supplies `StorageObserver`, keeping metrics exporters
 and global registries out of adapter-neutral contracts.
 
@@ -120,3 +129,30 @@ compile every one of their 250 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
 the latest crates.io release when a baseline exists.
+
+Task discovery adds a storage SDK obligation: preserve the private-fielded,
+versioned `StorageTaskMetadata` on creation, completion, redaction and backup
+round trips. Validate persisted JSON once with `from_persisted`. Preserve unknown
+historical facts and update output summaries in the fenced finalization
+transaction. Artifact purge must not erase them.
+
+Apply `TaskDiscoverySearch` predicates before counting and pagination, using its
+single captured evaluation timestamp. Project `StorageTaskDiscoveryState` from
+retained schema-work kind/status and artifact existence in bounded queries;
+never assemble schema reports during task polling. The PostgreSQL adapter
+requires migration `2026-09-18-000001_task_discovery`.
+
+Task authorization enrichment uses `AuthorizationDataStorage::load_authorization_resources`
+with a deduplicated `StorageAuthorizationResourcesQuery`. Adapters return lightweight
+`StorageAuthorizationResource` facts for all seven reference kinds, omit missing
+resources and relation endpoints, and bound queries by resource kind rather than
+page size. Preserve names and both relation endpoints for delegated policy checks;
+do not load template contents or remote transport/credential settings. Permission
+decisions remain with the configured authorization backend.
+
+`authorize_local_collection_batch` returns one decision per input, in input order,
+using only the requested principals and collections. Preserve the single-check
+semantics: all requested permissions must occur in one group grant for that
+collection. Do not combine partial grants from different groups. Local permission
+batches use this operation for both endpoints of relations, including non-admin
+callers, without per-resource database calls.

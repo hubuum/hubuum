@@ -1335,7 +1335,12 @@ mod tests {
             object_relation_invoke_body(object_relation.id),
         )
         .await;
-        assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        assert!(
+            task.details.is_none(),
+            "execute permission must not reveal target discovery metadata"
+        );
     }
 
     #[actix_web::test]

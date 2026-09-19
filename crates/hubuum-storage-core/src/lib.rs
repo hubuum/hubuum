@@ -5,6 +5,7 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod authorization;
+mod authorization_resources;
 mod backend;
 mod backup_snapshot;
 pub mod capabilities;
@@ -39,7 +40,9 @@ mod resource_lifecycle;
 mod restore;
 mod task_control;
 mod task_execution;
+mod task_metadata;
 mod task_queue;
+mod task_search;
 mod telemetry;
 mod token_credentials;
 mod transaction;
@@ -61,6 +64,10 @@ pub use authorization::{
     StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
     StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
     StorageAuthorizationResourceIds,
+};
+pub use authorization_resources::{
+    StorageAuthorizationResource, StorageAuthorizationResourceKey,
+    StorageAuthorizationResourcesQuery,
 };
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
@@ -285,6 +292,7 @@ pub use task_queue::{
     StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
     StorageTaskStatus, TaskQueueStorage,
 };
+pub use task_search::{StorageTaskSearch, TaskTimeRange};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
 pub use token_credentials::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,
@@ -577,3 +585,15 @@ mod tests {
 
 pub mod schema_evolution;
 pub use schema_evolution::*;
+
+pub use task_metadata::{
+    StorageTaskDiscoveryState, StorageTaskMetadata, TaskExplicitTarget,
+    TaskExportMissingDataPolicy, TaskExportScopeKind, TaskImportAtomicity,
+    TaskImportCollisionPolicy, TaskImportPermissionPolicy, TaskMetadataDetails, TaskOutputMetadata,
+    TaskOutputState,
+};
+
+mod task_discovery_search;
+pub use task_discovery_search::{
+    TaskDiscoveryPredicate, TaskDiscoverySearch, TaskRemoteSideEffectState,
+};

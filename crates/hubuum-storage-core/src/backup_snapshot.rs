@@ -4,6 +4,7 @@ mod budget;
 pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
 mod revisions;
 mod schemas;
+mod task_discovery;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -158,6 +159,9 @@ impl StorageBackupRow {
     /// additional information; populated values must never disappear.
     pub fn canonicalize_history(&mut self, section: StorageBackupHistorySection) {
         if section == StorageBackupHistorySection::TerminalTasks {
+            if self.0.get("discovery_metadata").is_some_and(Value::is_null) {
+                self.0.remove("discovery_metadata");
+            }
             for field in SNAPSHOT_FIELDS {
                 if self.0.get(*field).is_some_and(Value::is_null) {
                     self.0.remove(*field);
@@ -288,11 +292,26 @@ impl StorageBackupSnapshot {
         }
 
         if let Some(history) = &mut history_sections {
+            Self::canonicalize_discovery_history(history)?;
             for (section, rows) in history {
                 for row in rows {
                     row.canonicalize_history(*section);
                     if *section == StorageBackupHistorySection::TerminalTasks {
                         crate::task_control::validate_control_snapshot(row)?;
+                        if let Some(value) = row.0.get("discovery_metadata") {
+                            let kind = row
+                                .0
+                                .get("kind")
+                                .and_then(Value::as_str)
+                                .and_then(crate::StorageTaskKind::from_persisted)
+                                .ok_or_else(|| {
+                                    StorageValidationError::invalid("Invalid task metadata kind")
+                                })?;
+                            let metadata =
+                                crate::StorageTaskMetadata::from_persisted(kind, value.clone())?;
+                            row.0
+                                .insert("discovery_metadata".to_string(), metadata.to_value());
+                        }
                     }
                 }
             }

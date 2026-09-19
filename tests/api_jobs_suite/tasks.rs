@@ -186,6 +186,74 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn task_search_retains_combined_filters_across_cursors(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let expected = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Succeeded,
+            "search_first",
+        )
+        .await;
+        let second = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Export,
+            TaskStatus::Failed,
+            "search_second",
+        )
+        .await;
+        create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Backup,
+            TaskStatus::Succeeded,
+            "search_excluded_kind",
+        )
+        .await;
+        create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Cancelled,
+            "search_excluded_status",
+        )
+        .await;
+        let url = format!(
+            "{TASKS_ENDPOINT}?kind=import,export&status=succeeded,failed&terminal=true&cancel_requested=false&submitted_by={}&sort=id.asc&limit=1",
+            context.normal_user.id
+        );
+        let response = get_request(&context.pool, &context.admin_token, &url).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, "X-Total-Count").as_deref(),
+            Some("2")
+        );
+        let cursor = header_value(&response, NEXT_CURSOR_HEADER).expect("second page");
+        let first: Vec<TaskResponse> = test::read_body_json(response).await;
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{url}&cursor={cursor}"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let next: Vec<TaskResponse> = test::read_body_json(response).await;
+        assert_eq!(
+            first
+                .into_iter()
+                .chain(next)
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            vec![expected, second]
+        );
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_list_tasks_admin_sorts_by_kind(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let other_user = create_test_user(&context.pool).await;
@@ -692,5 +760,407 @@ mod tests {
         .await
         .unwrap();
         fixture.cleanup().await.unwrap();
+    }
+    #[rstest]
+    #[case::local_search(false, true, false)]
+    #[case::delegated_search(true, true, false)]
+    #[case::local_details(false, false, false)]
+    #[case::local_cancellation(false, false, true)]
+    #[case::delegated_details(true, false, false)]
+    #[actix_web::test]
+    async fn task_discovery_requires_resource_access(
+        #[future(awt)] test_context: TestContext,
+        #[case] delegated: bool,
+        #[case] search: bool,
+        #[case] cancel: bool,
+    ) {
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        use crate::tests::api_operations::get_request_with_permission_backend;
+        use hubuum_storage_core::{
+            StorageTaskCreateRequest, StorageTaskKind, StorageTaskMetadata, TaskExplicitTarget,
+            TaskMetadataDetails, TaskQueueStorage,
+        };
+        use std::sync::Arc;
+        let context = test_context;
+        let fixture = context.collection_fixture("task_discovery_hidden").await;
+        let (actor, token) = if delegated {
+            (context.admin_user.id, &context.admin_token)
+        } else {
+            (context.normal_user.id, &context.normal_token)
+        };
+        let storage =
+            hubuum_storage_postgres::PostgresStorage::unobserved(context.pool.get_ref().clone());
+        let metadata = StorageTaskMetadata::new(TaskMetadataDetails::RemoteCall {
+            remote_target_id: None,
+            target: Some(TaskExplicitTarget::Collection {
+                collection_id: hubuum_domain::CollectionId::new(fixture.collection.id).unwrap(),
+            }),
+        })
+        .unwrap();
+        let task = storage
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::RemoteCall,
+                    hubuum_domain::PrincipalId::new(actor).unwrap(),
+                    serde_json::json!({}),
+                    1,
+                )
+                .metadata(Some(metadata))
+                .try_build(100)
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let url = if cancel {
+            format!("/api/v1/tasks/{}/cancel", task.id().id())
+        } else if search {
+            format!(
+                "/api/v1/tasks?collection_id={}&include_total=true",
+                fixture.collection.id
+            )
+        } else {
+            format!("/api/v1/tasks/{}", task.id().id())
+        };
+        let response = if delegated {
+            let backend = Arc::new(MockTreetopBackend::new());
+            backend.add_task_read_rule(fixture.owner_group.id, None);
+            get_request_with_permission_backend(&context.pool, token, &url, backend).await
+        } else if cancel {
+            crate::tests::api_operations::post_request(
+                &context.pool,
+                token,
+                &url,
+                serde_json::json!({}),
+            )
+            .await
+        } else {
+            get_request(&context.pool, token, &url).await
+        };
+        if search {
+            assert_response_status(response, StatusCode::FORBIDDEN).await;
+        } else {
+            if cancel {
+                assert!(matches!(
+                    response.status(),
+                    StatusCode::OK | StatusCode::ACCEPTED
+                ));
+            } else {
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            let task: TaskResponse = test::read_body_json(response).await;
+            assert!(task.details.is_none());
+        }
+        hubuum_storage_postgres::test_support::delete_task(context.pool.get_ref(), task.id())
+            .await
+            .unwrap();
+        fixture.cleanup().await.unwrap();
+    }
+    #[rstest]
+    #[case::local_admin(false, true, false)]
+    #[case::local_non_admin(false, false, false)]
+    #[case::delegated(true, false, false)]
+    #[case::local_admin_filters(false, true, true)]
+    #[case::local_non_admin_filters(false, false, true)]
+    #[case::delegated_filters(true, false, true)]
+    #[actix_web::test]
+    async fn mixed_task_pages_have_a_fixed_authorization_query_budget(
+        #[future(awt)] test_context: TestContext,
+        #[case] delegated: bool,
+        #[case] admin: bool,
+        #[case] filtered: bool,
+    ) {
+        use crate::models::{
+            ExportContentType, ExportScopeKind, ExportTemplateKind, NewExportTemplate,
+            NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+            Permissions,
+        };
+        use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
+        use crate::permissions::{AuthzTarget, ResourceRef};
+        use crate::tests::api_operations::get_request_with_permission_backend;
+        use crate::traits::CanSave;
+        use hubuum_storage_core::{
+            StorageTaskCreateRequest, StorageTaskKind, StorageTaskMetadata, TaskQueueStorage,
+        };
+        use hubuum_storage_postgres::{PostgresStorage, capture_queries};
+        use std::sync::Arc;
+        let context = test_context;
+        let (actor, token) = if admin {
+            (context.admin_user.id, &context.admin_token)
+        } else {
+            (context.normal_user.id, &context.normal_token)
+        };
+        let storage = PostgresStorage::unobserved(context.pool.get_ref().clone());
+        let policy = Arc::new(MockTreetopBackend::new());
+        let trace_id = uuid::Uuid::new_v4().simple().to_string();
+        let trace =
+            hubuum_events_core::TraceLink::new(&trace_id, "00f067aa0ba902b7", 1, 0).unwrap();
+        let mut fixtures = Vec::new();
+        let mut task_ids = Vec::new();
+        let mut small_budget = None;
+        // Five tasks per set cover all seven kinds of resource reference. Every
+        // set uses distinct configuration IDs, collections and relation endpoints.
+        for index in 0..12 {
+            let mut objects = Vec::new();
+            for side in ["from", "to"] {
+                let fixture = context
+                    .collection_fixture(&format!("batch_{index}_{side}"))
+                    .await;
+                fixture
+                    .owner_group
+                    .add_member_without_events(&context.pool, &context.normal_user)
+                    .await
+                    .unwrap();
+                let class = NewHubuumClass {
+                    name: context.scoped_name(&format!("batch_class_{index}_{side}")),
+                    description: String::new(),
+                    collection_id: fixture.collection.id,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap();
+                let object = NewHubuumObject {
+                    name: context.scoped_name(&format!("batch_object_{index}_{side}")),
+                    description: String::new(),
+                    collection_id: fixture.collection.id,
+                    hubuum_class_id: class.id,
+                    data: serde_json::json!({}),
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap();
+                objects.push((class, object));
+                fixtures.push(fixture);
+            }
+            let fixture = &fixtures[index * 2];
+            let (class, object) = &objects[0];
+            let class_relation = NewHubuumClassRelation {
+                from_hubuum_class_id: class.id,
+                to_hubuum_class_id: objects[1].0.id,
+                forward_template_alias: None,
+                reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            let object_relation = NewHubuumObjectRelation {
+                from_hubuum_object_id: object.id,
+                to_hubuum_object_id: objects[1].1.id,
+                class_relation_id: class_relation.id,
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            let template = NewExportTemplate {
+                collection_id: fixture.collection.id,
+                name: context.scoped_name(&format!("batch_template_{index}")),
+                description: String::new(),
+                content_type: ExportContentType::TextPlain,
+                template: "{{ name }}".into(),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ObjectsInClass),
+                class_id: Some(class.id),
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            let response = crate::tests::api_operations::post_request(&context.pool, &context.admin_token, "/api/v1/remote-targets", serde_json::json!({
+                "collection_id":fixture.collection.id, "name":context.scoped_name(&format!("batch_remote_{index}")),
+                "description":"batch fixture", "method":"post", "url_template":"https://example.com/",
+                "allowed_subject_types":["collection", "class_relation", "object_relation"],
+            })).await;
+            let target: crate::models::RemoteTarget =
+                test::read_body_json(assert_response_status(response, StatusCode::CREATED).await)
+                    .await;
+            policy.add_task_read_rule(fixture.owner_group.id, None);
+            // Exact facts make delegated authorization detect lost names or
+            // either endpoint, as well as a wrong configuration owner.
+            for (resource, permission) in [
+                (
+                    fixture
+                        .collection
+                        .to_resource_ref(&context.pool)
+                        .await
+                        .unwrap(),
+                    Permissions::ReadCollection,
+                ),
+                (
+                    class.to_resource_ref(&context.pool).await.unwrap(),
+                    Permissions::ReadClass,
+                ),
+                (
+                    object.to_resource_ref(&context.pool).await.unwrap(),
+                    Permissions::ReadObject,
+                ),
+                (
+                    class_relation.to_resource_ref(&context.pool).await.unwrap(),
+                    Permissions::ReadClassRelation,
+                ),
+                (
+                    object_relation
+                        .to_resource_ref(&context.pool)
+                        .await
+                        .unwrap(),
+                    Permissions::ReadObjectRelation,
+                ),
+                (
+                    template.to_resource_ref(&context.pool).await.unwrap(),
+                    Permissions::ReadTemplate,
+                ),
+                (
+                    ResourceRef::remote_target(target.id, target.collection_id, Some(target.name)),
+                    Permissions::ReadRemoteTarget,
+                ),
+            ] {
+                let resource = resource.normalized_for_permission(permission);
+                policy.add_rule(MockAllowRule {
+                    group_id: fixture.owner_group.id,
+                    action: permission,
+                    resource_kind: resource.kind(),
+                    resource_id: resource.id(),
+                    attrs: resource.fields(),
+                });
+            }
+            let metadata = [
+                (
+                    StorageTaskKind::Export,
+                    serde_json::json!({"kind":"export", "scope_kind":"objects_in_class", "target":{"type":"class", "class_id":class.id}, "template_id":template.id}),
+                ),
+                (
+                    StorageTaskKind::RemoteCall,
+                    serde_json::json!({"kind":"remote_call", "remote_target_id":target.id, "target":{"type":"collection", "collection_id":fixture.collection.id}}),
+                ),
+                (
+                    StorageTaskKind::RemoteCall,
+                    serde_json::json!({"kind":"remote_call", "remote_target_id":target.id, "target":{"type":"object", "object_id":object.id, "class_id":class.id}}),
+                ),
+                (
+                    StorageTaskKind::RemoteCall,
+                    serde_json::json!({"kind":"remote_call", "remote_target_id":target.id, "target":{"type":"class_relation", "relation_id":class_relation.id}}),
+                ),
+                (
+                    StorageTaskKind::RemoteCall,
+                    serde_json::json!({"kind":"remote_call", "remote_target_id":target.id, "target":{"type":"object_relation", "relation_id":object_relation.id}}),
+                ),
+            ];
+            for (kind, data) in metadata {
+                let metadata = StorageTaskMetadata::from_persisted(
+                    kind,
+                    serde_json::json!({"version":1,"data":data}),
+                )
+                .unwrap();
+                let task = storage
+                    .create_task(
+                        StorageTaskCreateRequest::builder(
+                            kind,
+                            hubuum_domain::PrincipalId::new(actor).unwrap(),
+                            serde_json::json!({}),
+                            1,
+                        )
+                        .metadata(Some(metadata))
+                        .trace_link(Some(trace.clone()))
+                        .try_build(100)
+                        .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                task_ids.push(task.id());
+            }
+            if index != 0 && index != 11 {
+                continue;
+            }
+            let kinds = if filtered {
+                "remote_call"
+            } else {
+                "export,remote_call"
+            };
+            let search_trace_id = if filtered {
+                uuid::Uuid::new_v4().simple().to_string()
+            } else {
+                trace_id.clone()
+            };
+            let mut url = format!(
+                "{TASKS_ENDPOINT}?submitted_by={}&kind={kinds}&limit=100&include_total=true&trace_id={search_trace_id}",
+                actor
+            );
+            if filtered {
+                // An unmatched trace isolates filters from page redaction, even
+                // if a background worker changes fixture task status.
+                url.push_str(&format!("&class_id={}", class.id));
+                if index == 11 {
+                    url.push_str(&format!(
+                        "&object_id={}&collection_id={}&relation_type=object_relation&relation_id={}&remote_target_id={}",
+                        object.id, fixture.collection.id, object_relation.id, target.id
+                    ));
+                }
+            }
+            // Warm token activity bookkeeping before measuring steady-state polling.
+            let warmup = if delegated {
+                get_request_with_permission_backend(&context.pool, token, &url, policy.clone())
+                    .await
+            } else {
+                get_request(&context.pool, token, &url).await
+            };
+            assert_response_status(warmup, StatusCode::OK).await;
+            let previous_batches = policy.authorization_batch_sizes().len();
+            let (response, queries) = if delegated {
+                capture_queries(get_request_with_permission_backend(
+                    &context.pool,
+                    token,
+                    &url,
+                    policy.clone(),
+                ))
+                .await
+            } else {
+                capture_queries(get_request(&context.pool, token, &url)).await
+            };
+            let response = assert_response_status(response, StatusCode::OK).await;
+            let tasks: Vec<TaskResponse> = test::read_body_json(response).await;
+            assert_eq!(tasks.len(), if filtered { 0 } else { task_ids.len() });
+            if delegated && filtered {
+                assert_eq!(
+                    &policy.authorization_batch_sizes()[previous_batches..],
+                    &[if index == 0 { 1 } else { 5 }],
+                    "resource filters must use one policy batch"
+                );
+            }
+            assert!(tasks.iter().all(|task| task.details.is_some()));
+            assert!(
+                queries.domain_queries() <= 20,
+                "mixed-page query budget exceeded: {:?}",
+                queries.query_counts()
+            );
+            if let Some(budget) = small_budget {
+                assert_eq!(
+                    queries.domain_queries(),
+                    budget + if filtered { 4 } else { 0 },
+                    // Four additional resource kinds each need one facts query;
+                    // principal and grant queries must not grow with filter count.
+                    "query count grew with distinct references: {:?}",
+                    queries.query_counts()
+                );
+            } else {
+                small_budget = Some(queries.domain_queries());
+            }
+            assert_eq!(queries.queries_matching("schema_repair_reports"), 0);
+            assert_eq!(queries.queries_matching("schema_impact_findings"), 0);
+        }
+        for id in task_ids {
+            hubuum_storage_postgres::test_support::delete_task(&context.pool, id)
+                .await
+                .unwrap();
+        }
+        // Collection cleanup removes contained resources and associated relations.
+        for fixture in fixtures.iter().rev() {
+            fixture.cleanup().await.unwrap();
+        }
     }
 }

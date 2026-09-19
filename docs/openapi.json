@@ -20148,10 +20148,216 @@
         "operationId": "getApiV1Tasks",
         "parameters": [
           {
+            "name": "class_id",
+            "in": "query",
+            "description": "Explicit target class",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "query",
+            "description": "Explicit target object",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "description": "Explicit target collection",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "relation_type",
+            "in": "query",
+            "description": "class_relation or object_relation; requires relation_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "relation_id",
+            "in": "query",
+            "description": "Explicit relation identity; requires relation_type",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "schema_revision",
+            "in": "query",
+            "description": "Target schema revision; requires class_id",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "schema_work_kind",
+            "in": "query",
+            "description": "Retained work kind: impact or revalidation",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "schema_work_status",
+            "in": "query",
+            "description": "Retained work status: running, failed, complete, cancelled, superseded",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "computation_revision",
+            "in": "query",
+            "description": "Target computation revision; requires class_id",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "remote_target_id",
+            "in": "query",
+            "description": "Remote target configuration identity",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "remote_side_effect_state",
+            "in": "query",
+            "description": "not_sent, possibly_sent or legacy_unknown",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "export_scope_kind",
+            "in": "query",
+            "description": "Captured export scope kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "export_template_id",
+            "in": "query",
+            "description": "Resolved export template identity",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "export_has_warnings",
+            "in": "query",
+            "description": "Known export warning outcome",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "export_truncated",
+            "in": "query",
+            "description": "Known export truncation outcome",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "import_dry_run",
+            "in": "query",
+            "description": "Captured import dry run option",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "import_atomicity",
+            "in": "query",
+            "description": "strict or best_effort",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "import_collision_policy",
+            "in": "query",
+            "description": "abort or overwrite",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "import_permission_policy",
+            "in": "query",
+            "description": "abort or continue",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "import_has_failed_items",
+            "in": "query",
+            "description": "Known terminal import failure count is nonzero",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "backup_include_history",
+            "in": "query",
+            "description": "Captured backup history option",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "output_state",
+            "in": "query",
+            "description": "available, expired, not_produced or unknown; exports and backups",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "kind",
             "in": "query",
-            "description": "Optional task kind filter (import|export|backup|reindex|remote_call|schema_validation; schema tasks require administrator access)",
-            "required": true,
+            "description": "Comma-separated task kinds (import|export|backup|reindex|remote_call|schema_validation; schema tasks require administrator access)",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -20159,8 +20365,98 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Optional task status filter",
-            "required": true,
+            "description": "Comma-separated task statuses",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "terminal",
+            "in": "query",
+            "description": "Restrict to terminal or nonterminal states; must agree with status",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cancel_requested",
+            "in": "query",
+            "description": "Match durable cancellation intent",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "terminal_reason",
+            "in": "query",
+            "description": "cancel_requested or deadline_exceeded",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "description": "32 hexadecimal digits identifying the originating trace",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "RFC 3339 created timestamp; inclusive lower bound",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "RFC 3339 created timestamp; exclusive upper bound",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "started_after",
+            "in": "query",
+            "description": "RFC 3339 started timestamp; inclusive lower bound",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "started_before",
+            "in": "query",
+            "description": "RFC 3339 started timestamp; exclusive upper bound",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "finished_after",
+            "in": "query",
+            "description": "RFC 3339 finished timestamp; inclusive lower bound",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "finished_before",
+            "in": "query",
+            "description": "RFC 3339 finished timestamp; exclusive upper bound",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -20169,7 +20465,7 @@
             "name": "submitted_by",
             "in": "query",
             "description": "Optional submitter user id filter (effective only for admins)",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int32"
@@ -20191,7 +20487,7 @@
             "name": "sort",
             "in": "query",
             "description": "Comma-separated sort fields. Supported fields: id, kind, status, submitted_by, created_at, started_at, finished_at. Example: kind.asc,id.desc",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -20200,7 +20496,7 @@
             "name": "cursor",
             "in": "query",
             "description": "Cursor token from X-Next-Cursor",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -20926,6 +21222,16 @@
           },
           "output_url": {
             "type": "string"
+          },
+          "retained": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetainedBackupDetails"
+              }
+            ]
           },
           "sha256": {
             "type": [
@@ -23225,6 +23531,16 @@
               "null"
             ],
             "format": "int32"
+          },
+          "retained": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetainedExportDetails"
+              }
+            ]
           },
           "template_name": {
             "type": [
@@ -26611,6 +26927,16 @@
         "properties": {
           "results_url": {
             "type": "string"
+          },
+          "retained": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetainedImportDetails"
+              }
+            ]
           }
         }
       },
@@ -29064,6 +29390,28 @@
           }
         }
       },
+      "RebuildTaskDetails": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HubuumClassID"
+              }
+            ]
+          },
+          "computation_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "RelatedClassGraph": {
         "type": "object",
         "required": [
@@ -29291,6 +29639,31 @@
           "task_id": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "RemoteCallTaskDetails": {
+        "type": "object",
+        "properties": {
+          "remote_target_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RemoteTargetID"
+              }
+            ]
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskDiscoveryTarget"
+              }
+            ]
           }
         }
       },
@@ -29870,6 +30243,150 @@
           "total_items": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "RetainedBackupDetails": {
+        "type": "object",
+        "required": [
+          "output_state"
+        ],
+        "properties": {
+          "include_history": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "output_state": {
+            "$ref": "#/components/schemas/TaskOutputDiscoveryState"
+          }
+        }
+      },
+      "RetainedExportDetails": {
+        "type": "object",
+        "required": [
+          "output_state"
+        ],
+        "properties": {
+          "max_items": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "output_state": {
+            "$ref": "#/components/schemas/TaskOutputDiscoveryState"
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportScopeKind"
+              }
+            ]
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskDiscoveryTarget"
+              }
+            ]
+          },
+          "template_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportTemplateID"
+              }
+            ]
+          },
+          "truncated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "warning_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "RetainedImportDetails": {
+        "type": "object",
+        "properties": {
+          "atomicity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportAtomicity"
+              }
+            ]
+          },
+          "collision_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportCollisionPolicy"
+              }
+            ]
+          },
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "has_failed_items": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "permission_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportPermissionPolicy"
+              }
+            ]
           }
         }
       },
@@ -30570,6 +31087,57 @@
           }
         },
         "additionalProperties": false
+      },
+      "SchemaTaskDetails": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HubuumClassID"
+              }
+            ]
+          },
+          "results_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaRevision"
+              }
+            ]
+          },
+          "work_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaWorkKind"
+              }
+            ]
+          },
+          "work_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaWorkStatus"
+              }
+            ]
+          }
+        }
       },
       "SchemaValidationConfig": {
         "type": "object",
@@ -31933,8 +32501,143 @@
                 "$ref": "#/components/schemas/ImportTaskDetails"
               }
             ]
+          },
+          "reindex": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RebuildTaskDetails"
+              }
+            ]
+          },
+          "remote_call": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RemoteCallTaskDetails"
+              }
+            ]
+          },
+          "schema_validation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SchemaTaskDetails"
+              }
+            ]
           }
-        }
+        },
+        "additionalProperties": false
+      },
+      "TaskDiscoveryTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "collection_id",
+              "type"
+            ],
+            "properties": {
+              "collection_id": {
+                "$ref": "#/components/schemas/CollectionID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "collection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "class_id",
+              "type"
+            ],
+            "properties": {
+              "class_id": {
+                "$ref": "#/components/schemas/HubuumClassID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "class"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "object_id",
+              "type"
+            ],
+            "properties": {
+              "class_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HubuumClassID"
+                  }
+                ]
+              },
+              "object_id": {
+                "$ref": "#/components/schemas/HubuumObjectID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "relation_id",
+              "type"
+            ],
+            "properties": {
+              "relation_id": {
+                "$ref": "#/components/schemas/HubuumClassRelationID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "class_relation"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "relation_id",
+              "type"
+            ],
+            "properties": {
+              "relation_id": {
+                "$ref": "#/components/schemas/HubuumObjectRelationID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object_relation"
+                ]
+              }
+            }
+          }
+        ]
       },
       "TaskEventResponse": {
         "type": "object",
@@ -32038,6 +32741,15 @@
             "type": "string"
           }
         }
+      },
+      "TaskOutputDiscoveryState": {
+        "type": "string",
+        "enum": [
+          "available",
+          "expired",
+          "not_produced",
+          "unknown"
+        ]
       },
       "TaskProgress": {
         "type": "object",

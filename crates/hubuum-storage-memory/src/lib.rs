@@ -19,9 +19,9 @@ use hubuum_storage_core::capabilities::{
     workflows::*,
 };
 use hubuum_storage_core::{
-    StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,
+    StorageAuthenticationCredential, StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat,
     StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenMigrationOutcome,
-    StorageValidationError,
+    StorageValidationError, TaskMetadataDetails,
 };
 use uuid::Uuid;
 
@@ -70,6 +70,7 @@ struct MemoryTaskRecord {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<serde_json::Value>,
+    metadata: Option<StorageTaskMetadata>,
     summary: Option<String>,
     progress: StorageTaskProgress,
     scope_snapshot: StorageTaskScopeSnapshot,
@@ -240,6 +241,15 @@ impl MemoryHistoryEntry {
 }
 
 impl MemoryTaskRecord {
+    fn discovery_metadata(&self) -> Option<StorageTaskMetadata> {
+        let mut metadata = self.metadata.clone();
+        if self.status.is_terminal()
+            && let Some(metadata) = &mut metadata
+        {
+            metadata.record_terminal(self.progress.failed());
+        }
+        metadata
+    }
     fn projection(&self) -> Result<StorageTask, StorageError> {
         StorageTask::builder(
             self.id,
@@ -253,6 +263,7 @@ impl MemoryTaskRecord {
         .idempotency_key(self.idempotency_key.clone())
         .request_hash(self.request_hash.clone())
         .request_payload(self.request_payload.clone())
+        .metadata(self.discovery_metadata())
         .summary(self.summary.clone())
         .progress(self.progress)
         .scope_snapshot(self.scope_snapshot.clone())

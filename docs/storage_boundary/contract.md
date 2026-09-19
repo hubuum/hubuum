@@ -410,3 +410,46 @@ Any storage-boundary change must update, as applicable:
    when their external contracts are affected.
 
 If these artifacts disagree, the implementation is not complete.
+
+## Task lifecycle search
+
+`StorageTaskListQuery::searching` attaches a validated `StorageTaskSearch`.
+Adapters must read `search()` before consuming the query with `into_parts()`;
+the latter keeps its existing signature. Apply every search predicate before
+counts, sorting, limits, and cursors, alongside submitter and excluded-kind
+restrictions. The PostgreSQL adapter uses the same predicates for rows and
+counts within its existing read snapshot.
+
+Kinds and statuses are OR sets; different predicates combine with AND.
+`TaskTimeRange` uses inclusive lower and exclusive upper bounds, excludes null
+timestamps when bounded, and rejects reversed or empty intervals. Terminal
+selection includes all four terminal states, including partial success and
+cancellation. Trace identifiers are normalized to lowercase. Absent trace links
+and terminal reasons do not match their corresponding predicates.
+
+Task discovery adds a storage SDK obligation: preserve the private-fielded,
+versioned `StorageTaskMetadata` on creation, completion, redaction and backup
+round trips. Validate persisted JSON once with `from_persisted`. Preserve unknown
+historical facts and update output summaries in the fenced finalization
+transaction. Artifact purge must not erase them.
+
+Apply `TaskDiscoverySearch` predicates before counting and pagination, using its
+single captured evaluation timestamp. Project `StorageTaskDiscoveryState` from
+retained schema-work kind/status and artifact existence in bounded queries;
+never assemble schema reports during task polling. The PostgreSQL adapter
+requires migration `2026-09-18-000001_task_discovery`.
+
+Task authorization enrichment uses `AuthorizationDataStorage::load_authorization_resources`
+with a deduplicated `StorageAuthorizationResourcesQuery`. Adapters return lightweight
+`StorageAuthorizationResource` facts for all seven reference kinds, omit missing
+resources and relation endpoints, and bound queries by resource kind rather than
+page size. Preserve names and both relation endpoints for delegated policy checks;
+do not load template contents or remote transport/credential settings. Permission
+decisions remain with the configured authorization backend.
+
+`authorize_local_collection_batch` returns one decision per input, in input order,
+using only the requested principals and collections. Preserve the single-check
+semantics: all requested permissions must occur in one group grant for that
+collection. Do not combine partial grants from different groups. Local permission
+batches use this operation for both endpoints of relations, including non-admin
+callers, without per-resource database calls.

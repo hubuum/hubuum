@@ -154,6 +154,13 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             submitted_by: None,
             idempotency_key: None,
             request_hash: None,
+            metadata: Some(
+                StorageTaskMetadata::new(TaskMetadataDetails::Reindex {
+                    class_id: Some(class_id),
+                    computation_revision: Some(1),
+                })
+                .map_err(invalid_contract_value)?,
+            ),
             request_payload: Some(json!({"class_id": class_id.id()})),
             summary: None,
             progress: StorageTaskProgress::try_new(0, 0, 0, 0).map_err(invalid_contract_value)?,

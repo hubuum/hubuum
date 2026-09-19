@@ -825,6 +825,7 @@ diesel::table! {
         remote_dispatched_at -> Nullable<Timestamp>,
         #[max_length = 32]
         terminal_reason -> Nullable<Varchar>,
+        discovery_metadata -> Nullable<Jsonb>,
     }
 }
 

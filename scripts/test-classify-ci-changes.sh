@@ -49,7 +49,7 @@ for transport_path in scripts/test-event-transports.py tests/event_transport_con
 done
 
 for authorization_path in src/tests/permissions/candidate_paging.rs \
-  src/api/v1/handlers/tasks.rs tests/api_jobs_suite/tasks.rs; do
+  src/api/v1/handlers/tasks.rs src/api/v1/handlers/tasks/discovery.rs tests/api_jobs_suite/tasks.rs; do
   authorization_output="$(bash "$classifier" "$authorization_path")"
   assert_flag "$authorization_output" code true
   assert_flag "$authorization_output" treetop_conformance true

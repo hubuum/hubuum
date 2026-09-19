@@ -14,6 +14,11 @@ use crate::config::running::{
     TlsConfig,
 };
 use crate::events::EventResponse;
+use crate::models::task::TaskDiscoveryTarget;
+use crate::models::task::{
+    RebuildTaskDetails, RemoteCallTaskDetails, RetainedBackupDetails, RetainedExportDetails,
+    RetainedImportDetails, SchemaTaskDetails, TaskOutputDiscoveryState,
+};
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState, BackupTaskDetails,
     ClassComputationState, ClassKey, Collection, CollectionHistory, CollectionKey,
@@ -435,6 +440,14 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskStatus,
             TaskProgress,
             TaskLinks,
+            TaskDiscoveryTarget,
+            SchemaTaskDetails,
+            RebuildTaskDetails,
+            RemoteCallTaskDetails,
+            RetainedImportDetails,
+            RetainedExportDetails,
+            RetainedBackupDetails,
+            TaskOutputDiscoveryState,
             ImportTaskDetails,
             ExportTaskDetails,
             BackupTaskDetails,

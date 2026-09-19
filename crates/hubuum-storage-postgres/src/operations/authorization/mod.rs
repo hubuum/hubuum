@@ -139,3 +139,6 @@ pub use queries::{
     load_authorization_collection_candidates, load_authorization_group_candidates,
     load_groups_with_collection_permission, load_principal_collection_permissions,
 };
+
+mod resources;
+pub use resources::{authorize_local_collection_batch, load_authorization_resources};

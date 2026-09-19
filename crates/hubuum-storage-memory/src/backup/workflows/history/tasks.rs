@@ -22,6 +22,9 @@ pub(super) fn capture(
             "success_items": t.progress.succeeded(), "failed_items": t.progress.failed(), "submitted_token_scoped": t.scope_snapshot.scoped(), "submitted_token_scopes": t.scope_snapshot.scopes(),
             "request_redacted_at": t.request_redacted_at, "started_at": t.started_at, "finished_at": t.finished_at, "deleted_at": t.deleted_at, "deleted_by": t.deleted_by.map(PrincipalId::id),
             "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
+        if let Some(metadata) = t.discovery_metadata() {
+            fields.insert("discovery_metadata".to_string(), metadata.to_value());
+        }
         fields.extend(t.control.snapshot_fields());
         add_trace(&mut fields, t.trace_link.as_ref());
         tasks.push(retain_row(progress, row(Value::Object(fields)))?);
@@ -93,6 +96,18 @@ pub(super) fn restore(
             idempotency_key: None,
             request_hash: r.optional_text("request_hash")?,
             request_payload: r.optional_value("request_payload").cloned(),
+            metadata: r
+                .optional_value("discovery_metadata")
+                .cloned()
+                .map(|value| {
+                    StorageTaskMetadata::from_persisted(
+                        StorageTaskKind::from_persisted(r.text("kind")?)
+                            .ok_or_else(|| invalid("kind"))?,
+                        value,
+                    )
+                    .map_err(invalid_contract_value)
+                })
+                .transpose()?,
             summary: r.optional_text("summary")?,
             progress: StorageTaskProgress::try_new(
                 r.integer("total_items")?,

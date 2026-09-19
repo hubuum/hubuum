@@ -34,6 +34,7 @@ pub mod resources {
 pub mod identity {
     pub use crate::IdentityStorage;
     pub use crate::authorization::*;
+    pub use crate::authorization_resources::*;
     pub use crate::collection_authorization::*;
     pub use crate::identity::*;
     pub use crate::identity_operations::*;

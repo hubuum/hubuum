@@ -446,38 +446,66 @@ impl ComputedFieldStorage for MemoryStorage {
     ) -> Result<StorageClassComputationState, StorageError> {
         let (class_id, collection_id, actor_id) = request.into_parts();
         let actor_id = actor_id.unwrap_or_else(|| PrincipalId::new(1).expect("admin id is valid"));
-        {
-            let state = self.state.read().await;
-            let class = state.classes.get(&class_id.id()).ok_or_else(|| {
-                StorageError::not_found(format!("Class {} was not found", class_id.id()))
-            })?;
-            if class.collection_id() != collection_id {
-                return Err(StorageError::not_found(
-                    "Class was not found in the authorized collection",
-                ));
-            }
-        }
-        let task = self
-            .create_task(
-                StorageTaskCreateRequest::builder(
-                    StorageTaskKind::Reindex,
-                    actor_id,
-                    serde_json::json!({"class_id": class_id.id()}),
-                    0,
-                )
-                .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(100)?,
-            )
-            .await?;
         let mut state = self.state.write().await;
         let class = state.classes.get(&class_id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Class {} was not found", class_id.id()))
         })?;
+        if class.collection_id() != collection_id {
+            return Err(StorageError::not_found(
+                "Class was not found in the authorized collection",
+            ));
+        }
         let previous = state
             .computation_states
             .get(&class_id.id())
             .cloned()
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
+        state.ensure_task_capacity(actor_id, StorageTaskKind::Reindex, 100)?;
+        let now = Utc::now();
+        let task_id = TaskId::new(state.next_task_id)
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        state.next_task_id = state
+            .next_task_id
+            .checked_add(1)
+            .ok_or_else(|| StorageError::internal("Task identity exhausted"))?;
+        let record = MemoryTaskRecord {
+            id: task_id,
+            kind: StorageTaskKind::Reindex,
+            status: StorageTaskStatus::Queued,
+            control: StorageTaskControl::new(StorageTaskKind::Reindex),
+            submitted_by: Some(actor_id),
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: Some(serde_json::json!({"class_id":class_id.id()})),
+            metadata: Some(
+                StorageTaskMetadata::new(TaskMetadataDetails::Reindex {
+                    class_id: Some(class_id),
+                    computation_revision: Some(previous.evaluation_revision().get()),
+                })
+                .map_err(invalid_contract_value)?,
+            ),
+            summary: None,
+            progress: StorageTaskProgress::try_new(0, 0, 0, 0).map_err(invalid_contract_value)?,
+            scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+            deleted_at: None,
+            deleted_by: None,
+            created_at: now,
+            updated_at: now,
+            lease_expires_at: None,
+            attempt_count: 0,
+            initiator_principal_id: Some(actor_id),
+            trace_link: None,
+            claim_token: None,
+        };
+        let task = record.projection()?;
+        state.tasks.insert(task_id.id(), record);
+        state.append_task_event_record(
+            task_id,
+            StorageTaskEventInput::new("queued", "Computation rebuild queued"),
+        )?;
         let computation_state = StorageClassComputationState::try_new(
             class_id,
             previous.evaluation_revision(),

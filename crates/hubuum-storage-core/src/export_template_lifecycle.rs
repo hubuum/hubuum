@@ -199,6 +199,16 @@ pub struct StorageExportTemplate {
 
 impl StorageExportTemplate {
     #[must_use]
+    pub const fn collection_id(&self) -> CollectionId {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
     pub fn new(
         metadata: StorageRecordMetadata,
         collection_id: CollectionId,

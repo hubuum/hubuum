@@ -48,6 +48,7 @@ pub mod schema_evolution;
 pub mod service_account;
 pub(crate) mod structured_search;
 pub(crate) mod task_control;
+mod task_discovery;
 pub mod task_execution;
 pub mod task_queue;
 pub(crate) mod task_rows;

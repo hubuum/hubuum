@@ -1,0 +1,14 @@
+DROP TRIGGER retain_task_terminal_discovery ON tasks;
+DROP FUNCTION retain_task_terminal_discovery();
+DROP TRIGGER retain_export_discovery ON export_task_outputs;
+DROP TRIGGER retain_backup_discovery ON backup_task_outputs;
+DROP FUNCTION retain_task_output_discovery();
+DROP INDEX schema_validation_work_history_idx;
+DROP INDEX tasks_discovery_template_idx;
+DROP INDEX tasks_discovery_remote_target_idx;
+DROP INDEX tasks_discovery_relation_idx;
+DROP INDEX tasks_discovery_collection_idx;
+DROP INDEX tasks_discovery_object_idx;
+DROP INDEX tasks_discovery_class_idx;
+ALTER TABLE tasks DROP COLUMN discovery_metadata;
+DROP FUNCTION valid_task_discovery(jsonb, text);

@@ -42,6 +42,36 @@ async fn load_objects(
         .collect())
 }
 
+pub(crate) async fn task_class_authorization_resources(
+    backend: &impl StorageContext,
+    principal_id: i32,
+    class_ids: &[i32],
+) -> Result<HashMap<i32, ResourceRef>, ApiError> {
+    let mut resources = HashMap::new();
+    // Equality filters accept at most 50 values, even for internal queries.
+    for ids in class_ids.chunks(50) {
+        let query = QueryOptions::new(
+            vec![ParsedQueryParam {
+                field: FilterField::Id,
+                operator: SearchOperator::Equals { is_negated: false },
+                value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+            }],
+            Vec::new(),
+            Some(ids.len()),
+            None,
+            false,
+        )?;
+        let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
+        resources.extend(classes.into_iter().map(|class| {
+            (
+                class.id,
+                ResourceRef::class(class.id, class.collection.id, Some(class.name)),
+            )
+        }));
+    }
+    Ok(resources)
+}
+
 pub(crate) async fn schema_compliance_authorization_resources(
     backend: &impl StorageContext,
     object_ids: impl IntoIterator<Item = i32>,
@@ -103,28 +133,7 @@ pub(crate) async fn class_authorization_resources(
     principal_id: i32,
     class_ids: &[i32],
 ) -> Result<Vec<ResourceRef>, ApiError> {
-    let mut resources = HashMap::new();
-    // Equality filters accept at most 50 values, even for internal queries.
-    for ids in class_ids.chunks(50) {
-        let query = QueryOptions::new(
-            vec![ParsedQueryParam {
-                field: FilterField::Id,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
-            }],
-            Vec::new(),
-            Some(ids.len()),
-            None,
-            false,
-        )?;
-        let (classes, _) = catalog::list_classes(backend, principal_id, true, None, query).await?;
-        resources.extend(classes.into_iter().map(|class| {
-            (
-                class.id,
-                ResourceRef::class(class.id, class.collection.id, Some(class.name)),
-            )
-        }));
-    }
+    let resources = task_class_authorization_resources(backend, principal_id, class_ids).await?;
     class_ids
         .iter()
         .map(|id| {
@@ -254,4 +263,73 @@ pub(crate) async fn authorize_object_relation_candidates(
     .into_iter()
     .map(|(relation, _)| relation)
     .collect())
+}
+
+/// Load a page's current authorization facts without per-resource lookups.
+pub(crate) async fn task_authorization_resources(
+    backend: &impl StorageContext,
+    keys: impl IntoIterator<Item = hubuum_storage_core::StorageAuthorizationResourceKey>,
+) -> Result<HashMap<hubuum_storage_core::StorageAuthorizationResourceKey, ResourceRef>, ApiError> {
+    use hubuum_storage_core::{
+        StorageAuthorizationResource as R, StorageAuthorizationResourcesQuery,
+    };
+    Ok(storage_handle(backend)
+        .load_authorization_resources(StorageAuthorizationResourcesQuery::new(keys))
+        .await?
+        .into_iter()
+        .map(|resource| {
+            let key = resource.key();
+            let resource = match resource {
+                R::Class { resource, name } => ResourceRef::class(
+                    resource.id().id(),
+                    resource.collection_id().id(),
+                    Some(name),
+                ),
+                R::Object(resource) => ResourceRef::object(
+                    resource.id().id(),
+                    ClassResourceEndpoint::new(
+                        resource.collection_id().id(),
+                        resource.class_id().id(),
+                    ),
+                    Some(resource.name().to_owned()),
+                ),
+                R::Collection { id, name } => ResourceRef::named_collection(id.id(), Some(name)),
+                R::ExportTemplate {
+                    id,
+                    collection_id,
+                    name,
+                } => ResourceRef::template(id.id(), collection_id.id(), Some(name)),
+                R::RemoteTarget {
+                    id,
+                    collection_id,
+                    name,
+                } => ResourceRef::remote_target(id.id(), collection_id.id(), Some(name)),
+                R::ClassRelation { id, from, to } => ResourceRef::class_relation(
+                    Some(id.id()),
+                    ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
+                    ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
+                ),
+                R::ObjectRelation {
+                    id,
+                    from,
+                    to,
+                    class_relation_id,
+                } => ResourceRef::object_relation(
+                    Some(id.id()),
+                    ObjectResourceEndpoint::new(
+                        from.collection_id().id(),
+                        from.class_id().id(),
+                        from.id().id(),
+                    ),
+                    ObjectResourceEndpoint::new(
+                        to.collection_id().id(),
+                        to.class_id().id(),
+                        to.id().id(),
+                    ),
+                    class_relation_id.id(),
+                ),
+            };
+            (key, resource)
+        })
+        .collect())
 }

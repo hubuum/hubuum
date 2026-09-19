@@ -55,7 +55,7 @@ for path in "$@"; do
       src/config.rs | src/config/* | src/db/traits/authz.rs | src/permissions/* | \
       src/models/permissions.rs | src/models/token.rs | \
       src/models/token_scope.rs | src/models/unified_search.rs | \
-      src/api/v1/handlers/search.rs | src/api/v1/handlers/tasks.rs | \
+      src/api/v1/handlers/search.rs | src/api/v1/handlers/tasks.rs | src/api/v1/handlers/tasks/* | \
       tests/api_jobs_suite/tasks.rs | src/tests/permissions/* | \
       src/extractors/mod.rs | src/api/v1/handlers/principals.rs | \
       src/api/v1/handlers/service_accounts.rs | \

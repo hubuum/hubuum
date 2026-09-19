@@ -25,6 +25,7 @@ pub(crate) mod relation_queries;
 pub(crate) mod remote_targets;
 pub(crate) mod storage_boundary;
 #[doc(hidden)]
+mod task_discovery;
 pub mod tasks;
 pub(crate) mod unified_search;
 

@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
 impl AuthenticationStorage for StorageHandle {
@@ -759,6 +760,23 @@ impl TokenStorage for StorageHandle {
 
 #[async_trait]
 impl AuthorizationDataStorage for StorageHandle {
+    async fn load_authorization_resources(
+        &self,
+        query: StorageAuthorizationResourcesQuery,
+    ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::AuthorizationData,
+            "load_authorization_resources",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.load_authorization_resources(query).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn get_authorization_principal(
         &self,
         principal_id: PrincipalId,
@@ -821,6 +839,23 @@ impl AuthorizationDataStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend.list_authorization_objects(query).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn authorize_local_collection_batch(
+        &self,
+        queries: Vec<StorageAuthorizationCollectionAccessQuery>,
+    ) -> Result<Vec<bool>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::AuthorizationData,
+            "authorize_local_collection_batch",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.authorize_local_collection_batch(queries).await
                 })
             },
         )
