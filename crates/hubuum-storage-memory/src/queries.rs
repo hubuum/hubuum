@@ -460,6 +460,7 @@ impl ComputedFieldStorage for MemoryStorage {
             .get(&class_id.id())
             .cloned()
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
+        state.ensure_task_capacity(actor_id, StorageTaskKind::Reindex, 100)?;
         let now = Utc::now();
         let task_id = TaskId::new(state.next_task_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;

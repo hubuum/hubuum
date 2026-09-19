@@ -263,22 +263,11 @@ impl TaskQueueStorage for MemoryStorage {
                 "Idempotency-Key is already in use for a different task submission",
             ));
         }
-        let active_count = state
-            .tasks
-            .values()
-            .filter(|task| {
-                task.submitted_by == Some(request.submitted_by())
-                    && task.kind == request.kind()
-                    && !task.status.is_terminal()
-            })
-            .count();
-        if active_count >= request.maximum_active_tasks() {
-            return Err(StorageError::rate_limited(format!(
-                "Too many active {} tasks for user ({active_count} >= {}); wait for queued or running tasks to finish",
-                request.kind().as_str(),
-                request.maximum_active_tasks()
-            )));
-        }
+        state.ensure_task_capacity(
+            request.submitted_by(),
+            request.kind(),
+            request.maximum_active_tasks(),
+        )?;
         let id = TaskId::new(state.next_task_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         state.next_task_id += 1;
@@ -2037,6 +2026,30 @@ impl MemoryStorage {
 }
 
 impl MemoryState {
+    pub(super) fn ensure_task_capacity(
+        &self,
+        submitted_by: PrincipalId,
+        kind: StorageTaskKind,
+        maximum_active_tasks: usize,
+    ) -> Result<(), StorageError> {
+        let active_count = self
+            .tasks
+            .values()
+            .filter(|task| {
+                task.submitted_by == Some(submitted_by)
+                    && task.kind == kind
+                    && !task.status.is_terminal()
+            })
+            .count();
+        if active_count >= maximum_active_tasks {
+            return Err(StorageError::rate_limited(format!(
+                "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
+                kind.as_str(),
+            )));
+        }
+        Ok(())
+    }
+
     fn task_discovery_projection(
         &self,
         task: &MemoryTaskRecord,

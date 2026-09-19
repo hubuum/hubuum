@@ -167,7 +167,7 @@ WITH candidates AS (
  SELECT id, kind, jsonb_build_object('version', 1, 'data',
     CASE kind
       WHEN 'import' THEN jsonb_build_object('kind',kind,
-        'dry_run',COALESCE(request_payload->'dry_run','false'::jsonb),
+        'dry_run',COALESCE(NULLIF(request_payload->'dry_run','null'::jsonb),'false'::jsonb),
         'atomicity',COALESCE(NULLIF(request_payload->'mode'->'atomicity','null'::jsonb),'"strict"'::jsonb),
         'collision_policy',COALESCE(NULLIF(request_payload->'mode'->'collision_policy','null'::jsonb),'"abort"'::jsonb),
         'permission_policy',COALESCE(NULLIF(request_payload->'mode'->'permission_policy','null'::jsonb),'"abort"'::jsonb))

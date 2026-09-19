@@ -642,6 +642,98 @@ async fn deleting_cancellation_actor_preserves_the_stop_request() {
     }
 }
 
+#[rstest]
+#[case::last_slot(99, StorageTaskStatus::Queued, true)]
+#[case::full_queue(100, StorageTaskStatus::Queued, false)]
+#[case::claimed_task(100, StorageTaskStatus::Validating, false)]
+#[case::cancelled_task(100, StorageTaskStatus::Cancelled, true)]
+#[actix_web::test]
+async fn memory_rebuild_preserves_active_task_capacity(
+    #[case] task_count: usize,
+    #[case] first_task_status: StorageTaskStatus,
+    #[case] accepted: bool,
+) {
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let user = create_backend_user(&backend, &prefix("rebuild_capacity_owner")).await;
+    let resources =
+        create_backend_object_fixture(&backend, &prefix("rebuild_capacity"), Vec::new()).await;
+    let request = || {
+        StorageComputedFieldRebuildRequest::new(
+            resources.class.id(),
+            resources.collection.id(),
+            Some(user.principal_id),
+        )
+    };
+    let first_task_id = backend
+        .request_computed_field_rebuild(request())
+        .await
+        .unwrap()
+        .active_task_id()
+        .unwrap();
+    for _ in 1..task_count {
+        backend
+            .request_computed_field_rebuild(request())
+            .await
+            .unwrap();
+    }
+    match first_task_status {
+        StorageTaskStatus::Validating => {
+            let claim = backend
+                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(claim.task().id(), first_task_id);
+        }
+        StorageTaskStatus::Cancelled => {
+            let (task, _) = backend
+                .get_task_access(first_task_id)
+                .await
+                .unwrap()
+                .into_parts();
+            backend
+                .request_task_cancellation(StorageTaskCancellationRequest::new(
+                    &task,
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap();
+        }
+        StorageTaskStatus::Queued => {}
+        _ => unreachable!(),
+    }
+    let previous = backend
+        .get_computed_field_state(resources.class.id())
+        .await
+        .unwrap();
+    let result = backend.request_computed_field_rebuild(request()).await;
+    if accepted {
+        assert!(result.is_ok());
+    } else {
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::RateLimited);
+        assert_eq!(
+            backend
+                .get_computed_field_state(resources.class.id())
+                .await
+                .unwrap(),
+            previous,
+        );
+    }
+    let (_, total) = backend
+        .list_tasks(StorageTaskListQuery::new(
+            Some(user.principal_id),
+            None,
+            None,
+            QueryOptions::new(Vec::new(), Vec::new(), Some(1), None, true).unwrap(),
+        ))
+        .await
+        .unwrap()
+        .into_parts();
+    assert_eq!(total, Some((task_count + usize::from(accepted)) as i64));
+    delete_backend_object_fixture(&backend, resources).await;
+    delete_backend_user(&backend, user).await;
+}
+
 #[actix_web::test]
 async fn cancelled_reindex_stays_incomplete_and_a_later_rebuild_can_finish() {
     let _permit = postgres_permit().await;

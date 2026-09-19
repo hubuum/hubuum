@@ -33,6 +33,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   exhaustive task-detail decoders must add schema-validation, rebuild and
   remote-call variants.
 
+### Fixed
+
+- Preserve the memory backend's limit of 100 active rebuild tasks per principal.
+- Recover the `false` dry-run default for historical imports whose retained
+  requests contain JSON null, so `import_dry_run=false` searches include them.
+
 ## [0.0.15] - 2026-09-15
 
 ### Added
