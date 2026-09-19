@@ -856,14 +856,18 @@ mod tests {
         fixture.cleanup().await.unwrap();
     }
     #[rstest]
-    #[case::local_admin(false, true)]
-    #[case::local_non_admin(false, false)]
-    #[case::delegated(true, false)]
+    #[case::local_admin(false, true, false)]
+    #[case::local_non_admin(false, false, false)]
+    #[case::delegated(true, false, false)]
+    #[case::local_admin_filters(false, true, true)]
+    #[case::local_non_admin_filters(false, false, true)]
+    #[case::delegated_filters(true, false, true)]
     #[actix_web::test]
     async fn mixed_task_pages_have_a_fixed_authorization_query_budget(
         #[future(awt)] test_context: TestContext,
         #[case] delegated: bool,
         #[case] admin: bool,
+        #[case] filtered: bool,
     ) {
         use crate::models::{
             ExportContentType, ExportScopeKind, ExportTemplateKind, NewExportTemplate,
@@ -1073,10 +1077,31 @@ mod tests {
             if index != 0 && index != 11 {
                 continue;
             }
-            let url = format!(
-                "{TASKS_ENDPOINT}?submitted_by={}&kind=export,remote_call&limit=100&include_total=true&trace_id={trace_id}",
+            let kinds = if filtered {
+                "remote_call"
+            } else {
+                "export,remote_call"
+            };
+            let search_trace_id = if filtered {
+                uuid::Uuid::new_v4().simple().to_string()
+            } else {
+                trace_id.clone()
+            };
+            let mut url = format!(
+                "{TASKS_ENDPOINT}?submitted_by={}&kind={kinds}&limit=100&include_total=true&trace_id={search_trace_id}",
                 actor
             );
+            if filtered {
+                // An unmatched trace isolates filters from page redaction, even
+                // if a background worker changes fixture task status.
+                url.push_str(&format!("&class_id={}", class.id));
+                if index == 11 {
+                    url.push_str(&format!(
+                        "&object_id={}&collection_id={}&relation_type=object_relation&relation_id={}&remote_target_id={}",
+                        object.id, fixture.collection.id, object_relation.id, target.id
+                    ));
+                }
+            }
             // Warm token activity bookkeeping before measuring steady-state polling.
             let warmup = if delegated {
                 get_request_with_permission_backend(&context.pool, token, &url, policy.clone())
@@ -1085,6 +1110,7 @@ mod tests {
                 get_request(&context.pool, token, &url).await
             };
             assert_response_status(warmup, StatusCode::OK).await;
+            let previous_batches = policy.authorization_batch_sizes().len();
             let (response, queries) = if delegated {
                 capture_queries(get_request_with_permission_backend(
                     &context.pool,
@@ -1098,7 +1124,14 @@ mod tests {
             };
             let response = assert_response_status(response, StatusCode::OK).await;
             let tasks: Vec<TaskResponse> = test::read_body_json(response).await;
-            assert_eq!(tasks.len(), task_ids.len());
+            assert_eq!(tasks.len(), if filtered { 0 } else { task_ids.len() });
+            if delegated && filtered {
+                assert_eq!(
+                    &policy.authorization_batch_sizes()[previous_batches..],
+                    &[if index == 0 { 1 } else { 5 }],
+                    "resource filters must use one policy batch"
+                );
+            }
             assert!(tasks.iter().all(|task| task.details.is_some()));
             assert!(
                 queries.domain_queries() <= 20,
@@ -1108,7 +1141,9 @@ mod tests {
             if let Some(budget) = small_budget {
                 assert_eq!(
                     queries.domain_queries(),
-                    budget,
+                    budget + if filtered { 4 } else { 0 },
+                    // Four additional resource kinds each need one facts query;
+                    // principal and grant queries must not grow with filter count.
                     "query count grew with distinct references: {:?}",
                     queries.query_counts()
                 );

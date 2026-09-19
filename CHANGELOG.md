@@ -16,7 +16,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Searches authorize referenced resources before exposing matches and counts.
   Mixed task pages batch authorization facts for all resource types, including
   configuration references and relation endpoints, with bounded query counts.
-  Local grant checks are batched for non-admin callers as well.
+  Local grant checks are batched for non-admin callers as well. Combined resource
+  filters share one authorization batch without per-filter principal or grant queries.
 - **Breaking storage SDK contract change:** adapters must persist validated
   `StorageTaskMetadata`, project retained schema-work and artifact state, and
   apply `StorageTaskSearch` (including `TaskDiscoverySearch`) before counting

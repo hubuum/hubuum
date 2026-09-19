@@ -111,7 +111,8 @@ pub(super) fn parse(values: &HashMap<String, String>) -> Result<TaskDiscoverySea
 
 use crate::extractors::Authenticated;
 use crate::models::{Permissions, TaskRecord};
-use crate::permissions::{AppContext, authorize_resources};
+use crate::permissions::{AppContext, PermissionDecision, PermissionRequest, PrincipalRef};
+use crate::traits::{scope_allows, scope_allows_resource};
 use hubuum_storage_core::{TaskExplicitTarget, TaskMetadataDetails};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -184,20 +185,41 @@ pub(super) async fn authorize_filters(
         references.push(reference.key());
     }
     let resources = task_authorization_resources(context, references.iter().copied()).await?;
+    let mut requests = Vec::with_capacity(references.len());
     for key in references {
         let resource = resources
             .get(&key)
             .cloned()
             .ok_or_else(|| ApiError::NotFound("Task discovery resource was not found".into()))?;
-        authorize_resources(
-            context.permission_backend(),
-            context,
-            &requestor.principal,
-            requestor.scopes(),
-            vec![reference_permission(key)],
-            vec![resource],
-        )
-        .await?;
+        let permission = reference_permission(key);
+        if !scope_allows(requestor.scopes(), &[permission])
+            || !scope_allows_resource(requestor.scopes(), &resource)
+        {
+            return Err(ApiError::Forbidden("Permission denied".into()));
+        }
+        requests.push(PermissionRequest {
+            resource: resource.normalized_for_permission(permission),
+            permissions: vec![permission],
+        });
+    }
+    if !requests.is_empty() {
+        let expected = requests.len();
+        let principal = PrincipalRef::load(context, &requestor.principal).await?;
+        let decisions = context
+            .permission_backend()
+            .authorize_many(&principal, requests)
+            .await?;
+        if decisions.len() != expected {
+            return Err(ApiError::InternalServerError(
+                "Permission backend returned an unexpected number of discovery decisions".into(),
+            ));
+        }
+        if decisions
+            .iter()
+            .any(|decision| *decision != PermissionDecision::Allow)
+        {
+            return Err(ApiError::Forbidden("Permission denied".into()));
+        }
     }
     Ok(())
 }
@@ -238,8 +260,6 @@ pub(crate) async fn redact(
     requestor: &Authenticated,
     tasks: &mut [TaskRecord],
 ) -> Result<(), ApiError> {
-    use crate::permissions::{PermissionDecision, PermissionRequest, PrincipalRef};
-    use crate::traits::{scope_allows, scope_allows_resource};
     let unique: BTreeSet<_> = tasks
         .iter()
         .flat_map(references)
