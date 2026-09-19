@@ -4,7 +4,7 @@ use crate::models::{
     ImportRequest, NewUser, PrincipalID, PrincipalTokenCreateRequest, RestoreConfirmRequest,
     RestoreJobID, TokenID, TokenScopeDetails, UpdateUser, UserID,
 };
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, SubsecRound, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use hubuum_storage_core::{
     StorageCredentialApprovalMetadata, StorageCredentialFingerprint, StorageCredentialOperation,
@@ -124,7 +124,11 @@ impl CredentialOperation {
             _ => return Ok(()),
         };
         let policy = crate::models::token::configured_token_issuance_policy()?;
-        *expiry = Some(policy.resolve_expiry(Utc::now().naive_utc(), *expiry)?);
+        *expiry = Some(
+            policy
+                .resolve_expiry(Utc::now().naive_utc(), *expiry)?
+                .trunc_subsecs(6),
+        );
         Ok(())
     }
 }
@@ -232,5 +236,7 @@ pub struct CredentialApprovalResponse {
     pub approval: CredentialApprovalSecret,
     pub record: CredentialApprovalRecord,
     /// Use this exact value as token.expires_at in the subsequent creation/renewal request.
+    /// Resolved token expiry at database microsecond precision. Copy this value
+    /// into the mint/renew request, including when approval used an explicit expiry.
     pub token_expires_at: Option<NaiveDateTime>,
 }

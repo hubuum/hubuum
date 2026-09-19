@@ -84,7 +84,9 @@ A successful `201` response contains:
 `record.token_id` identifies the human's originating bearer token, not the token
 being created. Approval timestamps use UTC with a `Z` suffix. Token expiry uses
 the existing API's UTC timestamp representation without an offset. Clients
-should preserve the returned expiry precision rather than rounding it.
+must copy `token_expires_at` even when they supplied an explicit expiry: the
+server normalizes it to database microsecond precision before binding approval.
+Preserve that precision rather than rounding it.
 
 ```http
 POST /api/v1/iam/principals/42/tokens

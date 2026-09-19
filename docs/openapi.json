@@ -22336,7 +22336,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "Use this exact value as token.expires_at in the subsequent creation/renewal request."
+            "description": "Use this exact value as token.expires_at in the subsequent creation/renewal request.\nResolved token expiry at database microsecond precision. Copy this value\ninto the mint/renew request, including when approval used an explicit expiry."
           }
         }
       },

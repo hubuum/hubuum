@@ -493,8 +493,11 @@ mod tests {
         assert_eq!(token.authenticate(pool).await.is_ok(), expected_valid);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[actix_web::test]
-    async fn token_mint_materializes_and_returns_the_configured_default_expiry() {
+    async fn token_mint_returns_and_persists_the_approved_expiry(#[case] explicit: bool) {
         use crate::schema::tokens::dsl::{expires_at, token as token_column, tokens};
         use crate::tests::api_operations::post_request_with_headers;
         use actix_web::http::header::HeaderName;
@@ -505,6 +508,10 @@ mod tests {
         let lifetime =
             chrono::Duration::hours(integration_test_config().unwrap().token_lifetime_hours);
         let before_approval = chrono::Utc::now().naive_utc().trunc_subsecs(6);
+        let requested_expiry = explicit.then_some(
+            before_approval + lifetime - chrono::Duration::seconds(1)
+                + chrono::Duration::nanoseconds(123),
+        );
         let response = post_request(
             &context.pool,
             &context.admin_token,
@@ -513,7 +520,7 @@ mod tests {
                 "password": "testadminpassword",
                 "operation": {
                     "kind": "create_token", "principal_id": sa.id,
-                    "token": {"name": "default-expiry"}
+                    "token": {"name": "default-expiry", "expires_at": requested_expiry}
                 }
             }),
         )
@@ -524,9 +531,13 @@ mod tests {
         let approved_expiry =
             serde_json::from_value::<chrono::NaiveDateTime>(approval["token_expires_at"].clone())
                 .unwrap();
-        assert!(
-            (before_approval + lifetime..=after_approval + lifetime).contains(&approved_expiry)
-        );
+        if let Some(requested) = requested_expiry {
+            assert_eq!(approved_expiry, requested.trunc_subsecs(6));
+        } else {
+            assert!(
+                (before_approval + lifetime..=after_approval + lifetime).contains(&approved_expiry)
+            );
+        }
 
         let response = post_request_with_headers(
             &context.pool,
