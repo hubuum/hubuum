@@ -1,0 +1,82 @@
+{
+  "groups": [
+    {
+      "name": "hubuum.operations",
+      "interval": "1m",
+      "rules": [
+        {
+          "alert": "HubuumDatabasePoolSaturated",
+          "expr": "max by (deployment, instance) (hubuum_db_pool_connections{state=\"checked_out\"}) / max by (deployment, instance) (hubuum_db_pool_connections{state=\"configured\"}) > 0.9",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Database pool remains above 90% utilization",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/database-pool.md"
+          }
+        },
+        {
+          "alert": "HubuumTaskQueueDelayed",
+          "expr": "max by (deployment, kind) (hubuum_task_oldest_age_seconds{state=\"queued\"}) > 300",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Queued work has exceeded five minutes",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/task-queue.md"
+          }
+        },
+        {
+          "alert": "HubuumWorkerErrors",
+          "expr": "sum by (deployment) (increase(hubuum_task_worker_iterations_total{outcome=\"error\"}[10m])) > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Task workers are reporting errors",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/worker-errors.md"
+          }
+        },
+        {
+          "alert": "HubuumEventBacklog",
+          "expr": "max by (deployment, queue) (hubuum_event_oldest_age_seconds) > 300",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Event processing has exceeded five minutes",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+          }
+        },
+        {
+          "alert": "HubuumBackupFailed",
+          "expr": "sum by (deployment) (increase(hubuum_task_completions_total{kind=\"backup\",final_status=\"failed\"}[1h])) > 0",
+          "for": "0m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "A backup task failed during the last hour",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/backup-failure.md"
+          }
+        },
+        {
+          "alert": "HubuumMetricsRefreshStale",
+          "expr": "time() - hubuum_metrics_refresh_last_success_timestamp_seconds > 300",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Metrics inventory has not refreshed for five minutes",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/metrics-stale.md"
+          }
+        }
+      ]
+    }
+  ]
+}

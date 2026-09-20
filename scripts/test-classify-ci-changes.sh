@@ -43,6 +43,13 @@ assert_literal_include_is_code() {
   assert_flag "$output" code true
 }
 
+for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
+  observability/dashboards/overview.json scripts/check-observability.py; do
+  operator_output="$(bash "$classifier" "$operator_path")"
+  assert_flag "$operator_output" code true
+  assert_flag "$operator_output" container false
+done
+
 for transport_path in scripts/test-event-transports.py tests/event_transport_contract.rs; do
   transport_output="$(bash "$classifier" "$transport_path")"
   assert_flag "$transport_output" code true

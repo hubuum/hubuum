@@ -369,3 +369,8 @@ global valid/invalid/pending/not-required counts. Generic task metrics include
 `schema_validation` backlog and recovery. Per-class IDs, object IDs, paths, and
 schema content never become metric labels; administrator schema reports provide
 per-class detail. See [class schema evolution](schema_evolution.md).
+
+## Operator package
+
+See the [operator package](../observability/README.md) for the initial Grafana
+overview, tested Prometheus alerts, deployment labels and response runbooks.

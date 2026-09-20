@@ -1,0 +1,274 @@
+{
+  "rule_files": [
+    "alerts.json"
+  ],
+  "evaluation_interval": "1m",
+  "tests": [
+    {
+      "name": "HubuumDatabasePoolSaturated fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_db_pool_connections{deployment=\"test\",instance=\"one\",state=\"checked_out\"}",
+          "values": "0+0x4 10+0x20 0+0x30"
+        },
+        {
+          "series": "hubuum_db_pool_connections{deployment=\"test\",instance=\"one\",state=\"configured\"}",
+          "values": "10+0x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumDatabasePoolSaturated",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumDatabasePoolSaturated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Database pool remains above 90% utilization",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/database-pool.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumDatabasePoolSaturated",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumTaskQueueDelayed fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"one\",kind=\"export\",state=\"queued\"}",
+          "values": "0+0x4 600+0x20 0+0x30"
+        },
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"two\",kind=\"export\",state=\"queued\"}",
+          "values": "0+0x4 600+0x20 0+0x30"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumTaskQueueDelayed",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumTaskQueueDelayed",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "kind": "export",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Queued work has exceeded five minutes",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/task-queue.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumTaskQueueDelayed",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumWorkerErrors fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_task_worker_iterations_total{deployment=\"test\",instance=\"one\",outcome=\"error\"}",
+          "values": "0+0x4 1+1x20 21+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumWorkerErrors",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumWorkerErrors",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Task workers are reporting errors",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/worker-errors.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumWorkerErrors",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumEventBacklog fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_event_oldest_age_seconds{deployment=\"test\",instance=\"one\",queue=\"delivery\"}",
+          "values": "0+0x4 600+0x20 0+0x30"
+        },
+        {
+          "series": "hubuum_event_oldest_age_seconds{deployment=\"test\",instance=\"two\",queue=\"delivery\"}",
+          "values": "0+0x4 600+0x20 0+0x30"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumEventBacklog",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumEventBacklog",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "queue": "delivery",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Event processing has exceeded five minutes",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumEventBacklog",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumBackupFailed fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_task_completions_total{deployment=\"test\",instance=\"one\",kind=\"backup\",final_status=\"failed\"}",
+          "values": "0+0x4 1+0x120"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumBackupFailed",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumBackupFailed",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "A backup task failed during the last hour",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/backup-failure.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumBackupFailed",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumMetricsRefreshStale fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_metrics_refresh_last_success_timestamp_seconds{deployment=\"test\",instance=\"one\",source=\"inventory\"}",
+          "values": "0+60x4 240+0x20 1560+60x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumMetricsRefreshStale",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumMetricsRefreshStale",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "source": "inventory",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Metrics inventory has not refreshed for five minutes",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/metrics-stale.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "100m",
+          "alertname": "HubuumMetricsRefreshStale",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "duplicate database gauges stay below threshold",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"one\",kind=\"export\",state=\"queued\"}",
+          "values": "200+0x30"
+        },
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"two\",kind=\"export\",state=\"queued\"}",
+          "values": "200+0x30"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumTaskQueueDelayed",
+          "exp_alerts": []
+        }
+      ]
+    }
+  ]
+}

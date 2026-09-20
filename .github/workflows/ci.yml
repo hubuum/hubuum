@@ -246,6 +246,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Test Python requirements and standard-library-only checks
         run: python3 scripts/test-python-version.py
+      - name: Validate operator dashboards, metric references and alert behavior
+        run: |
+          python3 scripts/check-observability.py --promtool
+          python3 scripts/test-observability.py
       - name: Test Rust API classification policy
         run: python3 scripts/test-rust-api-policy.py
       - name: Test supply-chain policy validation
