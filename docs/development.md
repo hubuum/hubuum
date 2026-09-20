@@ -66,9 +66,9 @@ cargo clippy --all-targets --fix
 cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 ```
 
-## Event transport contract tests
+## Production integration contract tests
 
-Run the production AMQP, Valkey Streams, and webhook adapters against disposable
+Run the production LDAP, SMTP, AMQP, Valkey Streams, and webhook adapters against disposable
 TLS fixtures with Python 3.11+, Docker or its Podman compatibility command, and
 OpenSSL on `PATH`:
 
@@ -76,7 +76,7 @@ OpenSSL on `PATH`:
 python3 scripts/test-event-transports.py
 ```
 
-The runner uses digest-pinned RabbitMQ and Valkey images and a source-controlled
+The runner uses digest-pinned OpenLDAP, Mailpit, RabbitMQ and Valkey images and a source-controlled
 HTTPS fixture. It generates a private CA, verifies certificates through the
 production clients, and removes its containers and temporary credentials after
 the run. Ports bind only to loopback. No Python packages are required.
@@ -88,9 +88,18 @@ certificates, redirects, server errors, response limits, and timeouts.
 
 Ordinary local `cargo test` leaves these fixture-dependent tests ignored. The
 runner explicitly enables them; missing fixture settings fail the tests. The
-`Event transport TLS contracts` CI job runs for full validation and release tags,
-and contributes to the required CI gate. LDAP, SMTP, and the broader integration
-matrix remain tracked in [#248](https://github.com/hubuum/hubuum/issues/248).
+`Production integration contracts` CI job runs for full validation and release tags,
+and contributes to the required CI gate. The shared Valkey login limiter also runs
+on release tags and is required before release publication.
+
+LDAP cases exercise LDAPS and mandatory STARTTLS, invalid credentials and filter
+escaping, stable-subject refresh, untrusted CAs, and restart recovery. SMTP cases
+exercise authenticated implicit TLS, message delivery, temporary and permanent
+recipient rejection, invalid credentials, untrusted CAs, and cached-transport
+recovery. Mailpit rejects recipients deterministically at 100% for failure cases.
+
+See [integration coverage](integration-coverage.md) for the evidence boundary and
+remaining work in [#248](https://github.com/hubuum/hubuum/issues/248).
 
 ## Architecture Overview
 

@@ -13,6 +13,7 @@ if sys.version_info < (3, 11):
 import base64
 import contextlib
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -239,10 +240,16 @@ def run(root, containers, servers, networks):
         server = HttpsFixture(directory)
         servers.append(server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+    spec = importlib.util.spec_from_file_location("integration_fixtures", ROOT / "scripts/integration-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    extra = fixtures.start(root, tls, untrusted, password, suffix, network, containers,
+                           command, loopback_ports, wait_until_ready)
     empty_roots = root / "empty-roots"
     empty_roots.mkdir()
     env = dict(os.environ)
     valkey_port = mapped_port(valkey, 6379)
+    env.update(extra)
     env.update({
         "SSL_CERT_FILE": str(tls / "ca.pem"), "SSL_CERT_DIR": str(empty_roots),
         "HUBUUM_CONTRACT_PASSWORD": password,
@@ -269,6 +276,12 @@ def main():
     build = subprocess.run([*CARGO_TEST, "--no-run"], cwd=ROOT, timeout=1800, check=False)
     if build.returncode:
         return build.returncode
+    worker = subprocess.run(
+        ["cargo", "build", "--locked", "-p", "hubuum-templates", "--bin", "hubuum-template-worker"],
+        cwd=ROOT, timeout=1800, check=False,
+    )
+    if worker.returncode:
+        return worker.returncode
     containers = []
     servers = []
     networks = []
