@@ -56,7 +56,8 @@ def main():
         for arguments in (("check", "rules", "alerts.json"), ("test", "rules", "tests.json")):
             subprocess.run(
                 ["docker", "run", "--rm", "--network", "none", "--user", "0:0",
-                 "--read-only", "--cap-drop", "ALL", "--entrypoint", "/bin/promtool",
+                 "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+                 "--cap-drop", "ALL", "--entrypoint", "/bin/promtool",
                  "--volume", f"{ROOT / 'observability'}:/work:ro,z", "--workdir", "/work/prometheus",
                  PROMETHEUS, *arguments], check=True, timeout=120,
             )
