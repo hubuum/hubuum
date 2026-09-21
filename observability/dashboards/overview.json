@@ -54,7 +54,7 @@
         {
           "refId": "A",
           "expr": "max by (deployment, instance) (hubuum_db_pool_connections{deployment=~\"$deployment\",state=\"checked_out\"}) / max by (deployment, instance) (hubuum_db_pool_connections{deployment=~\"$deployment\",state=\"configured\"})",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}} {{instance}}"
         }
       ],
       "fieldConfig": {
@@ -88,7 +88,7 @@
         {
           "refId": "A",
           "expr": "max by (deployment, kind) (hubuum_task_oldest_age_seconds{deployment=~\"$deployment\",state=\"queued\"})",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}} {{kind}}"
         }
       ],
       "fieldConfig": {
@@ -122,7 +122,7 @@
         {
           "refId": "A",
           "expr": "sum by (deployment) (rate(hubuum_task_worker_iterations_total{deployment=~\"$deployment\",outcome=\"error\"}[5m]))",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}}"
         }
       ],
       "fieldConfig": {
@@ -156,7 +156,7 @@
         {
           "refId": "A",
           "expr": "max by (deployment, queue) (hubuum_event_oldest_age_seconds{deployment=~\"$deployment\"})",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}} {{queue}}"
         }
       ],
       "fieldConfig": {
@@ -190,7 +190,7 @@
         {
           "refId": "A",
           "expr": "sum by (deployment) (increase(hubuum_task_completions_total{deployment=~\"$deployment\",kind=\"backup\",final_status=\"failed\"}[1h]))",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}}"
         }
       ],
       "fieldConfig": {
@@ -224,7 +224,7 @@
         {
           "refId": "A",
           "expr": "time() - hubuum_metrics_refresh_last_success_timestamp_seconds{deployment=~\"$deployment\"}",
-          "legendFormat": "{{deployment}} {{instance}} {{kind}} {{queue}} {{source}}"
+          "legendFormat": "{{deployment}} {{instance}} {{source}}"
         }
       ],
       "fieldConfig": {
