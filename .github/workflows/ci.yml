@@ -246,6 +246,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Test Python requirements and standard-library-only checks
         run: python3 scripts/test-python-version.py
+      - name: Test integration fixture readiness and cleanup
+        run: python3 scripts/test-event-transport-runner.py
       - name: Test Rust API classification policy
         run: python3 scripts/test-rust-api-policy.py
       - name: Test supply-chain policy validation

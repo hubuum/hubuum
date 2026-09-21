@@ -44,7 +44,7 @@ assert_literal_include_is_code() {
 }
 
 for transport_path in scripts/test-event-transports.py scripts/integration-fixtures.py \
-  tests/event_transport_contract.rs tests/integration_services/mod.rs; do
+  scripts/test-event-transport-runner.py tests/event_transport_contract.rs tests/integration_services/mod.rs; do
   transport_output="$(bash "$classifier" "$transport_path")"
   assert_flag "$transport_output" code true
 done

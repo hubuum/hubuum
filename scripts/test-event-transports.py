@@ -162,9 +162,24 @@ def wait_until_ready(probe, label):
         try:
             probe()
             return
-        except (RuntimeError, OSError, urllib.error.URLError):
+        except (RuntimeError, OSError, urllib.error.URLError, subprocess.TimeoutExpired):
             time.sleep(0.5)
     raise RuntimeError(f"{label} fixture did not become ready within 120 seconds")
+
+
+def remove_fixture(*arguments):
+    try:
+        result = subprocess.run(
+            ["docker", *arguments], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=30, check=False,
+        )
+        if result.returncode == 0:
+            return True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # Do not print command errors: fixture commands may contain credentials.
+    print(f"Could not remove disposable fixture {arguments[-1]}", file=sys.stderr)
+    return False
 
 
 def run(root, containers, servers, networks):
@@ -287,21 +302,15 @@ def main():
     networks = []
     with tempfile.TemporaryDirectory(prefix="hubuum-transport-contract-") as temporary:
         try:
-            return run(Path(temporary), containers, servers, networks)
+            result = run(Path(temporary), containers, servers, networks)
         finally:
             for server in servers:
                 server.shutdown()
                 server.server_close()
-            for container in reversed(containers):
-                subprocess.run(
-                    ["docker", "rm", "--force", "--volumes", container],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False,
-                )
-            for network in networks:
-                subprocess.run(
-                    ["docker", "network", "rm", network],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False,
-                )
+            removed = [remove_fixture("rm", "--force", "--volumes", container)
+                       for container in reversed(containers)]
+            removed += [remove_fixture("network", "rm", network) for network in networks]
+        return result if all(removed) else 1
 
 
 if __name__ == "__main__":
