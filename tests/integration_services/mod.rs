@@ -33,17 +33,20 @@ async fn ldap_authenticates_over_verified_tls(#[case] endpoint: &str) {
 }
 
 #[rstest]
-#[case::wrong_password("human", "wrong-password")]
-#[case::filter_injection("*)(uid=*)", "wrong-password")]
-#[case::unknown_user("missing", "wrong-password")]
+#[case::wrong_password("human", "wrong-password".to_string())]
+#[case::empty_password("human", String::new())]
+#[case::filter_injection("*", fixture("PASSWORD"))]
+#[case::unknown_user("missing", fixture("PASSWORD"))]
 #[tokio::test]
 #[ignore = "requires the pinned OpenLDAP fixture"]
-async fn ldap_rejects_invalid_credentials(#[case] username: &str, #[case] password: &str) {
-    let error = bounded(ldap("LDAP_URI").authenticate(username, password))
+async fn ldap_rejects_invalid_credentials(#[case] username: &str, #[case] password: String) {
+    // A wildcard with the real password would authenticate if filter escaping
+    // regressed. A wrong password would hide that regression at the user bind.
+    let error = bounded(ldap("LDAP_URI").authenticate(username, &password))
         .await
         .unwrap_err();
     assert!(matches!(error, AuthProviderError::AuthenticationFailed));
-    assert!(!format!("{error:?}").contains(password));
+    assert!(password.is_empty() || !format!("{error:?}").contains(&password));
 }
 
 #[rstest]

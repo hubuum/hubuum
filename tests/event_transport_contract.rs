@@ -1,5 +1,6 @@
 #![cfg(all(feature = "amqp", feature = "valkey"))]
 
+#[cfg(feature = "email")]
 mod integration_services;
 
 use std::collections::BTreeMap;
