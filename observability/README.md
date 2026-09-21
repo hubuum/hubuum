@@ -25,6 +25,11 @@ and completion counters are process-local and are summed after calculating their
 increase or rate. Pool utilization remains per process. Missing data is not
 converted to zero; the metrics-refresh alert helps identify stale inventory,
 while your deployment monitoring must detect missing scrapes with `up`.
+The refresh alert also detects sources that fail before their first successful
+refresh. Worker-error and failed-backup counters expose a zero baseline at
+startup; scrape it before running work to observe the first failure. Events
+before the first scrape or between a process restart and its first scrape can
+still be missed by counter-based alerts.
 
 The backup alert reports observed failures, not missed scheduled backups or
 recoverability. Worker loop errors do not cover every failed task. Long-running

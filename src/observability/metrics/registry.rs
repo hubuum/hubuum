@@ -130,6 +130,12 @@ pub fn init() -> Result<(), ApiError> {
         return Ok(());
     }
 
+    METRICS
+        .set(build_metrics()?)
+        .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
+}
+
+fn build_metrics() -> Result<Metrics, ApiError> {
     let registry = Registry::new();
     let process_metrics = ProcessMetrics::new(&registry)?;
     let provider = build_provider(&registry)?;
@@ -293,9 +299,20 @@ pub fn init() -> Result<(), ApiError> {
         &[],
     );
 
-    METRICS
-        .set(metrics)
-        .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
+    // Alert counters need a baseline before the first failure. Otherwise a
+    // lazily exported series starts at one and Prometheus increase misses it.
+    metrics
+        .task_worker_iterations
+        .add(0, &[KeyValue::new("outcome", "error")]);
+    metrics.task_completions.add(
+        0,
+        &[
+            KeyValue::new("kind", "backup"),
+            KeyValue::new("final_status", "failed"),
+        ],
+    );
+
+    Ok(metrics)
 }
 
 pub fn runtime_identity(role: RuntimeRole) {
@@ -309,8 +326,25 @@ pub fn runtime_identity(role: RuntimeRole) {
 #[cfg(test)]
 mod tests {
     use prometheus::{Encoder, TextEncoder};
+    use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::worker_error("hubuum_task_worker_iterations_total{outcome=\"error\"}")]
+    #[case::backup_failure(
+        "hubuum_task_completions_total{final_status=\"failed\",kind=\"backup\"}"
+    )]
+    fn failure_counters_export_a_zero_baseline_before_any_work(#[case] series: &str) {
+        let metrics = build_metrics().unwrap();
+        let mut encoded = Vec::new();
+        TextEncoder::new()
+            .encode(&metrics.registry.gather(), &mut encoded)
+            .unwrap();
+        let body = String::from_utf8(encoded).unwrap();
+
+        assert!(body.lines().any(|line| line == format!("{series} 0")));
+    }
 
     fn histogram_bucket_bounds(instrument_name: &'static str, value: f64) -> Vec<String> {
         let registry = Registry::new();

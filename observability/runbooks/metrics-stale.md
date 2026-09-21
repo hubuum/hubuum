@@ -3,6 +3,8 @@
 ## Meaning
 
 A process has not refreshed a metric source for five minutes, sustained for another five minutes.
+The alert also fires after five minutes when a source has failed without ever
+refreshing successfully. It clears once that source refreshes successfully.
 
 ## Diagnose
 

@@ -153,8 +153,9 @@ sum by (route) (
 )
 ```
 
-Counter and histogram series appear only after a process observes a matching
-event. Seeing only `/readyz` means that target handled readiness probes but not
+Counter and histogram series generally appear only after a process observes a matching
+event. The worker-error and failed-backup counters start at zero so alerts can
+observe their first failure after scraping the baseline. Seeing only `/readyz` means that target handled readiness probes but not
 application requests; it does not mean other routes are filtered out.
 
 For stored-template exports, join the total-duration histogram to the current

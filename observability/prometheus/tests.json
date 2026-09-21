@@ -41,7 +41,7 @@
           ]
         },
         {
-          "eval_time": "100m",
+          "eval_time": "40m",
           "alertname": "HubuumDatabasePoolSaturated",
           "exp_alerts": []
         }
@@ -84,7 +84,7 @@
           ]
         },
         {
-          "eval_time": "100m",
+          "eval_time": "40m",
           "alertname": "HubuumTaskQueueDelayed",
           "exp_alerts": []
         }
@@ -122,7 +122,7 @@
           ]
         },
         {
-          "eval_time": "100m",
+          "eval_time": "40m",
           "alertname": "HubuumWorkerErrors",
           "exp_alerts": []
         }
@@ -165,7 +165,7 @@
           ]
         },
         {
-          "eval_time": "100m",
+          "eval_time": "40m",
           "alertname": "HubuumEventBacklog",
           "exp_alerts": []
         }
@@ -266,6 +266,50 @@
         {
           "eval_time": "20m",
           "alertname": "HubuumTaskQueueDelayed",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "a source that never refreshed successfully fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_metrics_refresh_failures_total{deployment=\"test\",instance=\"one\",source=\"inventory\"}",
+          "values": "1+1x20 21+0x20"
+        },
+        {
+          "series": "hubuum_metrics_refresh_last_success_timestamp_seconds{deployment=\"test\",instance=\"one\",source=\"inventory\"}",
+          "values": "_x20 1260+60x20"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumMetricsRefreshStale",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "10m",
+          "alertname": "HubuumMetricsRefreshStale",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "source": "inventory",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "Metrics inventory has not refreshed for five minutes",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/metrics-stale.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "25m",
+          "alertname": "HubuumMetricsRefreshStale",
           "exp_alerts": []
         }
       ]
