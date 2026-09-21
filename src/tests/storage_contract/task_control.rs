@@ -5,6 +5,7 @@ use hubuum_storage_core::{
 };
 use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReason};
 use rstest::rstest;
+use tokio::time::{sleep, timeout};
 
 struct Fixture {
     environment: BackendTestEnvironment,
@@ -372,22 +373,35 @@ async fn another_replica_recovers_a_stopped_worker_without_replaying(#[case] dea
         };
         // The worker disappears after admission. A short final renewal lets
         // this test exercise the real expired-lease recovery path on both adapters.
-        fixture
-            .backend
-            .renew_task_lease(
-                lease.clone(),
-                StorageTaskLeaseDuration::from_milliseconds(1).unwrap(),
-            )
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            fixture
+                .backend
+                .renew_task_lease(
+                    lease.clone(),
+                    StorageTaskLeaseDuration::from_milliseconds(1).unwrap(),
+                )
+                .await
+                .unwrap()
+        );
         let replica = fixture.environment.storage();
-        replica.recover_expired_task_leases(100).await.unwrap();
-        let (recovered, _) = replica
-            .get_task_access(fixture.task.id())
-            .await
-            .unwrap()
-            .into_parts();
+        // Other parallel contracts also recover leases. PostgreSQL deliberately
+        // skips their locked rows, so a single pass need not finish our task.
+        let recovered = timeout(Duration::from_secs(5), async {
+            loop {
+                replica.recover_expired_task_leases(100).await.unwrap();
+                let (task, _) = replica
+                    .get_task_access(fixture.task.id())
+                    .await
+                    .unwrap()
+                    .into_parts();
+                if task.status().is_terminal() {
+                    break task;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("an expired task must reach a terminal state despite concurrent recovery");
         assert_eq!(recovered.status(), StorageTaskStatus::Cancelled);
         assert_eq!(recovered.control().terminal_reason(), Some(reason));
         assert!(
