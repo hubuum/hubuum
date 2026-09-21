@@ -31,6 +31,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- An initial Grafana operations dashboard and tested Prometheus alerts with
+  runbooks for database saturation, task delays, worker errors, event backlog,
+  backup failures and stale metrics. Deployment labels keep databases separate
+  and shared inventory gauges are deduplicated across replicas. Failure counters
+  expose an initial zero baseline and refresh alerts also detect sources that
+  have never refreshed successfully.
+
 - Task discovery across all six task kinds: durable explicit targets, retained
   options, schema-work result links, export outcomes and output retention state.
   Search by resources, operation options and revisions alongside comma-separated
