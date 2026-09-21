@@ -14,6 +14,7 @@ import importlib.util
 import io
 from pathlib import Path
 import subprocess
+import traceback
 import unittest
 from unittest.mock import Mock, patch
 
@@ -25,6 +26,18 @@ spec.loader.exec_module(runner)
 
 
 class FixtureFailureTests(unittest.TestCase):
+    def test_command_timeouts_do_not_expose_credentials(self):
+        arguments = ("docker", "exec", "fixture", "--password", "fixture-secret")
+        expired = subprocess.TimeoutExpired(arguments, 5)
+        with patch.object(runner.subprocess, "run", side_effect=expired):
+            try:
+                runner.command(*arguments, timeout=5)
+            except RuntimeError as error:
+                self.assertEqual(str(error), "docker exec timed out")
+                self.assertNotIn("fixture-secret", "".join(traceback.format_exception(error)))
+            else:
+                self.fail("A command timeout must fail the fixture operation")
+
     def test_readiness_retries_a_transient_probe_timeout(self):
         probe = Mock(side_effect=[subprocess.TimeoutExpired(["probe"], 5), None])
         with patch.object(runner.time, "sleep"):

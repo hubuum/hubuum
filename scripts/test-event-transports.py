@@ -43,8 +43,14 @@ CARGO_TEST = (
 )
 
 
-def command(*args, timeout=120):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+def command(*args, timeout=120, input=None):
+    try:
+        result = subprocess.run(
+            args, input=input, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired includes the full command, which can contain secrets.
+        raise RuntimeError(f"{args[0]} {args[1]} timed out") from None
     if result.returncode:
         # Commands can contain fixture credentials. Only identify the operation.
         raise RuntimeError(f"{args[0]} {args[1]} failed (exit {result.returncode})")

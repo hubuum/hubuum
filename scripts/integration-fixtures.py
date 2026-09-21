@@ -11,7 +11,6 @@ if sys.version_info < (3, 11):
 
 import base64
 import json
-import subprocess
 import urllib.request
 
 LDAP_IMAGE = (
@@ -67,13 +66,11 @@ def start(root, tls, untrusted, password, suffix, network, containers, command, 
             "employeeType: readers\nmail: human@example.test\n"
             f"userPassword:: {base64.b64encode(password.encode()).decode()}\n"
         )
-        result = subprocess.run(
-            ["docker", "exec", "-i", container, "ldapadd", "-x", "-H", "ldap://127.0.0.1:10389",
-             "-D", "cn=admin,dc=example,dc=test", "-w", password],
-            input=ldif, capture_output=True, text=True, timeout=10, check=False,
+        command(
+            "docker", "exec", "-i", container, "ldapadd", "-x", "-H", "ldap://127.0.0.1:10389",
+            "-D", "cn=admin,dc=example,dc=test", "-w", password,
+            input=ldif, timeout=10,
         )
-        if result.returncode:
-            raise RuntimeError("LDAP fixture initialization failed")
         env[f"HUBUUM_CONTRACT_{variant}_URI"] = f"ldaps://127.0.0.1:{secure}"
         env[f"HUBUUM_CONTRACT_{variant}_STARTTLS_URI"] = f"ldap://127.0.0.1:{plain}"
         env[f"HUBUUM_CONTRACT_{variant}_CONTAINER"] = container
