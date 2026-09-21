@@ -246,6 +246,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Test Python requirements and standard-library-only checks
         run: python3 scripts/test-python-version.py
+      - name: Test integration fixture readiness and cleanup
+        run: python3 scripts/test-event-transport-runner.py
       - name: Validate operator dashboards, metric references and alert behavior
         run: |
           python3 scripts/check-observability.py --promtool
@@ -807,7 +809,9 @@ jobs:
   valkey-rate-limit-contract:
     name: Valkey login limiter contract
     needs: changes
-    if: needs.changes.outputs.run_full_ci == 'true'
+    if: >-
+      !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_full_ci == 'true')
     runs-on: ubuntu-24.04
     services:
       valkey:
@@ -830,7 +834,7 @@ jobs:
           'middlewares::rate_limit::tests::' -- --ignored
 
   event-transport-contract:
-    name: Event transport TLS contracts
+    name: Production integration contracts
     needs: changes
     if: >-
       !cancelled() &&
@@ -1496,6 +1500,7 @@ jobs:
       needs.openapi-contract.result == 'success' &&
       needs.operational-contract.result == 'success' &&
       needs.event-transport-contract.result == 'success' &&
+      needs.valkey-rate-limit-contract.result == 'success' &&
       needs.treetop-authorization-conformance.result == 'success' &&
       needs.container-build.result == 'success'
     needs:
@@ -1505,6 +1510,7 @@ jobs:
       - rust-api-policy
       - openapi-contract
       - operational-contract
+      - valkey-rate-limit-contract
       - event-transport-contract
       - treetop-authorization-conformance
       - container-build

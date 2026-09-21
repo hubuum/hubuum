@@ -13,6 +13,7 @@ use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use tokio::task::spawn_blocking;
 use tracing::warn;
 
 #[derive(Default)]
@@ -109,15 +110,20 @@ impl EmailSink {
     async fn transport(&self, uri: &str) -> Result<AsyncSmtpTransport<Tokio1Executor>, SinkError> {
         self.transports
             .get_or_try_insert_with(uri.to_string(), |uri| async move {
-                AsyncSmtpTransport::<Tokio1Executor>::from_url(&uri)
-                    .map_err(|error| {
-                        warn!(
-                            message = "Invalid email transport configuration",
-                            error = %error,
-                        );
-                        SinkError::new("Invalid email config")
-                    })
-                    .map(|builder| builder.build())
+                // TLS configuration reads the operating system certificate
+                // store synchronously. Keep that I/O off the async executor.
+                let builder =
+                    spawn_blocking(move || AsyncSmtpTransport::<Tokio1Executor>::from_url(&uri))
+                        .await
+                        .map_err(|_| SinkError::new("Email transport initialization failed"))?
+                        .map_err(|error| {
+                            warn!(
+                                message = "Invalid email transport configuration",
+                                error = %error,
+                            );
+                            SinkError::new("Invalid email config")
+                        })?;
+                Ok(builder.build())
             })
             .await
     }

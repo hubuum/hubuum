@@ -13,6 +13,7 @@ if sys.version_info < (3, 11):
 import base64
 import contextlib
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -42,8 +43,14 @@ CARGO_TEST = (
 )
 
 
-def command(*args, timeout=120):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+def command(*args, timeout=120, input=None):
+    try:
+        result = subprocess.run(
+            args, input=input, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired includes the full command, which can contain secrets.
+        raise RuntimeError(f"{args[0]} {args[1]} timed out") from None
     if result.returncode:
         # Commands can contain fixture credentials. Only identify the operation.
         raise RuntimeError(f"{args[0]} {args[1]} failed (exit {result.returncode})")
@@ -161,9 +168,24 @@ def wait_until_ready(probe, label):
         try:
             probe()
             return
-        except (RuntimeError, OSError, urllib.error.URLError):
+        except (RuntimeError, OSError, urllib.error.URLError, subprocess.TimeoutExpired):
             time.sleep(0.5)
     raise RuntimeError(f"{label} fixture did not become ready within 120 seconds")
+
+
+def remove_fixture(*arguments):
+    try:
+        result = subprocess.run(
+            ["docker", *arguments], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=30, check=False,
+        )
+        if result.returncode == 0:
+            return True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # Do not print command errors: fixture commands may contain credentials.
+    print(f"Could not remove disposable fixture {arguments[-1]}", file=sys.stderr)
+    return False
 
 
 def run(root, containers, servers, networks):
@@ -239,10 +261,16 @@ def run(root, containers, servers, networks):
         server = HttpsFixture(directory)
         servers.append(server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+    spec = importlib.util.spec_from_file_location("integration_fixtures", ROOT / "scripts/integration-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    extra = fixtures.start(root, tls, untrusted, password, suffix, network, containers,
+                           command, loopback_ports, wait_until_ready)
     empty_roots = root / "empty-roots"
     empty_roots.mkdir()
     env = dict(os.environ)
     valkey_port = mapped_port(valkey, 6379)
+    env.update(extra)
     env.update({
         "SSL_CERT_FILE": str(tls / "ca.pem"), "SSL_CERT_DIR": str(empty_roots),
         "HUBUUM_CONTRACT_PASSWORD": password,
@@ -269,26 +297,26 @@ def main():
     build = subprocess.run([*CARGO_TEST, "--no-run"], cwd=ROOT, timeout=1800, check=False)
     if build.returncode:
         return build.returncode
+    worker = subprocess.run(
+        ["cargo", "build", "--locked", "-p", "hubuum-templates", "--bin", "hubuum-template-worker"],
+        cwd=ROOT, timeout=1800, check=False,
+    )
+    if worker.returncode:
+        return worker.returncode
     containers = []
     servers = []
     networks = []
     with tempfile.TemporaryDirectory(prefix="hubuum-transport-contract-") as temporary:
         try:
-            return run(Path(temporary), containers, servers, networks)
+            result = run(Path(temporary), containers, servers, networks)
         finally:
             for server in servers:
                 server.shutdown()
                 server.server_close()
-            for container in reversed(containers):
-                subprocess.run(
-                    ["docker", "rm", "--force", "--volumes", container],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False,
-                )
-            for network in networks:
-                subprocess.run(
-                    ["docker", "network", "rm", network],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False,
-                )
+            removed = [remove_fixture("rm", "--force", "--volumes", container)
+                       for container in reversed(containers)]
+            removed += [remove_fixture("network", "rm", network) for network in networks]
+        return result if all(removed) else 1
 
 
 if __name__ == "__main__":

@@ -64,6 +64,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- SMTP event delivery now trusts operator-installed system certificate
+  authorities, including private CAs, while still verifying server certificates.
+  Trust-store loading runs off the async executor to keep workers responsive.
+
 - Preserve the memory backend's limit of 100 active rebuild tasks per principal.
 - Recover the `false` dry-run default for historical imports whose retained
   requests contain JSON null, so `import_dry_run=false` searches include them.

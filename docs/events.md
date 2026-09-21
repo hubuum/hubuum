@@ -396,7 +396,9 @@ address, and MiniJinja export templates for the subject and text body:
 }
 ```
 
-SMTP URLs must use the TLS `smtps://` scheme. When `secret_ref` is set, the URI
+SMTP URLs must use the TLS `smtps://` scheme. Certificate verification uses the
+system trust store, including operator-installed private CAs (`SSL_CERT_FILE`
+and `SSL_CERT_DIR` on supported Unix platforms). When `secret_ref` is set, the URI
 must contain `{secret}`. Hubuum resolves the alias through the selected
 [secret source](secret_sources.md), percent-encodes the value for URI userinfo
 use, and substitutes it into the URI. The default environment source maps this

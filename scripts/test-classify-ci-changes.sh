@@ -50,7 +50,8 @@ for operator_path in observability/prometheus/alerts.json observability/promethe
   assert_flag "$operator_output" container false
 done
 
-for transport_path in scripts/test-event-transports.py tests/event_transport_contract.rs; do
+for transport_path in scripts/test-event-transports.py scripts/integration-fixtures.py \
+  scripts/test-event-transport-runner.py tests/event_transport_contract.rs tests/integration_services/mod.rs; do
   transport_output="$(bash "$classifier" "$transport_path")"
   assert_flag "$transport_output" code true
 done
