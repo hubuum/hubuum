@@ -122,6 +122,9 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
+    observability/*)
+      code=true
+      ;;
     *.md | docs/* | LICENSE | .gitattributes | .gitignore | \
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
