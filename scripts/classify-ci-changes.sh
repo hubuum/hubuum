@@ -238,6 +238,7 @@ for path in "$@"; do
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
+      scripts/adjacent-release-api.sh | scripts/test-adjacent-release-api.py | \
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
       scripts/test-install-script-refresh.sh | scripts/test-single-host-tags.py | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \

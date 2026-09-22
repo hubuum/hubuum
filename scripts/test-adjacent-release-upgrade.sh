@@ -356,45 +356,7 @@ wait_for_ready() {
   return 1
 }
 
-api_request() {
-  local service="$1"
-  local method="$2"
-  local path="$3"
-  local payload="${4:-}"
-  local etag="${5:-}"
-  local status
-  local url
-  local body_file="$test_root/api-body.json"
-  local headers_file="$test_root/api-headers.txt"
-  local args=(
-    --silent --show-error
-    --request "$method"
-    --output "$body_file"
-    --dump-header "$headers_file"
-    --write-out '%{http_code}'
-    --header 'Accept: application/json'
-  )
-
-  url="$(service_url "$service")"
-  if [[ -n "$admin_token" ]]; then
-    args+=(--header "Authorization: Bearer $admin_token")
-  fi
-  if [[ -n "$payload" ]]; then
-    args+=(--header 'Content-Type: application/json' --data "$payload")
-  fi
-  if [[ -n "$etag" ]]; then
-    args+=(--header "If-Match: $etag")
-  fi
-
-  status="$(curl "${args[@]}" "$url$path")"
-  api_body="$(cat "$body_file")"
-  api_headers="$(cat "$headers_file")"
-  if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
-    echo "ERROR: $service $method $path returned HTTP $status" >&2
-    printf '%s\n' "$api_body" >&2
-    return 1
-  fi
-}
+source "$repository_root/scripts/adjacent-release-api.sh"
 
 json_id() {
   jq --exit-status --raw-output '.id' <<< "$api_body"
@@ -570,7 +532,7 @@ seed_previous_release() {
     '{"groupname":"compat-operators","description":"adjacent release operators"}'
   group_id="$(json_id)"
 
-  api_request previous-api POST /api/v1/iam/users \
+  create_user previous-api \
     '{"name":"compat-user","password":"compatibility-password","proper_name":"Compatibility User","email":"compat@example.com"}'
   user_id="$(json_id)"
   api_request previous-api POST "/api/v1/iam/groups/$group_id/members/$user_id"
@@ -578,7 +540,7 @@ seed_previous_release() {
   api_request previous-api POST /api/v1/iam/service-accounts \
     "{\"name\":\"compat-agent\",\"description\":\"adjacent release fixture\",\"owner_group_id\":$group_id}"
   service_account_id="$(json_id)"
-  api_request previous-api POST "/api/v1/iam/principals/$service_account_id/tokens" \
+  create_principal_token previous-api "$service_account_id" \
     '{"name":"compat-agent-token","description":"adjacent release fixture","scope":{"permissions":["ReadCollection","ReadClass","ReadObject"]}}'
   jq --exit-status --raw-output '.token' <<< "$api_body" >/dev/null
 
