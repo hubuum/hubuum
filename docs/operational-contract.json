@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "0.0.15",
+  "release": "0.0.16",
   "metrics": [
     {
       "name": "hubuum_api_errors_total",
@@ -11,7 +11,10 @@
           "name": "class",
           "bounded_by": "enumerated values",
           "values": [
+            "cancel_requested",
+            "deadline_exceeded",
             "unauthorized",
+            "reauthentication_required",
             "internal_server_error",
             "forbidden",
             "not_acceptable",

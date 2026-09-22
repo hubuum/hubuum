@@ -8,8 +8,8 @@
 
 Hubuum is a REST service that provides a shared interface for your resources.
 
-The latest release is [Hubuum `0.0.15`](https://github.com/hubuum/hubuum/releases/tag/v0.0.15),
-published on September 15, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.16`](https://github.com/hubuum/hubuum/releases/tag/v0.0.16),
+published on September 22, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -30,7 +30,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.15
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.16
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -291,6 +291,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.16](https://github.com/hubuum/hubuum/releases/tag/v0.0.16) | 2026-09-22 | Requires fresh password approval for credential management. Adds resource-aware task discovery, an operations dashboard, tested alerts and runbooks, and system CA trust for SMTP. Includes two migrations and breaking API and storage SDK changes. |
 | [0.0.15](https://github.com/hubuum/hubuum/releases/tag/v0.0.15) | 2026-09-15 | Adds staged schema evolution, detailed impact and HTML repair reports, task cancellation, and execution limits. Hardens external authorization, schema validation, and event delivery. Introduces backup format 6 and new migrations. |
 | [0.0.14](https://github.com/hubuum/hubuum/releases/tag/v0.0.14) | 2026-09-10 | Keeps subsequent backups restorable after restoring without history. Makes memory backup and restore preserve resource state, retained history, and task artifacts. Retains backup format 5. |
 | [0.0.13](https://github.com/hubuum/hubuum/releases/tag/v0.0.13) | 2026-09-09 | Fixes full-restore coordination with live servers and preserves JSON `null` during PostgreSQL restores. Existing format 5 backups remain compatible. |
@@ -302,22 +303,36 @@ Before upgrading:
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
   CI certifies upgrades and application rollbacks only between adjacent stable
   releases; application rollback retains the migrated database.
-- For `0.0.15`, drain old task and schema workers, schedule a quiet migration
-  window, and run `hubuum-admin --migrate` before starting upgraded processes.
-  Install matching server, administrator, and template worker binaries and update
-  the separately supervised restore executor. Existing enforced objects start
-  pending; request schema revalidation after migration.
-- Keep a verified `0.0.14` backup before upgrading. Backup format 6 replaces
-  format 5: restore an older artifact with its matching release, migrate the
-  restored database, then create and verify a new format 6 backup. There is no
-  artifact converter. See the
+- For `0.0.16`, update frontend, CLI, and SDK credential-management flows to
+  request a single-use password approval and send
+  `X-Hubuum-Credential-Approval`. Bearer-only token creation/renewal, local user
+  creation, password changes, credential-bearing imports, and restore confirmation
+  return `403 reauthentication_required`. See the
+  [client and rollout guide](docs/credential_approvals.md).
+- Keep a verified `0.0.15` backup, quiesce protected mutations, and drain workers.
+  Run `hubuum-admin --migrate` to apply `2026-09-18-000001_task_discovery` and
+  `2026-09-19-000001_credential_approvals` before starting upgraded processes.
+  Install matching `0.0.16` server, administrator, and template worker binaries,
+  including the separately supervised restore executor. Upgrade every API and
+  worker replica before resuming protected operations.
+- Update strict event decoders for `credential_approval.created` and
+  `credential_approval.succeeded`, and exhaustive task-detail decoders for
+  schema-validation, rebuild, and remote-call variants. External storage
+  adapters must implement the new approval and task-discovery contracts.
+- Backup format 6 is unchanged from `0.0.15`; older backups without task-discovery
+  metadata remain accepted. When crossing the `0.0.15` format boundary, restore
+  older artifacts with their matching release, migrate the restored database,
+  then create and verify a new format 6 backup. There is no artifact converter.
+  See the
   [existing deployment upgrade path](docs/backup-restore.md#existing-deployment-upgrade-path).
-- Update clients that change schema policy on nonempty classes to stage a
-  revision, request impact analysis, and explicitly activate it. Review the
+- When upgrading from before `0.0.15`, update clients that change schema policy
+  on nonempty classes to stage a revision, request impact analysis, and explicitly
+  activate it. Review the
   [JSON Schema limits](docs/json_schema_validation.md) for unsupported schemas
   and work budgets. Restart string-sorted pagination after upgrading.
-- Treetop deployments must add `CancelTask` policies. Review the external
-  authorization query limits and storage SDK `0.3` changes in the changelog.
+- Treetop deployments upgrading from before `0.0.15` must add `CancelTask`
+  policies. Review the external authorization query limits and storage SDK `0.3`
+  changes in the changelog.
   Repository tooling now requires Python 3.11 or newer.
 - Set matching backup and execution limits on API, worker, and administrator
   processes. Backups default to a 256 MiB byte ceiling and 1,000,000 captured rows;

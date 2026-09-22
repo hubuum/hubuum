@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-09-22
+
 ### Security
 
 - **Breaking API change:** token creation/renewal, local user creation, password
@@ -64,6 +66,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Record credential-approval rejections, task cancellation, and execution
+  deadline errors in the API error counter instead of dropping those metric
+  observations.
 - SMTP event delivery now trusts operator-installed system certificate
   authorities, including private CAs, while still verifying server certificates.
   Trust-store loading runs off the async executor to keep workers responsive.
