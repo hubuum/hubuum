@@ -1352,7 +1352,10 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "outcome",
         ) => strings(&["success", "failure"]),
         ("hubuum_api_errors_total", "class") => strings(&[
+            "cancel_requested",
+            "deadline_exceeded",
             "unauthorized",
+            "reauthentication_required",
             "internal_server_error",
             "forbidden",
             "not_acceptable",
@@ -2590,7 +2593,10 @@ fn enum_name<T: Serialize>(value: T) -> String {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_task_core::TaskStopReason;
     use rstest::rstest;
+
+    use crate::errors::ApiError;
 
     use super::*;
 
@@ -3209,6 +3215,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[rstest]
+    #[case(ApiError::ReauthenticationRequired)]
+    #[case(ApiError::TaskStopped(TaskStopReason::Cancelled))]
+    #[case(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))]
+    fn credential_and_task_error_classes_are_recordable(#[case] error: ApiError) {
+        assert!(metric_label_value_is_allowed(
+            "hubuum_api_errors_total",
+            "class",
+            error.class(),
+        ));
     }
 
     #[test]
