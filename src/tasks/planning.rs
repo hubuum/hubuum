@@ -1,5 +1,6 @@
 use crate::models::token_scope::TokenScope;
 use hubuum_domain::JsonSchemaLimits;
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -31,9 +32,7 @@ use crate::models::{
 };
 use crate::permissions::AuthorizationContext;
 use crate::services::schema_evolution;
-use crate::services::storage_boundary::{
-    class_id_to_storage, collection_id_to_storage, object_id_to_storage,
-};
+
 use crate::storage::{
     ImportStorage, StorageClassSchemaPolicy, StorageImportPlanItem, storage_handle,
 };
@@ -329,7 +328,10 @@ async fn class_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .has_import_class_relation(class_id_to_storage(pair.0), class_id_to_storage(pair.1))
+        .has_import_class_relation(
+            ClassId::new(pair.0).map_err(|error| error.to_string())?,
+            ClassId::new(pair.1).map_err(|error| error.to_string())?,
+        )
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.class_relation_exists_cache.insert(pair, exists);
@@ -356,7 +358,10 @@ async fn object_relation_exists_cached(
     }
 
     let exists = storage_handle(pool)
-        .has_import_object_relation(object_id_to_storage(pair.0), object_id_to_storage(pair.1))
+        .has_import_object_relation(
+            ObjectId::new(pair.0).map_err(|error| error.to_string())?,
+            ObjectId::new(pair.1).map_err(|error| error.to_string())?,
+        )
         .await
         .map_err(|err| sanitize_error_for_storage(&err.into()))?;
     state.object_relation_exists_cache.insert(pair, exists);
@@ -1045,7 +1050,16 @@ where
         } else {
             storage_handle(pool)
                 .get_import_collection_child_by_name(
-                    collection_id_to_storage(parent.id),
+                    CollectionId::new(parent.id).map_err(|error| PlanningFailure {
+                        kind: FailureKind::Runtime,
+                        item: planned_result(
+                            "collection",
+                            "lookup",
+                            input.ref_.clone(),
+                            Some(input.name.clone()),
+                        ),
+                        message: error.to_string(),
+                    })?,
                     &input.name,
                 )
                 .await
@@ -1317,7 +1331,19 @@ where
         None
     } else {
         storage_handle(pool)
-            .get_import_class_by_name(collection_id_to_storage(collection.id), &input.name)
+            .get_import_class_by_name(
+                CollectionId::new(collection.id).map_err(|error| PlanningFailure {
+                    kind: FailureKind::Runtime,
+                    item: planned_result(
+                        "class",
+                        "lookup",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?,
+                &input.name,
+            )
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1592,7 +1618,19 @@ where
         None
     } else {
         storage_handle(pool)
-            .get_import_object_by_name(class_id_to_storage(class.id), &input.name)
+            .get_import_object_by_name(
+                ClassId::new(class.id).map_err(|error| PlanningFailure {
+                    kind: FailureKind::Runtime,
+                    item: planned_result(
+                        "object",
+                        "lookup",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: error.to_string(),
+                })?,
+                &input.name,
+            )
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,

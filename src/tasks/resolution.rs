@@ -3,7 +3,8 @@ use super::helpers::{
 };
 use super::types::{ClassResolution, CollectionResolution, ObjectResolution, PlanningState};
 use crate::models::{ClassKey, CollectionKey, ImportCollectionInput, ObjectKey};
-use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
+use hubuum_domain::{ClassId, CollectionId};
+
 use crate::storage::{ImportStorage, storage_handle};
 
 fn validate_collection_key_path(key: &CollectionKey) -> Result<(), String> {
@@ -162,7 +163,9 @@ pub(super) async fn resolve_collection_by_id_planning(
     }
 
     let collection = storage_handle(pool)
-        .get_import_collection_by_id(collection_id_to_storage(collection_id))
+        .get_import_collection_by_id(
+            CollectionId::new(collection_id).map_err(|error| error.to_string())?,
+        )
         .await
         .map_err(|err| err.to_string())?
         .map(storage_collection_to_resolution)
@@ -205,7 +208,10 @@ pub(super) async fn resolve_class_planning(
             }
 
             let class = storage_handle(pool)
-                .get_import_class_by_name(collection_id_to_storage(collection.id), &key.name)
+                .get_import_class_by_name(
+                    CollectionId::new(collection.id).map_err(|error| error.to_string())?,
+                    &key.name,
+                )
                 .await
                 .map_err(|err| err.to_string())?
                 .map(storage_class_to_resolution)
@@ -256,7 +262,10 @@ pub(super) async fn resolve_object_planning(
             }
 
             let object = storage_handle(pool)
-                .get_import_object_by_name(class_id_to_storage(class.id), &key.name)
+                .get_import_object_by_name(
+                    ClassId::new(class.id).map_err(|error| error.to_string())?,
+                    &key.name,
+                )
                 .await
                 .map_err(|err| err.to_string())?
                 .map(storage_object_to_resolution)

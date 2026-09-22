@@ -10,7 +10,8 @@ use crate::models::{
     Permissions, Principal, PrincipalID, ServiceAccount, ServiceAccountID, TokenScope, User, UserID,
 };
 use crate::permissions::ResourceRef;
-use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
+use hubuum_domain::{CollectionId, PrincipalId};
+
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthenticationPrincipal,
     StorageAuthorizationCollectionsAccessQuery, StorageAuthorizationGroupMembershipQuery,
@@ -22,6 +23,11 @@ use super::CollectionAccessors;
 /// Cheap, local access to a subject's principal id (no backend round-trip).
 pub trait PrincipalIdAccessor {
     fn principal_id(&self) -> i32;
+
+    /// Validate a raw model identity at its boundary, or retain an existing typed identity.
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok(PrincipalID::new(self.principal_id())?)
+    }
 }
 
 impl PrincipalIdAccessor for User {
@@ -40,6 +46,10 @@ impl PrincipalIdAccessor for StorageAuthenticationPrincipal {
     fn principal_id(&self) -> i32 {
         self.id().id()
     }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok(self.id())
+    }
 }
 
 impl PrincipalIdAccessor for ServiceAccount {
@@ -52,11 +62,19 @@ impl PrincipalIdAccessor for UserID {
     fn principal_id(&self) -> i32 {
         self.id()
     }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok((*self).into())
+    }
 }
 
 impl PrincipalIdAccessor for PrincipalID {
     fn principal_id(&self) -> i32 {
         self.id()
+    }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok(*self)
     }
 }
 
@@ -64,11 +82,19 @@ impl PrincipalIdAccessor for ServiceAccountID {
     fn principal_id(&self) -> i32 {
         self.id()
     }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok((*self).into())
+    }
 }
 
 impl<T: PrincipalIdAccessor + ?Sized> PrincipalIdAccessor for &T {
     fn principal_id(&self) -> i32 {
         (**self).principal_id()
+    }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        (**self).validated_principal_id()
     }
 }
 
@@ -95,7 +121,7 @@ pub trait AuthzSubject: PrincipalIdAccessor {
         backend: &impl StorageContext,
     ) -> Result<bool, ApiError> {
         let query = StorageAuthorizationGroupMembershipQuery::new(
-            principal_id_to_storage(self.principal_id()),
+            self.validated_principal_id()?,
             group_name,
             self.admin_identity_scope().await?,
         );
@@ -175,8 +201,12 @@ pub trait UserPermissions: AuthzSubject {
         let collection_count = collection_ids.len();
         let collection_id = (collection_count == 1).then(|| collection_ids[0]);
         let query = StorageAuthorizationCollectionsAccessQuery::new(
-            principal_id_to_storage(principal_id),
-            collection_ids.iter().copied().map(collection_id_to_storage),
+            PrincipalId::new(principal_id)?,
+            collection_ids
+                .iter()
+                .copied()
+                .map(CollectionId::new)
+                .collect::<Result<Vec<_>, _>>()?,
             requested
                 .iter()
                 .copied()

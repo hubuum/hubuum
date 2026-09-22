@@ -1,3 +1,4 @@
+use hubuum_domain::{ClassId, CollectionId};
 use std::collections::{HashMap, HashSet};
 
 use super::helpers::{
@@ -9,7 +10,7 @@ use super::resolution::{
 };
 use super::types::{CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
-use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
+
 use crate::storage::{ImportStorage, storage_handle};
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
@@ -157,7 +158,10 @@ pub(super) async fn preload_existing_classes(
     for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let classes = storage_handle(pool)
-            .list_import_classes_by_names(collection_id_to_storage(collection_id), &names)
+            .list_import_classes_by_names(
+                CollectionId::new(collection_id).map_err(|error| error.to_string())?,
+                &names,
+            )
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -240,7 +244,10 @@ pub(super) async fn preload_existing_objects(
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
         let objects = storage_handle(pool)
-            .list_import_objects_by_names(class_id_to_storage(class_id), &names)
+            .list_import_objects_by_names(
+                ClassId::new(class_id).map_err(|error| error.to_string())?,
+                &names,
+            )
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects

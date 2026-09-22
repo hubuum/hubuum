@@ -1,5 +1,6 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
+use hubuum_domain::ResourceId;
 use std::collections::HashMap;
 
 use crate::errors::ApiError;
@@ -8,7 +9,7 @@ use crate::models::{HubuumClassRelation, HubuumObjectRelation, Permissions, Toke
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{PermissionBackend, PrincipalRef, ResourceRef};
 use crate::services::catalog;
-use crate::services::storage_boundary::resource_id_to_storage;
+
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
     StorageContext, storage_handle,
@@ -20,7 +21,10 @@ async fn load_classes(
 ) -> Result<HashMap<i32, crate::storage::StorageAuthorizationClassResource>, ApiError> {
     Ok(storage_handle(backend)
         .list_authorization_classes(StorageAuthorizationResourceIds::new(
-            class_ids.into_iter().map(resource_id_to_storage),
+            class_ids
+                .into_iter()
+                .map(ResourceId::new)
+                .collect::<Result<Vec<_>, _>>()?,
         ))
         .await?
         .into_iter()
@@ -34,7 +38,10 @@ async fn load_objects(
 ) -> Result<HashMap<i32, StorageAuthorizationObjectResource>, ApiError> {
     Ok(storage_handle(backend)
         .list_authorization_objects(StorageAuthorizationResourceIds::new(
-            object_ids.into_iter().map(resource_id_to_storage),
+            object_ids
+                .into_iter()
+                .map(ResourceId::new)
+                .collect::<Result<Vec<_>, _>>()?,
         ))
         .await?
         .into_iter()

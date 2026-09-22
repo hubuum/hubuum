@@ -1,3 +1,4 @@
+use hubuum_domain::ClassId;
 mod pagination;
 use pagination::authorized_storage_page;
 
@@ -2195,8 +2196,8 @@ async fn ensure_class_name_ids(
                 .as_slice()
                 .iter()
                 .copied()
-                .map(crate::services::storage_boundary::class_id_to_storage)
-                .collect(),
+                .map(ClassId::new)
+                .collect::<Result<Vec<_>, _>>()?,
         )
         .await
         .map_err(ApiError::from)?

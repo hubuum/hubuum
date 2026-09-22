@@ -1,5 +1,6 @@
 use crate::permissions::ClassResourceEndpoint;
 use async_trait::async_trait;
+use hubuum_domain::PrincipalId;
 
 use crate::errors::ApiError;
 use crate::models::object_aggregate::{
@@ -14,9 +15,7 @@ use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PermissionBackend, PermissionDecision,
     PermissionRequest, PrincipalRef, ResourceRef, permission_from_storage, permission_to_storage,
 };
-use crate::services::storage_boundary::{
-    class_id_to_storage, collection_id_to_storage, principal_id_to_storage, visibility,
-};
+use crate::services::storage_boundary::visibility;
 use crate::storage::{
     ObjectAggregateAuthorizer, ObjectAggregateStorage, StorageAuthorizationPermission,
     StorageComputedFieldSelector, StorageError, StorageObjectAggregateAuthorization,
@@ -75,16 +74,12 @@ pub(crate) async fn aggregate_objects(
     let is_admin = AuthzSubject::is_admin(principal, backend).await?;
     let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
     let query = StorageObjectAggregateQuery::builder(
-        StorageObjectAggregateTarget::new(
-            class_id_to_storage(class_id.id()),
-            class_name,
-            collection_id_to_storage(collection_id.id()),
-        ),
+        StorageObjectAggregateTarget::new(class_id, class_name, collection_id),
         query_options,
         storage_spec,
         visibility,
     )
-    .personal_owner_id(personal_owner_id.map(|owner| principal_id_to_storage(owner.id())))
+    .personal_owner_id(personal_owner_id.map(PrincipalId::from))
     .required_permissions(
         required_permissions
             .iter()

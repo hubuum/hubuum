@@ -1,4 +1,5 @@
 use hubuum_computed_fields::{Definition, FieldKey, Operation};
+use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -283,9 +284,7 @@ pub(crate) fn import_operation_to_storage(
             collection_id,
             input,
         } => StorageImportOperation::UpdateCollection {
-            collection_id: crate::services::storage_boundary::collection_id_to_storage(
-                collection_id,
-            ),
+            collection_id: CollectionId::new(collection_id)?,
             input: collection_to_storage(input)?,
         },
         ApplicationImportOperation::CreateClass(input) => {
@@ -293,7 +292,7 @@ pub(crate) fn import_operation_to_storage(
         }
         ApplicationImportOperation::UpdateClass { class_id, input } => {
             StorageImportOperation::UpdateClass {
-                class_id: crate::services::storage_boundary::class_id_to_storage(class_id),
+                class_id: ClassId::new(class_id)?,
                 input: class_to_storage(input)?,
             }
         }
@@ -302,7 +301,7 @@ pub(crate) fn import_operation_to_storage(
         }
         ApplicationImportOperation::UpdateObject { object_id, input } => {
             StorageImportOperation::UpdateObject {
-                object_id: crate::services::storage_boundary::object_id_to_storage(object_id),
+                object_id: ObjectId::new(object_id)?,
                 input: object_to_storage(input)?,
             }
         }

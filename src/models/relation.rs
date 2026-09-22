@@ -1,7 +1,23 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
+use crate::services::storage_boundary::{
+    class_record_from_storage, class_relation_create_from_storage, class_relation_from_storage,
+    object_from_storage, object_relation_create_from_storage, object_relation_from_storage,
+    resolved_class_relation_from_storage,
+};
+#[cfg(test)]
+use crate::services::storage_boundary::{
+    class_record_to_storage, class_relation_create_to_storage, class_relation_to_storage,
+    object_relation_create_to_storage, object_relation_to_storage, object_to_storage,
+    resolved_class_relation_to_storage,
+};
+use crate::storage::{
+    StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClassRelation,
+    StorageResolvedObjectRelation,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Schema, Type};
 use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
@@ -13,6 +29,7 @@ use crate::models::{
 };
 use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
+#[cfg(test)]
 use crate::utilities::aliases::normalize_template_alias;
 
 pub use hubuum_domain::ClassRelationId as HubuumClassRelationID;
@@ -118,6 +135,7 @@ impl NewHubuumClassRelation {
     ///
     /// Class IDs are stored in ascending order. Directional aliases and limits
     /// move with their corresponding class when the supplied order is reversed.
+    #[cfg(test)]
     pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
         if self.from_hubuum_class_id == self.to_hubuum_class_id {
             return Err(ApiError::BadRequest(
@@ -182,14 +200,30 @@ fn class_relation_authorization_resource(
 ///
 /// Carrying the endpoints keeps authorization independent of the persistence
 /// adapter and lets creation recheck the exact aggregate that was authorized.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreparedClassRelation {
+    storage: StoragePreparedClassRelation,
     command: NewHubuumClassRelation,
     from_class: HubuumClass,
     to_class: HubuumClass,
 }
 
 impl PreparedClassRelation {
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StoragePreparedClassRelation) -> Result<Self, ApiError> {
+        Ok(Self {
+            command: class_relation_create_from_storage(storage.command())?,
+            from_class: class_record_from_storage(storage.from_class().clone())?,
+            to_class: class_record_from_storage(storage.to_class().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StoragePreparedClassRelation {
+        &self.storage
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(
         command: NewHubuumClassRelation,
         from_class: HubuumClass,
@@ -203,13 +237,21 @@ impl PreparedClassRelation {
                 "prepared class relation endpoints do not match its normalized command".to_string(),
             ));
         }
+        let storage = StoragePreparedClassRelation::try_new(
+            class_relation_create_to_storage(command.clone())?,
+            class_record_to_storage(from_class.clone())?,
+            class_record_to_storage(to_class.clone())?,
+        )
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
+            storage,
             command,
             from_class,
             to_class,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn command(&self) -> &NewHubuumClassRelation {
         &self.command
     }
@@ -228,14 +270,30 @@ impl PreparedClassRelation {
 }
 
 /// A persisted class relation resolved with both endpoint classes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResolvedClassRelationTarget {
+    storage: StorageResolvedClassRelation,
     relation: HubuumClassRelation,
     from_class: HubuumClass,
     to_class: HubuumClass,
 }
 
 impl ResolvedClassRelationTarget {
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StorageResolvedClassRelation) -> Result<Self, ApiError> {
+        Ok(Self {
+            relation: class_relation_from_storage(storage.relation().clone())?,
+            from_class: class_record_from_storage(storage.from_class().clone())?,
+            to_class: class_record_from_storage(storage.to_class().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StorageResolvedClassRelation {
+        &self.storage
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(
         relation: HubuumClassRelation,
         from_class: HubuumClass,
@@ -249,7 +307,14 @@ impl ResolvedClassRelationTarget {
                 relation.id
             )));
         }
+        let storage = StorageResolvedClassRelation::try_new(
+            class_relation_to_storage(relation.clone())?,
+            class_record_to_storage(from_class.clone())?,
+            class_record_to_storage(to_class.clone())?,
+        )
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
+            storage,
             relation,
             from_class,
             to_class,
@@ -304,6 +369,7 @@ pub struct NewHubuumObjectRelation {
 
 impl NewHubuumObjectRelation {
     /// Validate and normalize an object relation before persistence.
+    #[cfg(test)]
     pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
         if self.from_hubuum_object_id == self.to_hubuum_object_id {
             return Err(ApiError::BadRequest(
@@ -420,6 +486,7 @@ fn object_relation_authorization_resource(
     )
 }
 
+#[cfg(test)]
 fn validate_object_relation_membership(
     command: &NewHubuumObjectRelation,
     from_object: &HubuumObject,
@@ -453,8 +520,9 @@ fn validate_object_relation_membership(
 }
 
 /// A prospective object relation with both objects and its class relation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreparedObjectRelation {
+    storage: StoragePreparedObjectRelation,
     command: NewHubuumObjectRelation,
     from_object: HubuumObject,
     to_object: HubuumObject,
@@ -462,6 +530,22 @@ pub struct PreparedObjectRelation {
 }
 
 impl PreparedObjectRelation {
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StoragePreparedObjectRelation) -> Result<Self, ApiError> {
+        Ok(Self {
+            command: object_relation_create_from_storage(*storage.command()),
+            from_object: object_from_storage(storage.from_object().clone())?,
+            to_object: object_from_storage(storage.to_object().clone())?,
+            class_relation: resolved_class_relation_from_storage(storage.class_relation().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StoragePreparedObjectRelation {
+        &self.storage
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(
         command: NewHubuumObjectRelation,
         from_object: HubuumObject,
@@ -470,7 +554,15 @@ impl PreparedObjectRelation {
     ) -> Result<Self, ApiError> {
         let command = command.normalized()?;
         validate_object_relation_membership(&command, &from_object, &to_object, &class_relation)?;
+        let storage = StoragePreparedObjectRelation::try_new(
+            object_relation_create_to_storage(command.clone())?,
+            object_to_storage(from_object.clone())?,
+            object_to_storage(to_object.clone())?,
+            resolved_class_relation_to_storage(&class_relation).clone(),
+        )
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
+            storage,
             command,
             from_object,
             to_object,
@@ -478,6 +570,7 @@ impl PreparedObjectRelation {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn command(&self) -> &NewHubuumObjectRelation {
         &self.command
     }
@@ -505,8 +598,9 @@ impl PreparedObjectRelation {
 }
 
 /// A persisted object relation resolved with both objects and its class relation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResolvedObjectRelationTarget {
+    storage: StorageResolvedObjectRelation,
     relation: HubuumObjectRelation,
     from_object: HubuumObject,
     to_object: HubuumObject,
@@ -514,6 +608,22 @@ pub struct ResolvedObjectRelationTarget {
 }
 
 impl ResolvedObjectRelationTarget {
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StorageResolvedObjectRelation) -> Result<Self, ApiError> {
+        Ok(Self {
+            relation: object_relation_from_storage(storage.relation().clone())?,
+            from_object: object_from_storage(storage.from_object().clone())?,
+            to_object: object_from_storage(storage.to_object().clone())?,
+            class_relation: resolved_class_relation_from_storage(storage.class_relation().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StorageResolvedObjectRelation {
+        &self.storage
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(
         relation: HubuumObjectRelation,
         from_object: HubuumObject,
@@ -530,7 +640,15 @@ impl ResolvedObjectRelationTarget {
             &to_object,
             &class_relation,
         )?;
+        let storage = StorageResolvedObjectRelation::try_new(
+            object_relation_to_storage(relation)?,
+            object_to_storage(from_object.clone())?,
+            object_to_storage(to_object.clone())?,
+            resolved_class_relation_to_storage(&class_relation).clone(),
+        )
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
+            storage,
             relation,
             from_object,
             to_object,
@@ -851,6 +969,48 @@ impl AuthzTarget for HubuumObjectRelationID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
+
+impl fmt::Debug for PreparedClassRelation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PreparedClassRelation")
+            .field("command", &self.command)
+            .field("from_class", &self.from_class)
+            .field("to_class", &self.to_class)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ResolvedClassRelationTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedClassRelationTarget")
+            .field("relation", &self.relation)
+            .field("from_class", &self.from_class)
+            .field("to_class", &self.to_class)
+            .finish()
+    }
+}
+
+impl fmt::Debug for PreparedObjectRelation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PreparedObjectRelation")
+            .field("command", &self.command)
+            .field("from_object", &self.from_object)
+            .field("to_object", &self.to_object)
+            .field("class_relation", &self.class_relation)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ResolvedObjectRelationTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedObjectRelationTarget")
+            .field("relation", &self.relation)
+            .field("from_object", &self.from_object)
+            .field("to_object", &self.to_object)
+            .field("class_relation", &self.class_relation)
+            .finish()
     }
 }
 

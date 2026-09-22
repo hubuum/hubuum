@@ -1,5 +1,6 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use hubuum_domain::CollectionId;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -10,13 +11,13 @@ use crate::models::{
     PreparedClassRelation, PreparedObjectRelation, RelatedObjectGraphRow,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
+use crate::services::storage_boundary::collection_from_storage;
 use crate::services::storage_boundary::{
-    class_relation_create_to_storage, class_relation_from_storage, class_relation_id_to_storage,
+    class_relation_create_to_storage, class_relation_from_storage,
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
     prepared_class_relation_from_storage, prepared_object_relation_from_storage,
     resolved_class_relation_from_storage, resolved_object_relation_from_storage,
 };
-use crate::services::storage_boundary::{collection_from_storage, collection_id_to_storage};
 use crate::services::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
@@ -34,7 +35,7 @@ async fn prepare_class_relation(
 ) -> Result<PreparedClassRelation, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .prepare_class_relation(class_relation_create_to_storage(command.clone()))
+        .prepare_class_relation(class_relation_create_to_storage(command.clone())?)
         .await
         .map_err(ApiError::from)
         .and_then(prepared_class_relation_from_storage)
@@ -46,7 +47,7 @@ async fn resolve_class_relation(
 ) -> Result<ResolvedClassRelationTarget, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .resolve_class_relation(class_relation_id_to_storage(id.id()))
+        .resolve_class_relation(id)
         .await
         .map_err(ApiError::from)
         .and_then(resolved_class_relation_from_storage)
@@ -60,7 +61,7 @@ async fn prepare_object_relation(
         .object_relation_store()
         .prepare_object_relation(object_relation_create_selector_to_storage(
             ObjectRelationCreateSelector::explicit(command.clone()),
-        ))
+        )?)
         .await
         .map_err(ApiError::from)
         .and_then(prepared_object_relation_from_storage)
@@ -87,16 +88,16 @@ async fn relation_collections(
 ) -> Result<(Collection, Collection), ApiError> {
     let storage = storage_handle(backend).collection_store();
     let from_collection = storage
-        .get_collection(collection_id_to_storage(
+        .get_collection(CollectionId::new(
             CollectionID::new(from_collection_id)?.id(),
-        ))
+        )?)
         .await
         .map_err(ApiError::from)
         .and_then(collection_from_storage)?;
     let to_collection = storage
-        .get_collection(collection_id_to_storage(
+        .get_collection(CollectionId::new(
             CollectionID::new(to_collection_id)?.id(),
-        ))
+        )?)
         .await
         .map_err(ApiError::from)
         .and_then(collection_from_storage)?;
@@ -146,7 +147,7 @@ impl DeleteAdapter for HubuumClassRelation {
         let storage = storage_handle(pool).class_relation_store();
         resolve_and_delete_class_relation(
             storage.as_ref(),
-            HubuumClassRelationID::new(self.id)?.id(),
+            HubuumClassRelationID::new(self.id)?,
             &EventContext::system(),
         )
         .await
@@ -162,7 +163,7 @@ impl DeleteAdapter for HubuumClassRelation {
         let storage = storage_handle(pool).class_relation_store();
         resolve_and_delete_class_relation(
             storage.as_ref(),
-            HubuumClassRelationID::new(self.id)?.id(),
+            HubuumClassRelationID::new(self.id)?,
             context,
         )
         .await
@@ -181,7 +182,7 @@ impl SaveAdapter for NewHubuumClassRelation {
         let storage = storage_handle(pool).class_relation_store();
         prepare_and_create_class_relation(
             storage.as_ref(),
-            class_relation_create_to_storage(self.clone()),
+            class_relation_create_to_storage(self.clone())?,
             &EventContext::system(),
         )
         .await
@@ -198,7 +199,7 @@ impl SaveAdapter for NewHubuumClassRelation {
         let storage = storage_handle(pool).class_relation_store();
         prepare_and_create_class_relation(
             storage.as_ref(),
-            class_relation_create_to_storage(self.clone()),
+            class_relation_create_to_storage(self.clone())?,
             context,
         )
         .await
@@ -214,7 +215,7 @@ impl DeleteAdapter for HubuumClassRelationID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).class_relation_store();
-        resolve_and_delete_class_relation(storage.as_ref(), self.id(), &EventContext::system())
+        resolve_and_delete_class_relation(storage.as_ref(), *self, &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -226,7 +227,7 @@ impl DeleteAdapter for HubuumClassRelationID {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).class_relation_store();
-        resolve_and_delete_class_relation(storage.as_ref(), self.id(), context)
+        resolve_and_delete_class_relation(storage.as_ref(), *self, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

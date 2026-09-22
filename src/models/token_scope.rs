@@ -66,9 +66,9 @@ impl TokenResourceScope {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TokenResourceScopeSet {
-    collections: Vec<i32>,
-    classes: Vec<i32>,
-    objects: Vec<i32>,
+    collections: Vec<CollectionID>,
+    classes: Vec<HubuumClassID>,
+    objects: Vec<HubuumObjectID>,
 }
 
 impl TokenResourceScopeSet {
@@ -78,9 +78,9 @@ impl TokenResourceScopeSet {
         let mut objects = Vec::new();
         for resource in resources {
             match resource {
-                TokenResourceScope::Collection(id) => collections.push(id.id()),
-                TokenResourceScope::Class(id) => classes.push(id.id()),
-                TokenResourceScope::Object(id) => objects.push(id.id()),
+                TokenResourceScope::Collection(id) => collections.push(id),
+                TokenResourceScope::Class(id) => classes.push(id),
+                TokenResourceScope::Object(id) => objects.push(id),
             }
         }
         collections.sort_unstable();
@@ -96,34 +96,23 @@ impl TokenResourceScopeSet {
         }
     }
 
-    fn entries(&self) -> Result<Vec<TokenResourceScope>, ApiError> {
+    fn entries(&self) -> Vec<TokenResourceScope> {
         self.collections
             .iter()
-            .map(|id| {
-                CollectionID::new(*id)
-                    .map(TokenResourceScope::Collection)
-                    .map_err(ApiError::from)
-            })
-            .chain(self.classes.iter().map(|id| {
-                HubuumClassID::new(*id)
-                    .map(TokenResourceScope::Class)
-                    .map_err(ApiError::from)
-            }))
-            .chain(self.objects.iter().map(|id| {
-                HubuumObjectID::new(*id)
-                    .map(TokenResourceScope::Object)
-                    .map_err(ApiError::from)
-            }))
+            .copied()
+            .map(TokenResourceScope::Collection)
+            .chain(self.classes.iter().copied().map(TokenResourceScope::Class))
+            .chain(self.objects.iter().copied().map(TokenResourceScope::Object))
             .collect()
     }
 
     fn allows_collection(&self, collection_id: Option<i32>) -> bool {
-        collection_id.is_some_and(|id| self.collections.contains(&id))
+        collection_id.is_some_and(|id| self.collections.iter().any(|entry| entry.id() == id))
     }
 
     fn allows_class(&self, collection_id: Option<i32>, class_id: Option<i32>) -> bool {
         self.allows_collection(collection_id)
-            || class_id.is_some_and(|id| self.classes.contains(&id))
+            || class_id.is_some_and(|id| self.classes.iter().any(|entry| entry.id() == id))
     }
 
     fn allows_object(
@@ -133,7 +122,7 @@ impl TokenResourceScopeSet {
         object_id: Option<i32>,
     ) -> bool {
         self.allows_class(collection_id, class_id)
-            || object_id.is_some_and(|id| self.objects.contains(&id))
+            || object_id.is_some_and(|id| self.objects.iter().any(|entry| entry.id() == id))
     }
 }
 
@@ -155,21 +144,21 @@ pub struct TokenScope {
 /// the explicit accessors instead of depending on its storage representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TokenResourceScopeIds<'a> {
-    collection_ids: &'a [i32],
-    class_ids: &'a [i32],
-    object_ids: &'a [i32],
+    collection_ids: &'a [CollectionID],
+    class_ids: &'a [HubuumClassID],
+    object_ids: &'a [HubuumObjectID],
 }
 
 impl<'a> TokenResourceScopeIds<'a> {
-    pub(crate) fn collection_ids(self) -> &'a [i32] {
+    pub(crate) fn collection_ids(self) -> &'a [CollectionID] {
         self.collection_ids
     }
 
-    pub(crate) fn class_ids(self) -> &'a [i32] {
+    pub(crate) fn class_ids(self) -> &'a [HubuumClassID] {
         self.class_ids
     }
 
-    pub(crate) fn object_ids(self) -> &'a [i32] {
+    pub(crate) fn object_ids(self) -> &'a [HubuumObjectID] {
         self.object_ids
     }
 
@@ -189,10 +178,7 @@ impl TokenScopeDetails {
 
     /// Build an API representation from a validated domain scope.
     pub fn from_scope(scope: TokenScope) -> Result<Self, ApiError> {
-        let resources = scope
-            .resources
-            .map(|resources| resources.entries())
-            .transpose()?;
+        let resources = scope.resources.map(|resources| resources.entries());
         Ok(Self {
             permissions: scope.permissions,
             resources,
@@ -324,10 +310,7 @@ impl TokenScope {
 
     /// Return the normalized collection, class, and object boundary.
     pub fn resources(&self) -> Result<Option<Vec<TokenResourceScope>>, ApiError> {
-        self.resources
-            .as_ref()
-            .map(TokenResourceScopeSet::entries)
-            .transpose()
+        Ok(self.resources.as_ref().map(TokenResourceScopeSet::entries))
     }
 
     pub(crate) fn resource_ids(&self) -> Option<TokenResourceScopeIds<'_>> {
@@ -342,7 +325,12 @@ impl TokenScope {
 
     pub(crate) fn retain_allowed_collection_ids(&self, candidate_ids: &mut Vec<i32>) {
         if let Some(resource_ids) = self.resource_ids() {
-            candidate_ids.retain(|id| resource_ids.collection_ids().contains(id));
+            candidate_ids.retain(|id| {
+                resource_ids
+                    .collection_ids()
+                    .iter()
+                    .any(|entry| entry.id() == *id)
+            });
         }
     }
 
@@ -555,9 +543,9 @@ mod tests {
 
         let ids = scope.resource_ids().unwrap();
 
-        assert_eq!(ids.collection_ids(), &[7]);
-        assert_eq!(ids.class_ids(), &[9]);
-        assert_eq!(ids.object_ids(), &[11]);
+        assert_eq!(ids.collection_ids(), &[CollectionID::new(7).unwrap()]);
+        assert_eq!(ids.class_ids(), &[HubuumClassID::new(9).unwrap()]);
+        assert_eq!(ids.object_ids(), &[HubuumObjectID::new(11).unwrap()]);
     }
 
     #[test]

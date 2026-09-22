@@ -293,6 +293,18 @@ positive_id!(
     "user id",
     "UserID"
 );
+
+impl From<UserId> for PrincipalId {
+    fn from(id: UserId) -> Self {
+        Self(id.0)
+    }
+}
+
+impl From<ServiceAccountId> for PrincipalId {
+    fn from(id: ServiceAccountId) -> Self {
+        Self(id.0)
+    }
+}
 positive_i64_id!(
     /// Identifier for one temporal history record.
     HistoryRecordId,

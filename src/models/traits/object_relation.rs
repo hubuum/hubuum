@@ -69,7 +69,7 @@ impl DeleteAdapter for HubuumObjectRelation {
         let storage = storage_handle(pool).object_relation_store();
         resolve_and_delete_object_relation(
             storage.as_ref(),
-            HubuumObjectRelationID::new(self.id)?.id(),
+            HubuumObjectRelationID::new(self.id)?,
             &EventContext::system(),
         )
         .await
@@ -85,7 +85,7 @@ impl DeleteAdapter for HubuumObjectRelation {
         let storage = storage_handle(pool).object_relation_store();
         resolve_and_delete_object_relation(
             storage.as_ref(),
-            HubuumObjectRelationID::new(self.id)?.id(),
+            HubuumObjectRelationID::new(self.id)?,
             context,
         )
         .await
@@ -100,7 +100,7 @@ impl DeleteAdapter for HubuumObjectRelationID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).object_relation_store();
-        resolve_and_delete_object_relation(storage.as_ref(), self.id(), &EventContext::system())
+        resolve_and_delete_object_relation(storage.as_ref(), *self, &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -112,7 +112,7 @@ impl DeleteAdapter for HubuumObjectRelationID {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).object_relation_store();
-        resolve_and_delete_object_relation(storage.as_ref(), self.id(), context)
+        resolve_and_delete_object_relation(storage.as_ref(), *self, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -129,7 +129,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
         let storage = storage_handle(pool).object_relation_store();
         prepare_and_create_object_relation(
             storage.as_ref(),
-            object_relation_create_to_storage(self.clone()),
+            object_relation_create_to_storage(self.clone())?,
             &EventContext::system(),
         )
         .await
@@ -146,7 +146,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
         let storage = storage_handle(pool).object_relation_store();
         prepare_and_create_object_relation(
             storage.as_ref(),
-            object_relation_create_to_storage(self.clone()),
+            object_relation_create_to_storage(self.clone())?,
             context,
         )
         .await

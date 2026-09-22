@@ -1,6 +1,11 @@
 use crate::permissions::ClassResourceEndpoint;
+use crate::services::storage_boundary::{
+    class_record_from_storage, object_from_storage, object_selector_from_storage,
+};
+use crate::storage::StorageResolvedObject;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
@@ -263,20 +268,27 @@ impl ObjectSelector {
 
 /// An object resolved from one explicit selector and safe to pass through authorization to a
 /// transactional mutation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResolvedObjectTarget {
+    storage: StorageResolvedObject,
     selector: ObjectSelector,
     class: HubuumClass,
     object: HubuumObject,
 }
 
 impl ResolvedObjectTarget {
-    pub(crate) fn new(selector: ObjectSelector, class: HubuumClass, object: HubuumObject) -> Self {
-        Self {
-            selector,
-            class,
-            object,
-        }
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StorageResolvedObject) -> Result<Self, ApiError> {
+        Ok(Self {
+            selector: object_selector_from_storage(storage.selector().clone())?,
+            class: class_record_from_storage(storage.class().clone())?,
+            object: object_from_storage(storage.object().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StorageResolvedObject {
+        &self.storage
     }
 
     pub fn object(&self) -> &HubuumObject {
@@ -287,6 +299,7 @@ impl ResolvedObjectTarget {
         &self.class
     }
 
+    #[cfg(test)]
     pub(crate) fn selector(&self) -> &ObjectSelector {
         &self.selector
     }
@@ -431,6 +444,16 @@ impl AuthzTarget for HubuumObjectID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
+
+impl fmt::Debug for ResolvedObjectTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedObjectTarget")
+            .field("selector", &self.selector)
+            .field("class", &self.class)
+            .field("object", &self.object)
+            .finish()
     }
 }
 

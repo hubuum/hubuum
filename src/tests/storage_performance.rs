@@ -874,15 +874,15 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         ))
         .await
         .expect("class fixture should resolve");
-    let storage_class = resolved_class_to_storage(&class_target)
-        .expect("resolved class fixture should satisfy the storage contract");
+    let storage_class = resolved_class_to_storage(&class_target).clone();
     let command = object_create_to_storage(NewHubuumObject {
         name: scope.scoped_name("query_budget_object_transaction_create"),
         collection_id: fixture.collection.id,
         hubuum_class_id: class.id,
         data: serde_json::json!({"value": 1}),
         description: "object transaction query budget".to_string(),
-    });
+    })
+    .expect("valid fixture");
 
     let (created, queries) = capture_queries(storage.with_transaction(
         EventContext::system(),

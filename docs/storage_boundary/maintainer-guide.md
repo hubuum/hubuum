@@ -41,6 +41,14 @@ resource operation accessors reuse the same native unit of work.
 Results travel back as storage DTOs, then domain or API values. Errors travel
 back as `PostgresStorageError`, `StorageError`, and finally `ApiError`.
 
+Keep validated identifiers typed while crossing these boundaries. Convert raw
+request and legacy model fields with fallible constructors; pass existing domain
+IDs directly. Resolved and prepared application targets retain their original
+private storage aggregate alongside immutable presentation views. Mutations borrow
+that aggregate instead of reconstructing selectors, identifiers, and endpoint
+membership from the views. Database transactions still recheck revisions and
+concurrent state.
+
 ## Source Map
 
 | Concern | Primary location |

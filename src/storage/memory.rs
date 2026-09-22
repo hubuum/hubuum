@@ -1147,7 +1147,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let prepared =
             PreparedClassRelation::new(command, from_class, to_class).map_err(map_memory_error)?;
-        prepared_class_relation_to_storage(&prepared).map_err(map_memory_error)
+        Ok(prepared_class_relation_to_storage(&prepared).clone())
     }
 
     async fn resolve_class_relation(
@@ -1169,7 +1169,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let target = ResolvedClassRelationTarget::new(relation, from_class, to_class)
             .map_err(map_memory_error)?;
-        resolved_class_relation_to_storage(&target).map_err(map_memory_error)
+        Ok(resolved_class_relation_to_storage(&target).clone())
     }
 
     async fn create_class_relation(
@@ -1214,7 +1214,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             prepared.to_class().clone(),
         )
         .map_err(map_memory_error)
-        .and_then(|target| resolved_class_relation_to_storage(&target).map_err(map_memory_error))?;
+        .map(|target| resolved_class_relation_to_storage(&target).clone())?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1313,7 +1313,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
                     .map_err(map_memory_error)?
             }
         };
-        prepared_object_relation_to_storage(&prepared).map_err(map_memory_error)
+        Ok(prepared_object_relation_to_storage(&prepared).clone())
     }
 
     async fn resolve_object_relation(
@@ -1364,7 +1364,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
             class_relation,
         )
         .map_err(map_memory_error)?;
-        resolved_object_relation_to_storage(&target).map_err(map_memory_error)
+        Ok(resolved_object_relation_to_storage(&target).clone())
     }
 
     async fn create_object_relation(
@@ -1428,9 +1428,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
             prepared.class_relation().clone(),
         )
         .map_err(map_memory_error)
-        .and_then(|target| {
-            resolved_object_relation_to_storage(&target).map_err(map_memory_error)
-        })?;
+        .map(|target| resolved_object_relation_to_storage(&target).clone())?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1486,7 +1484,7 @@ impl ObjectStorage for MemoryStorageModel {
                 object_id: ObjectId::new(object.id).expect("internal object id must be positive"),
             },
             class_record_to_storage(class.clone()).map_err(map_memory_error)?,
-            object_to_storage(object.clone()),
+            object_to_storage(object.clone()).map_err(map_memory_error)?,
         )
         .map_err(|error| {
             StorageError::backend_failure(format!("Invalid in-memory object projection: {error}"))
@@ -1532,7 +1530,7 @@ impl ObjectStorage for MemoryStorageModel {
         StorageResolvedObject::try_new(
             selector,
             class_record_to_storage(class.clone()).map_err(map_memory_error)?,
-            object_to_storage(object.clone()),
+            object_to_storage(object.clone()).map_err(map_memory_error)?,
         )
         .map_err(|error| {
             StorageError::backend_failure(format!("Invalid in-memory object projection: {error}"))
@@ -1582,7 +1580,7 @@ impl ObjectStorage for MemoryStorageModel {
         state.objects.insert(id, object.clone());
         state.record_object_event(id, Action::Created, context);
         Ok(StorageMutationOutcome::committed(
-            object_to_storage(object),
+            object_to_storage(object).map_err(map_memory_error)?,
             memory_audit_receipt(
                 EntityType::Object,
                 Action::Created,
@@ -1614,9 +1612,9 @@ impl ObjectStorage for MemoryStorageModel {
             .validate_for_class(&current, &class)
             .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
-            return Ok(StorageMutationOutcome::unchanged(object_to_storage(
-                current,
-            )));
+            return Ok(StorageMutationOutcome::unchanged(
+                object_to_storage(current).map_err(map_memory_error)?,
+            ));
         }
         if let Some(name) = changes.name.as_deref()
             && state.object_name_in_use(class.id, name, Some(current.id))
@@ -1637,7 +1635,7 @@ impl ObjectStorage for MemoryStorageModel {
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
         Ok(StorageMutationOutcome::committed(
-            object_to_storage(updated.clone()),
+            object_to_storage(updated.clone()).map_err(map_memory_error)?,
             memory_audit_receipt(
                 EntityType::Object,
                 Action::Updated,
@@ -1666,9 +1664,9 @@ impl ObjectStorage for MemoryStorageModel {
                 .map_err(map_memory_error)?;
         }
         if patched_data == current.data {
-            return Ok(StorageMutationOutcome::unchanged(object_to_storage(
-                current,
-            )));
+            return Ok(StorageMutationOutcome::unchanged(
+                object_to_storage(current).map_err(map_memory_error)?,
+            ));
         }
 
         let mut updated = current.clone();
@@ -1681,7 +1679,7 @@ impl ObjectStorage for MemoryStorageModel {
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
         Ok(StorageMutationOutcome::committed(
-            object_to_storage(updated.clone()),
+            object_to_storage(updated.clone()).map_err(map_memory_error)?,
             memory_audit_receipt(
                 EntityType::Object,
                 Action::Updated,
