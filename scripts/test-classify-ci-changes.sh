@@ -470,10 +470,13 @@ assert_flag "$docker_output" code true
 assert_flag "$docker_output" container true
 assert_flag "$docker_output" artifacts true
 
-compatibility_output="$(bash "$classifier" scripts/test-adjacent-release-upgrade.sh)"
-assert_flag "$compatibility_output" code true
-assert_flag "$compatibility_output" container true
-assert_flag "$compatibility_output" artifacts false
+for compatibility_path in scripts/test-adjacent-release-upgrade.sh \
+  scripts/adjacent-release-api.sh scripts/test-adjacent-release-api.py; do
+  compatibility_output="$(bash "$classifier" "$compatibility_path")"
+  assert_flag "$compatibility_output" code true
+  assert_flag "$compatibility_output" container true
+  assert_flag "$compatibility_output" artifacts false
+done
 
 restore_drill_output="$(bash "$classifier" .github/workflows/restore-drill.yml)"
 assert_flag "$restore_drill_output" code true

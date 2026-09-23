@@ -4,8 +4,7 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
 use crate::services::storage_boundary::{
-    collection_create_to_storage, collection_from_storage, collection_id_to_storage,
-    collection_update_to_storage,
+    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
 };
 use crate::storage::CollectionStorage;
 
@@ -26,7 +25,7 @@ impl CollectionService {
 
     pub async fn get(&self, id: CollectionID) -> Result<Collection, ApiError> {
         self.storage
-            .get_collection(collection_id_to_storage(id.id()))
+            .get_collection(id)
             .await
             .map_err(ApiError::from)
             .and_then(collection_from_storage)
@@ -52,11 +51,7 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .update_collection(
-                collection_id_to_storage(id.id()),
-                collection_update_to_storage(changes),
-                context,
-            )
+            .update_collection(id, collection_update_to_storage(changes), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -65,7 +60,7 @@ impl CollectionService {
 
     pub async fn delete(&self, id: CollectionID, context: &EventContext) -> Result<(), ApiError> {
         self.storage
-            .delete_collection(collection_id_to_storage(id.id()), context)
+            .delete_collection(id, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -73,7 +68,7 @@ impl CollectionService {
 
     pub async fn children(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .list_collection_children(collection_id_to_storage(id.id()))
+            .list_collection_children(id)
             .await
             .map_err(ApiError::from)?
             .into_iter()
@@ -83,7 +78,7 @@ impl CollectionService {
 
     pub async fn ancestors(&self, id: CollectionID) -> Result<Vec<Collection>, ApiError> {
         self.storage
-            .list_collection_ancestors(collection_id_to_storage(id.id()))
+            .list_collection_ancestors(id)
             .await
             .map_err(ApiError::from)?
             .into_iter()
@@ -98,11 +93,7 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .move_collection(
-                collection_id_to_storage(id.id()),
-                collection_id_to_storage(new_parent_id.id()),
-                context,
-            )
+            .move_collection(id, new_parent_id, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

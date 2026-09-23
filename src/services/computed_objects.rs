@@ -7,8 +7,7 @@ use crate::models::{
 };
 use crate::pagination::{effective_page_limit, prepare_db_pagination};
 use crate::services::storage_boundary::{
-    class_id_to_storage, object_from_storage, object_to_storage, principal_id_to_storage,
-    visibility as storage_visibility,
+    object_from_storage, object_to_storage, visibility as storage_visibility,
 };
 use crate::storage::{
     ComputedObjectStorage, StorageComputedFieldError, StorageComputedObject,
@@ -17,6 +16,7 @@ use crate::storage::{
     StorageComputedObjectVisibility, StorageComputedScope, StorageContext, storage_handle,
 };
 use crate::traits::{CursorPaginated, CursorValue};
+use hubuum_domain::{ClassId, PrincipalId};
 
 pub(crate) enum ComputedObjectAccess<'a> {
     Storage {
@@ -88,8 +88,8 @@ async fn execute_computed_object_query(
 ) -> Result<ComputedObjectListResult, ApiError> {
     let (objects, total, computed, resolved_options) = storage_handle(backend)
         .list_computed_objects(StorageComputedObjectListQuery::new(
-            class_id_to_storage(class_id),
-            personal_owner_id.map(principal_id_to_storage),
+            ClassId::new(class_id)?,
+            personal_owner_id.map(PrincipalId::new).transpose()?,
             prepared_options,
             access.into_storage()?,
             projection,
@@ -230,8 +230,11 @@ pub(crate) async fn enrich_objects_with_computed(
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
     storage_handle(backend)
         .enrich_objects_with_computed(StorageComputedObjectEnrichmentQuery::new(
-            objects.into_iter().map(object_to_storage).collect(),
-            personal_owner_id.map(principal_id_to_storage),
+            objects
+                .into_iter()
+                .map(object_to_storage)
+                .collect::<Result<Vec<_>, _>>()?,
+            personal_owner_id.map(PrincipalId::new).transpose()?,
         ))
         .await?
         .into_iter()

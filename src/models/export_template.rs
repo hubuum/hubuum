@@ -1,3 +1,4 @@
+use hubuum_domain::{ClassId, CollectionId};
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -14,7 +15,7 @@ use crate::models::{
 };
 use crate::pagination::{CursorPaginated, CursorValue};
 use crate::permissions::{AuthzTarget, ResourceRef};
-use crate::services::storage_boundary::{class_id_to_storage, collection_id_to_storage};
+
 use crate::storage::{
     ExportTemplateStorage, StorageClassSelector, StorageContext, StorageErrorKind,
     StorageExportTemplate, StorageExportTemplateCreate, StorageExportTemplateDefinition,
@@ -226,7 +227,7 @@ fn storage_definition(
     )
     .with_scope(
         template.scope_kind.map(|scope| scope.as_str().to_string()),
-        template.class_id.map(class_id_to_storage),
+        template.class_id.map(ClassId::new).transpose()?,
     )
     .with_default_query(template.default_query.clone())
     .with_include(to_optional_json(template.include.clone())?)
@@ -351,8 +352,8 @@ impl ExportTemplate {
                 allowed_collection_ids
                     .iter()
                     .copied()
-                    .map(collection_id_to_storage)
-                    .collect(),
+                    .map(CollectionId::new)
+                    .collect::<Result<Vec<_>, _>>()?,
                 query_options.clone(),
             ))
             .await?;
@@ -454,7 +455,7 @@ impl NewExportTemplate {
         )
         .with_scope(
             self.scope_kind.map(|scope| scope.as_str().to_string()),
-            self.class_id.map(class_id_to_storage),
+            self.class_id.map(ClassId::new).transpose()?,
         )
         .with_default_query(self.default_query.clone())
         .with_include(to_optional_json(self.include.clone())?)
@@ -506,7 +507,7 @@ impl NewExportTemplate {
         .await?;
         let stored = storage_handle(pool)
             .create_export_template(StorageExportTemplateCreate::new(
-                collection_id_to_storage(self.collection_id),
+                CollectionId::new(self.collection_id)?,
                 self.name.clone(),
                 definition,
                 context.clone(),
@@ -642,7 +643,7 @@ async fn apply_export_template_update(
         .replace_export_template(StorageExportTemplateReplace::new(
             ExportTemplateID::new(template_id)
                 .expect("validated export template id must be positive"),
-            collection_id_to_storage(replacement.collection_id),
+            CollectionId::new(replacement.collection_id)?,
             replacement.name.clone(),
             storage_definition(&replacement)?,
             context.clone(),
@@ -941,9 +942,7 @@ async fn ensure_template_class_in_collection(
 ) -> Result<(), ApiError> {
     let class = storage_handle(pool)
         .class_store()
-        .resolve_class(StorageClassSelector::Id(class_id_to_storage(
-            target_class_id,
-        )))
+        .resolve_class(StorageClassSelector::Id(ClassId::new(target_class_id)?))
         .await
         .map_err(|error| {
             if error.kind() == StorageErrorKind::NotFound {

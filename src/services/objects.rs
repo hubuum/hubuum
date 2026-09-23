@@ -41,9 +41,9 @@ impl ObjectService {
         command: NewHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let class = resolved_class_to_storage(class)?;
+        let class = resolved_class_to_storage(class);
         self.storage
-            .create_object(&class, object_create_to_storage(command), context)
+            .create_object(class, object_create_to_storage(command)?, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -56,9 +56,9 @@ impl ObjectService {
         changes: UpdateHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let target = resolved_object_to_storage(target)?;
+        let target = resolved_object_to_storage(target);
         self.storage
-            .update_object(&target, object_update_to_storage(changes), context)
+            .update_object(target, object_update_to_storage(changes)?, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -71,9 +71,9 @@ impl ObjectService {
         patch: ObjectDataPatchDocument,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let target = resolved_object_to_storage(target)?;
+        let target = resolved_object_to_storage(target);
         self.storage
-            .patch_object_data(&target, object_patch_to_storage(patch)?, context)
+            .patch_object_data(target, object_patch_to_storage(patch)?, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -85,9 +85,9 @@ impl ObjectService {
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_to_storage(target)?;
+        let target = resolved_object_to_storage(target);
         self.storage
-            .delete_object(&target, context)
+            .delete_object(target, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

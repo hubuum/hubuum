@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub mod aliases;
 pub mod auth;
 pub(crate) mod bounded_file;

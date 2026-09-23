@@ -248,6 +248,8 @@ jobs:
         run: python3 scripts/test-python-version.py
       - name: Test integration fixture readiness and cleanup
         run: python3 scripts/test-event-transport-runner.py
+      - name: Test adjacent-release credential approval compatibility
+        run: python3 scripts/test-adjacent-release-api.py
       - name: Validate operator dashboards, metric references and alert behavior
         run: |
           python3 scripts/check-observability.py --promtool

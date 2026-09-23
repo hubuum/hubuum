@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use hubuum_domain::{CollectionId, GroupId};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,9 +18,7 @@ use crate::permissions::{
     authorization_group_grant_from_storage, grant_from_storage, permission_to_storage,
 };
 use crate::services::identity::token_scope_to_storage;
-use crate::services::storage_boundary::{
-    collection_from_storage, collection_id_to_storage, group_id_to_storage, principal_id_to_storage,
-};
+use crate::services::storage_boundary::collection_from_storage;
 use crate::storage::{
     AuthorizationDataStorage, CollectionAuthorizationQueryStorage,
     StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionGroupsPageQuery,
@@ -132,8 +131,8 @@ where
     T: CollectionAccessors,
 {
     let query = StorageAuthorizationPrincipalCollectionQuery::new(
-        principal_id_to_storage(principal.principal_id()),
-        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+        principal.validated_principal_id()?,
+        collection_ref.collection_id(backend).await?,
     );
     storage_handle(backend)
         .load_principal_collection_permissions(query)
@@ -157,9 +156,7 @@ where
     S: AuthzSubject,
 {
     storage_handle(backend)
-        .list_all_principal_collection_permissions(principal_id_to_storage(
-            principal.principal_id(),
-        ))
+        .list_all_principal_collection_permissions(principal.validated_principal_id()?)
         .await
         .map_err(ApiError::from)
         .and_then(|rows| {
@@ -188,8 +185,8 @@ where
     T: CollectionAccessors,
 {
     let principal = StorageAuthorizationPrincipalCollectionQuery::new(
-        principal_id_to_storage(principal.principal_id()),
-        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+        principal.validated_principal_id()?,
+        collection_ref.collection_id(backend).await?,
     );
     storage_handle(backend)
         .list_principal_collection_permissions(
@@ -219,8 +216,8 @@ where
     T: CollectionAccessors,
 {
     let query = StorageAuthorizationPrincipalCollectionQuery::new(
-        principal_id_to_storage(principal.principal_id()),
-        collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+        principal.validated_principal_id()?,
+        collection_ref.collection_id(backend).await?,
     );
     storage_handle(backend)
         .list_effective_principal_collection_permissions(query)
@@ -257,7 +254,7 @@ where
     let is_admin = user_id.is_admin(backend).await?;
     storage_handle(backend)
         .list_visible_collections(StorageAuthorizationCollectionVisibilityQuery::new(
-            principal_id_to_storage(user_id.principal_id()),
+            user_id.validated_principal_id()?,
             is_admin,
             permission_to_storage(permission_type),
             scopes.map(token_scope_to_storage),
@@ -294,8 +291,8 @@ where
 {
     storage_handle(backend)
         .has_group_collection_permission(StorageAuthorizationGroupCollectionQuery::new(
-            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
-            group_id_to_storage(gid),
+            collection_ref.collection_id(backend).await?,
+            GroupId::new(gid)?,
             permission_to_storage(permission_type),
         ))
         .await
@@ -312,8 +309,8 @@ where
 {
     storage_handle(backend)
         .list_effective_group_collection_permissions(
-            collection_id_to_storage(target_collection_id),
-            group_id_to_storage(gid),
+            CollectionId::new(target_collection_id)?,
+            GroupId::new(gid)?,
         )
         .await
         .map_err(ApiError::from)
@@ -344,7 +341,7 @@ where
 {
     storage_handle(backend)
         .load_groups_with_collection_permission(StorageAuthorizationCollectionGroupsQuery::new(
-            collection_id_to_storage(target_collection_id),
+            CollectionId::new(target_collection_id)?,
             permission_to_storage(permission_type),
         ))
         .await
@@ -368,7 +365,7 @@ where
     storage_handle(backend)
         .list_groups_with_collection_permission(StorageAuthorizationCollectionGroupsPageQuery::new(
             StorageAuthorizationCollectionGroupsQuery::new(
-                collection_id_to_storage(target_collection_id),
+                CollectionId::new(target_collection_id)?,
                 permission_to_storage(permission_type),
             ),
             query_options.clone(),
@@ -411,7 +408,7 @@ where
     query_options.set_include_total(false);
     let (rows, _) = storage_handle(backend)
         .list_local_collection_grants(StorageAuthorizationCollectionGrantListQuery::new(
-            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            collection_ref.collection_id(backend).await?,
             permissions_filter.into_iter().map(permission_to_storage),
             query_options,
         ))
@@ -435,7 +432,7 @@ where
 {
     let page = storage_handle(backend)
         .list_local_collection_grants(StorageAuthorizationCollectionGrantListQuery::new(
-            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            collection_ref.collection_id(backend).await?,
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
@@ -460,7 +457,7 @@ where
 {
     storage_handle(backend)
         .list_local_collection_grants(StorageAuthorizationCollectionGrantListQuery::new(
-            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            collection_ref.collection_id(backend).await?,
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
@@ -489,7 +486,7 @@ where
 {
     let (_, total) = storage_handle(backend)
         .list_local_collection_grants(StorageAuthorizationCollectionGrantListQuery::new(
-            collection_id_to_storage(collection_ref.collection_id(backend).await?.id()),
+            collection_ref.collection_id(backend).await?,
             permissions_filter.into_iter().map(permission_to_storage),
             query_options.clone(),
         ))
@@ -510,8 +507,8 @@ where
 {
     let grant = storage_handle(backend)
         .get_local_collection_grant(StorageAuthorizationGrantKey::new(
-            collection_id_to_storage(target_collection_id),
-            group_id_to_storage(gid),
+            CollectionId::new(target_collection_id)?,
+            GroupId::new(gid)?,
         ))
         .await
         .map_err(ApiError::from)?
@@ -534,9 +531,7 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .list_collection_children(crate::services::storage_boundary::collection_id_to_storage(
-            collection_id.id(),
-        ))
+        .list_collection_children(collection_id)
         .await
         .map_err(ApiError::from)?
         .into_iter()
@@ -555,9 +550,7 @@ where
     let collection_id = collection_ref.collection_id(backend).await?;
     storage_handle(backend)
         .collection_store()
-        .list_collection_ancestors(crate::services::storage_boundary::collection_id_to_storage(
-            collection_id.id(),
-        ))
+        .list_collection_ancestors(collection_id)
         .await
         .map_err(ApiError::from)?
         .into_iter()
@@ -577,8 +570,8 @@ where
     storage_handle(backend)
         .collection_store()
         .move_collection(
-            crate::services::storage_boundary::collection_id_to_storage(collection_id),
-            crate::services::storage_boundary::collection_id_to_storage(new_parent_collection_id),
+            CollectionId::new(collection_id)?,
+            CollectionId::new(new_parent_collection_id)?,
             context,
         )
         .await

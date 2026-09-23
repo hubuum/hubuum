@@ -1,3 +1,4 @@
+use hubuum_domain::{CollectionId, PrincipalId};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use crate::pagination::{SKIPPED_TOTAL_COUNT, prepare_db_pagination};
 use crate::permissions::storage::{
     collection_from_storage, grant_from_storage, group_grant_from_storage, permission_to_storage,
 };
-use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
+
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationCollectionAccessQuery,
     StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionsQuery,
@@ -79,21 +80,25 @@ impl PermissionBackend for LocalPermissionBackend {
                     }
                     _ => request.resource.collection_id().map(|id| vec![id]),
                 };
-                ranges.push(collections.map(|collections| {
-                    let start = checks.len();
-                    for collection in collections {
-                        checks.push(StorageAuthorizationCollectionAccessQuery::new(
-                            principal_id_to_storage(principal.user_id),
-                            collection_id_to_storage(collection),
-                            request
-                                .permissions
-                                .iter()
-                                .copied()
-                                .map(permission_to_storage),
-                        ));
-                    }
-                    start..checks.len()
-                }));
+                ranges.push(
+                    collections
+                        .map(|collections| {
+                            let start = checks.len();
+                            for collection in collections {
+                                checks.push(StorageAuthorizationCollectionAccessQuery::new(
+                                    PrincipalId::new(principal.user_id)?,
+                                    CollectionId::new(collection)?,
+                                    request
+                                        .permissions
+                                        .iter()
+                                        .copied()
+                                        .map(permission_to_storage),
+                                ));
+                            }
+                            Ok::<_, ApiError>(start..checks.len())
+                        })
+                        .transpose()?,
+                );
             }
             let expected = checks.len();
             let allowed = self
@@ -141,7 +146,7 @@ impl PermissionBackend for LocalPermissionBackend {
     ) -> Result<Vec<Collection>, ApiError> {
         let start = Instant::now();
         let query = StorageAuthorizationCollectionsQuery::new(
-            principal_id_to_storage(principal.user_id),
+            PrincipalId::new(principal.user_id)?,
             permissions.iter().copied().map(permission_to_storage),
         );
         let rows = self
@@ -304,7 +309,7 @@ impl PermissionBackend for LocalPermissionBackend {
             .clone()
             .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
         let query = StorageAuthorizationGroupMembershipQuery::new(
-            principal_id_to_storage(principal.user_id),
+            PrincipalId::new(principal.user_id)?,
             &self.admin_groupname,
             identity_scope,
         );

@@ -4,13 +4,13 @@ use crate::models::{
     UnifiedSearchSpec,
 };
 use crate::services::storage_boundary::{
-    class_from_storage, collection_from_storage, object_from_storage, resource_id_to_storage,
-    visibility,
+    class_from_storage, collection_from_storage, object_from_storage, visibility,
 };
 use crate::storage::{
     StorageCandidatePageLimit, StorageContext, StorageUnifiedSearchCursor,
     StorageUnifiedSearchQuery, UnifiedSearchStorage, storage_handle,
 };
+use hubuum_domain::ResourceId;
 
 pub(crate) struct UnifiedSearchCandidatePage<T> {
     pub(crate) items: Vec<UnifiedSearchCandidate<T>>,
@@ -30,14 +30,18 @@ fn candidate_cursor(cursor: StorageUnifiedSearchCursor) -> UnifiedSearchCursorTo
     }
 }
 
-fn cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Option<StorageUnifiedSearchCursor> {
-    cursor.map(|cursor| {
-        StorageUnifiedSearchCursor::new(
-            cursor.rank,
-            cursor.name.clone(),
-            resource_id_to_storage(cursor.id),
-        )
-    })
+fn cursor(
+    cursor: Option<&UnifiedSearchCursorToken>,
+) -> Result<Option<StorageUnifiedSearchCursor>, ApiError> {
+    cursor
+        .map(|cursor| {
+            Ok(StorageUnifiedSearchCursor::new(
+                cursor.rank,
+                cursor.name.clone(),
+                ResourceId::new(cursor.id)?,
+            ))
+        })
+        .transpose()
 }
 
 fn query(
@@ -56,7 +60,7 @@ fn query(
         visibility(principal_id, is_admin, scope)?,
     )
     .search_extended_document(search_extended_document)
-    .cursor(self::cursor(cursor)))
+    .cursor(self::cursor(cursor)?))
 }
 
 pub async fn search_collections(

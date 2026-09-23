@@ -1,3 +1,4 @@
+use hubuum_domain::{CollectionId, PrincipalId};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -10,7 +11,7 @@ use crate::models::{
     validate_subscription_parts,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
-use crate::services::storage_boundary::{collection_id_to_storage, principal_id_to_storage};
+
 use crate::storage::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageContext,
@@ -78,8 +79,8 @@ pub(crate) async fn list_audit_events(
         .list_audit_events(StorageAuditEventListQuery::new(
             accessible_collection_ids
                 .into_iter()
-                .map(collection_id_to_storage)
-                .collect(),
+                .map(CollectionId::new)
+                .collect::<Result<Vec<_>, _>>()?,
             include_collection_less,
             filters,
             options,
@@ -131,9 +132,9 @@ pub(crate) fn parse_audit_event_filters(
         }))
         .action(action)
         .actor_kind(actor_kind)
-        .actor_user_id(actor_user_id.map(principal_id_to_storage))
-        .initiator_user_id(initiator_user_id.map(principal_id_to_storage))
-        .collection_id(collection_id.map(collection_id_to_storage))
+        .actor_user_id(actor_user_id.map(PrincipalId::new).transpose()?)
+        .initiator_user_id(initiator_user_id.map(PrincipalId::new).transpose()?)
+        .collection_id(collection_id.map(CollectionId::new).transpose()?)
         .occurred_after(occurred_after.map(|timestamp| timestamp.and_utc()))
         .occurred_before(occurred_before.map(|timestamp| timestamp.and_utc())))
 }
@@ -358,7 +359,7 @@ pub(crate) async fn list_event_subscriptions(
 ) -> Result<(Vec<EventSubscription>, i64), ApiError> {
     let page = storage_handle(backend)
         .list_event_subscriptions(StorageEventSubscriptionListQuery::new(
-            collection_id_to_storage(collection_id),
+            CollectionId::new(collection_id)?,
             options,
         ))
         .await?;
@@ -380,7 +381,7 @@ pub(crate) async fn get_event_subscription(
     event_subscription_from_storage(
         storage_handle(backend)
             .get_event_subscription(
-                collection_id_to_storage(collection_id),
+                CollectionId::new(collection_id)?,
                 hubuum_domain::EventSubscriptionId::new(subscription_id)
                     .expect("validated event subscription id must be positive"),
             )
@@ -406,7 +407,7 @@ pub(crate) async fn create_event_subscription(
     let entity_types = storage_entity_types(&subscription.entity_types)?;
     let actions = storage_actions(&subscription.actions)?;
     let request = StorageEventSubscriptionCreate::builder(
-        collection_id_to_storage(collection_id),
+        CollectionId::new(collection_id)?,
         subscription.sink_id,
         subscription.name,
         event_context,
@@ -452,7 +453,7 @@ pub(crate) async fn update_event_subscription(
         .transpose()?;
     let storage_actions = update.actions.as_deref().map(storage_actions).transpose()?;
     let request = StorageEventSubscriptionUpdate::builder(
-        collection_id_to_storage(collection_id),
+        CollectionId::new(collection_id)?,
         hubuum_domain::EventSubscriptionId::new(subscription_id)
             .expect("validated event subscription id must be positive"),
         event_context,
@@ -482,7 +483,7 @@ pub(crate) async fn delete_event_subscription(
 ) -> Result<(), ApiError> {
     storage_handle(backend)
         .delete_event_subscription(StorageEventSubscriptionDelete::new(
-            collection_id_to_storage(collection_id),
+            CollectionId::new(collection_id)?,
             hubuum_domain::EventSubscriptionId::new(subscription_id)
                 .expect("validated event subscription id must be positive"),
             event_context,

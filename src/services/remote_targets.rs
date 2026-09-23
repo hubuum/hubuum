@@ -1,3 +1,4 @@
+use hubuum_domain::{CollectionId, ResourceId};
 use std::str::FromStr;
 
 use crate::errors::ApiError;
@@ -8,9 +9,7 @@ use crate::models::{
     validate_target_parts,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
-use crate::services::storage_boundary::{
-    class_id_to_storage, collection_id_to_storage, resource_id_to_storage,
-};
+
 use crate::storage::{
     RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetHttpMethod,
@@ -41,8 +40,8 @@ pub(crate) async fn list_remote_targets(
         .list_remote_targets(StorageRemoteTargetListQuery::new(
             allowed_collection_ids
                 .into_iter()
-                .map(collection_id_to_storage)
-                .collect(),
+                .map(CollectionId::new)
+                .collect::<Result<Vec<_>, _>>()?,
             options,
         ))
         .await?;
@@ -83,9 +82,7 @@ pub(crate) async fn create_remote_target(
         )
         .map_err(|error| ApiError::from(error.into_request_error()))?,
         StorageRemoteTargetPolicy::try_new(
-            input
-                .class_id
-                .map(|class_id| class_id_to_storage(class_id.id())),
+            input.class_id,
             subject_types_to_storage(input.allowed_subject_types),
             input.enabled,
         )
@@ -93,7 +90,7 @@ pub(crate) async fn create_remote_target(
     );
     let target = storage_handle(backend)
         .create_remote_target(StorageRemoteTargetCreate::new(
-            collection_id_to_storage(input.collection_id.id()),
+            input.collection_id,
             input.name,
             definition,
             event_context,
@@ -143,16 +140,8 @@ pub(crate) async fn update_remote_target(
     .await?;
 
     let patch = StorageRemoteTargetPatch::new()
-        .with_collection_id(
-            update
-                .collection_id
-                .map(|collection_id| collection_id_to_storage(collection_id.id())),
-        )
-        .with_class_id(
-            update
-                .class_id
-                .map(|class_id| class_id.map(|class_id| class_id_to_storage(class_id.id()))),
-        )
+        .with_collection_id(update.collection_id)
+        .with_class_id(update.class_id)
         .with_name(update.name)
         .with_description(update.description)
         .with_method(update.method.map(http_method_to_storage))
@@ -204,7 +193,7 @@ pub(crate) async fn record_remote_target_invocation(
                 .expect("validated remote target id must be positive"),
             hubuum_domain::TaskId::new(task_id).expect("validated task id must be positive"),
             subject_type_to_storage(subject_type),
-            resource_id_to_storage(subject_id),
+            ResourceId::new(subject_id)?,
             event_context,
         ))
         .await?

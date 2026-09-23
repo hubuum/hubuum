@@ -1,3 +1,4 @@
+use hubuum_domain::ObjectRelationId;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
@@ -7,10 +8,9 @@ use crate::models::{
     ResolvedObjectRelationTarget,
 };
 use crate::services::storage_boundary::{
-    object_relation_create_selector_to_storage, object_relation_id_to_storage,
-    object_relation_selector_to_storage, prepared_object_relation_from_storage,
-    prepared_object_relation_to_storage, resolved_object_relation_from_storage,
-    resolved_object_relation_to_storage,
+    object_relation_create_selector_to_storage, object_relation_selector_to_storage,
+    prepared_object_relation_from_storage, prepared_object_relation_to_storage,
+    resolved_object_relation_from_storage, resolved_object_relation_to_storage,
 };
 use crate::storage::{
     ObjectRelationStorage, StorageError, StorageMutationOutcome, StorageObjectRelation,
@@ -37,13 +37,11 @@ pub(crate) async fn prepare_and_create_object_relation(
 /// Compose the canonical resolve/delete relation lifecycle for an identifier.
 pub(crate) async fn resolve_and_delete_object_relation(
     storage: &dyn ObjectRelationStorage,
-    relation_id: i32,
+    relation_id: ObjectRelationId,
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<()>, StorageError> {
     let target = storage
-        .resolve_object_relation(StorageObjectRelationSelector::Id(
-            object_relation_id_to_storage(relation_id),
-        ))
+        .resolve_object_relation(StorageObjectRelationSelector::Id(relation_id))
         .await?;
     storage.delete_object_relation(&target, context).await
 }
@@ -64,7 +62,7 @@ impl ObjectRelationService {
         selector: ObjectRelationCreateSelector,
     ) -> Result<PreparedObjectRelation, ApiError> {
         self.storage
-            .prepare_object_relation(object_relation_create_selector_to_storage(selector))
+            .prepare_object_relation(object_relation_create_selector_to_storage(selector)?)
             .await
             .map_err(ApiError::from)
             .and_then(prepared_object_relation_from_storage)
@@ -86,9 +84,9 @@ impl ObjectRelationService {
         prepared: &PreparedObjectRelation,
         context: &EventContext,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
-        let prepared = prepared_object_relation_to_storage(prepared)?;
+        let prepared = prepared_object_relation_to_storage(prepared);
         self.storage
-            .create_object_relation(&prepared, context)
+            .create_object_relation(prepared, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -100,9 +98,9 @@ impl ObjectRelationService {
         target: &ResolvedObjectRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_relation_to_storage(target)?;
+        let target = resolved_object_relation_to_storage(target);
         self.storage
-            .delete_object_relation(&target, context)
+            .delete_object_relation(target, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -111,6 +109,7 @@ impl ObjectRelationService {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_domain::ObjectRelationId;
     use rstest::rstest;
     use serde_json::json;
 
@@ -454,18 +453,16 @@ mod tests {
                     to_hubuum_object_id: fixture.to_object.id,
                     class_relation_id: fixture.class_relation.relation().id,
                 },
-            ),
+            )
+            .expect("valid fixture command"),
             &EventContext::system(),
         )
         .await
         .expect("event-suppressed relation should create");
-        let relation_id =
-            crate::services::storage_boundary::object_relation_from_storage(created.into_value())
-                .expect("valid stored object relation")
-                .id;
+        let relation_id = ObjectRelationId::from(created.into_value().metadata().id());
         lifecycle
             .resolve_object_relation(crate::storage::StorageObjectRelationSelector::Id(
-                crate::services::storage_boundary::object_relation_id_to_storage(relation_id),
+                relation_id,
             ))
             .await
             .expect("event-suppressed relation should resolve");
@@ -481,7 +478,7 @@ mod tests {
         assert!(
             lifecycle
                 .resolve_object_relation(crate::storage::StorageObjectRelationSelector::Id(
-                    crate::services::storage_boundary::object_relation_id_to_storage(relation_id),
+                    relation_id,
                 ))
                 .await
                 .is_err()

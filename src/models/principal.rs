@@ -1,3 +1,4 @@
+use hubuum_domain::PrincipalId;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
@@ -438,9 +439,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
         C: StorageContext,
     {
         storage_handle(backend)
-            .get_principal_settings(crate::services::storage_boundary::principal_id_to_storage(
-                self.id(),
-            ))
+            .get_principal_settings(*self)
             .await
             .map_err(ApiError::from)
             .and_then(principal_settings_from_storage)
@@ -457,7 +456,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .update_principal_settings(
-                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                *self,
                 StoragePrincipalSettingsMutation::Replace(settings.as_value().clone()),
                 event_context,
             )
@@ -478,7 +477,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .update_principal_settings(
-                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                *self,
                 StoragePrincipalSettingsMutation::MergePatch(patch.as_value().clone()),
                 event_context,
             )
@@ -498,7 +497,7 @@ impl PrincipalIdApplicationExt for PrincipalID {
     {
         storage_handle(backend)
             .update_principal_settings(
-                crate::services::storage_boundary::principal_id_to_storage(self.id()),
+                *self,
                 StoragePrincipalSettingsMutation::Reset,
                 event_context,
             )
@@ -520,7 +519,7 @@ where
 {
     storage_handle(backend)
         .update_principal_settings(
-            crate::services::storage_boundary::principal_id_to_storage(principal_id.id()),
+            principal_id,
             principal_settings_mutation_to_storage(patch)?,
             event_context,
         )
@@ -536,9 +535,7 @@ pub async fn load_principal_by_id(
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
     storage_handle(pool)
-        .get_principal(crate::services::storage_boundary::principal_id_to_storage(
-            principal_id,
-        ))
+        .get_principal(PrincipalId::new(principal_id)?)
         .await
         .map_err(ApiError::from)
         .and_then(principal_from_storage)

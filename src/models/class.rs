@@ -1,5 +1,8 @@
+use crate::services::storage_boundary::{class_record_from_storage, class_selector_from_storage};
+use crate::storage::StorageResolvedClass;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
@@ -146,21 +149,32 @@ impl ClassSelector {
 
 /// A class resolved from one explicit selector and safe to carry from authorization into a
 /// selector-aware mutation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResolvedClassTarget {
+    storage: StorageResolvedClass,
     selector: ClassSelector,
     class: HubuumClass,
 }
 
 impl ResolvedClassTarget {
-    pub(crate) fn new(selector: ClassSelector, class: HubuumClass) -> Self {
-        Self { selector, class }
+    /// Preserve the validated aggregate; private views serve domain and HTTP callers.
+    pub(crate) fn from_storage(storage: StorageResolvedClass) -> Result<Self, ApiError> {
+        Ok(Self {
+            selector: class_selector_from_storage(storage.selector().clone())?,
+            class: class_record_from_storage(storage.class().clone())?,
+            storage,
+        })
+    }
+
+    pub(crate) fn as_storage(&self) -> &StorageResolvedClass {
+        &self.storage
     }
 
     pub fn class(&self) -> &HubuumClass {
         &self.class
     }
 
+    #[cfg(test)]
     pub(crate) fn selector(&self) -> &ClassSelector {
         &self.selector
     }
@@ -297,6 +311,15 @@ impl AuthzTarget for HubuumClassID {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
+
+impl fmt::Debug for ResolvedClassTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedClassTarget")
+            .field("selector", &self.selector)
+            .field("class", &self.class)
+            .finish()
     }
 }
 

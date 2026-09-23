@@ -1,3 +1,4 @@
+use hubuum_domain::CollectionId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -6,7 +7,7 @@ use diesel_async::RunQueryDsl;
 
 use crate::events::{EntityType, EventContext};
 use crate::models::NewGroup;
-use crate::services::storage_boundary::collection_id_to_storage;
+
 use crate::storage::{
     ClassRelationStorage, ClassStorage, CollectionStorage, MemoryStorageModel,
     ObjectRelationStorage, ObjectStorage, StorageClassCreate, StorageClassRelationCreate,
@@ -371,9 +372,10 @@ where
     assert_eq!(rollback.kind(), StorageErrorKind::Internal);
     rolled_back_ids.assert_populated();
     let missing_collection = match storage
-        .get_collection(collection_id_to_storage(
-            rolled_back_ids.id_for(EntityType::Collection),
-        ))
+        .get_collection(
+            CollectionId::new(rolled_back_ids.id_for(EntityType::Collection))
+                .expect("valid fixture"),
+        )
         .await
     {
         Ok(_) => panic!("rolled-back collection must not be visible"),

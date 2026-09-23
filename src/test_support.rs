@@ -408,7 +408,7 @@ where
             crate::models::configured_token_lifetime()?.cutoff_from(observed_at)?;
         hubuum_storage_postgres::test_support::load_active_tokens_for_principal(
             pool,
-            hubuum_domain::PrincipalId::new(self.principal_id())?,
+            self.validated_principal_id()?,
             observed_at,
             legacy_valid_after,
         )

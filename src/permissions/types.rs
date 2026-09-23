@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use hubuum_domain::PrincipalId;
 
 use crate::errors::ApiError;
 use crate::models::Permissions;
-use crate::services::storage_boundary::principal_id_to_storage;
+
 use crate::storage::{AuthorizationDataStorage, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 
@@ -33,7 +34,7 @@ impl PrincipalRef {
     {
         let user_id = subject.principal_id();
         let principal = storage_handle(pool)
-            .get_authorization_principal(principal_id_to_storage(user_id))
+            .get_authorization_principal(PrincipalId::new(user_id)?)
             .await?;
         Ok(Self::new(
             user_id,

@@ -5,7 +5,7 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 use crate::permissions::{grant_from_storage, permission_to_storage};
-use crate::services::storage_boundary::principal_id_to_storage;
+
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationCollectionAccessQuery,
     StorageAuthorizationGrantDelete, StorageAuthorizationGrantKey,
@@ -80,7 +80,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
             return Ok(true);
         }
         let query = StorageAuthorizationCollectionAccessQuery::new(
-            principal_id_to_storage(subject.principal_id()),
+            subject.validated_principal_id()?,
             self.collection_id(backend).await?,
             permission.into_iter().map(permission_to_storage),
         );

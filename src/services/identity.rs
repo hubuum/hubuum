@@ -1,3 +1,4 @@
+use hubuum_domain::{GroupId, PrincipalId};
 use std::collections::HashMap;
 
 use chrono::SubsecRound;
@@ -8,17 +9,13 @@ use crate::events::EventContext;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    CollectionID, Group, HubuumClassID, HubuumObjectID, IdentityScope, NewServiceAccount,
-    PrincipalGroup, PrincipalToken, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-    ServiceAccount, ServiceAccountWithName, TokenListState, TokenResourceScope, TokenScope,
-    TokenScopeDetails, UpdateServiceAccount, UpdateUser, User, UserPointResponse, UserWithName,
-    configured_token_lifetime,
+    Group, IdentityScope, NewServiceAccount, PrincipalGroup, PrincipalToken,
+    PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountWithName,
+    TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount,
+    UpdateUser, User, UserPointResponse, UserWithName, configured_token_lifetime,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
-use crate::services::storage_boundary::{
-    class_id_to_storage, collection_id_to_storage, group_id_to_storage, object_id_to_storage,
-    principal_id_to_storage,
-};
+
 use crate::storage::{
     ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
     LocalIdentityCredentialStorage, ServiceAccountStorage, StorageAuthenticationResourceScope,
@@ -139,25 +136,15 @@ fn token_scope_from_storage(
             .map(crate::permissions::permission_from_storage)
             .collect::<Vec<_>>()
     });
-    let resources = resources
-        .map(|resources| {
-            let (collections, classes, objects) = resources.into_parts();
-            collections
-                .into_iter()
-                .map(|id| CollectionID::new(id.id()).map(TokenResourceScope::Collection))
-                .chain(
-                    classes
-                        .into_iter()
-                        .map(|id| HubuumClassID::new(id.id()).map(TokenResourceScope::Class)),
-                )
-                .chain(
-                    objects
-                        .into_iter()
-                        .map(|id| HubuumObjectID::new(id.id()).map(TokenResourceScope::Object)),
-                )
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
+    let resources = resources.map(|resources| {
+        let (collections, classes, objects) = resources.into_parts();
+        collections
+            .into_iter()
+            .map(TokenResourceScope::Collection)
+            .chain(classes.into_iter().map(TokenResourceScope::Class))
+            .chain(objects.into_iter().map(TokenResourceScope::Object))
+            .collect()
+    });
     TokenScopeDetails::from_scope(TokenScope::from_stored_parts(permissions, resources)?)
 }
 
@@ -170,8 +157,8 @@ fn token_metadata_from_storage(
         .map(token_scope_from_storage)
         .transpose()?;
     Ok(PrincipalTokenMetadata {
-        id: crate::models::TokenID::new(metadata.id().id())?,
-        principal_id: crate::models::PrincipalID::new(metadata.principal_id().id())?,
+        id: metadata.id(),
+        principal_id: metadata.principal_id(),
         name: metadata.name().map(str::to_string),
         description: metadata.description().map(str::to_string),
         issued: metadata.issued().naive_utc(),
@@ -242,24 +229,9 @@ pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> StorageAuthenticatio
     });
     let resources = scope.resource_ids().map(|resources| {
         StorageAuthenticationResourceScope::new(
-            resources
-                .collection_ids()
-                .iter()
-                .copied()
-                .map(collection_id_to_storage)
-                .collect(),
-            resources
-                .class_ids()
-                .iter()
-                .copied()
-                .map(class_id_to_storage)
-                .collect(),
-            resources
-                .object_ids()
-                .iter()
-                .copied()
-                .map(object_id_to_storage)
-                .collect(),
+            resources.collection_ids().to_vec(),
+            resources.class_ids().to_vec(),
+            resources.object_ids().to_vec(),
         )
     });
     StorageAuthenticationTokenScope::new(permissions, resources)
@@ -437,7 +409,7 @@ pub async fn create_token(
     let parts = request.into_parts();
     let raw = crate::utilities::auth::generate_token();
     let storage_request = StorageTokenCreate::new(
-        principal_id_to_storage(parts.principal_id.id()),
+        parts.principal_id,
         raw.storage_digest()?,
         token_policy(issuance_policy),
         event_context.clone(),
@@ -472,7 +444,7 @@ pub async fn renew_token(
     let request = StorageTokenRenew::new(
         hubuum_domain::TokenId::new(source_token_id)
             .expect("validated source token id must be positive"),
-        principal_id_to_storage(principal_id),
+        PrincipalId::new(principal_id)?,
         raw.storage_digest()?,
         expires_at.map(|timestamp| timestamp.and_utc()),
         token_policy(issuance_policy),
@@ -500,7 +472,7 @@ pub async fn get_token_metadata(
     token_metadata_from_storage(
         storage_handle(context)
             .get_token_metadata(
-                principal_id_to_storage(principal_id),
+                PrincipalId::new(principal_id)?,
                 hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
                 token_observation()?,
             )
@@ -538,7 +510,7 @@ pub async fn revoke_token(
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
             hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
-            principal_id_to_storage(principal_id),
+            PrincipalId::new(principal_id)?,
             event_context.clone(),
         ))
         .await?
@@ -552,7 +524,7 @@ pub async fn revoke_token_by_hash(
     event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     let request = StorageTokenHashRevoke::try_candidates(
-        principal_id.map(principal_id_to_storage),
+        principal_id.map(PrincipalId::new).transpose()?,
         credentials,
         event_context.clone(),
     )
@@ -570,7 +542,7 @@ pub async fn revoke_all_principal_tokens(
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
-            principal_id_to_storage(principal_id),
+            PrincipalId::new(principal_id)?,
             event_context.clone(),
         ))
         .await?
@@ -630,10 +602,7 @@ pub async fn get_principal_group(
 ) -> Result<PrincipalGroup, ApiError> {
     principal_group_from_storage(
         storage_handle(context)
-            .get_principal_group(
-                principal_id_to_storage(principal_id),
-                group_id_to_storage(group_id),
-            )
+            .get_principal_group(PrincipalId::new(principal_id)?, GroupId::new(group_id)?)
             .await?,
     )
 }
@@ -645,7 +614,7 @@ pub async fn list_principal_groups(
 ) -> Result<(Vec<Group>, i64), ApiError> {
     let (rows, total) = storage_handle(context)
         .list_principal_groups(StoragePrincipalGroupListQuery::new(
-            principal_id_to_storage(principal_id),
+            PrincipalId::new(principal_id)?,
             options,
         ))
         .await?
@@ -665,7 +634,7 @@ pub async fn list_retained_tokens(
     state: TokenListState,
 ) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {
     let query = StorageTokenListQuery::new(
-        principal_id_to_storage(principal_id),
+        PrincipalId::new(principal_id)?,
         options,
         token_state(state),
         token_observation()?,
@@ -689,8 +658,8 @@ pub async fn is_human_owner_group_member(
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
         .is_human_owner_group_member(
-            principal_id_to_storage(principal_id),
-            group_id_to_storage(owner_group_id),
+            PrincipalId::new(principal_id)?,
+            GroupId::new(owner_group_id)?,
         )
         .await?)
 }
@@ -700,7 +669,7 @@ pub async fn is_service_account_disabled(
     principal_id: i32,
 ) -> Result<bool, ApiError> {
     Ok(storage_handle(context)
-        .is_service_account_disabled(principal_id_to_storage(principal_id))
+        .is_service_account_disabled(PrincipalId::new(principal_id)?)
         .await?)
 }
 
@@ -751,7 +720,7 @@ pub async fn list_manageable_service_accounts(
     options: QueryOptions,
 ) -> Result<(Vec<ServiceAccountWithName>, i64), ApiError> {
     let query = StorageServiceAccountListQuery::new(
-        principal_id_to_storage(requestor_id),
+        PrincipalId::new(requestor_id)?,
         administrator,
         options,
     );
@@ -786,8 +755,8 @@ pub async fn create_service_account(
     let request = StorageServiceAccountCreate::new(
         &account.name,
         account.description.clone().unwrap_or_default(),
-        group_id_to_storage(account.owner_group_id.id()),
-        created_by.map(principal_id_to_storage),
+        account.owner_group_id,
+        created_by.map(PrincipalId::new).transpose()?,
         event_context.clone(),
     );
     Ok(service_account_from_storage(
@@ -808,7 +777,7 @@ pub async fn update_service_account(
         hubuum_domain::ServiceAccountId::new(id)
             .expect("validated service account id must be positive"),
         update.description.clone(),
-        update.owner_group_id.map(group_id_to_storage),
+        update.owner_group_id.map(GroupId::new).transpose()?,
         event_context.clone(),
     );
     Ok(service_account_from_storage(
@@ -888,7 +857,7 @@ pub async fn get_external_principal_state(
     principal_id: i32,
 ) -> Result<Option<ExternalPrincipalState>, ApiError> {
     Ok(storage_handle(context)
-        .get_external_principal_state(principal_id_to_storage(principal_id))
+        .get_external_principal_state(PrincipalId::new(principal_id)?)
         .await?
         .map(external_state_from_storage))
 }
@@ -898,7 +867,7 @@ pub async fn mark_external_sync_attempted(
     principal_id: i32,
 ) -> Result<(), ApiError> {
     Ok(storage_handle(context)
-        .mark_external_sync_attempted(principal_id_to_storage(principal_id))
+        .mark_external_sync_attempted(PrincipalId::new(principal_id)?)
         .await?)
 }
 

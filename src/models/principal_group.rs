@@ -1,12 +1,12 @@
 use crate::models::ResourceRevision;
 use crate::models::group::Group;
 use crate::models::principal::Principal;
+use hubuum_domain::{GroupId, PrincipalId};
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::services::storage_boundary::{
-    group_from_storage, group_id_to_storage, principal_from_storage, principal_group_from_storage,
-    principal_id_to_storage,
+    group_from_storage, principal_from_storage, principal_group_from_storage,
 };
 use crate::storage::{
     GroupMembershipStorage, GroupStorage, PrincipalStorage, StorageContext, storage_handle,
@@ -41,8 +41,8 @@ impl SaveAdapter for NewPrincipalGroup {
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
             .add_group_member(
-                principal_id_to_storage(self.principal_id),
-                group_id_to_storage(self.group_id),
+                PrincipalId::new(self.principal_id)?,
+                GroupId::new(self.group_id)?,
                 &EventContext::system(),
             )
             .await
@@ -58,8 +58,8 @@ impl SaveAdapter for NewPrincipalGroup {
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
             .add_group_member(
-                principal_id_to_storage(self.principal_id),
-                group_id_to_storage(self.group_id),
+                PrincipalId::new(self.principal_id)?,
+                GroupId::new(self.group_id)?,
                 context,
             )
             .await
@@ -75,7 +75,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .get_principal(principal_id_to_storage(self.principal_id))
+            .get_principal(PrincipalId::new(self.principal_id)?)
             .await
             .map_err(ApiError::from)
             .and_then(principal_from_storage)
@@ -86,7 +86,7 @@ impl PrincipalGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .get_group(group_id_to_storage(self.group_id))
+            .get_group(GroupId::new(self.group_id)?)
             .await
             .map_err(ApiError::from)
             .and_then(group_from_storage)
@@ -98,8 +98,8 @@ impl PrincipalGroup {
     {
         storage_handle(backend)
             .add_group_member(
-                principal_id_to_storage(self.principal_id),
-                group_id_to_storage(self.group_id),
+                PrincipalId::new(self.principal_id)?,
+                GroupId::new(self.group_id)?,
                 &EventContext::system(),
             )
             .await
@@ -114,8 +114,8 @@ impl PrincipalGroup {
     {
         storage_handle(backend)
             .remove_group_member(
-                principal_id_to_storage(self.principal_id),
-                group_id_to_storage(self.group_id),
+                PrincipalId::new(self.principal_id)?,
+                GroupId::new(self.group_id)?,
                 &EventContext::system(),
             )
             .await

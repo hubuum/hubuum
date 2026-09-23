@@ -1,3 +1,4 @@
+use hubuum_domain::PrincipalId;
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PermissionDecision, PrincipalRef, ResourceRef,
 };
-use crate::services::storage_boundary::principal_id_to_storage;
+
 use crate::storage::{
     AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
     StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
@@ -383,7 +384,7 @@ pub(crate) async fn submit_task(
     let metadata = super::task_discovery::capture(task_kind, &submission.payload)?;
     let request = StorageTaskCreateRequest::builder(
         task_kind,
-        principal_id_to_storage(submission.submitted_by.id()),
+        submission.submitted_by,
         submission.payload,
         submission.total_items,
     )
@@ -550,7 +551,7 @@ where
     let allowed = match authorization_mode {
         AuthorizationMode::LocalStorage => {
             let (identity, _) = storage_handle(backend)
-                .get_authentication_identity(principal_id_to_storage(requestor.principal_id()))
+                .get_authentication_identity(requestor.validated_principal_id()?)
                 .await?
                 .into_parts();
             requestor.is_admin(backend).await?
@@ -585,7 +586,7 @@ pub(crate) async fn list_tasks(
     let (tasks, total) = storage_handle(backend)
         .list_tasks(
             StorageTaskListQuery::new(
-                submitted_by.map(principal_id_to_storage),
+                submitted_by.map(PrincipalId::new).transpose()?,
                 None,
                 None,
                 options,
@@ -958,7 +959,7 @@ pub(crate) async fn cancel_task(
 ) -> Result<TaskRecord, ApiError> {
     use crate::models::Permissions;
     use crate::traits::{SelfAccessors, UserPermissions};
-    use hubuum_domain::ClassId;
+
     use hubuum_storage_core::{SchemaEvolutionStorage, StorageTaskCancellationRequest};
 
     let (stored, owner_group) = storage_handle(backend)
@@ -1016,9 +1017,7 @@ pub(crate) async fn cancel_task(
     }
     if stored.kind() == StorageTaskKind::SchemaValidation {
         let work = storage_handle(backend).get_schema_work(task_id).await?;
-        let class = ClassId::new(work.target().class_id().id())?
-            .instance(backend)
-            .await?;
+        let class = work.target().class_id().instance(backend).await?;
         crate::can!(
             backend,
             &requestor.principal,
