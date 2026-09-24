@@ -8,6 +8,15 @@
 
 Hubuum is a REST service that provides a shared interface for your resources.
 
+**[Documentation website](https://hubuum.github.io/hubuum/)** ·
+[Get started](docs/getting-started/index.md) ·
+[Administration](docs/administration/index.md) ·
+[API and clients](docs/integrations/index.md)
+
+The website opens the latest released documentation. Select a release version
+or explicitly choose `main` for development documentation, and check
+[client compatibility](docs/integrations/clients.md#choose-compatible-versions).
+
 The latest release is [Hubuum `0.0.16`](https://github.com/hubuum/hubuum/releases/tag/v0.0.16),
 published on September 22, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
@@ -39,8 +48,9 @@ database role mode uses the existing `HUBUUM_DATABASE_URL`; separate owner, migr
 and runtime roles are optional. Web restores also require a separately supervised
 `hubuum-admin --restore-executor` process.
 
-- Follow the [quick start guide](docs/quick_start.md) for configuration and first-time
-  administrator setup.
+- Follow [Run your first server](docs/getting-started/first-server.md) for a local
+  evaluation and first-time administrator setup; see the
+  [configuration reference](docs/quick_start.md) for all settings.
 - Follow the [deployment guide](docs/deployment.md) for Docker or Podman Compose
   installation.
 - Follow the [distributed deployment guide](docs/distributed_deployment.md) for

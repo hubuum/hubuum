@@ -7,6 +7,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- A searchable Zensical documentation website, automatically published to GitHub
+  Pages with immutable `/vX.Y.Z/` release snapshots, the latest release as the
+  default, an explicit development edition, and on-demand older-release
+  publishing. Guided paths cover users, administrators, integrators, and
+  contributors, with links to the CLI, frontend, and client-library guides.
+
+### Fixed
+
+- Documentation entry points now distinguish first-time setup from configuration
+  reference. Corrected outdated source links, an incomplete Compose example,
+  and the collection guide's description of token resource scopes.
+
 ## [0.0.16] - 2026-09-22
 
 ### Security

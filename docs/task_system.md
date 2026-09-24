@@ -37,10 +37,10 @@ The result/output tables are typed per task kind.
 
 Relevant code:
 
-- [src/models/task.rs](../src/models/task.rs)
-- [PostgreSQL task queue operations](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
-- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
-- [PostgreSQL initial migration](../crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql)
+- [src/models/task.rs](https://github.com/hubuum/hubuum/blob/main/src/models/task.rs)
+- [PostgreSQL task queue operations](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_queue.rs)
+- [PostgreSQL task execution operations](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_execution.rs)
+- [PostgreSQL initial migration](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/migrations/2023-12-27-011440_initial/up.sql)
 
 ### `tasks`
 
@@ -118,7 +118,7 @@ shape does not match an existing table.
 
 ## Status model
 
-Generic statuses are defined in [src/models/task.rs](../src/models/task.rs):
+Generic statuses are defined in [src/models/task.rs](https://github.com/hubuum/hubuum/blob/main/src/models/task.rs):
 
 - `queued`
 - `validating`
@@ -150,7 +150,7 @@ Imports are created through:
 
 Relevant code:
 
-- [src/api/v1/handlers/imports.rs](../src/api/v1/handlers/imports.rs)
+- [src/api/v1/handlers/imports.rs](https://github.com/hubuum/hubuum/blob/main/src/api/v1/handlers/imports.rs)
 
 Submission flow:
 
@@ -165,7 +165,7 @@ Submission flow:
 
 Task creation itself is generic and implemented in:
 
-- [`create_task`](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
+- [`create_task`](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_queue.rs)
 
 When a task is created:
 
@@ -178,10 +178,10 @@ When a task is created:
 
 The worker implementation lives in:
 
-- [src/tasks/worker.rs](../src/tasks/worker.rs)
-- [src/tasks/planning.rs](../src/tasks/planning.rs)
-- [src/tasks/execution.rs](../src/tasks/execution.rs)
-- [src/tasks/resolution.rs](../src/tasks/resolution.rs)
+- [src/tasks/worker.rs](https://github.com/hubuum/hubuum/blob/main/src/tasks/worker.rs)
+- [src/tasks/planning.rs](https://github.com/hubuum/hubuum/blob/main/src/tasks/planning.rs)
+- [src/tasks/execution.rs](https://github.com/hubuum/hubuum/blob/main/src/tasks/execution.rs)
+- [src/tasks/resolution.rs](https://github.com/hubuum/hubuum/blob/main/src/tasks/resolution.rs)
 
 There are two entry points:
 
@@ -192,7 +192,7 @@ There are two entry points:
 
 `ensure_task_worker_running` is called during server startup from:
 
-- [src/main.rs](../src/main.rs)
+- [src/main.rs](https://github.com/hubuum/hubuum/blob/main/src/main.rs)
 
 It starts a fixed number of background worker loops once per process.
 
@@ -236,7 +236,7 @@ The HTTP worker count and background task worker count are intentionally separat
 
 Task claiming is DB-backed and implemented in:
 
-- [`claim_next_task`](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
+- [`claim_next_task`](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_execution.rs)
 
 Claiming uses:
 
@@ -278,7 +278,7 @@ Current dispatch:
 
 This logic is in:
 
-- [process_one_task](../src/tasks/worker.rs)
+- [process_one_task](https://github.com/hubuum/hubuum/blob/main/src/tasks/worker.rs)
 
 Computed-field reindex tasks carry a server-owned payload with the class,
 target evaluation revision, and a fixed object-ID upper bound. Definition
@@ -311,7 +311,7 @@ If the payload is missing or invalid, the task is marked failed.
 
 Planning is implemented in:
 
-- [plan_import](../src/tasks/planning.rs)
+- [plan_import](https://github.com/hubuum/hubuum/blob/main/src/tasks/planning.rs)
 
 Planning walks the import graph in dependency order:
 
@@ -348,7 +348,7 @@ Execution mode depends on `mode.atomicity`.
 
 Implemented in:
 
-- [execute_import_strict](../src/tasks/execution.rs)
+- [execute_import_strict](https://github.com/hubuum/hubuum/blob/main/src/tasks/execution.rs)
 
 Behavior:
 
@@ -367,7 +367,7 @@ So strict mode means “domain writes are all-or-nothing”, not “all task met
 
 Implemented in:
 
-- [execute_import_best_effort](../src/tasks/execution.rs)
+- [execute_import_best_effort](https://github.com/hubuum/hubuum/blob/main/src/tasks/execution.rs)
 
 Behavior:
 
@@ -391,7 +391,7 @@ After execution:
 Terminal completion, failure, event append, result persistence, and redaction
 are implemented together in:
 
-- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
+- [PostgreSQL task execution operations](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_execution.rs)
 
 Redaction means:
 
@@ -484,7 +484,7 @@ Admin queue state is exposed through:
 
 Relevant code:
 
-- [src/api/handlers/meta.rs](../src/api/handlers/meta.rs)
+- [src/api/handlers/meta.rs](https://github.com/hubuum/hubuum/blob/main/src/api/handlers/meta.rs)
 
 This endpoint exports:
 
@@ -562,11 +562,11 @@ The task system now has coverage in three areas:
 
 See:
 
-- [PostgreSQL task queue operations](../crates/hubuum-storage-postgres/src/operations/task_queue.rs)
-- [PostgreSQL task execution operations](../crates/hubuum-storage-postgres/src/operations/task_execution.rs)
-- [src/tasks/tests.rs](../src/tasks/tests.rs)
-- [src/tests/api/v1/imports.rs](../src/tests/api/v1/imports.rs)
-- [src/tests/api/meta.rs](../src/tests/api/meta.rs)
+- [PostgreSQL task queue operations](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_queue.rs)
+- [PostgreSQL task execution operations](https://github.com/hubuum/hubuum/blob/main/crates/hubuum-storage-postgres/src/operations/task_execution.rs)
+- [src/tasks/tests.rs](https://github.com/hubuum/hubuum/blob/main/src/tasks/tests.rs)
+- [tests/api_jobs_suite/imports.rs](https://github.com/hubuum/hubuum/blob/main/tests/api_jobs_suite/imports.rs)
+- [tests/api_platform_suite/meta.rs](https://github.com/hubuum/hubuum/blob/main/tests/api_platform_suite/meta.rs)
 
 ## Recommended mental model
 

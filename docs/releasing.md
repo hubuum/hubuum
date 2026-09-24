@@ -1,7 +1,7 @@
 # Releasing Hubuum
 
 This repository uses the CI workflow in
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for both validation and publishing.
+[`.github/workflows/ci.yml`](https://github.com/hubuum/hubuum/blob/main/.github/workflows/ci.yml) for both validation and publishing.
 
 ## What the workflows enforce
 
@@ -24,14 +24,14 @@ This repository uses the CI workflow in
 
 ## Scripted release flow
 
-Use the helper script in [`scripts/release.sh`](../scripts/release.sh), replacing
+Use the helper script in [`scripts/release.sh`](https://github.com/hubuum/hubuum/blob/main/scripts/release.sh), replacing
 `X.Y.Z` with the new release version:
 
 1. Start from a clean local `main`.
 2. Run `./scripts/release.sh prepare X.Y.Z`.
 3. Review the generated release branch `release/vX.Y.Z`, including the full
    `Cargo.lock` dependency refresh, and polish `CHANGELOG.md` if needed.
-4. Update [`README.md`](../README.md) for the new release: version and date,
+4. Update [`README.md`](https://github.com/hubuum/hubuum/blob/main/README.md) for the new release: version and date,
    pinned container example, release links and highlights, and changed installation
    or upgrade requirements. Keep these aligned with `Cargo.toml`, `CHANGELOG.md`,
    and the release artifacts. This review is required for every release; the helper

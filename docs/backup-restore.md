@@ -88,7 +88,7 @@ Both shared and personal computed-field definitions are preserved, including
 personal ownership. Class computation state and object materializations remain
 excluded as rebuildable caches; restore validates definitions and queues shared
 class rebuild tasks. Personal values are evaluated when their owner reads an
-object. The [functional corpus](../test-corpora/README.md#object-data-and-computed-fields)
+object. The [functional corpus](https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md#object-data-and-computed-fields)
 includes verified restore examples for both scopes.
 
 The manifest does not carry partial-selection counts, import-planning
@@ -365,7 +365,7 @@ predicates and request-provided identifiers are not accepted.
 ## Benchmark dataset seeding
 
 For manual and functional testing, download the committed
-[comprehensive test corpus](../test-corpora/README.md) from the same branch or
+[comprehensive test corpus](https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md) from the same branch or
 release tag as the server. It is an ordinary full-system backup containing
 3,000 objects, twelve classes with mixed schema policies, permission scenarios,
 relations and retained history. Consumers can restore it directly without

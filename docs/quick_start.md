@@ -1,4 +1,9 @@
-# Quick Start Guide
+# Configuration reference
+
+For a short, ordered walkthrough, start with
+[Run your first server](getting-started/first-server.md). This page is the
+detailed reference for environment variables, probes, exit codes, and bootstrap
+behavior. Its existing `quick_start.md` path is retained for incoming links.
 
 ## Environment Variables
 
@@ -380,20 +385,12 @@ and [split-role mounts](secret_sources.md#split-role-mounts).
 
 ### Docker Compose
 
-```yaml
-services:
-  hubuum:
-    image: hubuum:latest
-    environment:
-      HUBUUM_BIND_IP: "0.0.0.0"
-      HUBUUM_DATABASE_URL: "postgres://hubuum:password@postgres:5432/hubuum"
-      HUBUUM_LOG_LEVEL: "info"
-      HUBUUM_CLIENT_ALLOWLIST: "*"
-    ports:
-      - "8080:8080"
-    depends_on:
-      - postgres
-```
+Use [single-host deployment](deployment.md) for a complete installation with
+PostgreSQL, explicit migration sequencing, a restore executor, and optional
+frontend. For source development, use the repository's
+[Compose configuration](https://github.com/hubuum/hubuum/blob/main/docker-compose.yml)
+and the migration commands described above. A server-only Compose service does
+not provision its database or apply migrations.
 
 ## See Also
 

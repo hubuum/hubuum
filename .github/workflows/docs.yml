@@ -1,0 +1,109 @@
+name: Documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  # Releases created by CI's GITHUB_TOKEN do not emit another workflow event.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Also publish a stable release tag (vX.Y.Z); leave empty for main and the latest release'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Documentation inputs
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-24.04
+    outputs:
+      documentation: ${{ steps.paths.outputs.documentation }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Classify documentation inputs
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          RELEASE: ${{ github.event_name == 'release' || github.event_name == 'workflow_run' }}
+        shell: bash
+        run: |
+          if [[ "$MANUAL" == true || "$RELEASE" == true || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            echo 'documentation=true' >> "$GITHUB_OUTPUT"
+          else
+            paths=()
+            while IFS= read -r -d '' path; do
+              paths+=("$path")
+            done < <(git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA")
+            bash scripts/classify-ci-changes.sh "${paths[@]}"
+          fi
+
+  build:
+    name: Build documentation
+    needs: changes
+    if: needs.changes.outputs.documentation == 'true'
+    uses: hubuum/.github/.github/workflows/docs-build.yml@b900399e221aa53b09d280c13052e09f64929550 # shared documentation platform
+    with:
+      tooling_revision: 'b900399e221aa53b09d280c13052e09f64929550'
+      source_ref: ${{ (github.event_name == 'release' || github.event_name == 'workflow_run') && 'main' || github.sha }}
+      versioned: true
+      version: ${{ inputs.version || github.event.workflow_run.head_branch || (github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name) || '' }}
+
+  check:
+    name: Documentation check
+    if: always() && needs.changes.result != 'skipped'
+    needs: [changes, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require successful validation when documentation changes
+        env:
+          CLASSIFICATION: ${{ needs.changes.result }}
+          REQUIRED: ${{ needs.changes.outputs.documentation }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          test "$CLASSIFICATION" = success
+          if [[ "$REQUIRED" == true ]]; then
+            test "$BUILD" = success
+          fi
+
+  deploy:
+    name: Publish documentation
+    needs: [build, check]
+    if: >-
+      github.repository == 'hubuum/hubuum' &&
+      ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') ||
+      (github.event_name == 'release' && !github.event.release.prerelease) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'))
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    uses: hubuum/.github/.github/workflows/docs-publish.yml@b900399e221aa53b09d280c13052e09f64929550 # shared documentation platform
+    with:
+      tooling_revision: 'b900399e221aa53b09d280c13052e09f64929550'
+      source_sha: ${{ needs.build.outputs.source_sha }}

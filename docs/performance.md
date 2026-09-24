@@ -81,7 +81,7 @@ as Hubuum's pool-local `in_use_connections`.
 
 ## Repeatable Load Test
 
-The k6 scenario in [`load-tests/pool.js`](../load-tests/pool.js) drives a
+The k6 scenario in [`load-tests/pool.js`](https://github.com/hubuum/hubuum/blob/main/load-tests/pool.js) drives a
 constant request arrival rate. Run it only against an isolated test deployment
 with production-like data and database latency.
 
