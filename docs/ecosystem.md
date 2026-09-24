@@ -18,7 +18,13 @@ is an earlier implementation. The current Python client is
 
 ## One entry point, clear ownership
 
-This site owns shared concepts, server operation, API behavior, and cross-project
+The proposed organization landing page at `https://hubuum.github.io/` belongs in
+the separate `hubuum/hubuum.github.io` repository. It introduces the ecosystem
+and directs readers to each project. The `.github` repository supplies the GitHub
+organization profile, which can link to that landing page. See the
+[site ownership plan](contributing/documentation.md#organization-landing-page-and-project-sites).
+
+This server site at `/hubuum/` owns shared concepts, server operation, API behavior, and cross-project
 workflows. Companion repositories own their installation instructions,
 language-specific examples, command/UI reference, and release history.
 
@@ -29,4 +35,4 @@ automatically; consult each project's declared server targets.
 Maintainers adding another client or interface should follow the
 [ecosystem documentation contract](contributing/documentation.md#connecting-companion-projects).
 It allows each project to publish its own detailed documentation while sharing
-the same entry point here.
+navigation and an organization-wide entry point.

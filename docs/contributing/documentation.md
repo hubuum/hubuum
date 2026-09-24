@@ -146,7 +146,48 @@ for the hosting requirements.
 
 ## Connecting companion projects
 
-The initial site is a curated hub. It links to the real documentation maintained
+### Organization landing page and project sites
+
+The proposed ecosystem entry point is **`https://hubuum.github.io/`**, published
+from a separate **`hubuum/hubuum.github.io`** repository. GitHub requires that
+repository name for an organization Pages site. This server repository publishes
+the project site at **`https://hubuum.github.io/hubuum/`**. Each companion
+repository can independently publish its own project site below the same host.
+See [GitHub's site types](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages).
+
+| Repository | Responsibility | Public entry point |
+| --- | --- | --- |
+| `hubuum/hubuum.github.io` (proposed) | Ecosystem introduction, project cards, shared navigation, contribution and support links | `https://hubuum.github.io/` |
+| `hubuum/hubuum` | Server concepts, tutorials, administration, HTTP contracts, and versioned references | `https://hubuum.github.io/hubuum/` |
+| Each client, CLI, or frontend repository | Its own installation, examples, reference, compatibility, and releases | Its existing guides, then `https://hubuum.github.io/<repository>/` when published |
+| `hubuum/.github` | GitHub organization profile and shared community files | `https://github.com/hubuum` |
+
+The `.github/profile/README.md` file supplies the GitHub organization profile;
+it should introduce the ecosystem and link to the landing page. It does not
+control the root Pages site. See
+[GitHub's organization-profile instructions](https://docs.github.com/en/organizations/collaborating-with-groups-in-organizations/customizing-your-organizations-profile).
+
+Keep the landing page small: an introduction, audience entry points, and five
+cards for Server, Frontend, CLI, Rust client, and Python client. Give each card a
+short purpose statement and links to documentation, source, and releases. Use
+the same typography and colors as the documentation, with a shared ecosystem
+navigation and a home link from each project. A small Zensical site can use the
+same pinned container and Pages artifact workflow without importing server docs.
+
+The ecosystem landing page has no combined product version. Each project owns
+its own release selector, and stable entry links open that project's latest
+released documentation. The server keeps `/hubuum/vX.Y.Z/` and explicit
+`/hubuum/main/` editions. Client and server releases need not have matching
+numbers. Link to existing companion guides until their sites are published;
+do not advertise an unprovisioned Pages URL as a working documentation link.
+
+Create and enable the organization-site repository separately, then update the
+profile and project navigation to point to its live URL. The initial server-site
+PR does not create that repository or publish the organization root.
+
+### Content ownership and shared navigation
+
+The initial server site links to the real documentation maintained
 in the Rust client, Python client, CLI, and frontend repositories. It does not
 fetch another repository's moving default branch during a documentation build.
 

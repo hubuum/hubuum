@@ -50,6 +50,7 @@ These are proposed follow-ups, not capabilities implemented by the initial site.
 
 | Priority | Work | Completion criterion |
 | --- | --- | --- |
+| 1 | Publish the organization landing page from `hubuum/hubuum.github.io`. | Five project cards, shared branding, working documentation links, and a link from `.github/profile/README.md`; each project's versioning remains independent. |
 | 1 | Add a complete inventory walkthrough spanning the frontend, CLI, and one client. | A tested scenario with permissions, sample data, expected results, and cleanup, owned jointly by the affected projects. |
 | 1 | Review each operational example against a pinned released deployment. | Reproducible evidence for install, upgrade, backup, and restore examples; remove redundant snippets. |
 | 2 | Separate long mixed-purpose references where it helps readers. | Keep stable links or redirects while distinguishing tutorials, how-to guides, reference, and design rationale. |
