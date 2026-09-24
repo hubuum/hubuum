@@ -89,8 +89,7 @@ assert_flag "$docs_output" artifacts false
 assert_flag "$docs_output" treetop_conformance false
 
 for site_input in zensical.toml docs/assets/stylesheets/extra.css \
-  docs-site/overrides/main.html .github/docs-tools.env .github/workflows/docs.yml \
-  scripts/docs.sh scripts/check-docs.py scripts/test-check-docs.py scripts/docs-versions.py; do
+  .github/docs-tools.env .github/workflows/docs.yml scripts/docs.sh; do
   site_output="$(bash "$classifier" "$site_input")"
   assert_flag "$site_output" documentation true
   assert_flag "$site_output" code false

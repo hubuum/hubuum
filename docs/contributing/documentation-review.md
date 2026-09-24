@@ -19,6 +19,7 @@ executed against every supported deployment.
 | Operations content was scattered among configuration, metrics, deployment, and recovery references. | Added an administrator entry point, symptom-based troubleshooting, and links to existing dashboards and runbooks. |
 | The clients and frontend release independently; an older Python repository is archived. | Linked the active companion repositories and their compatibility records, distinguished the CLI from `hubuum-admin`, and identified the archived project. |
 | A website could make development behavior look like a released contract. | Made the latest release the default, retained immutable `/vX.Y.Z/` snapshots, and made development an explicit version-menu choice. |
+| The ecosystem needs a shared front door without coupled product releases. | Added an organization landing-page repository and companion site setup, sharing pinned theme and publishing tools through `.github`. |
 | New pages could become invisible as the library grows. | Added a navigation coverage check, strict source-link validation, rendered-link checks, and a required-check-compatible PR workflow. |
 
 ## Placement of the existing library
@@ -50,11 +51,9 @@ These are proposed follow-ups, not capabilities implemented by the initial site.
 
 | Priority | Work | Completion criterion |
 | --- | --- | --- |
-| 1 | Publish the organization landing page from `hubuum/hubuum.github.io`. | Five project cards, shared branding, working documentation links, and a link from `.github/profile/README.md`; each project's versioning remains independent. |
 | 1 | Add a complete inventory walkthrough spanning the frontend, CLI, and one client. | A tested scenario with permissions, sample data, expected results, and cleanup, owned jointly by the affected projects. |
 | 1 | Review each operational example against a pinned released deployment. | Reproducible evidence for install, upgrade, backup, and restore examples; remove redundant snippets. |
 | 2 | Separate long mixed-purpose references where it helps readers. | Keep stable links or redirects while distinguishing tutorials, how-to guides, reference, and design rationale. |
-| 2 | Publish companion documentation sites. | Stable documentation homes with backlinks, shared concepts, and release compatibility records. |
 | 3 | Consider unified ecosystem search. | Pinned cross-repository inputs, preserved ownership/edit links, reproducible builds, and an agreed compatibility policy. |
 
 For each future PR, review audience placement, local links, version applicability,

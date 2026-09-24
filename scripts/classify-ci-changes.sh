@@ -31,9 +31,8 @@ for path in "$@"; do
   fi
 
   case "$path" in
-    docs/* | docs-site/* | zensical.toml | .github/docs-tools.env | \
-      .github/workflows/docs.yml | scripts/docs.sh | scripts/check-docs.py | \
-      scripts/test-check-docs.py | scripts/docs-versions.py | scripts/classify-ci-changes.sh | \
+    docs/* | zensical.toml | .github/docs-tools.env | \
+      .github/workflows/docs.yml | scripts/docs.sh | scripts/classify-ci-changes.sh | \
       scripts/test-classify-ci-changes.sh | scripts/check-python-version.py | \
       .python-version)
       documentation=true
@@ -115,8 +114,8 @@ for path in "$@"; do
       # semantic-documentation tests in src/tests/application_boundary.rs.
       code=true
       ;;
-    zensical.toml | docs-site/* | .github/docs-tools.env | .github/workflows/docs.yml | \
-      scripts/docs.sh | scripts/check-docs.py | scripts/test-check-docs.py | scripts/docs-versions.py)
+    zensical.toml | .github/docs-tools.env | .github/workflows/docs.yml | \
+      scripts/docs.sh)
       # Documentation has its own containerized build and validation workflow.
       ;;
     .markdownlint.json)

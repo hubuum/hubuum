@@ -7,10 +7,12 @@ navigation labels can change without moving files.
 
 ## Preview and validate locally
 
-Requirements: Python 3.11 or newer, Bash, and a running Docker engine.
-The scripts use only the Python standard library. Zensical runs in its official
-container, pinned by version and digest in `.github/docs-tools.env`; there is
-no Python package installation or virtual environment to maintain here.
+Requirements: Python 3.11 or newer, Git, Bash, and a running Docker engine.
+The scripts use only the Python standard library. `.github/docs-tools.env` pins
+the shared tooling commit from [hubuum/.github](https://github.com/hubuum/.github).
+That revision owns the digest-pinned official Zensical container, theme, checks,
+and reusable workflows. There is no Python package installation or virtual
+environment to maintain in this repository.
 
 From the repository root:
 
@@ -18,12 +20,11 @@ From the repository root:
 bash scripts/docs.sh serve
 ```
 
-Open `http://127.0.0.1:8000`. The preview rebuilds as you edit documentation.
-Stop it with Ctrl-C. Restart it after changing `zensical.toml`, since the preview
-uses a prepared edition-specific configuration. Run the same validation as the publishing build with:
+Open `http://127.0.0.1:8000`. Stop the preview with Ctrl-C and rebuild after editing
+source files or configuration. Run the same validation as the publishing build with:
 
 ```sh
-python3 scripts/test-check-docs.py
+bash scripts/docs.sh check
 bash scripts/docs.sh build
 npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"
 ```
@@ -67,7 +68,7 @@ while having one canonical navigation entry.
 
 Use descriptive link labels, one H1 per page, a language on every code fence,
 and consistent Markdown table separators. Prefer normal Markdown; the home page
-uses a small HTML wrapper for Zensical's accessible card layout. The stylesheet
+uses a small HTML wrapper for Zensical's accessible card layout. The shared stylesheet
 adds only typography, color, and card treatment, and system fonts avoid a
 third-party font request.
 
@@ -118,6 +119,9 @@ A repository administrator must select **Settings → Pages → Build and deploy
 deployments from `main` and release tags matching `v*`. Add **Documentation check** to the repository's
 required checks if documentation builds should block merging.
 
+The shared [`scripts/setup-pages.sh`](https://github.com/hubuum/.github/blob/main/scripts/setup-pages.sh)
+configures Pages for all six sites from an authenticated administrator's terminal.
+
 After merging the setup, run the `Documentation` workflow on `main` if necessary
 to publish or retry the first deployment. The first publication includes the
 latest released tag even when that tag predates the website. Build validation
@@ -148,7 +152,7 @@ for the hosting requirements.
 
 ### Organization landing page and project sites
 
-The proposed ecosystem entry point is **`https://hubuum.github.io/`**, published
+The ecosystem entry point is **`https://hubuum.github.io/`**, published
 from a separate **`hubuum/hubuum.github.io`** repository. GitHub requires that
 repository name for an organization Pages site. This server repository publishes
 the project site at **`https://hubuum.github.io/hubuum/`**. Each companion
@@ -157,9 +161,9 @@ See [GitHub's site types](https://docs.github.com/en/pages/getting-started-with-
 
 | Repository | Responsibility | Public entry point |
 | --- | --- | --- |
-| `hubuum/hubuum.github.io` (proposed) | Ecosystem introduction, project cards, shared navigation, contribution and support links | `https://hubuum.github.io/` |
+| `hubuum/hubuum.github.io` | Ecosystem introduction, project cards, shared navigation, contribution and support links | `https://hubuum.github.io/` |
 | `hubuum/hubuum` | Server concepts, tutorials, administration, HTTP contracts, and versioned references | `https://hubuum.github.io/hubuum/` |
-| Each client, CLI, or frontend repository | Its own installation, examples, reference, compatibility, and releases | Its existing guides, then `https://hubuum.github.io/<repository>/` when published |
+| Each client, CLI, or frontend repository | Its own installation, examples, reference, compatibility, and releases | `https://hubuum.github.io/<repository>/` |
 | `hubuum/.github` | GitHub organization profile and shared community files | `https://github.com/hubuum` |
 
 The `.github/profile/README.md` file supplies the GitHub organization profile;
@@ -167,12 +171,11 @@ it should introduce the ecosystem and link to the landing page. It does not
 control the root Pages site. See
 [GitHub's organization-profile instructions](https://docs.github.com/en/organizations/collaborating-with-groups-in-organizations/customizing-your-organizations-profile).
 
-Keep the landing page small: an introduction, audience entry points, and five
-cards for Server, Frontend, CLI, Rust client, and Python client. Give each card a
-short purpose statement and links to documentation, source, and releases. Use
-the same typography and colors as the documentation, with a shared ecosystem
-navigation and a home link from each project. A small Zensical site can use the
-same pinned container and Pages artifact workflow without importing server docs.
+The landing page contains an introduction, audience entry points, and five cards
+for Server, Frontend, CLI, Rust client, and Python client. Each card links to its
+documentation, source, and releases. All sites share typography, colors, ecosystem
+navigation, and a home link through pinned tooling in `.github`. Detailed content
+stays in the repository that owns it.
 
 The ecosystem landing page has no combined product version. Each project owns
 its own release selector, and stable entry links open that project's latest
@@ -181,14 +184,14 @@ released documentation. The server keeps `/hubuum/vX.Y.Z/` and explicit
 numbers. Link to existing companion guides until their sites are published;
 do not advertise an unprovisioned Pages URL as a working documentation link.
 
-Create and enable the organization-site repository separately, then update the
-profile and project navigation to point to its live URL. The initial server-site
-PR does not create that repository or publish the organization root.
+The organization-site repository and each companion site have their own Pages
+settings and publishing workflow. The server repository publishes `/hubuum/`;
+its deployments cannot overwrite the organization root or another project's site.
 
 ### Content ownership and shared navigation
 
-The initial server site links to the real documentation maintained
-in the Rust client, Python client, CLI, and frontend repositories. It does not
+The server site links to the documentation maintained in the Rust client,
+Python client, CLI, and frontend repositories. It does not
 fetch another repository's moving default branch during a documentation build.
 
 For each companion project, maintain these entry points in
@@ -200,10 +203,10 @@ For each companion project, maintain these entry points in
 4. Release notes and tested server compatibility, including evidence where available.
 5. A backlink to the shared server concepts, API contracts, and operations guides.
 
-A companion can publish its own Zensical site from its own repository, reusing
-the section names and visual theme. Replace the links here once that site is
-published. This keeps independent releases independent and avoids copying
-examples into several repositories.
+Each companion publishes its own Zensical site using shared tooling and its own
+navigation. This keeps independent releases independent and avoids copying
+examples into several repositories. The Python client retains its generated
+mkdocstrings API reference from the selected release's source.
 
 If unified cross-project search becomes a requirement, introduce a reviewed
 manifest of pinned companion revisions and an explicit import step, preserving
@@ -212,9 +215,14 @@ claim compatibility based only on the fact that documentation builds together.
 
 ## Changing the site tooling
 
-Update the Zensical version and multi-architecture digest together, then build
+Update the shared Zensical version and multi-architecture digest together, then build
 the site and check navigation, search, both color schemes, and narrow-screen
 layout. GitHub Actions are pinned to immutable commit SHAs.
+
+Adopt shared changes by updating `.github/docs-tools.env` and both reusable
+workflow references to the same reviewed commit. The shared implementation and
+its tests are maintained in `docs-tooling/` in `hubuum/.github`;
+each project pins its own adoption point.
 
 When adding build inputs, update `scripts/classify-ci-changes.sh` and its
 regression tests so the documentation job runs for them. Do not suppress link

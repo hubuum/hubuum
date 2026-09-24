@@ -5,7 +5,7 @@ their source so installation details and examples can track each release.
 
 ## Web frontend
 
-Use the [frontend](https://github.com/hubuum/hubuum-frontend#readme) for browser
+Use the [frontend](https://hubuum.github.io/hubuum-frontend/) for browser
 workflows. Its server-side backend-for-frontend holds Hubuum bearer tokens;
 the browser uses a session cookie. Multi-replica installations share session
 state through Valkey.
@@ -20,7 +20,7 @@ server. For frontend-only deployment and settings, use the
 
 The [Hubuum CLI](https://github.com/hubuum/hubuum-cli#readme) provides one-shot
 commands, an interactive REPL, and script execution. Start with its
-[usage guide](https://github.com/hubuum/hubuum-cli#usage) and
+[usage guide](https://hubuum.github.io/hubuum-cli/) and
 [release downloads](https://github.com/hubuum/hubuum-cli/releases).
 
 The client executable `hubuum-cli` is different from `hubuum-admin`.
@@ -33,8 +33,7 @@ and the restore executor.
 [`hubuum_client`](https://crates.io/crates/hubuum_client) provides async and
 blocking clients, typed resource IDs, query builders, and task helpers.
 
-- [Setup and examples](https://github.com/hubuum/hubuum-client-rust#quick-start).
-- [Detailed guides](https://github.com/hubuum/hubuum-client-rust#more-documentation).
+- [Versioned setup, examples, and guides](https://hubuum.github.io/hubuum-client-rust/).
 - [Generated Rust API reference](https://docs.rs/hubuum_client).
 
 The HTTP client is distinct from the server's
@@ -47,7 +46,7 @@ normally use the client, not the internal root `hubuum` crate.
 typed synchronous and asynchronous clients. The distribution is named
 `hubuum-client` and its import package is `hubuum_client`.
 
-- [Installation and quick start](https://github.com/hubuum/hubuum-client-python#readme).
+- [Versioned installation, guides, and API reference](https://hubuum.github.io/hubuum-client-python/).
 - [Client configuration](https://github.com/hubuum/hubuum-client-python/blob/main/docs/client.md).
 - [Queries](https://github.com/hubuum/hubuum-client-python/blob/main/docs/querying.md).
 - [API guide](https://github.com/hubuum/hubuum-client-python/blob/main/docs/api.md).

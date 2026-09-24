@@ -7,10 +7,10 @@ that fits your workflow; all of them connect to a Hubuum server.
 | Component | Use it for | Documentation home |
 | --- | --- | --- |
 | [Hubuum server](https://github.com/hubuum/hubuum) | Data storage, API, authorization, background work, and administration | This site |
-| [Web frontend](https://github.com/hubuum/hubuum-frontend) | Interactive inventory and administration in a browser | [Frontend README](https://github.com/hubuum/hubuum-frontend#readme) |
-| [CLI](https://github.com/hubuum/hubuum-cli) | Interactive terminal work, scripts, and shell automation | [CLI guide](https://github.com/hubuum/hubuum-cli#usage) |
-| [Rust client](https://github.com/hubuum/hubuum-client-rust) | Typed asynchronous and blocking Rust applications | [Rust client guides](https://github.com/hubuum/hubuum-client-rust#more-documentation) |
-| [Python client](https://github.com/hubuum/hubuum-client-python) | Typed synchronous and asynchronous Python applications | [Python client guides](https://github.com/hubuum/hubuum-client-python/blob/main/docs/index.md) |
+| [Web frontend](https://github.com/hubuum/hubuum-frontend) | Interactive inventory and administration in a browser | [Frontend guides](https://hubuum.github.io/hubuum-frontend/) |
+| [CLI](https://github.com/hubuum/hubuum-cli) | Interactive terminal work, scripts, and shell automation | [CLI guide](https://hubuum.github.io/hubuum-cli/) |
+| [Rust client](https://github.com/hubuum/hubuum-client-rust) | Typed asynchronous and blocking Rust applications | [Rust client guides](https://hubuum.github.io/hubuum-client-rust/) |
+| [Python client](https://github.com/hubuum/hubuum-client-python) | Typed synchronous and asynchronous Python applications | [Python client guides](https://hubuum.github.io/hubuum-client-python/) |
 
 The archived [`hubuum-python`](https://github.com/hubuum/hubuum-python) repository
 is an earlier implementation. The current Python client is
@@ -18,7 +18,7 @@ is an earlier implementation. The current Python client is
 
 ## One entry point, clear ownership
 
-The proposed organization landing page at `https://hubuum.github.io/` belongs in
+The [organization landing page](https://hubuum.github.io/) belongs in
 the separate `hubuum/hubuum.github.io` repository. It introduces the ecosystem
 and directs readers to each project. The `.github` repository supplies the GitHub
 organization profile, which can link to that landing page. See the
