@@ -17,6 +17,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Documentation tables keep long environment-variable names readable, use wider
+  reference layouts, and scroll within the table on small screens. Shared style
+  fixes also reach retained release documentation.
 - Documentation entry points now distinguish first-time setup from configuration
   reference. Corrected outdated source links, an incomplete Compose example,
   and the collection guide's description of token resource scopes.

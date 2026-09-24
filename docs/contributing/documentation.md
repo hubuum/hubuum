@@ -227,3 +227,7 @@ each project pins its own adoption point.
 When adding build inputs, update `scripts/classify-ci-changes.sh` and its
 regression tests so the documentation job runs for them. Do not suppress link
 validation to make a renamed heading or moved page pass; update the references.
+
+Shared stylesheet fixes apply to retained release editions without re-rendering
+their content. Released HTML, downloads, scripts, and source revisions stay
+unchanged; only the shared presentation CSS is refreshed.
