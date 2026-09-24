@@ -1,0 +1,4437 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Model your assets, operate Hubuum, and build integrations with its API, clients, CLI, and web frontend.">
+      
+      
+      
+        <link rel="canonical" href="https://hubuum.github.io/hubuum/v0.0.16/metrics/">
+      
+      
+        <link rel="prev" href="../treetop/">
+      
+      
+        <link rel="next" href="../metrics-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.64">
+    
+    
+      
+        <title>Metrics & alerts - Hubuum documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#runtime-metrics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+        <aside class="md-banner">
+          <div class="md-banner__inner md-grid md-typeset">
+            
+            
+  <nav class="hubuum-ecosystem" aria-label="Hubuum projects">
+    <a href="https://hubuum.github.io/"><strong>Hubuum</strong></a>
+    
+      <a href="https://hubuum.github.io/hubuum/">Server</a>
+    
+      <a href="https://hubuum.github.io/hubuum-frontend/">Frontend</a>
+    
+      <a href="https://hubuum.github.io/hubuum-cli/">CLI</a>
+    
+      <a href="https://hubuum.github.io/hubuum-client-rust/">Rust client</a>
+    
+      <a href="https://hubuum.github.io/hubuum-client-python/">Python client</a>
+    
+  </nav>
+  
+  
+    Documentation for <strong>v0.0.16</strong>.
+  
+  <label for="docs-version">Version</label>
+  <select id="docs-version" data-version="v0.0.16"
+    data-manifest="../../versions.json">
+    <option value="v0.0.16">v0.0.16</option>
+  </select>
+  
+
+          </div>
+          
+        </aside>
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Hubuum documentation" class="md-header__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Hubuum documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Metrics & alerts
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/hubuum/hubuum" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hubuum/hubuum
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="./.." class="md-tabs__link">
+          
+  
+  Overview
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../collection_hierarchy/" class="md-tabs__link">
+          
+  
+  User guide
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../deployment/" class="md-tabs__link">
+          
+  
+  Administration
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../query_support_matrix/" class="md-tabs__link">
+          
+  
+  API & integrations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../development/" class="md-tabs__link">
+          
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Hubuum documentation" class="md-nav__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
+
+    </a>
+    Hubuum documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hubuum/hubuum" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hubuum/hubuum
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Overview
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_1">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Overview
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Welcome
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  User guide
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  User guide
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model & protect data
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_1">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Model & protect data
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../collection_hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collections & inheritance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../permissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Permissions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema_evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Class schemas & compliance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../computed_fields/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed fields
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../temporal_history/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  History & provenance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Find & change data
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Find & change data
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../querying/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Querying & pagination
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../search_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Search
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../relationship_endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Relationships
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../name_addressing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Address resources by name
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../object_data_json_patch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patch object data
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../resource_revisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Revisions & conditional writes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automate workflows
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Automate workflows
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../import_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Imports
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Exports
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export_template_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Write export templates
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Background tasks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../remote_targets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Remote actions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Events & audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Administration
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Administration
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Install & upgrade
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3_1">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Install & upgrade
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Single-host deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../distributed_deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Distributed deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quick_start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../database_roles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PostgreSQL roles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup & restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supply-chain-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verify release artifacts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Identity & security
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Identity & security
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../auth_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication & authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../external_auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  External identity providers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credential_approvals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Credential approvals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secret_sources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets & key rotation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../login_rate_limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Login rate limiting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../treetop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  External policy with Treetop
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor & troubleshoot
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_3_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Monitor & troubleshoot
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Metrics & alerts
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Metrics & alerts
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scrape-each-process-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scrape Each Process Directly
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cardinality-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cardinality Rules
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#duration-units-and-histograms" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Duration Units And Histograms
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#process-http-and-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process, HTTP, And Database
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distributed-tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Distributed Tracing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tasks-exports-imports-and-remote-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tasks, Exports, Imports, And Remote Calls
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#computed-fields-security-events-and-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Computed Fields, Security, Events, And Inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alert-starting-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alert Starting Points
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-compliance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schema compliance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator package
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/hubuum/hubuum/tree/8f4194ffe25d172d579b676f109efbdc71d9aab7/observability" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboards & runbooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Structured logs
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Distributed tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pool tuning & load testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runtime_hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../json_schema_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema validation limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../background_workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Worker lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../template_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Template worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API & integrations
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  API & integrations
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../query_support_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query support matrix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integration-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Integration test coverage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contributing
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Contributing
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development setup
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Architecture
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Application & storage boundary
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task execution
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../computed_field_locking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed-field locking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generated/project_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project inventory
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage adapters
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Storage adapters
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_adapter_sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SDK compatibility
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage contract
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/backend-author-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backend author guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/maintainer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Maintainer guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/capability-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Capability families
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/query-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query semantics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/transactions-and-events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Transactions & events
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_boundary/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing & compatibility
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Rust API policies
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Rust API policies
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api_boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Package boundaries
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-computed-fields/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed fields
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-domain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Domain
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-events-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Events
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-query/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema diagnostics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-storage-conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage conformance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-storage-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage core
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-task-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task core
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verification & releases
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Verification & releases
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Release process
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operational_contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operational contracts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scale_benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Scale benchmarks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/runtime_hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/template_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Template measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../treetop/test-fixture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Treetop conformance fixture
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scrape-each-process-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scrape Each Process Directly
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cardinality-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cardinality Rules
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#duration-units-and-histograms" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Duration Units And Histograms
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#process-http-and-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process, HTTP, And Database
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distributed-tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Distributed Tracing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tasks-exports-imports-and-remote-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tasks, Exports, Imports, And Remote Calls
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#computed-fields-security-events-and-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Computed Fields, Security, Events, And Inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alert-starting-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alert Starting Points
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-compliance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schema compliance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator package
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../deployment/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Administration
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="././" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Monitor & troubleshoot
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="runtime-metrics">Runtime Metrics<a class="headerlink" href="#runtime-metrics" title="Permanent link">&para;</a></h1>
+<p>Hubuum exposes low-cardinality runtime metrics through a Prometheus scrape
+endpoint. The endpoint is enabled by default at <code>/metrics</code>.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HUBUUM_METRICS_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Enables the Prometheus metrics scrape endpoint</td>
+</tr>
+<tr>
+<td><code>HUBUUM_METRICS_PATH</code></td>
+<td><code>/metrics</code></td>
+<td>Literal absolute non-root endpoint path; it must not contain route patterns or collide with API, probe, OpenAPI, or Swagger UI routes</td>
+</tr>
+</tbody>
+</table>
+<p>The endpoint is subject to <code>HUBUUM_CLIENT_ALLOWLIST</code> and uses the configured TLS
+settings. Put it behind network-level access controls appropriate for
+operational data.</p>
+<p>Processes with the <code>all</code> or <code>api</code> runtime role serve metrics on the main HTTP
+listener. A <code>worker</code> process serves only the configured metrics path on
+<code>HUBUUM_BIND_IP:HUBUUM_PORT</code> when metrics are enabled; it does not expose the
+application API or health probes. Give API and worker containers separate
+network namespaces or ports if they run on the same host.</p>
+<h2 id="scrape-each-process-directly">Scrape Each Process Directly<a class="headerlink" href="#scrape-each-process-directly" title="Permanent link">&para;</a></h2>
+<p>Counters, histograms, connection-pool gauges, and worker configuration describe
+one process. Configure Prometheus with a stable target for every API and worker
+process. Do not scrape a load-balanced public URL: successive scrapes can land
+on different processes, producing apparent counter resets and hiding
+worker-only activity.</p>
+<p>Use these metrics to identify a target:</p>
+<ul>
+<li><code>hubuum_build_info{version,git_sha}</code></li>
+<li><code>hubuum_runtime_info{role}</code></li>
+<li><code>hubuum_storage_backend_info{backend}</code></li>
+<li><code>hubuum_process_start_time_seconds</code></li>
+</ul>
+<p>Check the target mix before interpreting process-local worker metrics:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">count</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">role</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="nv">hubuum_runtime_info</span><span class="o">)</span>
+</code></pre></div>
+<p>An API-only target reports <code>hubuum_runtime_info{role="api"}</code> and zero configured
+task and event workers. It can still expose database-wide task and template
+gauges, but export, import, remote-call, task-execution, and worker-loop
+counters and histograms are produced by worker-enabled targets. If those
+families are absent from an API scrape, verify that Prometheus has a separate
+worker target before treating the absence as no activity.</p>
+<p>Inventory, task backlog, export-template identity, and event-queue gauges are
+database-wide snapshots. Every replica connected to the same database reports
+the same logical values. Aggregate those series with <code>max</code> or <code>avg</code>, not <code>sum</code>,
+unless replica multiplication is intentional. Process-local gauges such as
+database-pool state should normally be summed when calculating deployment-wide
+capacity.</p>
+<p>Database-backed gauges use a 30-second in-process cache and refresh on a
+best-effort basis. If a refresh fails, <code>/metrics</code> still returns process metrics
+and retains the last successful database snapshot when one exists. The refresh
+duration, last-success timestamp, failures, and skipped concurrent refreshes
+make stale values visible.</p>
+<p>Single-host deployments provide deterministic convenience routes.
+Shared-host <code>direct</code> routing sends <code>/metrics</code> to the worker-enabled primary and
+<code>/metrics/standby</code> to the HTTP-only standby. With shared-host <code>prefixed</code>
+routing, use <code>/hubuum-api/metrics</code> and
+<code>/hubuum-api/metrics/standby</code>. Shared-host <code>bff</code> routing does not expose either
+backend metrics endpoint publicly.</p>
+<h2 id="cardinality-rules">Cardinality Rules<a class="headerlink" href="#cardinality-rules" title="Permanent link">&para;</a></h2>
+<p>Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs,
+client IPs, raw URL paths, object IDs, class names, collection names, rendered
+remote URLs, task IDs, idempotency keys, or error messages.</p>
+<p>HTTP metrics use Actix route templates such as
+<code>/api/v1/classes/{class_id}/objects/{object_id}</code>. Requests that do not resolve
+to a registered route use a coarse route group instead of their raw path.</p>
+<p>Export phase timing is aggregated by phase and outcome. Only the total export
+histogram carries <code>template_id</code>; this keeps template identity useful without
+multiplying every query, hydration, and render bucket by every stored template.
+<code>hubuum_export_template_info</code> maps current database IDs to mutable names and is
+reset on every inventory snapshot, so renames and deletions do not leave stale
+series in a process.</p>
+<p>Use admin JSON/API endpoints and task logs for per-task detail.</p>
+<h2 id="duration-units-and-histograms">Duration Units And Histograms<a class="headerlink" href="#duration-units-and-histograms" title="Permanent link">&para;</a></h2>
+<p>Prometheus duration metric names and observations use seconds. A 4.7
+millisecond request is recorded as <code>0.0047</code>; using seconds does not discard
+millisecond or sub-millisecond precision.</p>
+<p>Hubuum uses three explicit bucket profiles:</p>
+<ul>
+<li>HTTP and database latency: <code>0.0005</code> seconds through <code>30</code> seconds.</li>
+<li>Outbound remote calls: <code>0.01</code> seconds through <code>120</code> seconds.</li>
+<li>Queued and background work: <code>0.01</code> seconds through <code>3600</code> seconds.</li>
+</ul>
+<p>The long background buckets are intentional: most buckets should be empty for
+fast work, while imports, exports, backups, remote dependencies, or a
+constrained worker can legitimately take seconds or minutes. Empty upper
+buckets are cheap and preserve visibility when an exceptional slow operation
+occurs.</p>
+<p>Prometheus histogram buckets are cumulative. This query calculates HTTP p95
+latency by route over five minutes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kr">histogram_quantile</span><span class="o">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="mf">0.95</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">le</span><span class="p">,</span><span class="w"> </span><span class="nv">route</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="kr">rate</span><span class="o">(</span><span class="nv">hubuum_http_request_duration_seconds_bucket</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="o">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="o">)</span>
+</code></pre></div>
+<p>The histogram sum divided by its count gives the mean. Apply <code>rate</code> before
+division for a time window:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">route</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="kr">rate</span><span class="o">(</span><span class="nv">hubuum_http_request_duration_seconds_sum</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="o">)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="o">/</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">route</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="kr">rate</span><span class="o">(</span><span class="nv">hubuum_http_request_duration_seconds_count</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="o">)</span>
+</code></pre></div>
+<p>The exported <code>_sum</code> is therefore useful, but only together with <code>_count</code>.
+Classic Prometheus histograms do not expose exact minimum or maximum
+observations. <code>histogram_quantile</code> estimates percentiles from bucket boundaries
+and remains aggregatable across processes.</p>
+<p>Readiness probes commonly dominate request counts. Exclude probes and the
+scrape endpoint when calculating application traffic or an overall application
+latency. The example uses the default scrape route, <code>/metrics</code>. If
+<code>HUBUUM_METRICS_PATH</code> is customized, replace <code>/metrics</code> in the matcher with the
+exact configured path; for example, use
+<code>route!~"/(healthz|readyz)|/internal/metrics"</code> for <code>/internal/metrics</code>.
+Prometheus regex matchers are fully anchored:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">route</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="kr">rate</span><span class="o">(</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nv">hubuum_http_requests_total</span><span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nl">route</span><span class="o">!~</span><span class="p">"</span><span class="s">/(healthz|readyz|metrics)</span><span class="p">"</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p">}[</span><span class="s">5m</span><span class="p">]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="o">)</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="o">)</span>
+</code></pre></div>
+<p>Counter and histogram series generally appear only after a process observes a matching
+event. The worker-error and failed-backup counters start at zero so alerts can
+observe their first failure after scraping the baseline. Seeing only <code>/readyz</code> means that target handled readiness probes but not
+application requests; it does not mean other routes are filtered out.</p>
+<p>For stored-template exports, join the total-duration histogram to the current
+template-info gauge:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kr">histogram_quantile</span><span class="o">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="mf">0.95</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">le</span><span class="p">,</span><span class="w"> </span><span class="nv">template_id</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="kr">rate</span><span class="o">(</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nv">hubuum_export_duration_seconds_bucket</span><span class="p">{</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nl">template_id</span><span class="o">!=</span><span class="p">"</span><span class="s">none</span><span class="p">"</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="p">}[</span><span class="s">15m</span><span class="p">]</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="o">)</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="o">)</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="o">)</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="o">*</span><span class="w"> </span><span class="k">on</span><span class="w"> </span><span class="o">(</span><span class="nv">template_id</span><span class="o">)</span><span class="w"> </span><span class="k">group_left</span><span class="w"> </span><span class="o">(</span><span class="nv">template_name</span><span class="o">)</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="k">max</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">template_id</span><span class="p">,</span><span class="w"> </span><span class="nv">template_name</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">  </span><span class="nv">hubuum_export_template_info</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="o">)</span>
+</code></pre></div>
+<h2 id="metrics">Metrics<a class="headerlink" href="#metrics" title="Permanent link">&para;</a></h2>
+<p>The complete metric inventory—including type, unit, process/database scope,
+allowed label names, feature ownership, and explicit histogram buckets—is
+generated in <a href="../metrics-reference/">Metric Reference</a>. The generated reference
+and <code>docs/operational-contract.json</code> are the canonical compatibility sources;
+CI rejects drift from the typed registry.</p>
+<h3 id="process-http-and-database">Process, HTTP, And Database<a class="headerlink" href="#process-http-and-database" title="Permanent link">&para;</a></h3>
+<p>The generated <a href="../metrics-reference/">Metric Reference</a> replaces the former
+hand-maintained table for this group. The notes below explain the bounded
+domains and aggregation semantics that are not part of each metric's structural
+signature.</p>
+<p>The bounded refresh <code>source</code> values are <code>database</code>, <code>events</code>, <code>inventory</code>,
+<code>login_limiter</code>, <code>process</code>, <code>tasks</code>, and <code>token_keys</code>.</p>
+<p>The bounded database <code>caller</code> values are <code>event_delivery</code>, <code>event_fanout</code>,
+<code>event_retention</code>, <code>http_request</code>, <code>metrics_refresh</code>, <code>readiness</code>,
+<code>request_maintenance</code>, <code>restore_coordinator</code>, <code>task_lease</code>, <code>task_worker</code>,
+<code>token_retention</code>, and <code>unattributed</code>.</p>
+<p>Storage <code>capability</code>, <code>operation</code>, and <code>result</code> values come from closed Rust
+enums or fixed call sites. Expected domain failures are included in
+<code>hubuum_storage_operation_errors_total</code>; use the <code>result</code> label to distinguish
+them from <code>database</code>, <code>unavailable</code>, and <code>internal</code> backend failures. Storage
+metrics describe logical use cases, while <code>hubuum_db_*</code> metrics describe the
+PostgreSQL implementation. Do not sum the two as though they were the same
+operation count.</p>
+<h3 id="distributed-tracing">Distributed Tracing<a class="headerlink" href="#distributed-tracing" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hubuum_tracing_info</code></td>
+<td><code>sampling_mode</code></td>
+<td>Effective bounded sampling mode; value is <code>1</code></td>
+</tr>
+<tr>
+<td><code>hubuum_tracing_sample_ratio</code></td>
+<td>none</td>
+<td>Effective root trace sampling ratio</td>
+</tr>
+<tr>
+<td><code>hubuum_tracing_queue_capacity</code></td>
+<td>none</td>
+<td>Configured bounded batch-processor queue capacity</td>
+</tr>
+<tr>
+<td><code>hubuum_tracing_queue_utilization</code></td>
+<td>none</td>
+<td>Current spans admitted and waiting for export</td>
+</tr>
+<tr>
+<td><code>hubuum_trace_spans_total</code></td>
+<td><code>category</code>, <code>state</code></td>
+<td>Sampled allowlisted spans observed at the processor's actual <code>started</code> or <code>ended</code> lifecycle callback</td>
+</tr>
+<tr>
+<td><code>hubuum_trace_spans_dropped_total</code></td>
+<td><code>reason</code></td>
+<td>Spans dropped for <code>classification</code> or <code>queue_saturation</code></td>
+</tr>
+<tr>
+<td><code>hubuum_trace_export_batches_total</code></td>
+<td><code>outcome</code></td>
+<td>OTLP export batches by <code>success</code> or <code>failure</code></td>
+</tr>
+<tr>
+<td><code>hubuum_trace_export_spans_total</code></td>
+<td><code>outcome</code></td>
+<td>Spans submitted in OTLP batches by <code>success</code> or <code>failure</code></td>
+</tr>
+<tr>
+<td><code>hubuum_trace_flushes_total</code></td>
+<td><code>outcome</code></td>
+<td>Graceful-shutdown flushes by <code>success</code> or <code>failure</code></td>
+</tr>
+</tbody>
+</table>
+<p>Trace labels come only from fixed categories and outcomes. They never contain
+trace IDs, span IDs, endpoints, resource identities, or error messages. Alert on
+a sustained nonzero <code>queue_saturation</code> rate and export <code>failure</code> rate. Queue
+utilization is process-local and should be compared with that process's capacity.
+See <a href="../tracing/">Distributed Tracing</a> for configuration and data policy.</p>
+<p>Storage capability labels follow the singular capability trait vocabulary: the
+trait's <code>Storage</code> suffix is removed and its remaining stem becomes snake case.
+The bounded values are <code>audit_event</code>, <code>authentication</code>, <code>authorization_data</code>,
+<code>backup_snapshot</code>, <code>catalog</code>, <code>class</code>, <code>class_relation</code>,
+<code>collection_authorization_query</code>, <code>collection</code>, <code>computed_field</code>,
+<code>computed_object</code>, <code>event_configuration</code>,
+<code>event_delivery_administration</code>, <code>event_delivery_worker</code>, <code>event_fanout</code>,
+<code>event_health</code>, <code>event_retention</code>, <code>export_template</code>, <code>external_identity</code>,
+<code>group</code>, <code>history</code>, <code>group_membership</code>, <code>identity_scope</code>, <code>import</code>, <code>inventory</code>,
+<code>local_identity_credential</code>, <code>metrics</code>, <code>object_aggregate</code>, <code>object_relation</code>,
+<code>object</code>, <code>operational_state</code>, <code>principal</code>, <code>relation_query</code>, <code>remote_target</code>,
+<code>restore</code>, <code>service_account</code>, <code>task_execution</code>, <code>task_queue</code>, <code>token_retention</code>,
+<code>token</code>, <code>transaction</code>, <code>unified_search</code>, and <code>user</code>.</p>
+<p>The standard unprefixed <code>process_*</code> families are available on Linux, macOS, and
+Windows. The names intentionally match the Prometheus ecosystem so existing
+process dashboards and alerts can be reused. File-descriptor or handle gauges
+remain zero if the operating system cannot return that information. On Windows,
+<code>process_open_fds</code> counts kernel handles and <code>process_max_fds</code> is zero because
+Windows has no comparable fixed per-process handle limit. Prefer resident memory
+for cross-platform pressure alerts: virtual address-space size is especially
+large and not directly comparable on macOS.
+<code>process_start_time_seconds</code> is the operating system's process start, while
+<code>hubuum_process_start_time_seconds</code> records when Hubuum initialized metrics.</p>
+<p>Useful starting queries include:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kr">rate</span><span class="o">(</span><span class="nv">process_cpu_seconds_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">process_resident_memory_bytes</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="o">(</span><span class="nv">process_open_fds</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nv">process_max_fds</span><span class="o">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="ow">and</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="o">(</span><span class="nv">process_max_fds</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="o">)</span>
+</code></pre></div>
+<h3 id="tasks-exports-imports-and-remote-calls">Tasks, Exports, Imports, And Remote Calls<a class="headerlink" href="#tasks-exports-imports-and-remote-calls" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hubuum_task_worker_iterations_total</code></td>
+<td><code>outcome</code></td>
+<td>Worker iterations by claimed, idle, or error outcome</td>
+</tr>
+<tr>
+<td><code>hubuum_task_claims_total</code></td>
+<td><code>kind</code></td>
+<td>Tasks claimed by workers</td>
+</tr>
+<tr>
+<td><code>hubuum_task_lease_recoveries_total</code></td>
+<td><code>kind</code></td>
+<td>Tasks failed after their owning worker lease expired</td>
+</tr>
+<tr>
+<td><code>hubuum_task_completions_total</code></td>
+<td><code>kind</code>, <code>final_status</code></td>
+<td>Tasks reaching a terminal status</td>
+</tr>
+<tr>
+<td><code>hubuum_task_cancellation_requests_total</code></td>
+<td><code>kind</code>, <code>result</code></td>
+<td>Durable requests with <code>queued</code>, <code>active</code>, or <code>unchanged</code> result</td>
+</tr>
+<tr>
+<td><code>hubuum_task_stop_acknowledgements_total</code></td>
+<td><code>kind</code>, <code>reason</code></td>
+<td>Terminal stops with <code>cancel_requested</code> or <code>deadline_exceeded</code> reason</td>
+</tr>
+<tr>
+<td><code>hubuum_task_cancellation_acknowledgement_duration_seconds</code></td>
+<td><code>kind</code>, <code>reason</code></td>
+<td>Time from persisted cancellation request to terminal acknowledgement</td>
+</tr>
+<tr>
+<td><code>hubuum_task_ambiguous_remote_stops_total</code></td>
+<td><code>reason</code></td>
+<td>Stops after remote dispatch where external effects may have occurred</td>
+</tr>
+<tr>
+<td><code>hubuum_task_queue_wait_duration_seconds</code></td>
+<td><code>kind</code></td>
+<td>Time from task creation to claim</td>
+</tr>
+<tr>
+<td><code>hubuum_task_execution_duration_seconds</code></td>
+<td><code>kind</code>, <code>final_status</code></td>
+<td>Time from task start to finish</td>
+</tr>
+<tr>
+<td><code>hubuum_task_workers_configured</code></td>
+<td>none</td>
+<td>Task workers configured in this process; zero on API-only processes</td>
+</tr>
+<tr>
+<td><code>hubuum_task_poll_interval_seconds</code></td>
+<td>none</td>
+<td>Configured task-worker poll interval</td>
+</tr>
+<tr>
+<td><code>hubuum_tasks</code></td>
+<td><code>kind</code>, <code>status</code></td>
+<td>Current database-wide task counts</td>
+</tr>
+<tr>
+<td><code>hubuum_task_oldest_age_seconds</code></td>
+<td><code>kind</code>, <code>state</code></td>
+<td>Oldest queued and active task age per task kind</td>
+</tr>
+<tr>
+<td><code>hubuum_task_last_terminal_timestamp_seconds</code></td>
+<td><code>kind</code>, <code>status</code></td>
+<td>Most recent finish time for each task kind and terminal status; zero means none is retained</td>
+</tr>
+<tr>
+<td><code>hubuum_task_output_cleanup_runs_total</code></td>
+<td><code>kind</code></td>
+<td>Stored output cleanup runs for export or backup artifacts</td>
+</tr>
+<tr>
+<td><code>hubuum_task_output_cleanup_failures_total</code></td>
+<td><code>kind</code></td>
+<td>Stored output cleanup failures</td>
+</tr>
+<tr>
+<td><code>hubuum_task_output_cleanup_deleted_total</code></td>
+<td><code>kind</code></td>
+<td>Stored outputs deleted by cleanup</td>
+</tr>
+<tr>
+<td><code>hubuum_export_template_info</code></td>
+<td><code>template_id</code>, <code>template_name</code></td>
+<td>Current stored export-template identities from the shared database</td>
+</tr>
+<tr>
+<td><code>hubuum_export_phase_duration_seconds</code></td>
+<td><code>phase</code>, <code>outcome</code></td>
+<td>Aggregate export query, hydration, render, and total phase duration</td>
+</tr>
+<tr>
+<td><code>hubuum_export_duration_seconds</code></td>
+<td><code>template_id</code>, <code>outcome</code></td>
+<td>Total export duration by stored template ID; ad-hoc exports use <code>none</code></td>
+</tr>
+<tr>
+<td><code>hubuum_export_completions_total</code></td>
+<td><code>scope</code>, <code>content_type</code></td>
+<td>Successfully persisted export outputs</td>
+</tr>
+<tr>
+<td><code>hubuum_export_truncations_total</code></td>
+<td><code>scope</code>, <code>content_type</code></td>
+<td>Successfully persisted truncated exports</td>
+</tr>
+<tr>
+<td><code>hubuum_export_warnings_total</code></td>
+<td><code>scope</code>, <code>content_type</code></td>
+<td>Warning count on successfully persisted exports</td>
+</tr>
+<tr>
+<td><code>hubuum_import_phase_duration_seconds</code></td>
+<td><code>phase</code>, <code>outcome</code></td>
+<td>Import planning, execution, and total phase duration, including failures</td>
+</tr>
+<tr>
+<td><code>hubuum_import_processed_items_total</code></td>
+<td>none</td>
+<td>Items processed by terminal import tasks</td>
+</tr>
+<tr>
+<td><code>hubuum_import_succeeded_items_total</code></td>
+<td>none</td>
+<td>Import items completed successfully</td>
+</tr>
+<tr>
+<td><code>hubuum_import_failed_items_total</code></td>
+<td>none</td>
+<td>Import items completed with failure</td>
+</tr>
+<tr>
+<td><code>hubuum_remote_call_duration_seconds</code></td>
+<td><code>method</code>, <code>status_family</code>, <code>outcome</code></td>
+<td>Remote HTTP execution duration</td>
+</tr>
+<tr>
+<td><code>hubuum_remote_call_results_total</code></td>
+<td><code>method</code>, <code>status_family</code>, <code>outcome</code></td>
+<td>Remote outcomes such as success, failure, timeout, or validation rejection</td>
+</tr>
+</tbody>
+</table>
+<p>Export timer phases are limited to <code>total</code>, <code>query</code>, <code>hydration</code>, and <code>render</code>;
+their outcomes are <code>success</code>, <code>error</code>, or <code>timeout</code>. Import timer phases are
+limited to <code>total</code>, <code>planning</code>, and <code>execution</code>; their outcomes are <code>success</code>,
+<code>failed</code>, <code>partially_succeeded</code>, or <code>error</code>.</p>
+<h3 id="computed-fields-security-events-and-inventory">Computed Fields, Security, Events, And Inventory<a class="headerlink" href="#computed-fields-security-events-and-inventory" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hubuum_computed_field_evaluations_total</code></td>
+<td><code>scope</code>, <code>outcome</code></td>
+<td>Computed-field evaluations by shared, personal, or preview scope and outcome</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_errors_total</code></td>
+<td><code>scope</code>, <code>code</code></td>
+<td>Computed-field runtime errors by stable bounded code</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_live_fallbacks_total</code></td>
+<td>none</td>
+<td>Stale shared materializations evaluated live during reads</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_read_repairs_total</code></td>
+<td><code>outcome</code></td>
+<td>Guarded stale-materialization repairs by success or failure</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_rebuild_batches_total</code></td>
+<td><code>items</code></td>
+<td>Computed-field rebuild batches classified as empty or non-empty</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_rebuild_completions_total</code></td>
+<td><code>status</code></td>
+<td>Computed-field rebuild terminal outcomes</td>
+</tr>
+<tr>
+<td><code>hubuum_computed_field_rebuild_duration_seconds</code></td>
+<td><code>status</code></td>
+<td>Computed-field rebuild duration histogram</td>
+</tr>
+<tr>
+<td><code>hubuum_login_attempts_total</code></td>
+<td><code>outcome</code></td>
+<td>Login attempts by success, bad credentials, rate-limited, or internal error</td>
+</tr>
+<tr>
+<td><code>hubuum_login_lockouts_total</code></td>
+<td><code>scope</code></td>
+<td>Login limiter lockout transitions by principal/IP, IP, or subnet scope</td>
+</tr>
+<tr>
+<td><code>hubuum_login_limiter_backend_failures_total</code></td>
+<td><code>backend</code>, <code>operation</code></td>
+<td>Shared login-limiter failures while local enforcement remains active</td>
+</tr>
+<tr>
+<td><code>hubuum_login_limiter_entries</code></td>
+<td><code>state</code></td>
+<td>Active and locked login-limiter entries in this process</td>
+</tr>
+<tr>
+<td><code>hubuum_client_allowlist_rejections_total</code></td>
+<td><code>reason</code></td>
+<td>Requests rejected for a disallowed or missing client IP</td>
+</tr>
+<tr>
+<td><code>hubuum_revision_conditions_total</code></td>
+<td><code>outcome</code></td>
+<td>Conditional writes classified as <code>matched</code>, <code>wildcard</code>, <code>stale</code>, <code>unconditional</code>, <code>malformed</code>, <code>async_stale</code>, or <code>invariant_failure</code>; never labelled by resource identity or revision</td>
+</tr>
+<tr>
+<td><code>hubuum_event_queue_items</code></td>
+<td><code>queue</code>, <code>state</code></td>
+<td>Database-wide fan-out and delivery queue items by bounded state</td>
+</tr>
+<tr>
+<td><code>hubuum_event_stale_claims</code></td>
+<td><code>queue</code></td>
+<td>Stale fan-out and delivery worker claims</td>
+</tr>
+<tr>
+<td><code>hubuum_event_oldest_age_seconds</code></td>
+<td><code>queue</code></td>
+<td>Oldest actionable fan-out or delivery item age</td>
+</tr>
+<tr>
+<td><code>hubuum_event_workers_configured</code></td>
+<td><code>worker</code></td>
+<td>Event workers configured in this process</td>
+</tr>
+<tr>
+<td><code>hubuum_event_worker_batch_size</code></td>
+<td><code>worker</code></td>
+<td>Configured event-worker batch size</td>
+</tr>
+<tr>
+<td><code>hubuum_event_worker_poll_interval_seconds</code></td>
+<td><code>worker</code></td>
+<td>Configured event-worker poll interval</td>
+</tr>
+<tr>
+<td><code>hubuum_event_worker_lock_timeout_seconds</code></td>
+<td><code>worker</code></td>
+<td>Configured event-worker claim lock timeout</td>
+</tr>
+<tr>
+<td><code>hubuum_event_worker_wakeups_total</code></td>
+<td><code>worker</code>, <code>kind</code></td>
+<td>Notification, poll, and notifications-sent wakeups observed by this process</td>
+</tr>
+<tr>
+<td><code>hubuum_inventory_entities</code></td>
+<td><code>entity_type</code></td>
+<td>Database-wide collections, classes, objects, users, groups, service accounts, and remote targets</td>
+</tr>
+</tbody>
+</table>
+<h2 id="alert-starting-points">Alert Starting Points<a class="headerlink" href="#alert-starting-points" title="Permanent link">&para;</a></h2>
+<p>These thresholds are deployment starting points, not universal defaults:</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Suggested alert</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Missing target</td>
+<td><code>up == 0</code>, grouped by expected API and worker target</td>
+</tr>
+<tr>
+<td>Missing worker telemetry</td>
+<td>Queued tasks with <code>sum(hubuum_task_workers_configured) == 0</code>, or no expected <code>worker</code>/<code>all</code> role target</td>
+</tr>
+<tr>
+<td>Counter reset</td>
+<td>Unexpected <code>resets(hubuum_http_requests_total[15m])</code>, correlated with process start time</td>
+</tr>
+<tr>
+<td>Process resource pressure</td>
+<td>CPU, resident memory, or open-FD/handle ratio above the target's established baseline</td>
+</tr>
+<tr>
+<td>Stale snapshots</td>
+<td>Current time minus <code>hubuum_metrics_refresh_last_success_timestamp_seconds</code> exceeds the cache and scrape tolerance</td>
+</tr>
+<tr>
+<td>DB acquisition failures</td>
+<td>Any sustained non-zero <code>hubuum_db_connection_acquire_failures_total</code> rate</td>
+</tr>
+<tr>
+<td>DB pool pressure</td>
+<td>Checked-out divided by configured connections above <code>0.8</code> for several minutes</td>
+</tr>
+<tr>
+<td>HTTP 5xx rate</td>
+<td><code>5xx</code> status family above the normal route-specific baseline</td>
+</tr>
+<tr>
+<td>Task queue age</td>
+<td>Oldest queued task age above the expected latency for that task kind</td>
+</tr>
+<tr>
+<td>Recent task failure</td>
+<td><code>time() - max by (kind) (hubuum_task_last_terminal_timestamp_seconds{status="failed"})</code> below the alert window</td>
+</tr>
+<tr>
+<td>Task worker errors</td>
+<td>Sustained non-zero worker iteration <code>outcome="error"</code> rate</td>
+</tr>
+<tr>
+<td>Task lease recovery</td>
+<td>Any unexpected <code>hubuum_task_lease_recoveries_total</code> increase</td>
+</tr>
+<tr>
+<td>Export or import failures</td>
+<td>Failure or timeout outcomes above the task-kind baseline</td>
+</tr>
+<tr>
+<td>Login lockouts</td>
+<td>Sudden increase in lockouts or sustained locked entries</td>
+</tr>
+<tr>
+<td>Shared limiter degradation</td>
+<td>Sustained non-zero login-limiter backend failure rate</td>
+</tr>
+<tr>
+<td>Remote call failures</td>
+<td>Failure or timeout rate above the remote-call baseline</td>
+</tr>
+<tr>
+<td>Event backlog</td>
+<td>Oldest fan-out or delivery age above the processing objective</td>
+</tr>
+</tbody>
+</table>
+<h2 id="schema-compliance">Schema compliance<a class="headerlink" href="#schema-compliance" title="Permanent link">&para;</a></h2>
+<p>Schema mutation counters use bounded policy/result labels. Validation object
+counters distinguish valid, invalid, not-required, uninspectable, and stale
+results; duration histograms track terminal work. The compliance gauge exposes
+global valid/invalid/pending/not-required counts. Generic task metrics include
+<code>schema_validation</code> backlog and recovery. Per-class IDs, object IDs, paths, and
+schema content never become metric labels; administrator schema reports provide
+per-class detail. See <a href="../schema_evolution/">class schema evolution</a>.</p>
+<h2 id="operator-package">Operator package<a class="headerlink" href="#operator-package" title="Permanent link">&para;</a></h2>
+<p>See the <a href="https://github.com/hubuum/hubuum/blob/8f4194ffe25d172d579b676f109efbdc71d9aab7/observability/README.md">operator package</a> for the initial Grafana
+overview, tested Prometheus alerts, deployment labels and response runbooks.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../treetop/" class="md-footer__link md-footer__link--prev" aria-label="Previous: External policy with Treetop">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                External policy with Treetop
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../metrics-reference/" class="md-footer__link md-footer__link--next" aria-label="Next: Metric reference">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Metric reference
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Hubuum · MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["navigation.tabs","navigation.tabs.sticky","navigation.sections","navigation.path","navigation.top","navigation.footer","navigation.instant","navigation.instant.progress","content.code.copy","toc.follow"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+        <script src="../assets/javascripts/versions.js"></script>
+      
+    
+  </body>
+</html>

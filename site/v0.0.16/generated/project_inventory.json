@@ -1,0 +1,61 @@
+{
+  "storage_sdk": [
+    {
+      "name": "hubuum-computed-fields",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-domain",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-events-core",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-query",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-schema-diagnostics",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-storage-conformance",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-storage-core",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    },
+    {
+      "name": "hubuum-task-core",
+      "version": "0.3.0",
+      "rust_version": "1.88"
+    }
+  ],
+  "task_kinds": [
+    "import",
+    "export",
+    "backup",
+    "reindex",
+    "remote_call",
+    "schema_validation"
+  ],
+  "binaries": [
+    "hubuum-admin",
+    "hubuum-openapi",
+    "hubuum-operational-contracts",
+    "hubuum-runtime-behavior-check",
+    "hubuum-scale-benchmark",
+    "hubuum-server",
+    "hubuum-template-worker"
+  ]
+}
