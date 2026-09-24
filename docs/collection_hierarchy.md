@@ -13,7 +13,7 @@ that collection and all descendant collections. This inheritance is additive:
 - child collections do not override or deny parent grants
 - every permission flag inherits, including `DelegateCollection`, `ReadAudit`,
   template permissions, and remote-target permissions
-- token scopes still narrow by permission type only
+- token scopes can narrow permission types and collection, class, or object identities
 - combined checks do not union different rows
 
 The last rule is important. If an operation requires both `ReadCollection` and

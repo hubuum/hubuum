@@ -11,6 +11,7 @@ declared_policy_documents="$(
 
 any=false
 markdown=false
+documentation=false
 code=false
 rust_api_policy=false
 openapi=false
@@ -28,6 +29,16 @@ for path in "$@"; do
   if [[ "$path" == *.md ]]; then
     markdown=true
   fi
+
+  case "$path" in
+    docs/* | docs-site/* | zensical.toml | .github/docs-tools.env | \
+      .github/workflows/docs.yml | scripts/docs.sh | scripts/check-docs.py | \
+      scripts/test-check-docs.py | scripts/docs-versions.py | scripts/classify-ci-changes.sh | \
+      scripts/test-classify-ci-changes.sh | scripts/check-python-version.py | \
+      .python-version)
+      documentation=true
+      ;;
+  esac
 
   while IFS= read -r policy_document; do
     if [[ -n "$policy_document" && "$path" == "$policy_document" ]]; then
@@ -103,6 +114,10 @@ for path in "$@"; do
       # These files are dynamic inputs to the storage architecture and
       # semantic-documentation tests in src/tests/application_boundary.rs.
       code=true
+      ;;
+    zensical.toml | docs-site/* | .github/docs-tools.env | .github/workflows/docs.yml | \
+      scripts/docs.sh | scripts/check-docs.py | scripts/test-check-docs.py | scripts/docs-versions.py)
+      # Documentation has its own containerized build and validation workflow.
       ;;
     .markdownlint.json)
       markdown=true
@@ -254,6 +269,7 @@ for path in "$@"; do
       # Unknown inputs are treated conservatively so new build inputs do not
       # silently bypass validation or main artifact publication.
       code=true
+      documentation=true
       container=true
       artifacts=true
       benchmarks=true
@@ -265,6 +281,7 @@ done
 outputs=(
   "any=$any"
   "markdown=$markdown"
+  "documentation=$documentation"
   "code=$code"
   "rust_api_policy=$rust_api_policy"
   "openapi=$openapi"

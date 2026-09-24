@@ -82,10 +82,39 @@ done
 
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
+assert_flag "$docs_output" documentation true
 assert_flag "$docs_output" code false
 assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
 assert_flag "$docs_output" treetop_conformance false
+
+for site_input in zensical.toml docs/assets/stylesheets/extra.css \
+  docs-site/overrides/main.html .github/docs-tools.env .github/workflows/docs.yml \
+  scripts/docs.sh scripts/check-docs.py scripts/test-check-docs.py scripts/docs-versions.py; do
+  site_output="$(bash "$classifier" "$site_input")"
+  assert_flag "$site_output" documentation true
+  assert_flag "$site_output" code false
+  assert_flag "$site_output" container false
+  assert_flag "$site_output" artifacts false
+done
+
+for shared_input in .python-version scripts/check-python-version.py \
+  scripts/classify-ci-changes.sh scripts/test-classify-ci-changes.sh; do
+  shared_output="$(bash "$classifier" "$shared_input")"
+  assert_flag "$shared_output" documentation true
+done
+
+for document_input in docs/new-page.md docs/deleted-page.md docs/openapi.json \
+  docs/storage_boundary/contract.md docs/generated/project_inventory.json; do
+  document_output="$(bash "$classifier" "$document_input")"
+  assert_flag "$document_output" documentation true
+done
+
+unrelated_output="$(bash "$classifier" src/main.rs README.md)"
+assert_flag "$unrelated_output" documentation false
+
+unknown_site_input="$(bash "$classifier" new-site-input.txt)"
+assert_flag "$unknown_site_input" documentation true
 
 python_version_output="$(bash "$classifier" .python-version)"
 for flag in code openapi operational_contract container artifacts benchmarks runtime_benchmark treetop_conformance; do

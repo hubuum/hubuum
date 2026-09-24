@@ -1,0 +1,193 @@
+[project]
+site_name = "Hubuum documentation"
+site_description = "Model your assets, operate Hubuum, and build integrations with its API, clients, CLI, and web frontend."
+# Base URL. scripts/docs.sh appends the selected edition (main or vX.Y.Z).
+site_url = "https://hubuum.github.io/hubuum/"
+repo_url = "https://github.com/hubuum/hubuum"
+repo_name = "hubuum/hubuum"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "target/docs-site"
+strict = true
+extra_css = ["assets/stylesheets/extra.css"]
+extra_javascript = ["assets/javascripts/versions.js"]
+copyright = "Hubuum · MIT licensed"
+
+nav = [
+  { "Overview" = [
+    { "Welcome" = "index.md" },
+    { "Concepts" = "concepts.md" },
+    { "Ecosystem" = "ecosystem.md" },
+    { "Releases & compatibility" = "releases.md" },
+  ] },
+  { "Get started" = [
+    { "Choose your path" = "getting-started/index.md" },
+    { "Run your first server" = "getting-started/first-server.md" },
+    { "Make your first API requests" = "getting-started/first-requests.md" },
+  ] },
+  { "User guide" = [
+    { "Working with Hubuum" = "guide/index.md" },
+    { "Model & protect data" = [
+      { "Collections & inheritance" = "collection_hierarchy.md" },
+      { "Permissions" = "permissions.md" },
+      { "Class schemas & compliance" = "schema_evolution.md" },
+      { "Computed fields" = "computed_fields.md" },
+      { "History & provenance" = "temporal_history.md" },
+    ] },
+    { "Find & change data" = [
+      { "Querying & pagination" = "querying.md" },
+      { "Search" = "search_api.md" },
+      { "Relationships" = "relationship_endpoints.md" },
+      { "Address resources by name" = "name_addressing.md" },
+      { "Patch object data" = "object_data_json_patch.md" },
+      { "Revisions & conditional writes" = "resource_revisions.md" },
+    ] },
+    { "Automate workflows" = [
+      { "Imports" = "import_api.md" },
+      { "Exports" = "export_api.md" },
+      { "Write export templates" = "export_template_guide.md" },
+      { "Background tasks" = "task_api.md" },
+      { "Remote actions" = "remote_targets.md" },
+      { "Events & audit" = "events.md" },
+    ] },
+  ] },
+  { "Administration" = [
+    { "Operate Hubuum" = "administration/index.md" },
+    { "Install & upgrade" = [
+      { "Single-host deployment" = "deployment.md" },
+      { "Distributed deployment" = "distributed_deployment.md" },
+      { "Configuration reference" = "quick_start.md" },
+      { "PostgreSQL roles" = "database_roles.md" },
+      { "Backup & restore" = "backup-restore.md" },
+      { "Verify release artifacts" = "supply-chain-security.md" },
+    ] },
+    { "Identity & security" = [
+      { "Authentication & authorization" = "auth_model.md" },
+      { "External identity providers" = "external_auth.md" },
+      { "Credential approvals" = "credential_approvals.md" },
+      { "Secrets & key rotation" = "secret_sources.md" },
+      { "Login rate limiting" = "login_rate_limiting.md" },
+      { "External policy with Treetop" = "treetop/README.md" },
+    ] },
+    { "Monitor & troubleshoot" = [
+      { "Troubleshooting" = "administration/troubleshooting.md" },
+      { "Metrics & alerts" = "metrics.md" },
+      { "Metric reference" = "metrics-reference.md" },
+      { "Dashboards & runbooks" = "https://github.com/hubuum/hubuum/tree/main/observability" },
+      { "Structured logs" = "logging.md" },
+      { "Distributed tracing" = "tracing.md" },
+      { "Pool tuning & load testing" = "performance.md" },
+      { "Runtime limits" = "runtime_hardening.md" },
+      { "Schema validation limits" = "json_schema_validation.md" },
+      { "Worker lifecycle" = "background_workers.md" },
+      { "Template worker" = "template_worker.md" },
+    ] },
+  ] },
+  { "API & integrations" = [
+    { "Build an integration" = "integrations/index.md" },
+    { "HTTP API reference" = "integrations/api.md" },
+    { "Clients, CLI & frontend" = "integrations/clients.md" },
+    { "Query support matrix" = "query_support_matrix.md" },
+    { "Integration test coverage" = "integration-coverage.md" },
+  ] },
+  { "Contributing" = [
+    { "Contributor guide" = "contributing/index.md" },
+    { "Development setup" = "development.md" },
+    { "Documentation" = "contributing/documentation.md" },
+    { "Documentation review & roadmap" = "contributing/documentation-review.md" },
+    { "Architecture" = [
+      { "Application & storage boundary" = "storage_boundary.md" },
+      { "Task execution" = "task_system.md" },
+      { "Computed-field locking" = "computed_field_locking.md" },
+      { "Project inventory" = "generated/project_inventory.md" },
+    ] },
+    { "Storage adapters" = [
+      { "SDK compatibility" = "storage_adapter_sdk.md" },
+      { "Storage contract" = "storage_boundary/contract.md" },
+      { "Backend author guide" = "storage_boundary/backend-author-guide.md" },
+      { "Maintainer guide" = "storage_boundary/maintainer-guide.md" },
+      { "Capability families" = "storage_boundary/capability-families.md" },
+      { "Query semantics" = "storage_boundary/query-semantics.md" },
+      { "Transactions & events" = "storage_boundary/transactions-and-events.md" },
+      { "Testing & compatibility" = "storage_boundary/testing.md" },
+    ] },
+    { "Rust API policies" = [
+      { "Package boundaries" = "rust_api_boundary.md" },
+      { "Computed fields" = "rust_api/hubuum-computed-fields.md" },
+      { "Domain" = "rust_api/hubuum-domain.md" },
+      { "Events" = "rust_api/hubuum-events-core.md" },
+      { "Query" = "rust_api/hubuum-query.md" },
+      { "Schema diagnostics" = "rust_api/hubuum-schema-diagnostics.md" },
+      { "Storage conformance" = "rust_api/hubuum-storage-conformance.md" },
+      { "Storage core" = "rust_api/hubuum-storage-core.md" },
+      { "Task core" = "rust_api/hubuum-task-core.md" },
+    ] },
+    { "Verification & releases" = [
+      { "Release process" = "releasing.md" },
+      { "Operational contracts" = "operational_contracts.md" },
+      { "Scale benchmarks" = "scale_benchmarks.md" },
+      { "Runtime measurements" = "performance/runtime_hardening.md" },
+      { "Template measurements" = "performance/template_worker.md" },
+      { "Treetop conformance fixture" = "treetop/test-fixture.md" },
+    ] },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+custom_dir = "docs-site/overrides"
+language = "en"
+font = false
+features = [
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.sections",
+  "navigation.path",
+  "navigation.top",
+  "navigation.footer",
+  "navigation.instant",
+  "navigation.instant.progress",
+  "content.action.edit",
+  "content.code.copy",
+  "toc.follow",
+]
+
+[project.theme.icon]
+logo = "lucide/network"
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "teal"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "teal"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.footnotes]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+[project.markdown_extensions.pymdownx.superfences]
+
+[project.validation]
+invalid_links = true
+invalid_link_anchors = true
+
+[project.extra]
+docs_version = "main"

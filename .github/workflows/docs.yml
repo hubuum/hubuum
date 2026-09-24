@@ -1,0 +1,202 @@
+name: Documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  # Releases created by CI's GITHUB_TOKEN do not emit another workflow event.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Also publish a stable release tag (vX.Y.Z); leave empty for main and the latest release'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Documentation inputs
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-24.04
+    outputs:
+      documentation: ${{ steps.paths.outputs.documentation }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Classify documentation inputs
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          RELEASE: ${{ github.event_name == 'release' || github.event_name == 'workflow_run' }}
+        shell: bash
+        run: |
+          if [[ "$MANUAL" == true || "$RELEASE" == true || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            echo 'documentation=true' >> "$GITHUB_OUTPUT"
+          else
+            paths=()
+            while IFS= read -r -d '' path; do
+              paths+=("$path")
+            done < <(git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA")
+            bash scripts/classify-ci-changes.sh "${paths[@]}"
+          fi
+
+  build:
+    name: Build documentation
+    needs: changes
+    if: needs.changes.outputs.documentation == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Backfills and release events use the current renderer, tagged prose.
+          ref: ${{ (github.event_name == 'release' || github.event_name == 'workflow_run') && 'main' || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Test documentation checks
+        run: python3 -I -S scripts/test-check-docs.py
+      - name: Test CI input classification
+        run: bash scripts/test-classify-ci-changes.sh
+      - name: Build development and released editions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version || github.event.workflow_run.head_branch || (github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name) || '' }}
+        shell: bash
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          [[ "$latest" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          versions=(main "$latest")
+          if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != main && "$REQUESTED_VERSION" != "$latest" ]]; then
+            [[ "$REQUESTED_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            gh release view "$REQUESTED_VERSION" --json isDraft,isPrerelease \
+              --jq 'select(.isDraft == false and .isPrerelease == false)' | grep -q isDraft
+            versions+=("$REQUESTED_VERSION")
+          fi
+          for version in "${versions[@]}"; do
+            bash scripts/docs.sh build "$version"
+            sha="$(python3 -c 'import json; print(json.load(open("target/docs-site/build.json"))["source_sha"])')"
+            python3 scripts/docs-versions.py assemble --site target/docs-site \
+              --archive target/docs-preview --version "$version" --source-sha "$sha"
+          done
+          python3 scripts/check-docs.py --site-dir target/docs-preview
+      - name: Retain reviewable site
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: documentation-site
+          path: target/docs-preview/
+          if-no-files-found: error
+          retention-days: 14
+
+  check:
+    name: Documentation check
+    if: always() && needs.changes.result != 'skipped'
+    needs: [changes, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require successful validation when documentation changes
+        env:
+          CLASSIFICATION: ${{ needs.changes.result }}
+          REQUIRED: ${{ needs.changes.outputs.documentation }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          test "$CLASSIFICATION" = success
+          if [[ "$REQUIRED" == true ]]; then
+            test "$BUILD" = success
+          fi
+
+  deploy:
+    name: Publish documentation
+    needs: [build, check]
+    if: >-
+      github.repository == 'hubuum/hubuum' &&
+      ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') ||
+      (github.event_name == 'release' && !github.event.release.prerelease) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'))
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: documentation-publication
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ (github.event_name == 'release' || github.event_name == 'workflow_run') && 'main' || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Download validated editions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: documentation-site
+          path: target/docs-preview
+      - name: Preserve older releases and update the archive
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages; then
+            git fetch origin gh-pages
+            git worktree add --detach target/docs-published FETCH_HEAD
+          else
+            git worktree add --detach target/docs-published HEAD
+            git -C target/docs-published switch --orphan gh-pages
+          fi
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          for edition in json.loads(Path('target/docs-preview/versions.json').read_text()):
+              subprocess.run([
+                  'python3', 'scripts/docs-versions.py', 'assemble',
+                  '--site', 'target/docs-preview/' + edition['version'],
+                  '--archive', 'target/docs-published/site',
+                  '--version', edition['version'], '--source-sha', edition['source_sha'],
+              ], check=True)
+          PY
+          python3 scripts/check-docs.py --site-dir target/docs-published/site
+          git -C target/docs-published add site
+          if ! git -C target/docs-published diff --cached --quiet; then
+            git -C target/docs-published -c user.name=github-actions[bot] \
+              -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+              commit -m 'Publish versioned documentation'
+            git -C target/docs-published push origin HEAD:refs/heads/gh-pages
+          fi
+      - name: Prepare Pages artifact with all retained versions
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: target/docs-published/site/
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Deploy validated artifact
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

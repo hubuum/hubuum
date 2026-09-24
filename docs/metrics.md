@@ -373,5 +373,5 @@ per-class detail. See [class schema evolution](schema_evolution.md).
 
 ## Operator package
 
-See the [operator package](../observability/README.md) for the initial Grafana
+See the [operator package](https://github.com/hubuum/hubuum/blob/main/observability/README.md) for the initial Grafana
 overview, tested Prometheus alerts, deployment labels and response runbooks.

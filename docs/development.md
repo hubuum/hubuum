@@ -1,5 +1,9 @@
 # Development Guide
 
+To edit or preview the documentation website, use the
+[documentation workflow](contributing/documentation.md). The site builds from
+the Markdown in `docs/` using the pinned Zensical container.
+
 ## Python tooling
 
 Repository Python scripts and tests require **Python 3.11 or newer**, available
