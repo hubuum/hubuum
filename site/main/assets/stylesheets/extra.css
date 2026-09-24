@@ -17,6 +17,11 @@
   line-height: 1.7;
 }
 
+/* Give reference pages more room without widening prose-only guides. */
+body:has(.md-content table) .md-grid {
+  max-width: 80rem;
+}
+
 .md-typeset h1,
 .md-typeset h2 {
   font-weight: 650;
@@ -33,7 +38,27 @@
 }
 
 .md-typeset table:not([class]) {
+  display: table;
   font-size: 0.75rem;
+  min-width: 100%;
+}
+
+.md-typeset .md-typeset__table {
+  display: block;
+}
+
+.md-typeset table:not([class]) code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.md-typeset table:not([class]) :is(th, td) {
+  padding: 0.75em 1em;
+}
+
+/* Keep explanatory columns readable when identifier tables scroll on phones. */
+.md-typeset table:not([class]):has(td:first-child > code) td:last-child {
+  min-width: 24ch;
 }
 
 .md-banner a {
