@@ -1,5 +1,10 @@
 # Collection Hierarchy
 
+In the [Atlas example](getting-started/example-dataset.md), atlas-demo contains
+Service and Context; its atlas-demo-operations child contains Server and
+Location. Read access granted to atlas-readers on the parent reaches both
+collections. The hierarchy below describes the general contract.
+
 Hubuum collections form a tree. The system creates one root collection named
 `root`, and every other collection has exactly one parent. Classes, objects,
 templates, remote targets, and event subscriptions still belong to one concrete

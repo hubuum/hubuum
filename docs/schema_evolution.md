@@ -1,5 +1,11 @@
 # Class schema evolution
 
+Try this workflow with the [Atlas dataset](getting-started/example-dataset.md):
+Service and Server begin with enforced schemas, while Location and Context
+begin schema-free. Use the Research notes object when exploring how a free-form
+class acquires a schema. Resolve class IDs from their names before using the
+ID-addressed revision endpoints below.
+
 Every class has an immutable schema revision, including classes without an
 object-validation requirement. Schema changes can be staged, analyzed, and
 activated without rewriting existing object JSON. PostgreSQL and the experimental

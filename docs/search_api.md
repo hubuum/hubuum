@@ -1,5 +1,10 @@
 # Search API
 
+For an inventory to search, load the [Atlas dataset](getting-started/example-dataset.md).
+`GET /api/v1/search?q=Atlas&kinds=object` discovers its service object; the
+structured class target `{"kind":"object","class":{"name":"Server"}}` searches
+its three server objects.
+
 Hubuum keeps discovery and structured querying at the central search
 resource:
 

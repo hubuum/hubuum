@@ -1,5 +1,10 @@
 # Export API
 
+For a runnable inventory, load the [Atlas dataset](getting-started/example-dataset.md).
+Resolve the Server class ID and use it as the objects-in-class scope; a
+`name__startswith=web-` query selects web-01 and web-02. Numeric IDs in the
+contract examples below are illustrative.
+
 The export API executes an authorized Hubuum query server-side through the
 generic task system.
 

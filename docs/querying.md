@@ -8,6 +8,20 @@ For endpoint-specific field support, see [query_support_matrix.md](query_support
 The mutation-side contract is documented in
 [Resource revisions and conditional mutations](resource_revisions.md).
 
+## Try it with Atlas
+
+Load the [Atlas dataset](getting-started/example-dataset.md) to use the same
+objects as the other guides. This query returns web-01 followed by web-02:
+
+```http
+GET /api/v1/classes/by-name/Server/objects?name__startswith=web-&sort=name
+Authorization: Bearer <token>
+```
+
+Use `limit=1` to page through them and pass the response's `X-Next-Cursor` as
+`cursor` on the next request while preserving the filter and sort. The corpus
+checks verify the filtered result and pagination against the server.
+
 ## Query syntax
 
 Query parameters are passed as standard query string parameters:
