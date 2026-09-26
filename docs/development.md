@@ -244,6 +244,18 @@ mechanics adapter-local.
 
 ## Pull request CI tiers
 
+Ordinary prose and documentation-site changes run Markdown and documentation
+checks without the application matrix or benchmark cache builds. `CHANGELOG.md`
+retains the OpenAPI and operational-contract checks because release notes are
+inputs to compatibility exceptions. Embedded documentation, generated contracts,
+and architecture-test inputs retain their existing code checks; unknown files
+under `docs/` also receive conservative validation.
+
+Change selection compares pull requests against their merge base, includes both
+sides of renames, and fails if Git cannot produce a reliable diff. The existing
+`CI gate` remains required. Benchmark cache warming on `main` runs only when
+benchmark inputs change; manual benchmark dispatch still forces cache warming.
+
 Pull request validation is selected from the complete base-to-head diff:
 
 - Draft documentation-only pull requests run Markdown lint when Markdown files
