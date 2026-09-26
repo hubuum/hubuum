@@ -27,7 +27,10 @@ data. It does not enable synchronization, establish trust, or prevent writes.
 Your integrations and permission design determine how records are maintained.
 
 `Service` requires an owner, a tier from 1 to 3, and a production or staging
-environment. Here is the complete data for its `Atlas` object:
+environment. Optional fields demonstrate a decimal availability target, a
+boolean, an array of strings, and a nested object, validated using the
+[JSON Schema standard](https://json-schema.org/specification).
+Here is the complete data for its `Atlas` object:
 
 <!-- atlas-data: object:Atlas -->
 ```json
@@ -35,6 +38,15 @@ environment. Here is the complete data for its `Atlas` object:
   "owner": "Platform",
   "tier": 1,
   "environment": "production",
+  "availability": 99.9,
+  "enabled": true,
+  "tags": [
+    "api",
+    "public"
+  ],
+  "support": {
+    "hours": "24/7"
+  },
   "source": "hubuum"
 }
 ```

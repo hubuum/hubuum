@@ -69,6 +69,33 @@
                 "production",
                 "staging"
               ]
+            },
+            "availability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Target service availability (%)"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "support": {
+              "type": "object",
+              "required": [
+                "hours"
+              ],
+              "properties": {
+                "hours": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
@@ -144,6 +171,15 @@
           "owner": "Platform",
           "tier": 1,
           "environment": "production",
+          "availability": 99.9,
+          "enabled": true,
+          "tags": [
+            "api",
+            "public"
+          ],
+          "support": {
+            "hours": "24/7"
+          },
           "source": "hubuum"
         },
         "class_ref": "class:Service"
