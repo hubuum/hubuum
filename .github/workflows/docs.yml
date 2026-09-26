@@ -37,10 +37,10 @@ jobs:
     outputs:
       documentation: ${{ steps.paths.outputs.documentation }}
     steps:
-      - uses: actions/checkout@67b6ad74bf82fe4745db6ca0225b6af2a25eda7f # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@67b6ad74bf82fe4745db6ca0225b6af2a25eda7f # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version-file: .python-version
       - name: Classify documentation inputs
