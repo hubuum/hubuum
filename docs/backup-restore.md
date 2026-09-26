@@ -1,5 +1,10 @@
 # Backup and restore
 
+For a small recovery exercise, use the [Atlas example backup](getting-started/example-dataset.md#restore-the-starting-point).
+It restores the same four-class inventory used in tutorials. Its separate import
+file adds that inventory through the normal merge API; the backup replaces all
+application data.
+
 Hubuum can create versioned full-system logical backups and perform a staged,
 destructive system restore. Backup generation uses one PostgreSQL
 `REPEATABLE READ, READ ONLY` transaction, so every section in a document is

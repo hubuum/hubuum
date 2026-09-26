@@ -1,5 +1,10 @@
 # Computed object fields
 
+The [Atlas example](getting-started/example-dataset.md) includes the Server
+class with a shared monthly_cost field. Read Server/web-01 with
+`include=computed`: its compute cost of 45 and storage cost of 5 produce 50,
+without changing raw object data.
+
 Hubuum can derive response-only values from the raw JSON in one object's
 `data` document. Computed fields are deterministic and cannot read relations,
 other objects, database state, time, configuration, or external services. A

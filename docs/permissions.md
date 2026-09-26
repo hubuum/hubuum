@@ -1,5 +1,10 @@
 # Permission model
 
+The [Atlas example](getting-started/example-dataset.md#explore-collection-permissions)
+provides two empty groups: atlas-readers inherits read access to the whole
+inventory; atlas-operators can maintain objects only in the operations child
+collection. Assign evaluation principals to the groups to exercise these rules.
+
 Hubuum divides user-created structures into classes and their objects. Objects are instances of classes, and both are contained within a single collection. A collection may contain multiple classes and objects.
 
 Permissions within Hubuum are based on the following principles:

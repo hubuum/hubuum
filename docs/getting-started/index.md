@@ -1,5 +1,8 @@
 # Get started
 
+Load the [Atlas example dataset](example-dataset.md) for a small, connected
+inventory you can use across the frontend, CLI, and client libraries.
+
 Choose a path based on whether you are joining an existing installation or
 setting one up.
 

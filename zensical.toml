@@ -23,6 +23,7 @@ nav = [
   { "Get started" = [
     { "Choose your path" = "getting-started/index.md" },
     { "Run your first server" = "getting-started/first-server.md" },
+    { "Explore the Atlas dataset" = "getting-started/example-dataset.md" },
     { "Make your first API requests" = "getting-started/first-requests.md" },
   ] },
   { "User guide" = [

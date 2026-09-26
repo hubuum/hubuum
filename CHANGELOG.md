@@ -15,6 +15,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- A shared Atlas example inventory for documentation, demonstrations, and client
+  testing: four classes and ten connected objects, with downloadable import and
+  restorable backup files, schema and permission examples, and automated checks
+  against a real server.
+
 - A searchable Zensical documentation website, automatically published to GitHub
   Pages with immutable `/vX.Y.Z/` release snapshots, the latest release as the
   default, an explicit development edition, and on-demand older-release

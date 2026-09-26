@@ -1,5 +1,11 @@
 # Object Data JSON Patch
 
+To practice with real data, load the [Atlas dataset](getting-started/example-dataset.md).
+The name-addressed path for its web server is
+`/api/v1/classes/by-name/Server/objects/by-name/web-01/data`. The
+`/memory_gib` JSON Pointer selects its memory capacity. A patch changes your
+example instance; restore the Atlas backup in a disposable deployment to reset it.
+
 Hubuum supports targeted, atomic updates to an object's raw JSON `data`
 document:
 

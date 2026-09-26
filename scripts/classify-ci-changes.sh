@@ -31,7 +31,8 @@ for path in "$@"; do
   fi
 
   case "$path" in
-    docs/* | zensical.toml | .github/docs-tools.env | \
+    scripts/example-corpus.py | scripts/test-example-corpus.py | \
+      docs/* | zensical.toml | .github/docs-tools.env | \
       .github/workflows/docs.yml | scripts/docs.sh | scripts/classify-ci-changes.sh | \
       scripts/test-classify-ci-changes.sh | scripts/check-python-version.py | \
       .python-version)
@@ -80,7 +81,9 @@ for path in "$@"; do
   esac
 
   case "$path" in
-    test-corpora/* | scripts/test-corpus.py | scripts/test-corpus-tooling.py | .gitattributes)
+    test-corpora/* | scripts/test-corpus.py | scripts/test-corpus-tooling.py | .gitattributes | \
+      docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
+      scripts/example-corpus.py | scripts/test-example-corpus.py)
       code=true
       container=true
       ;;

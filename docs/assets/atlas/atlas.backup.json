@@ -1,0 +1,3325 @@
+{
+  "backup_version": 6,
+  "created_at": "2026-09-26T00:40:19.868168090Z",
+  "source_version": "0.0.16",
+  "state": {
+    "sections": {
+      "identity_scopes": [
+        {
+          "created_at": "2026-09-26T00:40:17.173192Z",
+          "id": 1,
+          "name": "local",
+          "provider_kind": "local",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:17.173192Z"
+        }
+      ],
+      "groups": [
+        {
+          "created_at": "2026-09-26T00:40:17.620943Z",
+          "description": "Default admin group.",
+          "external_key": null,
+          "id": 1,
+          "identity_scope_id": 1,
+          "last_sync_attempted_at": null,
+          "last_sync_success_at": null,
+          "managed_by": "local",
+          "name": "admin",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:17.620943Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.477509Z",
+          "description": "Read the Atlas example inventory",
+          "external_key": null,
+          "id": 2,
+          "identity_scope_id": 1,
+          "last_sync_attempted_at": null,
+          "last_sync_success_at": null,
+          "managed_by": "local",
+          "name": "atlas-readers",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.477509Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.479108Z",
+          "description": "Maintain Atlas server and location records",
+          "external_key": null,
+          "id": 3,
+          "identity_scope_id": 1,
+          "last_sync_attempted_at": null,
+          "last_sync_success_at": null,
+          "managed_by": "local",
+          "name": "atlas-operators",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.479108Z"
+        }
+      ],
+      "principals": [
+        {
+          "created_at": "2026-09-26T00:40:17.620943Z",
+          "external_subject": null,
+          "id": 1,
+          "identity_scope_id": 1,
+          "kind": "human",
+          "last_sync_attempted_at": null,
+          "last_sync_success_at": null,
+          "name": "admin",
+          "provider_managed": false,
+          "revision": 2,
+          "settings": {},
+          "updated_at": "2026-09-26T00:40:18.286677Z"
+        }
+      ],
+      "users": [
+        {
+          "anonymized_at": null,
+          "created_at": "2026-09-26T00:40:17.620943Z",
+          "email": null,
+          "id": 1,
+          "kind": "human",
+          "proper_name": "Administrator",
+          "updated_at": "2026-09-26T00:40:18.285586Z"
+        }
+      ],
+      "service_accounts": [],
+      "group_memberships": [
+        {
+          "created_at": "2026-09-26T00:40:17.620943Z",
+          "group_id": 1,
+          "principal_id": 1,
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:17.620943Z"
+        }
+      ],
+      "group_membership_sources": [
+        {
+          "created_at": "2026-09-26T00:40:17.620943Z",
+          "group_id": 1,
+          "principal_id": 1,
+          "source": "manual",
+          "source_key": "",
+          "source_scope_id": 1,
+          "updated_at": "2026-09-26T00:40:17.620943Z"
+        }
+      ],
+      "collections": [
+        {
+          "created_at": "2026-09-26T00:40:17.173192Z",
+          "description": "Root collection",
+          "id": 1,
+          "name": "root",
+          "parent_collection_id": null,
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:17.173192Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Atlas example service catalogue and context",
+          "id": 2,
+          "name": "atlas-demo",
+          "parent_collection_id": 1,
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Atlas example upstream inventory",
+          "id": 3,
+          "name": "atlas-demo-operations",
+          "parent_collection_id": 2,
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        }
+      ],
+      "collection_authorization": [
+        {
+          "collection_id": 1,
+          "revision": 1
+        },
+        {
+          "collection_id": 2,
+          "revision": 1
+        },
+        {
+          "collection_id": 3,
+          "revision": 1
+        }
+      ],
+      "collection_hierarchy": [
+        {
+          "ancestor_collection_id": 1,
+          "depth": 0,
+          "descendant_collection_id": 1
+        },
+        {
+          "ancestor_collection_id": 1,
+          "depth": 1,
+          "descendant_collection_id": 2
+        },
+        {
+          "ancestor_collection_id": 1,
+          "depth": 2,
+          "descendant_collection_id": 3
+        },
+        {
+          "ancestor_collection_id": 2,
+          "depth": 0,
+          "descendant_collection_id": 2
+        },
+        {
+          "ancestor_collection_id": 2,
+          "depth": 1,
+          "descendant_collection_id": 3
+        },
+        {
+          "ancestor_collection_id": 3,
+          "depth": 0,
+          "descendant_collection_id": 3
+        }
+      ],
+      "collection_permission_grants": [
+        {
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "group_id": 2,
+          "id": 1,
+          "permissions": [
+            "read_collection",
+            "read_class",
+            "read_object",
+            "read_class_relation",
+            "read_object_relation"
+          ],
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "group_id": 3,
+          "id": 2,
+          "permissions": [
+            "read_collection",
+            "read_class",
+            "create_object",
+            "read_object",
+            "update_object",
+            "delete_object",
+            "read_class_relation",
+            "read_object_relation"
+          ],
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        }
+      ],
+      "classes": [
+        {
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Services maintained in Hubuum",
+          "id": 1,
+          "json_schema": {
+            "properties": {
+              "availability": {
+                "description": "Target service availability (%)",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "support": {
+                "properties": {
+                  "hours": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hours"
+                ],
+                "type": "object"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "tier": {
+                "maximum": 3,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "owner",
+              "tier",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "name": "Service",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "validate_schema": true
+        },
+        {
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Reference records from an upstream server inventory",
+          "id": 2,
+          "json_schema": {
+            "properties": {
+              "costs": {
+                "properties": {
+                  "compute": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "storage": {
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "cpu_cores": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "memory_gib": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "hostname",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "name": "Server",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "validate_schema": true
+        },
+        {
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Schema-free reference records from a facilities system",
+          "id": 3,
+          "json_schema": null,
+          "name": "Location",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "validate_schema": false
+        },
+        {
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Schema-free notes, checklists and observations",
+          "id": 4,
+          "json_schema": null,
+          "name": "Context",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "validate_schema": false
+        }
+      ],
+      "class_schema_revisions": [
+        {
+          "activated_at": "2026-09-26T00:40:18.485505Z",
+          "activation_policy": "reject_incompatible",
+          "class_id": 1,
+          "created_at": "2026-09-26T00:40:18.485504Z",
+          "created_by": null,
+          "json_schema": {
+            "properties": {
+              "availability": {
+                "description": "Target service availability (%)",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "support": {
+                "properties": {
+                  "hours": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hours"
+                ],
+                "type": "object"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "tier": {
+                "maximum": 3,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "owner",
+              "tier",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "revision": 1,
+          "status": "active",
+          "validate_schema": true
+        },
+        {
+          "activated_at": "2026-09-26T00:40:18.488832Z",
+          "activation_policy": "reject_incompatible",
+          "class_id": 2,
+          "created_at": "2026-09-26T00:40:18.488832Z",
+          "created_by": null,
+          "json_schema": {
+            "properties": {
+              "costs": {
+                "properties": {
+                  "compute": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "storage": {
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "cpu_cores": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "memory_gib": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "hostname",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "revision": 1,
+          "status": "active",
+          "validate_schema": true
+        },
+        {
+          "activated_at": "2026-09-26T00:40:18.490376Z",
+          "activation_policy": "reject_incompatible",
+          "class_id": 3,
+          "created_at": "2026-09-26T00:40:18.490375Z",
+          "created_by": null,
+          "json_schema": null,
+          "revision": 1,
+          "status": "active",
+          "validate_schema": false
+        },
+        {
+          "activated_at": "2026-09-26T00:40:18.491869Z",
+          "activation_policy": "reject_incompatible",
+          "class_id": 4,
+          "created_at": "2026-09-26T00:40:18.491868Z",
+          "created_by": null,
+          "json_schema": null,
+          "revision": 1,
+          "status": "active",
+          "validate_schema": false
+        }
+      ],
+      "class_schema_state": [
+        {
+          "active_revision": 1,
+          "class_id": 1,
+          "last_revision": 1,
+          "object_count": 2,
+          "object_epoch": 2
+        },
+        {
+          "active_revision": 1,
+          "class_id": 2,
+          "last_revision": 1,
+          "object_count": 3,
+          "object_epoch": 3
+        },
+        {
+          "active_revision": 1,
+          "class_id": 3,
+          "last_revision": 1,
+          "object_count": 2,
+          "object_epoch": 2
+        },
+        {
+          "active_revision": 1,
+          "class_id": 4,
+          "last_revision": 1,
+          "object_count": 3,
+          "object_epoch": 3
+        }
+      ],
+      "computed_field_definitions": [
+        {
+          "class_id": 2,
+          "created_at": "2026-09-26T00:40:18.590916Z",
+          "created_by": null,
+          "description": "Compute plus storage, in fictional example cost units",
+          "enabled": true,
+          "id": 1,
+          "key": "monthly_cost",
+          "label": "Monthly cost",
+          "operation": {
+            "paths": [
+              "/costs/compute",
+              "/costs/storage"
+            ],
+            "type": "sum"
+          },
+          "owner_principal_id": null,
+          "result_type": "number",
+          "revision": 1,
+          "semantics_version": 1,
+          "updated_at": "2026-09-26T00:40:18.590916Z",
+          "updated_by": null,
+          "visibility": "shared"
+        }
+      ],
+      "class_relations": [
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "servers",
+          "from_class_id": 1,
+          "from_max_relations": null,
+          "id": 1,
+          "reverse_template_alias": "services",
+          "revision": 1,
+          "to_class_id": 2,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "location",
+          "from_class_id": 2,
+          "from_max_relations": 1,
+          "id": 2,
+          "reverse_template_alias": "servers",
+          "revision": 1,
+          "to_class_id": 3,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "context",
+          "from_class_id": 1,
+          "from_max_relations": null,
+          "id": 3,
+          "reverse_template_alias": "services",
+          "revision": 1,
+          "to_class_id": 4,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "context",
+          "from_class_id": 2,
+          "from_max_relations": null,
+          "id": 4,
+          "reverse_template_alias": "servers",
+          "revision": 1,
+          "to_class_id": 4,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        }
+      ],
+      "objects": [
+        {
+          "class_id": 1,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "availability": 99.9,
+            "enabled": true,
+            "environment": "production",
+            "owner": "Platform",
+            "source": "hubuum",
+            "support": {
+              "hours": "24/7"
+            },
+            "tags": [
+              "api",
+              "public"
+            ],
+            "tier": 1
+          },
+          "description": "Customer-facing service catalogue",
+          "id": 1,
+          "name": "Atlas",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 1,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "environment": "staging",
+            "owner": "Operations",
+            "source": "hubuum",
+            "tier": 2
+          },
+          "description": "Staging event-processing service",
+          "id": 2,
+          "name": "Beacon",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 45,
+              "storage": 5
+            },
+            "cpu_cores": 8,
+            "environment": "production",
+            "hostname": "web-01.example.invalid",
+            "memory_gib": 32,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Primary Atlas web server",
+          "id": 3,
+          "name": "web-01",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 30,
+              "storage": 5
+            },
+            "cpu_cores": 4,
+            "environment": "production",
+            "hostname": "web-02.example.invalid",
+            "memory_gib": 16,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Secondary Atlas web server",
+          "id": 4,
+          "name": "web-02",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 20,
+              "storage": 5
+            },
+            "cpu_cores": 2,
+            "environment": "staging",
+            "hostname": "worker-01.example.invalid",
+            "memory_gib": 8,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Beacon staging worker",
+          "id": 5,
+          "name": "worker-01",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 3,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "country": "Norway",
+            "site_code": "OSL",
+            "source": "facilities.example.invalid"
+          },
+          "description": "Primary site from the facilities directory",
+          "id": 6,
+          "name": "Oslo",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 3,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "country": "Norway",
+            "notes": [
+              "Secondary location",
+              "Capacity under review"
+            ],
+            "site_code": "BGO",
+            "source": "facilities.example.invalid"
+          },
+          "description": "Secondary site from the facilities directory",
+          "id": 7,
+          "name": "Bergen",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "candidate": true,
+            "purpose": "Explore new hosting",
+            "questions": [
+              "Capacity?",
+              "Location?"
+            ],
+            "source": "hubuum"
+          },
+          "description": "Atlas hosting research maintained in Hubuum",
+          "id": 8,
+          "name": "Research notes",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "source": "hubuum",
+            "steps": [
+              {
+                "done": true,
+                "title": "Review capacity"
+              },
+              {
+                "done": false,
+                "title": "Schedule maintenance"
+              }
+            ]
+          },
+          "description": "Shared planning context for Atlas and Beacon",
+          "id": 9,
+          "name": "Migration checklist",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "labels": [
+              "synthetic",
+              "daily-sample"
+            ],
+            "memory_used_gib": 18,
+            "observed_at": "2026-09-01T12:00:00Z",
+            "source": "telemetry.example.invalid"
+          },
+          "description": "Reference observation from external telemetry",
+          "id": 10,
+          "name": "Capacity observation",
+          "revision": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        }
+      ],
+      "object_schema_evidence": [
+        {
+          "class_id": 1,
+          "object_id": 1,
+          "object_revision": 1,
+          "schema_revision": 1,
+          "valid": true,
+          "validated_at": "2026-09-26T00:40:18.498818Z"
+        },
+        {
+          "class_id": 1,
+          "object_id": 2,
+          "object_revision": 1,
+          "schema_revision": 1,
+          "valid": true,
+          "validated_at": "2026-09-26T00:40:18.502517Z"
+        },
+        {
+          "class_id": 2,
+          "object_id": 3,
+          "object_revision": 1,
+          "schema_revision": 1,
+          "valid": true,
+          "validated_at": "2026-09-26T00:40:18.505775Z"
+        },
+        {
+          "class_id": 2,
+          "object_id": 4,
+          "object_revision": 1,
+          "schema_revision": 1,
+          "valid": true,
+          "validated_at": "2026-09-26T00:40:18.508918Z"
+        },
+        {
+          "class_id": 2,
+          "object_id": 5,
+          "object_revision": 1,
+          "schema_revision": 1,
+          "valid": true,
+          "validated_at": "2026-09-26T00:40:18.512221Z"
+        }
+      ],
+      "object_relations": [
+        {
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "id": 1,
+          "revision": 1,
+          "to_object_id": 3,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "id": 2,
+          "revision": 1,
+          "to_object_id": 4,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 2,
+          "id": 3,
+          "revision": 1,
+          "to_object_id": 5,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 3,
+          "id": 4,
+          "revision": 1,
+          "to_object_id": 6,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 4,
+          "id": 5,
+          "revision": 1,
+          "to_object_id": 7,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 5,
+          "id": 6,
+          "revision": 1,
+          "to_object_id": 6,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "id": 7,
+          "revision": 1,
+          "to_object_id": 8,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "id": 8,
+          "revision": 1,
+          "to_object_id": 9,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 2,
+          "id": 9,
+          "revision": 1,
+          "to_object_id": 9,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        },
+        {
+          "class_relation_id": 4,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 3,
+          "id": 10,
+          "revision": 1,
+          "to_object_id": 10,
+          "updated_at": "2026-09-26T00:40:18.476044Z"
+        }
+      ],
+      "export_templates": [],
+      "remote_targets": [],
+      "event_sinks": [],
+      "event_subscriptions": []
+    }
+  },
+  "history": {
+    "sections": {
+      "collection_history": [
+        {
+          "actor_kind": null,
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:17.173192Z",
+          "description": "Root collection",
+          "history_entry_id": 1,
+          "id": 1,
+          "initiator_principal_id": null,
+          "name": "root",
+          "operation": "create",
+          "parent_collection_id": null,
+          "revision": 1,
+          "task_id": null,
+          "updated_at": "2026-09-26T00:40:17.173192Z",
+          "valid_from": "2026-09-26T00:40:17.173192Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Atlas example service catalogue and context",
+          "history_entry_id": 2,
+          "id": 2,
+          "initiator_principal_id": 1,
+          "name": "atlas-demo",
+          "operation": "create",
+          "parent_collection_id": 1,
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.481559Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Atlas example upstream inventory",
+          "history_entry_id": 3,
+          "id": 3,
+          "initiator_principal_id": 1,
+          "name": "atlas-demo-operations",
+          "operation": "create",
+          "parent_collection_id": 2,
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.483401Z",
+          "valid_to": null
+        }
+      ],
+      "class_history": [
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Services maintained in Hubuum",
+          "history_entry_id": 1,
+          "id": 1,
+          "initiator_principal_id": 1,
+          "json_schema": {
+            "properties": {
+              "availability": {
+                "description": "Target service availability (%)",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "support": {
+                "properties": {
+                  "hours": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hours"
+                ],
+                "type": "object"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "tier": {
+                "maximum": 3,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "owner",
+              "tier",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "name": "Service",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.486498Z",
+          "valid_to": null,
+          "validate_schema": true
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Reference records from an upstream server inventory",
+          "history_entry_id": 2,
+          "id": 2,
+          "initiator_principal_id": 1,
+          "json_schema": {
+            "properties": {
+              "costs": {
+                "properties": {
+                  "compute": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "storage": {
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "cpu_cores": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "environment": {
+                "enum": [
+                  "production",
+                  "staging"
+                ],
+                "type": "string"
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "memory_gib": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "hostname",
+              "environment"
+            ],
+            "type": "object"
+          },
+          "name": "Server",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.488936Z",
+          "valid_to": null,
+          "validate_schema": true
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Schema-free reference records from a facilities system",
+          "history_entry_id": 3,
+          "id": 3,
+          "initiator_principal_id": 1,
+          "json_schema": null,
+          "name": "Location",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.490465Z",
+          "valid_to": null,
+          "validate_schema": false
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "description": "Schema-free notes, checklists and observations",
+          "history_entry_id": 4,
+          "id": 4,
+          "initiator_principal_id": 1,
+          "json_schema": null,
+          "name": "Context",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.491966Z",
+          "valid_to": null,
+          "validate_schema": false
+        }
+      ],
+      "class_schema_history": [
+        {
+          "actor_principal_id": null,
+          "class_id": 1,
+          "id": 1,
+          "occurred_at": "2026-09-26T00:40:18.486017Z",
+          "operation": "create",
+          "revision": 1,
+          "snapshot": {
+            "activated_at": "2026-09-26T00:40:18.485505+00:00",
+            "activation_policy": "reject_incompatible",
+            "class_id": 1,
+            "created_at": "2026-09-26T00:40:18.485504+00:00",
+            "created_by": null,
+            "json_schema": {
+              "properties": {
+                "availability": {
+                  "description": "Target service availability (%)",
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "environment": {
+                  "enum": [
+                    "production",
+                    "staging"
+                  ],
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "support": {
+                  "properties": {
+                    "hours": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "hours"
+                  ],
+                  "type": "object"
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "tier": {
+                  "maximum": 3,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "owner",
+                "tier",
+                "environment"
+              ],
+              "type": "object"
+            },
+            "revision": 1,
+            "status": "active",
+            "validate_schema": true
+          },
+          "task_id": 1
+        },
+        {
+          "actor_principal_id": null,
+          "class_id": 2,
+          "id": 2,
+          "occurred_at": "2026-09-26T00:40:18.488861Z",
+          "operation": "create",
+          "revision": 1,
+          "snapshot": {
+            "activated_at": "2026-09-26T00:40:18.488832+00:00",
+            "activation_policy": "reject_incompatible",
+            "class_id": 2,
+            "created_at": "2026-09-26T00:40:18.488832+00:00",
+            "created_by": null,
+            "json_schema": {
+              "properties": {
+                "costs": {
+                  "properties": {
+                    "compute": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "storage": {
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                },
+                "cpu_cores": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "environment": {
+                  "enum": [
+                    "production",
+                    "staging"
+                  ],
+                  "type": "string"
+                },
+                "hostname": {
+                  "type": "string"
+                },
+                "memory_gib": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "hostname",
+                "environment"
+              ],
+              "type": "object"
+            },
+            "revision": 1,
+            "status": "active",
+            "validate_schema": true
+          },
+          "task_id": 1
+        },
+        {
+          "actor_principal_id": null,
+          "class_id": 3,
+          "id": 3,
+          "occurred_at": "2026-09-26T00:40:18.490396Z",
+          "operation": "create",
+          "revision": 1,
+          "snapshot": {
+            "activated_at": "2026-09-26T00:40:18.490376+00:00",
+            "activation_policy": "reject_incompatible",
+            "class_id": 3,
+            "created_at": "2026-09-26T00:40:18.490375+00:00",
+            "created_by": null,
+            "json_schema": null,
+            "revision": 1,
+            "status": "active",
+            "validate_schema": false
+          },
+          "task_id": 1
+        },
+        {
+          "actor_principal_id": null,
+          "class_id": 4,
+          "id": 4,
+          "occurred_at": "2026-09-26T00:40:18.491892Z",
+          "operation": "create",
+          "revision": 1,
+          "snapshot": {
+            "activated_at": "2026-09-26T00:40:18.491869+00:00",
+            "activation_policy": "reject_incompatible",
+            "class_id": 4,
+            "created_at": "2026-09-26T00:40:18.491868+00:00",
+            "created_by": null,
+            "json_schema": null,
+            "revision": 1,
+            "status": "active",
+            "validate_schema": false
+          },
+          "task_id": 1
+        }
+      ],
+      "class_relation_history": [
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "servers",
+          "from_class_id": 1,
+          "from_max_relations": null,
+          "history_entry_id": 1,
+          "id": 1,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "reverse_template_alias": "services",
+          "revision": 1,
+          "task_id": 1,
+          "to_class_id": 2,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.528765Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "location",
+          "from_class_id": 2,
+          "from_max_relations": 1,
+          "history_entry_id": 2,
+          "id": 2,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "reverse_template_alias": "servers",
+          "revision": 1,
+          "task_id": 1,
+          "to_class_id": 3,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.557970Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "context",
+          "from_class_id": 1,
+          "from_max_relations": null,
+          "history_entry_id": 3,
+          "id": 3,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "reverse_template_alias": "services",
+          "revision": 1,
+          "task_id": 1,
+          "to_class_id": 4,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.564677Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "forward_template_alias": "context",
+          "from_class_id": 2,
+          "from_max_relations": null,
+          "history_entry_id": 4,
+          "id": 4,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "reverse_template_alias": "servers",
+          "revision": 1,
+          "task_id": 1,
+          "to_class_id": 4,
+          "to_max_relations": null,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.571742Z",
+          "valid_to": null
+        }
+      ],
+      "object_history": [
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 1,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "availability": 99.9,
+            "enabled": true,
+            "environment": "production",
+            "owner": "Platform",
+            "source": "hubuum",
+            "support": {
+              "hours": "24/7"
+            },
+            "tags": [
+              "api",
+              "public"
+            ],
+            "tier": 1
+          },
+          "description": "Customer-facing service catalogue",
+          "history_entry_id": 1,
+          "id": 1,
+          "initiator_principal_id": 1,
+          "name": "Atlas",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.495580Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 1,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "environment": "staging",
+            "owner": "Operations",
+            "source": "hubuum",
+            "tier": 2
+          },
+          "description": "Staging event-processing service",
+          "history_entry_id": 2,
+          "id": 2,
+          "initiator_principal_id": 1,
+          "name": "Beacon",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.500910Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 45,
+              "storage": 5
+            },
+            "cpu_cores": 8,
+            "environment": "production",
+            "hostname": "web-01.example.invalid",
+            "memory_gib": 32,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Primary Atlas web server",
+          "history_entry_id": 3,
+          "id": 3,
+          "initiator_principal_id": 1,
+          "name": "web-01",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.504236Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 30,
+              "storage": 5
+            },
+            "cpu_cores": 4,
+            "environment": "production",
+            "hostname": "web-02.example.invalid",
+            "memory_gib": 16,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Secondary Atlas web server",
+          "history_entry_id": 4,
+          "id": 4,
+          "initiator_principal_id": 1,
+          "name": "web-02",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.507362Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 2,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "costs": {
+              "compute": 20,
+              "storage": 5
+            },
+            "cpu_cores": 2,
+            "environment": "staging",
+            "hostname": "worker-01.example.invalid",
+            "memory_gib": 8,
+            "source": "inventory.example.invalid"
+          },
+          "description": "Beacon staging worker",
+          "history_entry_id": 5,
+          "id": 5,
+          "initiator_principal_id": 1,
+          "name": "worker-01",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.510603Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 3,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "country": "Norway",
+            "site_code": "OSL",
+            "source": "facilities.example.invalid"
+          },
+          "description": "Primary site from the facilities directory",
+          "history_entry_id": 6,
+          "id": 6,
+          "initiator_principal_id": 1,
+          "name": "Oslo",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.513855Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 3,
+          "collection_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "country": "Norway",
+            "notes": [
+              "Secondary location",
+              "Capacity under review"
+            ],
+            "site_code": "BGO",
+            "source": "facilities.example.invalid"
+          },
+          "description": "Secondary site from the facilities directory",
+          "history_entry_id": 7,
+          "id": 7,
+          "initiator_principal_id": 1,
+          "name": "Bergen",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.516889Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "candidate": true,
+            "purpose": "Explore new hosting",
+            "questions": [
+              "Capacity?",
+              "Location?"
+            ],
+            "source": "hubuum"
+          },
+          "description": "Atlas hosting research maintained in Hubuum",
+          "history_entry_id": 8,
+          "id": 8,
+          "initiator_principal_id": 1,
+          "name": "Research notes",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.519704Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "source": "hubuum",
+            "steps": [
+              {
+                "done": true,
+                "title": "Review capacity"
+              },
+              {
+                "done": false,
+                "title": "Schedule maintenance"
+              }
+            ]
+          },
+          "description": "Shared planning context for Atlas and Beacon",
+          "history_entry_id": 9,
+          "id": 9,
+          "initiator_principal_id": 1,
+          "name": "Migration checklist",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.522544Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_id": 4,
+          "collection_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "data": {
+            "labels": [
+              "synthetic",
+              "daily-sample"
+            ],
+            "memory_used_gib": 18,
+            "observed_at": "2026-09-01T12:00:00Z",
+            "source": "telemetry.example.invalid"
+          },
+          "description": "Reference observation from external telemetry",
+          "history_entry_id": 10,
+          "id": 10,
+          "initiator_principal_id": 1,
+          "name": "Capacity observation",
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.525444Z",
+          "valid_to": null
+        }
+      ],
+      "object_relation_history": [
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "history_entry_id": 1,
+          "id": 1,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 3,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.579785Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "history_entry_id": 2,
+          "id": 2,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 4,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.580938Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 2,
+          "history_entry_id": 3,
+          "id": 3,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 5,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.581721Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 3,
+          "history_entry_id": 4,
+          "id": 4,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 6,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.582579Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 4,
+          "history_entry_id": 5,
+          "id": 5,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 7,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.583363Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 2,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 5,
+          "history_entry_id": 6,
+          "id": 6,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 6,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.584282Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "history_entry_id": 7,
+          "id": 7,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 8,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.584972Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 1,
+          "history_entry_id": 8,
+          "id": 8,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 9,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.585589Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 3,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 2,
+          "history_entry_id": 9,
+          "id": 9,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 9,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.586230Z",
+          "valid_to": null
+        },
+        {
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "class_relation_id": 4,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "from_object_id": 3,
+          "history_entry_id": 10,
+          "id": 10,
+          "initiator_principal_id": 1,
+          "operation": "create",
+          "revision": 1,
+          "task_id": 1,
+          "to_object_id": 10,
+          "updated_at": "2026-09-26T00:40:18.476044Z",
+          "valid_from": "2026-09-26T00:40:18.586826Z",
+          "valid_to": null
+        }
+      ],
+      "export_template_history": [],
+      "remote_target_history": [],
+      "terminal_tasks": [
+        {
+          "attempt_count": 1,
+          "created_at": "2026-09-26T00:40:18.443246Z",
+          "deleted_at": null,
+          "deleted_by": null,
+          "discovery_metadata": {
+            "data": {
+              "atomicity": "strict",
+              "collision_policy": "abort",
+              "dry_run": false,
+              "has_failed_items": false,
+              "kind": "import",
+              "permission_policy": "abort"
+            },
+            "version": 1
+          },
+          "execution_deadline_at": "2026-09-26T01:40:18.450554Z",
+          "failed_items": 0,
+          "finished_at": "2026-09-26T00:40:18.601562Z",
+          "id": 1,
+          "import_effects_committed_at": "2026-09-26T00:40:18.596918Z",
+          "initiator_principal_id": 1,
+          "kind": "import",
+          "processed_items": 35,
+          "request_hash": "e7766851e2c7b9b985d73823bb9599eb1a7156507fd6562463bd9d98d6aaf22b",
+          "request_payload": null,
+          "request_redacted_at": "2026-09-26T00:40:18.601562Z",
+          "started_at": "2026-09-26T00:40:18.450554Z",
+          "status": "succeeded",
+          "submitted_by": 1,
+          "submitted_token_scoped": false,
+          "submitted_token_scopes": [],
+          "success_items": 35,
+          "summary": "Import finished with 35 succeeded and 0 failed items",
+          "total_items": 35,
+          "updated_at": "2026-09-26T00:40:18.604955Z"
+        },
+        {
+          "attempt_count": 1,
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "deleted_at": null,
+          "deleted_by": null,
+          "discovery_metadata": {
+            "data": {
+              "class_id": 2,
+              "computation_revision": 1,
+              "kind": "reindex"
+            },
+            "version": 1
+          },
+          "execution_deadline_at": "2026-09-26T02:40:18.602040Z",
+          "failed_items": 0,
+          "finished_at": "2026-09-26T00:40:18.619743Z",
+          "id": 2,
+          "initiator_principal_id": null,
+          "kind": "reindex",
+          "processed_items": 3,
+          "request_hash": null,
+          "request_payload": null,
+          "request_redacted_at": "2026-09-26T00:40:18.619743Z",
+          "started_at": "2026-09-26T00:40:18.602040Z",
+          "status": "succeeded",
+          "submitted_by": null,
+          "submitted_token_scoped": false,
+          "submitted_token_scopes": [],
+          "success_items": 3,
+          "summary": "Computed-field rebuild completed for 3 objects",
+          "total_items": 3,
+          "updated_at": "2026-09-26T00:40:18.622360Z"
+        }
+      ],
+      "import_results": [
+        {
+          "action": "upsert",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "group",
+          "error": null,
+          "id": 1,
+          "identifier": "local/atlas-readers",
+          "item_ref": "group:readers",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "upsert",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "group",
+          "error": null,
+          "id": 2,
+          "identifier": "local/atlas-operators",
+          "item_ref": "group:operators",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "collection",
+          "error": null,
+          "id": 3,
+          "identifier": "atlas-demo",
+          "item_ref": "collection:atlas",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "collection",
+          "error": null,
+          "id": 4,
+          "identifier": "atlas-demo-operations",
+          "item_ref": "collection:operations",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class",
+          "error": null,
+          "id": 5,
+          "identifier": "atlas-demo::Service",
+          "item_ref": "class:Service",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class",
+          "error": null,
+          "id": 6,
+          "identifier": "atlas-demo-operations::Server",
+          "item_ref": "class:Server",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class",
+          "error": null,
+          "id": 7,
+          "identifier": "atlas-demo-operations::Location",
+          "item_ref": "class:Location",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class",
+          "error": null,
+          "id": 8,
+          "identifier": "atlas-demo::Context",
+          "item_ref": "class:Context",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 9,
+          "identifier": "Service::Atlas",
+          "item_ref": "object:Atlas",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 10,
+          "identifier": "Service::Beacon",
+          "item_ref": "object:Beacon",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 11,
+          "identifier": "Server::web-01",
+          "item_ref": "object:web-01",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 12,
+          "identifier": "Server::web-02",
+          "item_ref": "object:web-02",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 13,
+          "identifier": "Server::worker-01",
+          "item_ref": "object:worker-01",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 14,
+          "identifier": "Location::Oslo",
+          "item_ref": "object:Oslo",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 15,
+          "identifier": "Location::Bergen",
+          "item_ref": "object:Bergen",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 16,
+          "identifier": "Context::Research notes",
+          "item_ref": "object:Research notes",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 17,
+          "identifier": "Context::Migration checklist",
+          "item_ref": "object:Migration checklist",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object",
+          "error": null,
+          "id": 18,
+          "identifier": "Context::Capacity observation",
+          "item_ref": "object:Capacity observation",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class_relation",
+          "error": null,
+          "id": 19,
+          "identifier": "Service<->Server",
+          "item_ref": "class-relation:Service:Server",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class_relation",
+          "error": null,
+          "id": 20,
+          "identifier": "Server<->Location",
+          "item_ref": "class-relation:Server:Location",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class_relation",
+          "error": null,
+          "id": 21,
+          "identifier": "Service<->Context",
+          "item_ref": "class-relation:Service:Context",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "class_relation",
+          "error": null,
+          "id": 22,
+          "identifier": "Server<->Context",
+          "item_ref": "class-relation:Server:Context",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 23,
+          "identifier": "Atlas<->web-01",
+          "item_ref": "relation:Atlas:web-01",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 24,
+          "identifier": "Atlas<->web-02",
+          "item_ref": "relation:Atlas:web-02",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 25,
+          "identifier": "Beacon<->worker-01",
+          "item_ref": "relation:Beacon:worker-01",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 26,
+          "identifier": "web-01<->Oslo",
+          "item_ref": "relation:web-01:Oslo",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 27,
+          "identifier": "web-02<->Bergen",
+          "item_ref": "relation:web-02:Bergen",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 28,
+          "identifier": "worker-01<->Oslo",
+          "item_ref": "relation:worker-01:Oslo",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 29,
+          "identifier": "Atlas<->Research notes",
+          "item_ref": "relation:Atlas:Research notes",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 30,
+          "identifier": "Atlas<->Migration checklist",
+          "item_ref": "relation:Atlas:Migration checklist",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 31,
+          "identifier": "Beacon<->Migration checklist",
+          "item_ref": "relation:Beacon:Migration checklist",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "create",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "object_relation",
+          "error": null,
+          "id": 32,
+          "identifier": "web-01<->Capacity observation",
+          "item_ref": "relation:web-01:Capacity observation",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "grant",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "collection_permission",
+          "error": null,
+          "id": 33,
+          "identifier": "atlas-demo::atlas-readers",
+          "item_ref": "permissions:readers",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "grant",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "collection_permission",
+          "error": null,
+          "id": 34,
+          "identifier": "atlas-demo-operations::atlas-operators",
+          "item_ref": "permissions:operators",
+          "outcome": "succeeded",
+          "task_id": 1
+        },
+        {
+          "action": "upsert",
+          "created_at": "2026-09-26T00:40:18.476044Z",
+          "details": null,
+          "entity_kind": "computed_field",
+          "error": null,
+          "id": 35,
+          "identifier": "monthly_cost",
+          "item_ref": "computed:monthly_cost",
+          "outcome": "succeeded",
+          "task_id": 1
+        }
+      ],
+      "export_outputs": [],
+      "remote_call_results": [],
+      "audit_events": [
+        {
+          "action": "updated",
+          "actor_kind": "system",
+          "actor_principal_id": null,
+          "after": {
+            "created_at": "2026-09-26T00:40:17.620943",
+            "email": null,
+            "id": 1,
+            "name": "admin",
+            "proper_name": "Administrator",
+            "revision": 2,
+            "updated_at": "2026-09-26T00:40:18.285586"
+          },
+          "after_revision": 2,
+          "before": {
+            "created_at": "2026-09-26T00:40:17.620943",
+            "email": null,
+            "id": 1,
+            "name": "admin",
+            "proper_name": "Administrator",
+            "revision": 1,
+            "updated_at": "2026-09-26T00:40:17.620943"
+          },
+          "before_revision": 1,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.294955Z",
+          "entity_id": 1,
+          "entity_name": "admin",
+          "entity_type": "user",
+          "event_id": "b2b7d4a8-3783-4c81-a1af-8e0a19e3b6f8",
+          "id": 1,
+          "initiator_principal_id": null,
+          "metadata": {
+            "credential_reset": true,
+            "password_changed": true,
+            "revoked_token_count": 0
+          },
+          "occurred_at": "2026-09-26T00:40:18.281815Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "User 'admin' password changed",
+          "task_id": null
+        },
+        {
+          "action": "created",
+          "actor_kind": "system",
+          "actor_principal_id": null,
+          "after": {
+            "description": null,
+            "expires_at": "2026-09-27T00:40:18.430712",
+            "id": 1,
+            "issued": "2026-09-26T00:40:18.430712",
+            "last_used_at": null,
+            "name": null,
+            "permission_scoped": false,
+            "principal_id": 1,
+            "resource_scoped": false,
+            "revision": 1,
+            "revoked_at": null,
+            "scope": null,
+            "scoped": false,
+            "token_format": 1,
+            "token_hash_algorithm": 1,
+            "token_hash_key_id": "legacy"
+          },
+          "after_revision": 1,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.437994Z",
+          "entity_id": 1,
+          "entity_name": "1",
+          "entity_type": "token",
+          "event_id": "dd9c47a0-b7ae-463d-8212-b4f9702c383d",
+          "id": 2,
+          "initiator_principal_id": null,
+          "metadata": {
+            "permission_scoped": false,
+            "principal_id": 1,
+            "resource_scoped": false,
+            "scoped": false
+          },
+          "occurred_at": "2026-09-26T00:40:18.430273Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Token 1 created for principal 1",
+          "task_id": null
+        },
+        {
+          "action": "queued",
+          "actor_kind": "user",
+          "actor_principal_id": 1,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.452603Z",
+          "entity_id": 1,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "169601d7-2526-4200-98b6-6f77433df661",
+          "id": 3,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "task_id": 1,
+            "task_kind": "import"
+          },
+          "occurred_at": "2026-09-26T00:40:18.443246Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Task queued",
+          "task_id": 1
+        },
+        {
+          "action": "validating",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.455122Z",
+          "entity_id": 1,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "08109e29-96cb-4ed1-bb44-4f95b4a26369",
+          "id": 4,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "task_id": 1,
+            "task_kind": "import"
+          },
+          "occurred_at": "2026-09-26T00:40:18.449805Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Task claimed for validation",
+          "task_id": 1
+        },
+        {
+          "action": "running",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.475405Z",
+          "entity_id": 1,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "5a59c4e5-90f7-4386-a04f-482d123dd70f",
+          "id": 5,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "task_id": 1,
+            "task_kind": "import"
+          },
+          "occurred_at": "2026-09-26T00:40:18.470823Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Import execution started",
+          "task_id": 1
+        },
+        {
+          "action": "created",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 1,
+            "revision": 1,
+            "schema": {
+              "activation_policy": "reject_incompatible",
+              "dependent_rebuild_task_id": null,
+              "schema": {
+                "class_id": 1,
+                "revision": 1
+              },
+              "status": "active"
+            }
+          },
+          "after_revision": 1,
+          "before": null,
+          "before_revision": null,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 1,
+          "entity_name": "Service",
+          "entity_type": "class_schema",
+          "event_id": "3510ee16-ff59-4732-be27-4f32d85f11e3",
+          "id": 6,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "activation_policy": "reject_incompatible",
+            "dependent_rebuild_task_id": null,
+            "schema": {
+              "class_id": 1,
+              "revision": 1
+            },
+            "status": "active"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Class schema lifecycle changed",
+          "task_id": 1
+        },
+        {
+          "action": "created",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 2,
+            "revision": 1,
+            "schema": {
+              "activation_policy": "reject_incompatible",
+              "dependent_rebuild_task_id": null,
+              "schema": {
+                "class_id": 2,
+                "revision": 1
+              },
+              "status": "active"
+            }
+          },
+          "after_revision": 1,
+          "before": null,
+          "before_revision": null,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 2,
+          "entity_name": "Server",
+          "entity_type": "class_schema",
+          "event_id": "a8a88b07-99ef-43d1-ab28-885645013c47",
+          "id": 7,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "activation_policy": "reject_incompatible",
+            "dependent_rebuild_task_id": null,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "status": "active"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Class schema lifecycle changed",
+          "task_id": 1
+        },
+        {
+          "action": "created",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 3,
+            "revision": 1,
+            "schema": {
+              "activation_policy": "reject_incompatible",
+              "dependent_rebuild_task_id": null,
+              "schema": {
+                "class_id": 3,
+                "revision": 1
+              },
+              "status": "active"
+            }
+          },
+          "after_revision": 1,
+          "before": null,
+          "before_revision": null,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 3,
+          "entity_name": "Location",
+          "entity_type": "class_schema",
+          "event_id": "13957344-eb37-4d16-999c-7518238111d9",
+          "id": 8,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "activation_policy": "reject_incompatible",
+            "dependent_rebuild_task_id": null,
+            "schema": {
+              "class_id": 3,
+              "revision": 1
+            },
+            "status": "active"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Class schema lifecycle changed",
+          "task_id": 1
+        },
+        {
+          "action": "created",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 4,
+            "revision": 1,
+            "schema": {
+              "activation_policy": "reject_incompatible",
+              "dependent_rebuild_task_id": null,
+              "schema": {
+                "class_id": 4,
+                "revision": 1
+              },
+              "status": "active"
+            }
+          },
+          "after_revision": 1,
+          "before": null,
+          "before_revision": null,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 4,
+          "entity_name": "Context",
+          "entity_type": "class_schema",
+          "event_id": "281efa1f-f1d2-46ea-bc88-82d849cfe956",
+          "id": 9,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "activation_policy": "reject_incompatible",
+            "dependent_rebuild_task_id": null,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "status": "active"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Class schema lifecycle changed",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 1,
+            "revision": 1,
+            "schema": {
+              "class_id": 1,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 1,
+            "revision": 1,
+            "validation_status": "pending"
+          },
+          "before_revision": 1,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 1,
+          "entity_name": "Atlas",
+          "entity_type": "object_validation",
+          "event_id": "2128e27b-9d0c-429a-ab46-a61b9df032cb",
+          "id": 10,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 1,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 2,
+            "revision": 1,
+            "schema": {
+              "class_id": 1,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 2,
+            "revision": 1,
+            "validation_status": "pending"
+          },
+          "before_revision": 1,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 2,
+          "entity_name": "Beacon",
+          "entity_type": "object_validation",
+          "event_id": "4175511c-fe52-4ef5-b39b-177ecc2784b2",
+          "id": 11,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 1,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 3,
+            "revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 3,
+            "revision": 1,
+            "validation_status": "pending"
+          },
+          "before_revision": 1,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 3,
+          "entity_name": "web-01",
+          "entity_type": "object_validation",
+          "event_id": "d2fce8b4-4f83-4e68-a041-ee1825ad4591",
+          "id": 12,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 4,
+            "revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 4,
+            "revision": 1,
+            "validation_status": "pending"
+          },
+          "before_revision": 1,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 4,
+          "entity_name": "web-02",
+          "entity_type": "object_validation",
+          "event_id": "53ea95bd-579d-4c62-ad35-3bda5af7d41e",
+          "id": 13,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 5,
+            "revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 5,
+            "revision": 1,
+            "validation_status": "pending"
+          },
+          "before_revision": 1,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 5,
+          "entity_name": "worker-01",
+          "entity_type": "object_validation",
+          "event_id": "dc0de3d1-50f8-402f-9962-4c62aa5774a6",
+          "id": 14,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 2,
+              "revision": 1
+            },
+            "validation_status": "valid"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 6,
+            "revision": 1,
+            "schema": {
+              "class_id": 3,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 6,
+            "revision": 1,
+            "validation_status": "not_required"
+          },
+          "before_revision": 1,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 6,
+          "entity_name": "Oslo",
+          "entity_type": "object_validation",
+          "event_id": "cfc6a98b-d690-4c27-9b41-43823a124221",
+          "id": 15,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 3,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 7,
+            "revision": 1,
+            "schema": {
+              "class_id": 3,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 7,
+            "revision": 1,
+            "validation_status": "not_required"
+          },
+          "before_revision": 1,
+          "collection_id": 3,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 7,
+          "entity_name": "Bergen",
+          "entity_type": "object_validation",
+          "event_id": "7df2385a-5feb-4ee1-9e2f-b4a88d62e8fc",
+          "id": 16,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 3,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 8,
+            "revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 8,
+            "revision": 1,
+            "validation_status": "not_required"
+          },
+          "before_revision": 1,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 8,
+          "entity_name": "Research notes",
+          "entity_type": "object_validation",
+          "event_id": "29a3a799-5fa3-4c49-9d9a-17410b9bd15c",
+          "id": 17,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 9,
+            "revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 9,
+            "revision": 1,
+            "validation_status": "not_required"
+          },
+          "before_revision": 1,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 9,
+          "entity_name": "Migration checklist",
+          "entity_type": "object_validation",
+          "event_id": "b5e2cfa4-d25a-459e-a33c-fbc70a6b8830",
+          "id": 18,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": {
+            "id": 10,
+            "revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "after_revision": 1,
+          "before": {
+            "evidence": null,
+            "id": 10,
+            "revision": 1,
+            "validation_status": "not_required"
+          },
+          "before_revision": 1,
+          "collection_id": 2,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 10,
+          "entity_name": "Capacity observation",
+          "entity_type": "object_validation",
+          "event_id": "28a0a25e-6dc1-4c44-9d94-a2156f6925d9",
+          "id": 19,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "category": null,
+            "object_revision": 1,
+            "schema": {
+              "class_id": 4,
+              "revision": 1
+            },
+            "validation_status": "not_required"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 2,
+          "summary": "Object schema compliance changed",
+          "task_id": 1
+        },
+        {
+          "action": "queued",
+          "actor_kind": "system",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.602755Z",
+          "entity_id": 2,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "a19c05f1-358d-473e-a61c-c4040c2a426c",
+          "id": 20,
+          "initiator_principal_id": null,
+          "metadata": {
+            "task_id": 2,
+            "task_kind": "reindex"
+          },
+          "occurred_at": "2026-09-26T00:40:18.476044Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Internal task queued",
+          "task_id": 2
+        },
+        {
+          "action": "validating",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.607047Z",
+          "entity_id": 2,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "299b4573-7041-4058-bc16-978ca854bfaf",
+          "id": 21,
+          "initiator_principal_id": null,
+          "metadata": {
+            "task_id": 2,
+            "task_kind": "reindex"
+          },
+          "occurred_at": "2026-09-26T00:40:18.600806Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Task claimed for validation",
+          "task_id": 2
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.607047Z",
+          "entity_id": 1,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "361a84ec-bd6d-47f7-8ec3-733688f81d3a",
+          "id": 22,
+          "initiator_principal_id": 1,
+          "metadata": {
+            "data": {
+              "failed_items": 0,
+              "processed_items": 35,
+              "success_items": 35
+            },
+            "task_id": 1,
+            "task_kind": "import"
+          },
+          "occurred_at": "2026-09-26T00:40:18.601562Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Import finished with 35 succeeded and 0 failed items",
+          "task_id": 1
+        },
+        {
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_principal_id": null,
+          "after": null,
+          "after_revision": null,
+          "before": null,
+          "before_revision": null,
+          "collection_id": null,
+          "correlation_id": null,
+          "dispatched_at": "2026-09-26T00:40:18.624241Z",
+          "entity_id": 2,
+          "entity_name": null,
+          "entity_type": "task",
+          "event_id": "12de8cee-f8d4-4c1b-9e69-9cd0aa5e2076",
+          "id": 23,
+          "initiator_principal_id": null,
+          "metadata": {
+            "task_id": 2,
+            "task_kind": "reindex"
+          },
+          "occurred_at": "2026-09-26T00:40:18.619743Z",
+          "request_id": null,
+          "schema_version": 1,
+          "summary": "Computed-field rebuild completed for 3 objects",
+          "task_id": 2
+        }
+      ],
+      "terminal_event_deliveries": []
+    }
+  },
+  "manifest": {
+    "item_counts": {
+      "class_relations": 4,
+      "class_schema_revisions": 4,
+      "class_schema_state": 4,
+      "classes": 4,
+      "collection_authorization": 3,
+      "collection_hierarchy": 6,
+      "collection_permission_grants": 2,
+      "collections": 3,
+      "computed_field_definitions": 1,
+      "event_sinks": 0,
+      "event_subscriptions": 0,
+      "export_templates": 0,
+      "group_membership_sources": 1,
+      "group_memberships": 1,
+      "groups": 3,
+      "history.audit_events": 23,
+      "history.class_history": 4,
+      "history.class_relation_history": 4,
+      "history.class_schema_history": 4,
+      "history.collection_history": 3,
+      "history.export_outputs": 0,
+      "history.export_template_history": 0,
+      "history.import_results": 35,
+      "history.object_history": 10,
+      "history.object_relation_history": 10,
+      "history.remote_call_results": 0,
+      "history.remote_target_history": 0,
+      "history.terminal_event_deliveries": 0,
+      "history.terminal_tasks": 2,
+      "identity_scopes": 1,
+      "object_relations": 10,
+      "object_schema_evidence": 5,
+      "objects": 10,
+      "principals": 1,
+      "remote_targets": 0,
+      "service_accounts": 0,
+      "users": 1
+    },
+    "exclusions": [
+      "backup_task_outputs (backup artifacts never recursively contain prior backups)",
+      "authentication tokens and token scopes (credentials must be reissued after restore)",
+      "class reachability cache (rebuilt by database triggers during restore)",
+      "computed-field class state and materialized object cache (rebuilt after restore)",
+      "active tasks and non-terminal event deliveries",
+      "restore control-plane tables and server instance heartbeats"
+    ]
+  }
+}
