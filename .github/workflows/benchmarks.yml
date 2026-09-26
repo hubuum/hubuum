@@ -63,13 +63,15 @@ jobs:
       - name: Classify changed paths
         id: paths
         env:
+          IS_PULL_REQUEST: true
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          bash scripts/ci-changed-paths.sh > "$RUNNER_TEMP/benchmark-changed-paths"
           changed_files=()
           while IFS= read -r -d '' path; do
             changed_files+=("$path")
-          done < <(git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA")
+          done < "$RUNNER_TEMP/benchmark-changed-paths"
           bash scripts/classify-ci-changes.sh "${changed_files[@]}"
       - name: Select benchmark tier
         id: policy
@@ -128,11 +130,42 @@ jobs:
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
 
-  warm-cache:
-    name: Warm benchmark caches on main
+  warm-cache-changes:
+    name: Classify benchmark cache inputs
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    outputs:
+      benchmarks: ${{ steps.paths.outputs.benchmarks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Classify cache inputs
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          bash scripts/ci-changed-paths.sh > "$RUNNER_TEMP/cache-changed-paths"
+          changed_files=()
+          while IFS= read -r -d '' path; do
+            changed_files+=("$path")
+          done < "$RUNNER_TEMP/cache-changed-paths"
+          bash scripts/classify-ci-changes.sh "${changed_files[@]}"
+
+  warm-cache:
+    needs: warm-cache-changes
+    name: Warm benchmark caches on main
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.warm-cache-changes.outputs.benchmarks == 'true'
     uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
     with:
       action_ref: d0202becabbd115351a879c21f53ab9da6812a44

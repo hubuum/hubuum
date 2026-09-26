@@ -267,7 +267,8 @@ assert_flag "$operational_contract_output" artifacts false
 
 changelog_output="$(bash "$classifier" CHANGELOG.md)"
 assert_flag "$changelog_output" markdown true
-assert_flag "$changelog_output" code true
+assert_flag "$changelog_output" code false
+assert_flag "$changelog_output" openapi true
 assert_flag "$changelog_output" operational_contract true
 
 ci_workflow_output="$(bash "$classifier" .github/workflows/ci.yml)"
@@ -401,6 +402,7 @@ for required in (
     "github.ref == 'refs/heads/main'",
     "github.event_name == 'push'",
     "github.event_name == 'workflow_dispatch'",
+    "needs.warm-cache-changes.outputs.benchmarks == 'true'",
     "compile_only: true",
     "comment_mode: never",
 ):
@@ -625,3 +627,13 @@ for approval_path in src/api/v1/handlers/credential_approvals.rs src/services/cr
   approval_output="$(bash "$classifier" "$approval_path")"
   assert_flag "$approval_output" treetop_conformance true
 done
+
+for ci_input in scripts/ci-changed-paths.sh scripts/test-ci-changed-paths.py; do
+  output="$(bash "$classifier" "$ci_input")"
+  assert_flag "$output" code true
+  assert_flag "$output" documentation true
+  assert_flag "$output" benchmarks true
+done
+unknown_document="$(bash "$classifier" docs/future-contract.json)"
+assert_flag "$unknown_document" code true
+python3 "$repo_root/scripts/test-ci-changed-paths.py"

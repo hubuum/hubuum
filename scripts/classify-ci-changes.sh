@@ -33,7 +33,8 @@ for path in "$@"; do
   case "$path" in
     docs/* | zensical.toml | .github/docs-tools.env | \
       .github/workflows/docs.yml | scripts/docs.sh | scripts/classify-ci-changes.sh | \
-      scripts/test-classify-ci-changes.sh | scripts/check-python-version.py | \
+      scripts/test-classify-ci-changes.sh | scripts/ci-changed-paths.sh | \
+      scripts/test-ci-changed-paths.py | scripts/check-python-version.py | \
       .python-version)
       documentation=true
       ;;
@@ -84,7 +85,12 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    CHANGELOG.md | docs/operational-contract.json | docs/metrics-reference.md | \
+    CHANGELOG.md)
+      # Release notes participate in both compatibility exception contracts.
+      openapi=true
+      operational_contract=true
+      ;;
+    docs/operational-contract.json | docs/metrics-reference.md | \
       .github/operational-contract-breaking-exceptions.json | \
       scripts/check-operational-contract-compatibility.py | \
       scripts/resolve-operational-contract-baseline.sh | \
@@ -139,7 +145,7 @@ for path in "$@"; do
     observability/*)
       code=true
       ;;
-    *.md | docs/* | LICENSE | .gitattributes | .gitignore | \
+    *.md | docs/assets/* | LICENSE | .gitattributes | .gitignore | \
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
       ;;
@@ -244,7 +250,8 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    scripts/check-json-schema-budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh)
+    scripts/check-json-schema-budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
+      scripts/ci-changed-paths.sh | scripts/test-ci-changed-paths.py)
       code=true
       benchmarks=true
       runtime_benchmark=true

@@ -79,19 +79,15 @@ jobs:
       - name: Classify changed paths
         id: paths
         env:
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
+          bash scripts/ci-changed-paths.sh > "$RUNNER_TEMP/ci-changed-paths"
           changed_files=()
-          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
-            while IFS= read -r -d '' path; do
-              changed_files+=("$path")
-            done < <(git ls-files --cached --others --exclude-standard -z)
-          else
-            while IFS= read -r -d '' path; do
-              changed_files+=("$path")
-            done < <(git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA")
-          fi
+          while IFS= read -r -d '' path; do
+            changed_files+=("$path")
+          done < "$RUNNER_TEMP/ci-changed-paths"
           bash scripts/classify-ci-changes.sh "${changed_files[@]}"
       - name: Select CI tier
         id: policy
