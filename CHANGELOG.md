@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation uses the shared warm Hubuum theme from the ecosystem site's
+  unversioned stylesheet, including retained release editions. Future styling
+  updates no longer require changes or rebuilds in this repository.
+
 ### Added
 
 - A searchable Zensical documentation website, automatically published to GitHub
