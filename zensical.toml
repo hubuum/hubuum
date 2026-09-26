@@ -9,7 +9,7 @@ edit_uri = "edit/main/docs/"
 docs_dir = "docs"
 site_dir = "target/docs-site"
 strict = true
-extra_css = ["assets/stylesheets/extra.css"]
+extra_css = ["https://hubuum.github.io/assets/stylesheets/hubuum.css"]
 extra_javascript = ["assets/javascripts/versions.js"]
 copyright = "Hubuum · MIT licensed"
 
