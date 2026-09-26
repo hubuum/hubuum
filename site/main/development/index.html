@@ -4401,6 +4401,16 @@ ancestor must satisfy all requested flags.</p>
 move constraints, indexes, and the rationale for keeping its PostgreSQL
 mechanics adapter-local.</p>
 <h2 id="pull-request-ci-tiers">Pull request CI tiers<a class="headerlink" href="#pull-request-ci-tiers" title="Permanent link">&para;</a></h2>
+<p>Ordinary prose and documentation-site changes run Markdown and documentation
+checks without the application matrix or benchmark cache builds. <code>CHANGELOG.md</code>
+retains the OpenAPI and operational-contract checks because release notes are
+inputs to compatibility exceptions. Embedded documentation, generated contracts,
+and architecture-test inputs retain their existing code checks; unknown files
+under <code>docs/</code> also receive conservative validation.</p>
+<p>Change selection compares pull requests against their merge base, includes both
+sides of renames, and fails if Git cannot produce a reliable diff. The existing
+<code>CI gate</code> remains required. Benchmark cache warming on <code>main</code> runs only when
+benchmark inputs change; manual benchmark dispatch still forces cache warming.</p>
 <p>Pull request validation is selected from the complete base-to-head diff:</p>
 <ul>
 <li>Draft documentation-only pull requests run Markdown lint when Markdown files
