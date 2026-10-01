@@ -1,0 +1,9 @@
+dashboards/overview.json
+dashboards/api.json
+dashboards/postgresql.json
+dashboards/tasks.json
+dashboards/events.json
+dashboards/integrations.json
+dashboards/recovery.json
+prometheus/alerts.json
+prometheus/recording-rules.json

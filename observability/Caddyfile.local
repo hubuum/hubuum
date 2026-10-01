@@ -1,0 +1,21 @@
+localhost {
+    tls internal
+    handle /grafana {
+        redir /grafana/ 308
+    }
+    handle /grafana/* {
+        reverse_proxy grafana:3000
+    }
+    @prometheus path /prometheus /prometheus/*
+    handle @prometheus {
+        basic_auth {
+            admin {$PROMETHEUS_PASSWORD_HASH}
+        }
+        reverse_proxy prometheus:9090 {
+            header_up -Authorization
+        }
+    }
+    handle {
+        reverse_proxy hubuum:8080
+    }
+}

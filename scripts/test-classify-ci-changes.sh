@@ -47,7 +47,7 @@ for operator_path in observability/prometheus/alerts.json observability/promethe
   observability/dashboards/overview.json scripts/check-observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
   assert_flag "$operator_output" code true
-  assert_flag "$operator_output" container false
+  assert_flag "$operator_output" container true
 done
 
 for transport_path in scripts/test-event-transports.py scripts/integration-fixtures.py \
@@ -135,7 +135,12 @@ for python_tool in scripts/check-python-version.py scripts/test-python-version.p
 done
 
 for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py \
-  scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py; do
+  scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py \
+  scripts/single-host-monitoring.sh scripts/test-single-host-monitoring.py \
+  scripts/generate-observability.py scripts/check-observability.py \
+  scripts/record-operator-job.py scripts/test-operator-job.py \
+  observability/manifest.txt observability/dashboards/events.json \
+  observability/prometheus/operator-rule.json observability/runbooks/availability.md; do
   probe_output="$(bash "$classifier" "$probe_path")"
   assert_flag "$probe_output" code true
   assert_flag "$probe_output" container true

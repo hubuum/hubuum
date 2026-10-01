@@ -23,7 +23,7 @@ SERVER = "ghcr.io/hubuum/hubuum-server"
 FRONTEND = "ghcr.io/hubuum/hubuum-frontend"
 
 
-class ImageTagTests(unittest.TestCase):
+class InstallerFixture(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -45,6 +45,7 @@ class ImageTagTests(unittest.TestCase):
             "update-single-host.sh",
             "stop-single-host.sh",
             "uninstall-single-host.sh",
+            "single-host-monitoring.sh",
         ):
             source = (REPOSITORY_ROOT / "scripts" / name).read_text()
             source = source.replace('if [[ "$EUID" -ne 0 ]]; then', "if false; then")
@@ -161,6 +162,8 @@ class ImageTagTests(unittest.TestCase):
             )
         return values
 
+
+class ImageTagTests(InstallerFixture):
     def test_legacy_installation_accepts_updates_with_and_without_tag_overrides(self):
         for script in ("install-single-host.sh", "update-single-host.sh"):
             for saved_server in ("main", "v0.0.14"):

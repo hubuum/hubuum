@@ -217,3 +217,11 @@ Documentation-only and repository-metadata pushes do not rebuild or replace
 because their binary inputs are unchanged. Changes to Rust sources, embedded
 documentation, migrations, manifests, container inputs, or the publication
 workflow still run the complete validation and publishing path.
+
+## Operator monitoring
+
+Use the [shared operator package](../observability/README.md) for Grafana dashboards,
+Prometheus recording and alerting rules, SLO definitions and response runbooks.
+The same assets work with the optional single-host stack, independently managed
+Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
+your server release and scrape every process directly with deployment labels.

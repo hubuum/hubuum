@@ -24,6 +24,15 @@ FRONTEND_TAG=""
 POSTGRES_IMAGE="docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
+MONITORING_ENABLED="false"
+MONITORING_ASSETS_REF="auto"
+MONITORING_DEPLOYMENT=""
+PROMETHEUS_IMAGE="docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
+GRAFANA_IMAGE="docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
+PROMETHEUS_RETENTION_TIME="31d"
+PROMETHEUS_RETENTION_SIZE="5GB"
+PROMETHEUS_MEMORY_LIMIT="512m"
+GRAFANA_MEMORY_LIMIT="512m"
 EXTERNAL_DATABASE_URL=""
 EXTERNAL_MIGRATION_DATABASE_URL=""
 DATABASE_ROLE_MODE="single"
@@ -85,6 +94,11 @@ Options:
   --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.4 on Alpine 3.24 (digest-pinned)
   --valkey-image IMAGE    Valkey image. Default: docker.io/valkey/valkey:9-alpine
   --caddy-image IMAGE     Caddy image. Default: docker.io/library/caddy:2-alpine
+  --monitoring            Install Prometheus and Grafana under /prometheus/ and /grafana/
+  --monitoring-ref REF    Operator-package Git ref (default: derive from backend image)
+  --prometheus-image IMAGE
+                          Override the pinned Prometheus image
+  --grafana-image IMAGE   Override the pinned Grafana image
   --network-subnet CIDR   Container bridge subnet. Default: 172.30.42.0/24
   --systemd               Install and enable a systemd service
   --service-name NAME     systemd service name. Default: hubuum
@@ -195,6 +209,10 @@ while [[ $# -gt 0 ]]; do
     --postgres-image) POSTGRES_IMAGE="$2"; ARG_SET+=" POSTGRES_IMAGE"; shift 2 ;;
     --valkey-image) VALKEY_IMAGE="$2"; ARG_SET+=" VALKEY_IMAGE"; shift 2 ;;
     --caddy-image) CADDY_IMAGE="$2"; ARG_SET+=" CADDY_IMAGE"; shift 2 ;;
+    --monitoring) MONITORING_ENABLED="true"; ARG_SET+=" MONITORING_ENABLED"; shift ;;
+    --monitoring-ref) MONITORING_ASSETS_REF="$2"; ARG_SET+=" MONITORING_ASSETS_REF"; shift 2 ;;
+    --prometheus-image) PROMETHEUS_IMAGE="$2"; ARG_SET+=" PROMETHEUS_IMAGE"; shift 2 ;;
+    --grafana-image) GRAFANA_IMAGE="$2"; ARG_SET+=" GRAFANA_IMAGE"; shift 2 ;;
     --network-subnet) NETWORK_SUBNET="$2"; ARG_SET+=" NETWORK_SUBNET"; shift 2 ;;
     --systemd) INSTALL_SYSTEMD="true"; shift ;;
     --service-name) SERVICE_NAME="$2"; SERVICE_NAME_SET="true"; shift 2 ;;
@@ -248,6 +266,11 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env POSTGRES_IMAGE POSTGRES_IMAGE
   reuse_from_env VALKEY_IMAGE VALKEY_IMAGE
   reuse_from_env CADDY_IMAGE CADDY_IMAGE
+  for setting in MONITORING_ENABLED MONITORING_ASSETS_REF MONITORING_DEPLOYMENT \
+    PROMETHEUS_IMAGE GRAFANA_IMAGE PROMETHEUS_RETENTION_TIME PROMETHEUS_RETENTION_SIZE \
+    PROMETHEUS_MEMORY_LIMIT GRAFANA_MEMORY_LIMIT; do
+    reuse_from_env "$setting" "$setting"
+  done
   reuse_from_env BACKEND_REF BACKEND_REF
   reuse_from_env FRONTEND_REF FRONTEND_REF
   reuse_from_env BACKEND_REPO BACKEND_REPO
@@ -282,6 +305,7 @@ fi
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
 [[ "$DATABASE_ROLE_MODE" == "single" || "$DATABASE_ROLE_MODE" == "split" ]] || die "--database-role-mode must be single or split"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
+[[ "$MONITORING_ENABLED" == "true" || "$MONITORING_ENABLED" == "false" ]] || die "MONITORING_ENABLED must be true or false"
 [[ "$API_PORT" =~ ^[0-9]+$ && "$API_PORT" -ge 1 && "$API_PORT" -le 65535 ]] || die "--api-port must be an integer between 1 and 65535"
 if [[ -n "$SHARED_HOST_ROUTING" && "$SHARED_HOST_ROUTING" != "bff" && "$SHARED_HOST_ROUTING" != "direct" && "$SHARED_HOST_ROUTING" != "prefixed" ]]; then
   die "--shared-host-routing must be bff, direct, or prefixed"
@@ -477,6 +501,7 @@ install_management_script() {
 install_management_script install-single-host.sh
 install_management_script update-single-host.sh
 install_management_script single-host-rollout.sh
+install_management_script single-host-monitoring.sh
 install_management_script stop-single-host.sh
 install_management_script uninstall-single-host.sh
 
@@ -572,6 +597,14 @@ if [[ "$MODE" == "all" ]]; then
   LOGIN_RATE_LIMIT_BACKEND="valkey"
 fi
 
+MONITORING_CADDY_IMPORT=""
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  # shellcheck source=scripts/single-host-monitoring.sh
+  source "$INSTALL_DIR/single-host-monitoring.sh"
+  hubuum_prepare_monitoring
+  MONITORING_CADDY_IMPORT="import monitoring"
+fi
+
 write_deployment_env() {
   printf 'INSTALL_MODE=%s\n' "$MODE"
   printf 'WEB_FQDN=%s\n' "$WEB_FQDN"
@@ -592,6 +625,10 @@ write_deployment_env() {
   printf 'POSTGRES_IMAGE=%s\n' "$POSTGRES_IMAGE"
   printf 'VALKEY_IMAGE=%s\n' "$VALKEY_IMAGE"
   printf 'CADDY_IMAGE=%s\n' "$CADDY_IMAGE"
+  printf 'MONITORING_ENABLED=%s\n' "$MONITORING_ENABLED"
+  if [[ "$MONITORING_ENABLED" == "true" ]]; then
+    hubuum_monitoring_env
+  fi
   printf 'DATABASE_MANAGED=%s\n' "$DATABASE_MANAGED"
   printf 'POSTGRES_DB=hubuum\n'
   printf 'POSTGRES_USER=hubuum\n'
@@ -649,8 +686,12 @@ merge_missing_env_values() {
   temporary="$(mktemp "${ENV_FILE}.XXXXXX")"
   while IFS= read -r line || [[ -n "$line" ]]; do
     key="${line%%=*}"
-    if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ]] && arg_was_set "$key"; then
+    if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ||
+      "$key" == "MONITORING_ENABLED" || "$key" == "MONITORING_ASSETS_REF" ||
+      "$key" == "PROMETHEUS_IMAGE" || "$key" == "GRAFANA_IMAGE" ]] && arg_was_set "$key"; then
       line="${key}=${!key}"
+    elif [[ "$key" == "MONITORING_HOST" && "$MONITORING_ENABLED" == "true" ]]; then
+      line="MONITORING_HOST=${MONITORING_HOST}"
     fi
     printf '%s\n' "$line"
   done < "$ENV_FILE" > "$temporary"
@@ -675,6 +716,8 @@ if [[ "$ACTION" == "refresh-config" ]]; then
   merge_missing_env_values "$GENERATED_ENV_TEMP"
   rm -f "$GENERATED_ENV_TEMP"
 else
+  # Credentials must never be briefly created with the caller's public umask.
+  [[ -f "$ENV_FILE" ]] || install -m 0600 /dev/null "$ENV_FILE"
   write_deployment_env > "$ENV_FILE"
 fi
 
@@ -737,6 +780,10 @@ cat > "$CADDYFILE_TEMP" <<EOF
 }
 EOF
 
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  hubuum_monitoring_caddy >> "$CADDYFILE_TEMP"
+fi
+
 if [[ "$MODE" == "all" ]]; then
   cat >> "$CADDYFILE_TEMP" <<'EOF'
 (web_proxy) {
@@ -764,7 +811,10 @@ if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
 	encode zstd gzip
-	import web_proxy
+	${MONITORING_CADDY_IMPORT}
+	handle {
+		import web_proxy
+	}
 }
 
 ${API_FQDN} {
@@ -788,13 +838,17 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
 	encode zstd gzip
-	import web_proxy
+	${MONITORING_CADDY_IMPORT}
+	handle {
+		import web_proxy
+	}
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
 	encode zstd gzip
+	${MONITORING_CADDY_IMPORT}
 
 	@backend path /api/v0* /api/v1* /api-doc* /swagger-ui*
 	handle @backend {
@@ -819,6 +873,7 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
 	encode zstd gzip
+	${MONITORING_CADDY_IMPORT}
 
 	handle /hubuum-api {
 		redir * /hubuum-api/
@@ -847,6 +902,7 @@ else
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${API_FQDN} {
 	encode zstd gzip
+	${MONITORING_CADDY_IMPORT}
 
 	handle /metrics {
 		import metrics_primary_proxy
@@ -868,6 +924,7 @@ fi
 # so a running container sees the new contents when hubuum_reload_caddy reads
 # /etc/caddy/Caddyfile on Linux.
 cp "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"
+chmod 0644 "$INSTALL_DIR/Caddyfile"
 rm -f "$CADDYFILE_TEMP"
 
 cat > "$INSTALL_DIR/compose.yml" <<'EOF'
@@ -1046,6 +1103,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}
       HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL: ${HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL}
       HUBUUM_AUTH_CONFIG_PATH: ${HUBUUM_AUTH_CONFIG_PATH}
+      HUBUUM_METRICS_ENABLED: ${HUBUUM_METRICS_ENABLED:-true}
     volumes:
       - type: bind
         source: "${HUBUUM_AUTH_CONFIG_HOST_PATH}"
@@ -1143,6 +1201,10 @@ EOF
 EOF
 fi
 
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  hubuum_monitoring_compose >> "$INSTALL_DIR/compose.yml"
+fi
+
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
 
   caddy:
@@ -1153,7 +1215,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
       - caddy_data:/data
       - caddy_config:/config
 EOF
@@ -1174,6 +1236,15 @@ fi
 if [[ "$MODE" == "all" ]]; then
   cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
   valkey_data:
+EOF
+fi
+
+# Keep volume declarations after monitoring is disabled so --purge can still
+# remove the retained data. Ordinary stop/uninstall never remove these volumes.
+if [[ -d "$INSTALL_DIR/monitoring" ]]; then
+  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
+  prometheus_data:
+  grafana_data:
 EOF
 fi
 
@@ -1202,6 +1273,7 @@ if [[ "$PULL" == "true" ]]; then
   [[ "$BUILD_FROM_SOURCE" != "true" && "$MODE" == "all" ]] && PULL_SERVICES+=(hubuum-web)
   [[ "$DATABASE_MANAGED" == "true" ]] && PULL_SERVICES+=(postgres)
   [[ "$MODE" == "all" ]] && PULL_SERVICES+=(valkey)
+  [[ "$MONITORING_ENABLED" == "true" ]] && PULL_SERVICES+=(prometheus grafana)
   "${COMPOSE_CMD[@]}" pull "${PULL_SERVICES[@]}"
 fi
 
@@ -1248,6 +1320,10 @@ fi
 source "$INSTALL_DIR/single-host-rollout.sh"
 INSTALL_MODE="$MODE"
 hubuum_rollout
+
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  hubuum_monitoring_summary
+fi
 
 if [[ "$SYSTEMD_STATUS" == enabled* ]]; then
   # Mark the oneshot unit active without restarting the already-rolled stack.

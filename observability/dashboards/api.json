@@ -1,6 +1,6 @@
 {
-  "uid": "hubuum-operations",
-  "title": "Hubuum operations",
+  "uid": "hubuum-api",
+  "title": "Hubuum API",
   "schemaVersion": 39,
   "version": 1,
   "tags": [
@@ -48,9 +48,9 @@
   "panels": [
     {
       "id": 1,
-      "title": "API availability (30 days)",
+      "title": "Application requests",
       "type": "timeseries",
-      "description": "99.9% objective; API 2xx/3xx/5xx responses only. Missing or idle traffic has no ratio.",
+      "description": "SLO traffic excludes client errors, probes, metrics, Swagger and OpenAPI.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -58,238 +58,6 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "1 - hubuum:api_error_ratio:rate30d{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Availability budget burn",
-      "type": "timeseries",
-      "description": "1 consumes exactly one budget over 30 days; alerts use two windows.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 0,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum:api_error_budget_burn:rate1h{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "title": "API latency compliance (30 days)",
-      "type": "timeseries",
-      "description": "99% of successful API responses within one second; excludes asynchronous execution time.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "1 - hubuum:api_latency_bad_ratio:rate30d{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "Configured scrape targets",
-      "type": "timeseries",
-      "description": "Each process must be scraped directly. A missing target is not healthy.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "up{job=\"hubuum\",deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "Active alerts",
-      "type": "timeseries",
-      "description": "Alertmanager destinations and paging policy are configured separately.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 16,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "ALERTS{alertstate=\"firing\",deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "title": "Build inventory",
-      "type": "timeseries",
-      "description": "Version and revision labels identify the running build.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 16,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum_build_info{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Runtime roles",
-      "type": "timeseries",
-      "description": "Workers need independent scrape targets in distributed deployments.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 24,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum_runtime_info{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "title": "API and worker scrape age",
-      "type": "timeseries",
-      "description": "Age of the last scrape evaluation; inspect up for failures.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 24,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum:scrape_age:seconds{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "title": "API request rate",
-      "type": "timeseries",
-      "description": "Ordinary API SLO traffic, excluding client errors and probes.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -308,17 +76,75 @@
       ]
     },
     {
-      "id": 10,
-      "title": "Successful API latency p95",
+      "id": 2,
+      "title": "Status distribution",
       "type": "timeseries",
-      "description": "Successful API requests only.",
+      "description": "All application statuses, including client errors.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, status_family) (rate(hubuum_http_requests_total{deployment=~\"$deployment\",route=~\"/api/.*\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Requests by route and method",
+      "type": "timeseries",
+      "description": "Bounded route templates and methods, never raw URL paths.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, route, method) (rate(hubuum_http_requests_total{deployment=~\"$deployment\",route=~\"/api/.*\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Latency p50 by route and method",
+      "type": "timeseries",
+      "description": "Stable route templates and methods only; successful API requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -331,110 +157,23 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "hubuum:api_latency_p95:5m{deployment=~\"$deployment\"}",
+          "expr": "hubuum:api_route_latency_p50:5m{deployment=~\"$deployment\"}",
           "legendFormat": "__auto"
         }
       ]
     },
     {
-      "id": 11,
-      "title": "API readiness (external)",
+      "id": 5,
+      "title": "Latency p95 by route and method",
       "type": "timeseries",
-      "description": "Optional per-replica /readyz probes; scraping alone does not prove readiness.",
+      "description": "Stable route templates and methods only; successful API requests.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "probe_success{job=\"hubuum-readiness\",deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "Database pool utilization",
-      "type": "timeseries",
-      "description": "Per-process checked-out/configured connections.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 40,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum:pool_utilization:ratio{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 13,
-      "title": "Database operation failures",
-      "type": "timeseries",
-      "description": "Bounded caller categories; investigate persistent errors.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 48,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (deployment, caller) (rate(hubuum_db_operation_errors_total{deployment=~\"$deployment\"}[5m]))",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "title": "Oldest queued task",
-      "type": "timeseries",
-      "description": "Initial queue objective: below 300 seconds.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 48,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -447,52 +186,52 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "hubuum:task_queue_age:seconds{deployment=~\"$deployment\"}",
+          "expr": "hubuum:api_route_latency_p95:5m{deployment=~\"$deployment\"}",
           "legendFormat": "__auto"
         }
       ]
     },
     {
-      "id": 15,
-      "title": "Recent terminal task failures",
+      "id": 6,
+      "title": "Latency p99 by route and method",
       "type": "timeseries",
-      "description": "One indicates a retained task failure within the last hour.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 56,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "hubuum:task_failure:recent{deployment=~\"$deployment\"}",
-          "legendFormat": "__auto"
-        }
-      ]
-    },
-    {
-      "id": 16,
-      "title": "Event backlog",
-      "type": "timeseries",
-      "description": "Database-wide snapshot: max deduplicates replicas sharing a deployment label.",
+      "description": "Stable route templates and methods only; successful API requests.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "x": 12,
-        "y": 56,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hubuum:api_route_latency_p99:5m{deployment=~\"$deployment\"}",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "In-flight requests",
+      "type": "timeseries",
+      "description": "Process-local gauges summed across replicas.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -505,7 +244,181 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "hubuum:event_queue:items{deployment=~\"$deployment\"}",
+          "expr": "sum by (deployment, route) (hubuum_http_requests_in_flight{deployment=~\"$deployment\"})",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Authorization and request errors",
+      "type": "timeseries",
+      "description": "Bounded public error classes include permission and input/resource limits.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, class) (rate(hubuum_api_errors_total{deployment=~\"$deployment\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Allowlist rejections",
+      "type": "timeseries",
+      "description": "No source addresses or user identities are exposed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, reason) (rate(hubuum_client_allowlist_rejections_total{deployment=~\"$deployment\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Authentication failures",
+      "type": "timeseries",
+      "description": "Bounded outcomes without principals or addresses.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, outcome) (rate(hubuum_login_attempts_total{deployment=~\"$deployment\",outcome!=\"success\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Login limiter failures and fallback",
+      "type": "timeseries",
+      "description": "Shared limiter errors trigger local enforcement fallback.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (deployment, operation) (rate(hubuum_login_limiter_backend_failures_total{deployment=~\"$deployment\"}[5m]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Process memory",
+      "type": "timeseries",
+      "description": "Tune instance resource limits to observed workloads.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "process_resident_memory_bytes{job=\"hubuum\",deployment=~\"$deployment\"}",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Process CPU",
+      "type": "timeseries",
+      "description": "Per process CPU usage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(process_cpu_seconds_total{job=\"hubuum\",deployment=~\"$deployment\"}[5m])",
           "legendFormat": "__auto"
         }
       ]

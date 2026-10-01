@@ -15,6 +15,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Optional single-host Prometheus and Grafana installation with authenticated
+  `/prometheus/` and `/grafana/` paths, private container ports, pinned images,
+  persistent data and automatic provisioning. The shared operator package
+  provides seven dashboards, recording rules, SLO and operational alerts,
+  runbooks, Prometheus Operator resources and external job-result recording
+  for distributed installations as well.
+
 - A shared Atlas example inventory for documentation, demonstrations, and client
   testing: four classes and ten connected objects, with downloadable import and
   restorable backup files, schema and permission examples, and automated checks

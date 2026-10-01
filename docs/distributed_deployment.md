@@ -407,3 +407,11 @@ that query's higher-scale optimization remains follow-up work in
 
 For a single-host installation, continue to use
 [Single-Host Container Deployment](deployment.md).
+
+## Operator monitoring
+
+Use the [shared operator package](../observability/README.md) for Grafana dashboards,
+Prometheus recording and alerting rules, SLO definitions and response runbooks.
+The same assets work with the optional single-host stack, independently managed
+Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
+your server release and scrape every process directly with deployment labels.

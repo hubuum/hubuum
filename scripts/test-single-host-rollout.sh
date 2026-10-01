@@ -74,7 +74,7 @@ if [[ "$*" == *" ps -q"* ]]; then
     exit 2
   }
 
-  for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby; do
+  for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby prometheus grafana; do
     if [[ -e "$TEST_ROOT/stopped-$service" ]]; then
       continue
     fi
@@ -405,5 +405,20 @@ cat > "$TEST_ROOT/expected-managed-single-role-migration.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 EOF
 assert_commands "$TEST_ROOT/expected-managed-single-role-migration.log"
+
+MONITORING_ENABLED="false"
+: > "$COMMAND_LOG"
+hubuum_roll_monitoring
+[[ ! -s "$COMMAND_LOG" ]]
+
+MONITORING_ENABLED="true"
+: > "$COMMAND_LOG"
+hubuum_roll_monitoring
+cat > "$TEST_ROOT/expected-monitoring.log" <<EOF
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate prometheus grafana
+EOF
+assert_commands "$TEST_ROOT/expected-monitoring.log"
+grep -q 'inspect .*container-prometheus' "$COMMAND_LOG"
+grep -q 'inspect .*container-grafana' "$COMMAND_LOG"
 
 echo "Single-host rolling update test passed"

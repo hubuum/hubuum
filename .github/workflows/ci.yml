@@ -251,6 +251,19 @@ jobs:
         run: |
           python3 scripts/check-observability.py --promtool
           python3 scripts/test-observability.py
+          python3 scripts/test-operator-job.py
+          python3 scripts/test-single-host-monitoring.py
+      - name: Test monitoring with Docker Compose
+        if: matrix.python-version == '3.12'
+        run: python3 scripts/test-single-host-monitoring.py --live --engine docker
+      - name: Install rootful Podman Compose
+        if: matrix.python-version == '3.12'
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes podman podman-compose
+      - name: Test monitoring with rootful Podman Compose
+        if: matrix.python-version == '3.12'
+        run: sudo env PODMAN_COMPOSE_PROVIDER=/usr/bin/podman-compose "$(command -v python3)" scripts/test-single-host-monitoring.py --live --engine podman
       - name: Test Rust API classification policy
         run: python3 scripts/test-rust-api-policy.py
       - name: Test supply-chain policy validation
@@ -376,6 +389,8 @@ jobs:
         run: bash scripts/test-install-script-refresh.sh
       - name: Test single-host image tag selection
         run: python3 scripts/test-single-host-tags.py
+      - name: Test single-host monitoring configuration and lifecycle
+        run: python3 scripts/test-single-host-monitoring.py
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
       - name: Test health probe transport retry boundaries

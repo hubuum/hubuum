@@ -39,6 +39,23 @@ class ContractDriftTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     checker.validate(root)
 
+    def test_all_dashboard_metrics_are_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / "observability", root / "observability")
+            (root / "docs").mkdir()
+            shutil.copy(ROOT / "docs/operational-contract.json", root / "docs/operational-contract.json")
+            path = root / "observability/dashboards/recovery.json"
+            dashboard = json.loads(path.read_text())
+            dashboard["panels"][0]["targets"][0]["expr"] = "removed_metric"
+            path.write_text(json.dumps(dashboard))
+            with self.assertRaisesRegex(ValueError, "Unknown metric: removed_metric"):
+                checker.validate(root)
+
+    def test_vector_names_exclude_functions_and_labels(self):
+        expression = 'sum by (deployment) (rate(requests_total{outcome="error"}[5m])) or (errors_total / total)'
+        self.assertEqual(list(checker.metric_names(expression)), ["requests_total", "errors_total", "total"])
+
 
 if __name__ == "__main__":
     unittest.main()

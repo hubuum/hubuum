@@ -313,7 +313,18 @@ hubuum_start_stack() {
     hubuum_wait_for_rollout_health hubuum-web-standby
   fi
 
+  hubuum_roll_monitoring
   "${COMPOSE_CMD[@]}" up -d --no-deps caddy
+}
+
+hubuum_roll_monitoring() {
+  if [[ "${MONITORING_ENABLED:-false}" == "true" ]]; then
+    # Recreate to load refreshed rules/provisioning and resolve current backend
+    # container addresses. Named volumes retain time series and Grafana accounts.
+    "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate prometheus grafana
+    hubuum_wait_for_rollout_health prometheus
+    hubuum_wait_for_rollout_health grafana
+  fi
 }
 
 hubuum_rollout() {
@@ -335,6 +346,7 @@ hubuum_rollout() {
   fi
 
   hubuum_remove_legacy_caddy_dependencies
+  hubuum_roll_monitoring
   hubuum_ensure_infrastructure
   if hubuum_drain_primary_workers_for_migrations; then
     primary_workers_drained="true"

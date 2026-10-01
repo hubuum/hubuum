@@ -109,6 +109,24 @@ Default app images:
 - Backend: `ghcr.io/hubuum/hubuum-server:main`
 - Frontend: `ghcr.io/hubuum/hubuum-frontend:main`
 
+### Optional monitoring
+
+Add `--monitoring` during installation, or run
+`sudo /opt/hubuum/update-single-host.sh --monitoring` to enable Prometheus and
+Grafana later. Caddy serves `/grafana/` and `/prometheus/` on the frontend domain
+in `all` mode, or the API domain in `backend` mode. This works with each
+shared-host routing mode. Grafana has its own login; Prometheus uses a separate
+Caddy password gate. Both have generated credentials in the root-readable
+`.env`, private container ports, persistent volumes and pinned images.
+
+The [shared operator package](../observability/README.md) documents credential
+retrieval, seven dashboards, SLOs, limits, notifications and a walkthrough.
+The installer loads those same dashboards and rules for both process targets;
+distributed deployments can consume the files directly or through Prometheus
+Operator. Updates preserve credentials and data, stop/uninstall preserve volumes,
+and explicit `--purge` removes them. External monitoring is needed to report a
+complete host outage independently.
+
 ### Choosing Image Tags
 
 Fresh installations follow `main` for both application images. Use `--tag`
