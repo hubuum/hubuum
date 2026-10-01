@@ -131,11 +131,16 @@ def main():
                 expression = expression.replace("$deployment", ".*")
                 expression = query_expression(expression)
                 queries.append({"record": f"validation:query_{index}", "expr": expression})
-            Path(directory, "queries.json").write_text(json.dumps({"groups": [{"name": "validation", "rules": queries}]}))
+            query_file = Path(directory, "queries.json")
+            query_file.write_text(json.dumps({"groups": [{"name": "validation", "rules": queries}]}))
+            # Docker's container user differs from the host runner. These
+            # public queries must also be readable under a restrictive umask.
+            Path(directory).chmod(0o755)
+            query_file.chmod(0o644)
             for arguments in (("check", "rules", "alerts.json", "recording-rules.json", "/queries/queries.json"),
                               ("test", "rules", "tests.json", "extended-tests.json")):
                 subprocess.run(
-                    ["docker", "run", "--rm", "--network", "none", "--user", "0:0",
+                    ["docker", "run", "--rm", "--network", "none",
                      "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
                      "--cap-drop", "ALL", "--entrypoint", "/bin/promtool",
                      "--volume", f"{ROOT / 'observability'}:/work:ro,z",
