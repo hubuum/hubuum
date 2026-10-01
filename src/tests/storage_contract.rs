@@ -1,4 +1,5 @@
 mod authorization_resources;
+mod chat_notifications;
 mod credential_approvals;
 mod event_delivery;
 mod schema_evolution;
@@ -7001,11 +7002,12 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         let subscription_id = subscription.id();
         assert_eq!(
             backend
-                .get_event_subscription(event_admin_collection_id, subscription_id)
+                .get_event_subscription(event_admin_collection_id.into(), subscription_id)
                 .await
                 .expect("certified backend should load scoped subscriptions")
+                .scope()
                 .collection_id(),
-            event_admin_collection_id
+            Some(event_admin_collection_id)
         );
         let (subscriptions, subscription_total) = backend
             .list_event_subscriptions(StorageEventSubscriptionListQuery::new(

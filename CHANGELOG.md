@@ -25,6 +25,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   unversioned stylesheet, including retained release editions. Future styling
   updates no longer require changes or rebuilds in this repository.
 
+
 ### Added
 
 - Optional single-host Prometheus and Grafana installation with authenticated
@@ -40,12 +41,33 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   testing: four classes and ten connected objects, with downloadable import and
   restorable backup files, schema and permission examples, and automated checks
   against a real server.
+- Slack and Mattermost event sinks with incoming webhooks, bot tokens, bounded
+  text and rich templates, administrator preview/test delivery, and durable
+  per-sink throttling with provider cooldowns.
+- Administrator system event subscriptions and task-kind filtering, including
+  failed-backup notifications from existing task lifecycle events.
 
 - A searchable Zensical documentation website, automatically published to GitHub
   Pages with immutable `/vX.Y.Z/` release snapshots, the latest release as the
   default, an explicit development edition, and on-demand older-release
   publishing. Guided paths cover users, administrators, integrators, and
   contributors, with links to the CLI, frontend, and client-library guides.
+
+### Changed
+
+- Documentation uses the shared warm Hubuum theme from the ecosystem site's
+  unversioned stylesheet, including retained release editions. Future styling
+  updates no longer require changes or rebuilds in this repository.
+
+- **Breaking:** storage SDK 0.4 adds scoped subscriptions, notification testing
+  and delivery admission capabilities. Upgrade all eight SDK crates together
+  and implement the new adapter methods. Stop older workers before applying the
+  chat-event migration and restart only matching application versions.
+- **Breaking:** backups now use format 7; format 6 remains accepted with legacy
+  defaults. Older servers cannot restore format 7. Restore resets transient
+  sink scheduling while preserving configuration and terminal delivery history.
+- **Breaking:** event-delivery health subscription entries now return a nullable
+  `collection_id` for system subscriptions. Update clients to accept null.
 
 ### Fixed
 

@@ -18,51 +18,11 @@ use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{CursorPaginated, CursorValue};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskKind {
-    Import,
-    Export,
-    Backup,
-    Reindex,
-    RemoteCall,
-    SchemaValidation,
-}
+pub use hubuum_domain::TaskKind;
 
-impl TaskKind {
-    pub const ALL: [Self; 6] = [
-        Self::Import,
-        Self::Export,
-        Self::Backup,
-        Self::Reindex,
-        Self::RemoteCall,
-        Self::SchemaValidation,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TaskKind::Import => "import",
-            TaskKind::Export => "export",
-            TaskKind::Backup => "backup",
-            TaskKind::Reindex => "reindex",
-            TaskKind::SchemaValidation => "schema_validation",
-            TaskKind::RemoteCall => "remote_call",
-        }
-    }
-
-    pub fn from_db(value: &str) -> Result<Self, ApiError> {
-        match value {
-            "import" => Ok(TaskKind::Import),
-            "export" => Ok(TaskKind::Export),
-            "backup" => Ok(TaskKind::Backup),
-            "reindex" => Ok(TaskKind::Reindex),
-            "schema_validation" => Ok(TaskKind::SchemaValidation),
-            "remote_call" => Ok(TaskKind::RemoteCall),
-            _ => Err(ApiError::InternalServerError(format!(
-                "Unknown task kind '{value}'"
-            ))),
-        }
-    }
+pub(crate) fn task_kind_from_db(value: &str) -> Result<TaskKind, ApiError> {
+    TaskKind::from_persisted(value)
+        .ok_or_else(|| ApiError::InternalServerError(format!("Unknown task kind '{value}'")))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
@@ -1227,7 +1187,7 @@ impl TaskRecord {
         backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<TaskResponse, ApiError> {
-        let kind = TaskKind::from_db(&self.kind)?;
+        let kind = task_kind_from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
         let task_url = format!("/api/v1/tasks/{}", self.id);
         let import_url = (kind == TaskKind::Import).then(|| format!("/api/v1/imports/{}", self.id));

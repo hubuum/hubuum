@@ -1,4 +1,7 @@
 use super::*;
+use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 use std::time::Instant;
 
 #[async_trait]
@@ -142,6 +145,7 @@ impl EventConfigurationStorage for MemoryStorage {
             ResourceRevision::INITIAL,
         )
         .configuration(request.configuration().clone())
+        .delivery_policy(request.delivery_policy())
         .secret_ref(request.secret_ref().map(ToOwned::to_owned))
         .enabled(request.enabled())
         .try_build()
@@ -184,6 +188,9 @@ impl EventConfigurationStorage for MemoryStorage {
         if name == current.name()
             && kind == current.kind()
             && configuration == *current.configuration()
+            && request
+                .delivery_policy()
+                .is_none_or(|value| value == current.delivery_policy())
             && secret_ref.as_deref() == current.secret_ref()
             && enabled == current.enabled()
         {
@@ -210,6 +217,11 @@ impl EventConfigurationStorage for MemoryStorage {
                 .map_err(|error| StorageError::internal(error.to_string()))?,
         )
         .configuration(configuration)
+        .delivery_policy(
+            request
+                .delivery_policy()
+                .unwrap_or(current.delivery_policy()),
+        )
         .secret_ref(secret_ref)
         .enabled(enabled)
         .try_build()
@@ -265,7 +277,7 @@ impl EventConfigurationStorage for MemoryStorage {
             .await
             .event_subscriptions
             .values()
-            .filter(|subscription| subscription.collection_id() == query.collection_id())
+            .filter(|subscription| subscription.scope() == query.scope())
             .cloned()
             .collect();
         page(rows, query.options())
@@ -273,7 +285,7 @@ impl EventConfigurationStorage for MemoryStorage {
 
     async fn get_event_subscription(
         &self,
-        collection_id: CollectionId,
+        scope: EventSubscriptionScope,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
         self.state
@@ -281,13 +293,13 @@ impl EventConfigurationStorage for MemoryStorage {
             .await
             .event_subscriptions
             .get(&subscription_id.id())
-            .filter(|subscription| subscription.collection_id() == collection_id)
+            .filter(|subscription| subscription.scope() == scope)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
-                    "Event subscription {} was not found in collection {}",
+                    "Event subscription {} was not found in scope {:?}",
                     subscription_id.id(),
-                    collection_id.id()
+                    scope
                 ))
             })
     }
@@ -297,14 +309,10 @@ impl EventConfigurationStorage for MemoryStorage {
         request: StorageEventSubscriptionCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
         let mut state = self.state.write().await;
-        if !state
-            .collections
-            .contains_key(&request.collection_id().id())
+        if let Some(id) = request.scope().collection_id()
+            && !state.collections.contains_key(&id.id())
         {
-            return Err(StorageError::not_found(format!(
-                "Collection {} was not found",
-                request.collection_id().id()
-            )));
+            return Err(StorageError::not_found("Collection was not found"));
         }
         if !state.event_sinks.contains_key(&request.sink_id().id()) {
             return Err(StorageError::not_found(format!(
@@ -313,8 +321,7 @@ impl EventConfigurationStorage for MemoryStorage {
             )));
         }
         if state.event_subscriptions.values().any(|subscription| {
-            subscription.collection_id() == request.collection_id()
-                && subscription.name() == request.name()
+            subscription.scope() == request.scope() && subscription.name() == request.name()
         }) {
             return Err(StorageError::conflict(format!(
                 "Event subscription '{}' already exists",
@@ -327,7 +334,7 @@ impl EventConfigurationStorage for MemoryStorage {
         let now = Utc::now();
         let subscription = StorageEventSubscription::builder(
             id,
-            request.collection_id(),
+            request.scope(),
             request.sink_id(),
             request.name(),
             now,
@@ -350,7 +357,7 @@ impl EventConfigurationStorage for MemoryStorage {
             EntityType::EventSubscription,
             id.id(),
             Some(subscription.name()),
-            subscription.collection_id(),
+            subscription.scope().collection_id(),
             Action::Created,
             request.event_context(),
             format!("Event subscription '{}' created", subscription.name()),
@@ -366,13 +373,13 @@ impl EventConfigurationStorage for MemoryStorage {
         let current = state
             .event_subscriptions
             .get(&request.id().id())
-            .filter(|subscription| subscription.collection_id() == request.collection_id())
+            .filter(|subscription| subscription.scope() == request.scope())
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
-                    "Event subscription {} was not found in collection {}",
+                    "Event subscription {} was not found in scope {:?}",
                     request.id().id(),
-                    request.collection_id().id()
+                    request.scope()
                 ))
             })?;
         let sink_id = request.sink_id_value().unwrap_or(current.sink_id());
@@ -393,7 +400,7 @@ impl EventConfigurationStorage for MemoryStorage {
         let enabled = request.enabled_value().unwrap_or(current.enabled());
         let subscription = StorageEventSubscription::builder(
             current.id(),
-            current.collection_id(),
+            current.scope(),
             sink_id,
             name,
             current.created_at(),
@@ -419,7 +426,7 @@ impl EventConfigurationStorage for MemoryStorage {
             EntityType::EventSubscription,
             subscription.id().id(),
             Some(subscription.name()),
-            subscription.collection_id(),
+            subscription.scope().collection_id(),
             Action::Updated,
             request.event_context(),
             format!("Event subscription '{}' updated", subscription.name()),
@@ -435,12 +442,12 @@ impl EventConfigurationStorage for MemoryStorage {
         let subscription = state
             .event_subscriptions
             .remove(&request.id().id())
-            .filter(|subscription| subscription.collection_id() == request.collection_id())
+            .filter(|subscription| subscription.scope() == request.scope())
             .ok_or_else(|| {
                 StorageError::not_found(format!(
-                    "Event subscription {} was not found in collection {}",
+                    "Event subscription {} was not found in scope {:?}",
                     request.id().id(),
-                    request.collection_id().id()
+                    request.scope()
                 ))
             })?;
         let delivery_ids = state
@@ -458,7 +465,7 @@ impl EventConfigurationStorage for MemoryStorage {
             EntityType::EventSubscription,
             subscription.id().id(),
             Some(subscription.name()),
-            subscription.collection_id(),
+            subscription.scope().collection_id(),
             Action::Deleted,
             request.event_context(),
             format!("Event subscription '{}' deleted", subscription.name()),
@@ -469,6 +476,63 @@ impl EventConfigurationStorage for MemoryStorage {
 
 #[async_trait]
 impl EventDeliveryAdministrationStorage for MemoryStorage {
+    async fn load_event_notification(
+        &self,
+        selection: StorageEventNotificationSelection,
+    ) -> Result<StorageEventNotificationInput, StorageError> {
+        memory_notification(&*self.state.read().await, selection)
+    }
+    async fn enqueue_event_notification_test(
+        &self,
+        selection: StorageEventNotificationSelection,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
+        let mut state = self.state.write().await;
+        let input = memory_notification(&state, selection)?;
+        let id = EventDeliveryId::new(state.next_event_delivery_id)
+            .map_err(|e| StorageError::internal(e.to_string()))?;
+        let now = Utc::now();
+        let delivery = StorageEventDelivery::builder(
+            id,
+            input.event().id(),
+            selection.subscription_id(),
+            EventDeliveryStatus::Pending,
+            now,
+            now,
+            now,
+        )
+        .purpose(EventDeliveryPurpose::Test)
+        .try_build()
+        .map_err(invalid_contract_value)?;
+        let document = AuditDocument::try_new(
+            "Event sink test requested",
+            None,
+            None,
+            serde_json::json!({
+                "delivery_id": id.id(),
+                "subscription_id": selection.subscription_id().id(),
+                "source_event_id": selection.event_id(),
+                "purpose": "test",
+            }),
+        )
+        .map_err(|error| StorageError::internal(error.to_string()))?;
+        let receipt = append_memory_event!(
+            state,
+            EntityType::EventSink,
+            selection.sink_id().id(),
+            Some(input.sink().name()),
+            None,
+            Action::Invoked,
+            &context,
+            document,
+            None,
+            None,
+        )?;
+        state.next_event_delivery_id += 1;
+        state.event_deliveries.insert(id.id(), delivery.clone());
+        Ok(StorageMutationOutcome::committed(delivery, receipt))
+    }
+
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
@@ -583,7 +647,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .lock_deadline(now.naive_utc())
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event delivery lock deadline overflowed"))?;
-        let candidates = state
+        let mut candidates = state
             .event_deliveries
             .values()
             .filter(|delivery| {
@@ -597,12 +661,23 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                             .locked_until()
                             .is_some_and(|deadline| deadline < now))
             })
-            .take(settings.batch_size())
             .cloned()
             .collect::<Vec<_>>();
+        candidates.sort_by_key(|delivery| (delivery.next_attempt_at(), delivery.id().id()));
+        let mut spaced_sinks = std::collections::HashSet::new();
+        candidates.retain(|delivery| {
+            let sink = state
+                .event_subscriptions
+                .get(&delivery.subscription_id().id())
+                .and_then(|subscription| state.event_sinks.get(&subscription.sink_id().id()));
+            sink.is_none_or(|sink| {
+                sink.delivery_policy().min_interval_ms().is_none() || spaced_sinks.insert(sink.id())
+            })
+        });
+        candidates.truncate(settings.batch_size());
         let mut work = Vec::with_capacity(candidates.len());
         for current in candidates {
-            let attempts = current.attempts().saturating_add(1);
+            let attempts = current.attempts();
             let token = Uuid::new_v4();
             let delivery = rebuild_event_delivery(
                 &current,
@@ -635,7 +710,8 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 subscription.name(),
                 subscription.routing().clone(),
             )
-            .map_err(invalid_contract_value)?;
+            .map_err(invalid_contract_value)?
+            .for_test(current.purpose() == hubuum_domain::EventDeliveryPurpose::Test);
             let delivery_sink = StorageEventDeliverySink::try_new(
                 sink.id(),
                 sink.name(),
@@ -663,8 +739,12 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         let check_started = Instant::now();
-        let state = self.state.read().await;
-        let Some(delivery) = state.event_deliveries.get(&claim.delivery_id().id()) else {
+        let mut state = self.state.write().await;
+        let Some(delivery) = state
+            .event_deliveries
+            .get(&claim.delivery_id().id())
+            .cloned()
+        else {
             return Ok(None);
         };
         if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token())
@@ -672,15 +752,135 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         {
             return Ok(None);
         }
+        let now = Utc::now();
         let Some(remaining) = delivery
             .locked_until()
-            .and_then(|deadline| (deadline - Utc::now()).to_std().ok())
+            .and_then(|deadline| (deadline - now).to_std().ok())
         else {
             return Ok(None);
         };
+        let sink_id = state
+            .event_subscriptions
+            .get(&delivery.subscription_id().id())
+            .ok_or_else(|| StorageError::not_found("Subscription was removed"))?
+            .sink_id()
+            .id();
+        let interval = state
+            .event_sinks
+            .get(&sink_id)
+            .ok_or_else(|| StorageError::not_found("Sink was removed"))?
+            .delivery_policy()
+            .min_interval_ms()
+            .unwrap_or(0);
+        let (next, blocked) = state
+            .event_sink_schedule
+            .get(&sink_id)
+            .copied()
+            .unwrap_or((now, now));
+        if next.max(blocked) > now {
+            let deferred = rebuild_event_delivery(
+                &delivery,
+                EventDeliveryStatus::Pending,
+                delivery.attempts(),
+                next.max(blocked),
+                None,
+                None,
+            )?;
+            let deferred = delivery_metadata(
+                deferred,
+                delivery.purpose(),
+                Some(
+                    if blocked > now {
+                        "provider_rate"
+                    } else {
+                        "configured_rate"
+                    }
+                    .to_string(),
+                ),
+            )?;
+            state.event_deliveries.insert(delivery.id().id(), deferred);
+            state.event_delivery_claims.remove(&delivery.id().id());
+            return Ok(None);
+        }
+        state.event_sink_schedule.insert(
+            sink_id,
+            (
+                now + chrono::Duration::milliseconds(interval as i64),
+                blocked,
+            ),
+        );
+        let admitted = delivery_metadata(delivery.clone(), delivery.purpose(), None)?;
+        state.event_deliveries.insert(delivery.id().id(), admitted);
         StorageEventDeliveryLease::try_new(claim.clone(), check_started, remaining)
             .map(Some)
             .map_err(invalid_contract_value)
+    }
+
+    async fn finish_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+        disposition: StorageEventDeliveryDisposition,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        let now = Utc::now();
+        let current = state
+            .event_deliveries
+            .get(&claim.delivery_id().id())
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("Delivery was removed"))?;
+        if state.event_delivery_claims.get(&current.id().id()) != Some(&claim.token())
+            || current.status() != EventDeliveryStatus::InFlight
+            || current
+                .locked_until()
+                .is_none_or(|deadline| deadline <= now)
+        {
+            return Err(StorageError::conflict("Event delivery claim is stale"));
+        }
+        let updated = match disposition {
+            StorageEventDeliveryDisposition::Permanent(error) => rebuild_event_delivery(
+                &current,
+                EventDeliveryStatus::Dead,
+                current.attempts() + 1,
+                now,
+                Some(error),
+                None,
+            )?,
+            StorageEventDeliveryDisposition::RateLimited(delay) => {
+                let until = now
+                    .checked_add_signed(
+                        chrono::Duration::from_std(delay)
+                            .map_err(|_| StorageError::invalid_input("Cooldown overflow"))?,
+                    )
+                    .ok_or_else(|| StorageError::invalid_input("Cooldown overflow"))?;
+                let sink_id = state
+                    .event_subscriptions
+                    .get(&current.subscription_id().id())
+                    .ok_or_else(|| StorageError::not_found("Subscription was removed"))?
+                    .sink_id()
+                    .id();
+                let schedule = state
+                    .event_sink_schedule
+                    .entry(sink_id)
+                    .or_insert((now, now));
+                schedule.1 = schedule.1.max(until);
+                let updated = rebuild_event_delivery(
+                    &current,
+                    EventDeliveryStatus::Pending,
+                    current.attempts(),
+                    until,
+                    None,
+                    None,
+                )?;
+                delivery_metadata(
+                    updated,
+                    current.purpose(),
+                    Some("provider_rate".to_string()),
+                )?
+            }
+        };
+        state.event_deliveries.insert(current.id().id(), updated);
+        state.event_delivery_claims.remove(&current.id().id());
+        Ok(())
     }
 
     async fn mark_event_delivery_succeeded(
@@ -698,6 +898,9 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
         if current.status() != EventDeliveryStatus::InFlight
             || current.attempts() != claim.attempts()
+            || current
+                .locked_until()
+                .is_none_or(|deadline| deadline <= Utc::now())
         {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
@@ -735,23 +938,27 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
         if current.status() != EventDeliveryStatus::InFlight
             || current.attempts() != claim.attempts()
+            || current
+                .locked_until()
+                .is_none_or(|deadline| deadline <= Utc::now())
         {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
-        let exhausted = current.attempts() >= settings.max_attempts();
+        let attempts = current.attempts() + 1;
+        let exhausted = attempts >= settings.max_attempts();
         let status = if exhausted {
             EventDeliveryStatus::Dead
         } else {
             EventDeliveryStatus::Failed
         };
         let next_attempt_at = settings
-            .retry_deadline(Utc::now().naive_utc(), current.attempts())
+            .retry_deadline(Utc::now().naive_utc(), attempts)
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retry deadline overflowed"))?;
         let delivery = rebuild_event_delivery(
             &current,
             status,
-            current.attempts(),
+            attempts,
             next_attempt_at,
             Some(error.to_string()),
             None,
@@ -798,11 +1005,13 @@ impl EventFanoutStorage for MemoryStorage {
                     .get(&subscription.sink_id().id())
                     .is_some_and(|sink| sink.enabled());
                 let matches = sink_enabled
-                    && event.collection_id() == Some(subscription.collection_id())
+                    && subscription.scope().matches(event)
+                    && subscription.filter().matches(event)
                     && subscription.entity_types().contains(&event.entity_type())
                     && subscription.actions().contains(&event.action());
                 let exists = state.event_deliveries.values().any(|delivery| {
-                    delivery.event_id() == event.id()
+                    delivery.purpose() == EventDeliveryPurpose::Event
+                        && delivery.event_id() == event.id()
                         && delivery.subscription_id() == subscription.id()
                 });
                 if matches && !exists {
@@ -1253,4 +1462,50 @@ impl HistoryStorage for MemoryStorage {
             _ => unreachable!("remote-target history filter guarantees the variant"),
         }
     }
+}
+
+fn delivery_metadata(
+    current: StorageEventDelivery,
+    purpose: hubuum_domain::EventDeliveryPurpose,
+    deferred_reason: Option<String>,
+) -> Result<StorageEventDelivery, StorageError> {
+    StorageEventDelivery::builder(
+        current.id(),
+        current.event_id(),
+        current.subscription_id(),
+        current.status(),
+        current.next_attempt_at(),
+        current.created_at(),
+        current.updated_at(),
+    )
+    .attempts(current.attempts())
+    .last_error(current.last_error().map(str::to_owned))
+    .locked_until(current.locked_until())
+    .purpose(purpose)
+    .deferred_reason(deferred_reason)
+    .try_build()
+    .map_err(invalid_contract_value)
+}
+
+fn memory_notification(
+    state: &MemoryState,
+    selection: StorageEventNotificationSelection,
+) -> Result<StorageEventNotificationInput, StorageError> {
+    let sink = state
+        .event_sinks
+        .get(&selection.sink_id().id())
+        .cloned()
+        .ok_or_else(|| StorageError::not_found("Event sink not found"))?;
+    let subscription = state
+        .event_subscriptions
+        .get(&selection.subscription_id().id())
+        .cloned()
+        .ok_or_else(|| StorageError::not_found("Event subscription not found"))?;
+    let event = state
+        .events
+        .iter()
+        .map(|event| event.clone().into_parts().0)
+        .find(|event| event.event_id() == selection.event_id())
+        .ok_or_else(|| StorageError::not_found("Event not found"))?;
+    StorageEventNotificationInput::try_new(sink, subscription, event)
 }

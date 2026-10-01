@@ -4,6 +4,7 @@ use hubuum_domain::{
     CollectionId, EventSinkId, EventSubscriptionId, ExportTemplateId, MaintenanceState,
     TokenRetentionSettings,
 };
+use hubuum_events_core::EventSubscriptionScope;
 use std::fmt;
 
 use crate::{StorageError, StorageValidationError};
@@ -726,7 +727,7 @@ impl StorageEventSinkHealthSnapshot {
 pub struct StorageEventSubscriptionHealthSnapshot {
     id: EventSubscriptionId,
     name: String,
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     enabled: bool,
     sink: StorageEventSinkSnapshot,
     queue: StorageEventQueueSnapshot,
@@ -737,7 +738,7 @@ impl StorageEventSubscriptionHealthSnapshot {
     pub fn new(
         id: EventSubscriptionId,
         name: String,
-        collection_id: CollectionId,
+        scope: EventSubscriptionScope,
         enabled: bool,
         sink: StorageEventSinkSnapshot,
         queue: StorageEventQueueSnapshot,
@@ -745,7 +746,7 @@ impl StorageEventSubscriptionHealthSnapshot {
         Self {
             id,
             name,
-            collection_id,
+            scope,
             enabled,
             sink,
             queue,
@@ -763,8 +764,8 @@ impl StorageEventSubscriptionHealthSnapshot {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]

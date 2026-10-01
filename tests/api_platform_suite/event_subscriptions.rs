@@ -15,6 +15,7 @@ mod tests {
 
     fn new_webhook_sink(name: String) -> NewEventSink {
         NewEventSink {
+            delivery_policy: None,
             name,
             kind: EventSinkKind::Webhook,
             config: json!({}),
@@ -118,6 +119,7 @@ mod tests {
 
         if let Some(kind) = disabled_sink_kind_for_feature_set() {
             let disabled_kind = NewEventSink {
+                delivery_policy: None,
                 name: context.scoped_name("sink_disabled"),
                 kind,
                 config: json!({}),
@@ -250,5 +252,70 @@ mod tests {
         )
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+    #[actix_web::test]
+    async fn chat_preview_and_test_require_admin_and_preserve_real_source_event() {
+        let context = TestContext::new().await;
+        let resp = post_request(&context.pool, &context.admin_token, SINKS_ENDPOINT, &json!({
+            "name":context.scoped_name("preview_slack"), "kind":"slack", "config":{"transport":"webhook"},
+            "secret_ref":"unresolved_preview_only", "enabled":false
+        })).await;
+        let sink: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        let sink_id = sink["id"].as_i64().unwrap();
+        let system = "/api/v1/system-event-subscriptions";
+        let subscription = json!({"sink_id":sink_id,"name":context.scoped_name("system_sub"),"entity_types":["task"],"actions":["failed"],"filter":{"task_kinds":["backup"]},"enabled":false});
+        let resp = post_request(&context.pool, &context.normal_token, system, &subscription).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+        let resp = post_request(&context.pool, &context.admin_token, system, &subscription).await;
+        let sub: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        assert!(sub.get("collection_id").is_none());
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/events?entity_type=event_sink&entity_id={sink_id}&action=created"),
+        )
+        .await;
+        let events: Vec<serde_json::Value> =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        let input = json!({"subscription_id":sub["id"],"event_id":events[0]["event_id"]});
+        let preview = format!("{SINKS_ENDPOINT}/{sink_id}/preview");
+        let resp = post_request(&context.pool, &context.normal_token, &preview, &input).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+        let resp = post_request(&context.pool, &context.admin_token, &preview, &input).await;
+        let rendered: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        assert!(
+            rendered["payload"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("[TEST]")
+        );
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}/test"),
+            &input,
+        )
+        .await;
+        let delivery: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::ACCEPTED).await).await;
+        assert_eq!(delivery["purpose"], "test");
+        assert_eq!(delivery["event_id"], events[0]["id"]);
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{system}/{}", sub["id"]),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}"),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
     }
 }

@@ -1,12 +1,11 @@
-use std::{fmt, time::Duration};
+use std::fmt;
 
 use hubuum_event_sinks_common::{
     EventEnvelope, SinkDelivery, SinkError, ensure_payload_within_limit, parse_sink_config,
     parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
 };
-use hubuum_outbound_http::{OutboundHeaders, OutboundMethod, OutboundRequest};
+use hubuum_outbound_http::OutboundHeaders;
 use serde::Deserialize;
-use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct WebhookSink {
@@ -27,64 +26,7 @@ impl WebhookSink {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WebhookSinkSettings {
-    max_timeout_ms: u64,
-    max_response_bytes: usize,
-    max_request_bytes: usize,
-    allow_private_targets: bool,
-    dangerous_accept_invalid_certs: bool,
-    dangerous_allow_localhost: bool,
-}
-
-impl WebhookSinkSettings {
-    pub fn new(max_timeout_ms: u64, max_response_bytes: usize) -> Result<Self, SinkError> {
-        if max_timeout_ms == 0 {
-            return Err(SinkError::new(
-                "Webhook maximum timeout must be greater than zero",
-            ));
-        }
-        if max_response_bytes == 0 {
-            return Err(SinkError::new(
-                "Webhook maximum response size must be greater than zero",
-            ));
-        }
-
-        Ok(Self {
-            max_timeout_ms,
-            max_response_bytes,
-            max_request_bytes: max_response_bytes,
-            allow_private_targets: false,
-            dangerous_accept_invalid_certs: false,
-            dangerous_allow_localhost: false,
-        })
-    }
-
-    pub fn with_max_request_bytes(mut self, max_request_bytes: usize) -> Result<Self, SinkError> {
-        if max_request_bytes == 0 {
-            return Err(SinkError::new(
-                "Webhook maximum request size must be greater than zero",
-            ));
-        }
-        self.max_request_bytes = max_request_bytes;
-        Ok(self)
-    }
-
-    pub fn allow_private_targets(mut self, allow_private_targets: bool) -> Self {
-        self.allow_private_targets = allow_private_targets;
-        self
-    }
-
-    pub fn dangerous_accept_invalid_certs(mut self, dangerous_accept_invalid_certs: bool) -> Self {
-        self.dangerous_accept_invalid_certs = dangerous_accept_invalid_certs;
-        self
-    }
-
-    pub fn dangerous_allow_localhost(mut self, dangerous_allow_localhost: bool) -> Self {
-        self.dangerous_allow_localhost = dangerous_allow_localhost;
-        self
-    }
-}
+pub use hubuum_event_sinks_http::HttpSinkSettings as WebhookSinkSettings;
 
 #[derive(Deserialize)]
 struct WebhookRouting {
@@ -149,20 +91,14 @@ async fn deliver_webhook(
     let max_request_bytes = bounded_request_bytes(config.max_request_bytes, settings);
     ensure_payload_within_limit("webhook", body.len(), max_request_bytes)?;
 
-    let response = OutboundRequest::new(
-        OutboundMethod::Post,
-        routing.url,
-        Duration::from_millis(bounded_timeout_ms(config.timeout_ms, settings)),
-    )
-    .headers(headers)
-    .body(Some(body))
-    .max_response_bytes(bounded_response_bytes(config.max_response_bytes, settings))
-    .allow_private_targets(settings.allow_private_targets)
-    .dangerous_accept_invalid_certs(settings.dangerous_accept_invalid_certs)
-    .dangerous_allow_localhost(settings.dangerous_allow_localhost)
-    .send()
-    .await
-    .map_err(|error| SinkError::new(format!("Webhook delivery failed: {error}")))?;
+    let response = settings
+        .bounded(
+            config.timeout_ms,
+            config.max_response_bytes,
+            config.max_request_bytes,
+        )
+        .post(routing.url, headers, body)
+        .await?;
 
     if !response.is_success() {
         return Err(SinkError::new(format!(
@@ -200,27 +136,8 @@ fn webhook_headers(
     Ok(headers)
 }
 
-fn bounded_timeout_ms(requested: Option<u64>, settings: &WebhookSinkSettings) -> u64 {
-    let cap = settings.max_timeout_ms;
-    let requested = requested.unwrap_or(cap);
-    if requested > cap {
-        warn!(
-            message = "Webhook timeout clamped to configured maximum",
-            requested_timeout_ms = requested,
-            configured_max_timeout_ms = cap
-        );
-    }
-    requested.min(cap)
-}
-
-fn bounded_response_bytes(requested: Option<usize>, settings: &WebhookSinkSettings) -> usize {
-    let cap = settings.max_response_bytes;
-    requested.unwrap_or(cap).min(cap)
-}
-
 fn bounded_request_bytes(requested: Option<usize>, settings: &WebhookSinkSettings) -> usize {
-    let cap = settings.max_request_bytes;
-    requested.unwrap_or(cap).min(cap)
+    settings.request_bytes(requested)
 }
 
 fn sink_error(error: hubuum_outbound_http::OutboundHttpError) -> SinkError {
@@ -317,7 +234,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Webhook maximum timeout must be greater than zero"
+            "HTTP sink maximum timeout must be greater than zero"
         );
     }
 
@@ -327,7 +244,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Webhook maximum response size must be greater than zero"
+            "HTTP sink maximum response size must be greater than zero"
         );
     }
 
@@ -340,7 +257,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Webhook maximum request size must be greater than zero"
+            "HTTP sink maximum request size must be greater than zero"
         );
     }
 

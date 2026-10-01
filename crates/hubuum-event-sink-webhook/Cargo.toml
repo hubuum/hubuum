@@ -11,6 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-event-sinks-http = { path = "../hubuum-event-sinks-http" }
 futures = "0.3"
 hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
 hubuum-events-core = { path = "../hubuum-events-core" }

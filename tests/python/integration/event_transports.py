@@ -124,10 +124,24 @@ class HttpsHandler(http.server.BaseHTTPRequestHandler):
         if length > 1_000_000:
             self.reply(413, b"{}")
             return
-        self.rfile.read(length)
+        payload = self.rfile.read(length)
         with self.server.observed_lock:
             self.server.observed.setdefault(identity, []).append(behavior)
-        if behavior == "redirect":
+        if behavior == "chat":
+            self.reply(200, b"ok")
+        elif behavior == "limited":
+            self.reply(429, b"private-provider-detail")
+        elif behavior == "denied":
+            self.reply(403, b"private-provider-detail")
+        elif behavior == "mattermost":
+            body = json.loads(payload)
+            if (self.headers.get("Authorization") == "Bearer fixture-bot-token"
+                    and body.get("channel_id") == "channel123"
+                    and body.get("message", "").startswith("[TEST]")):
+                self.reply(201, b'{"id":"post123"}')
+            else:
+                self.reply(400, b'{"error":"bad-payload"}')
+        elif behavior == "redirect":
             self.reply(307, b"{}", f"/destination/{identity}")
         elif behavior == "retry":
             self.reply(503, b"{}")

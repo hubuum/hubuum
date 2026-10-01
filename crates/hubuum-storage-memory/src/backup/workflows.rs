@@ -8,8 +8,8 @@ pub(super) fn capture(
     sections: &mut StorageBackupStateSections,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "config": v.configuration(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.collection_id().id(), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "config": v.configuration(), "delivery_policy": v.delivery_policy(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.scope().collection_id().map(|id| id.id()), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::ComputedFieldDefinitions, state.computed_fields.values().map(|v| {
         let (visibility, owner) = match v.visibility() { StorageComputedFieldVisibility::Shared => ("shared", None), StorageComputedFieldVisibility::Personal { owner_id } => ("personal", Some(owner_id.id())) };
         let m = v.metadata();
@@ -25,6 +25,7 @@ pub(super) fn restore(
     sections: &StorageBackupStateSections,
     state: &mut MemoryState,
 ) -> Result<(), StorageError> {
+    state.event_sink_schedule.clear();
     for row in &sections[&StorageBackupStateSection::EventSinks] {
         let r = Row(row);
         let value = StorageEventSink::builder(
@@ -36,6 +37,10 @@ pub(super) fn restore(
             r.revision()?,
         )
         .configuration(r.value("config")?.clone())
+        .delivery_policy(
+            serde_json::from_value(r.value("delivery_policy")?.clone())
+                .map_err(|_| invalid("delivery_policy"))?,
+        )
         .secret_ref(r.optional_text("secret_ref")?)
         .enabled(r.boolean("enabled")?)
         .try_build()
@@ -46,7 +51,13 @@ pub(super) fn restore(
         let r = Row(row);
         let value = StorageEventSubscription::builder(
             EventSubscriptionId::new(r.integer("id")?).map_err(|_| invalid("id"))?,
-            CollectionId::new(r.integer("collection_id")?).map_err(|_| invalid("collection_id"))?,
+            if r.value("collection_id")?.is_null() {
+                hubuum_events_core::EventSubscriptionScope::System
+            } else {
+                CollectionId::new(r.integer("collection_id")?)
+                    .map_err(|_| invalid("collection_id"))?
+                    .into()
+            },
             EventSinkId::new(r.integer("sink_id")?).map_err(|_| invalid("sink_id"))?,
             r.text("name")?,
             r.time("created_at")?,

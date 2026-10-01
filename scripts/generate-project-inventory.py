@@ -27,7 +27,7 @@ def inventory():
     packages = [p for p in metadata["packages"] if p["id"] in members]
     sdk = [{"name": p["name"], "version": p["version"], "rust_version": p["rust_version"]}
            for p in packages if p["metadata"].get("hubuum", {}).get("release-train") == "storage-sdk"]
-    source = (ROOT / "src/models/task.rs").read_text()
+    source = (ROOT / "crates/hubuum-domain/src/task_kind.rs").read_text()
     match = re.search(r"pub enum TaskKind\s*\{([^}]+)\}", source)
     if not match:
         raise ValueError("TaskKind enum was not found")

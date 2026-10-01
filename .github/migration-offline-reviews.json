@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "reviews": [
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-01-000001_chat_event_sinks/up.sql",
+      "sha256": "c9e8976a7c86c768e28b7feda54273c82aae7d264f7b3c5514ec3e20b2da35ec",
+      "reason": "Repeated test sends require a separate delivery purpose and normal-only uniqueness; older fanout workers use the old conflict target. New sink kinds also require matching readers.",
+      "upgrade_action": "Stop all older API and worker processes, apply the migration and role grants, and start only matching binaries. See docs/events.md#slack-and-mattermost.",
+      "drop_constraints": {
+        "event_sinks": [
+          "event_sinks_kind_check"
+        ],
+        "event_deliveries": [
+          "event_deliveries_event_id_subscription_id_key"
+        ]
+      }
+    }
+  ]
+}

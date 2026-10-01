@@ -362,3 +362,76 @@ async fn outbound_https_retains_only_the_bounded_response_preview() {
     .unwrap();
     assert_eq!(response.body_preview(), "x".repeat(1024));
 }
+
+#[rstest]
+#[case("slack", "chat", "ok")]
+#[case("mattermost", "chat", "ok")]
+#[case("slack", "limited", "rate")]
+#[case("mattermost", "limited", "rate")]
+#[case("slack", "denied", "permanent")]
+#[case("mattermost", "retry", "retry")]
+#[tokio::test]
+#[ignore = "requires the private-CA HTTPS fixture"]
+async fn chat_webhooks_acknowledge_and_classify_responses(
+    #[case] provider: &str,
+    #[case] behavior: &str,
+    #[case] expected: &str,
+) {
+    use hubuum_event_sinks_common::SinkFailure;
+    let event = envelope();
+    let settings = WebhookSinkSettings::new(2000, 1024)
+        .unwrap()
+        .allow_private_targets(true)
+        .dangerous_allow_localhost(true);
+    let secret = SecretValue::new(
+        format!("{}/{behavior}/{}", fixture("HTTPS_URL"), event.event_id()).into_bytes(),
+    )
+    .unwrap();
+    let config = json!({"transport":"webhook"});
+    let routing = json!({});
+    let delivery = SinkDelivery::new(&config, &routing, Some(&secret));
+    let result = match provider {
+        "slack" => {
+            hubuum_event_sink_slack::SlackSink::new(settings)
+                .deliver(&event, delivery)
+                .await
+        }
+        _ => {
+            hubuum_event_sink_mattermost::MattermostSink::new(settings)
+                .deliver(&event, delivery)
+                .await
+        }
+    };
+    let outcome = match result {
+        Ok(()) => "ok",
+        Err(error) => {
+            assert!(!error.to_string().contains("private-provider-detail"));
+            match error.failure() {
+                SinkFailure::Permanent => "permanent",
+                SinkFailure::RateLimited(_) => "rate",
+                SinkFailure::Retryable => "retry",
+            }
+        }
+    };
+    assert_eq!(outcome, expected);
+}
+
+#[tokio::test]
+#[ignore = "requires the private-CA HTTPS fixture"]
+async fn mattermost_bot_sends_marked_message_with_bearer_authentication() {
+    let event = envelope();
+    let settings = WebhookSinkSettings::new(2000, 1024)
+        .unwrap()
+        .allow_private_targets(true)
+        .dangerous_allow_localhost(true);
+    let secret = SecretValue::new(b"fixture-bot-token".to_vec()).unwrap();
+    let config = json!({"transport":"bot", "server_url":format!("{}/mattermost/{}", fixture("HTTPS_URL"), event.event_id())});
+    let routing = json!({"channel_id":"channel123"});
+    hubuum_event_sink_mattermost::MattermostSink::new(settings)
+        .deliver(
+            &event,
+            SinkDelivery::new(&config, &routing, Some(&secret)).for_test(true),
+        )
+        .await
+        .unwrap();
+}

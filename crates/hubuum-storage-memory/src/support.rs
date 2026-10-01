@@ -210,6 +210,8 @@ pub(super) fn rebuild_event_delivery(
         delivery.created_at(),
         Utc::now(),
     )
+    .purpose(delivery.purpose())
+    .deferred_reason(delivery.deferred_reason().map(str::to_owned))
     .attempts(attempts)
     .last_error(last_error)
     .locked_until(locked_until)

@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.3`.
+Status: accepted; current experimental release train is `0.4`.
 
 ## Supported Crate Graph
 
@@ -311,3 +311,25 @@ unused approvals, and attach consumed restore approval evidence to completion
 provenance. PostgreSQL and memory conformance tests cover single use, concurrency,
 rollback, expiry, origin revocation, and request binding. See the
 [wire protocol and deployment guide](credential_approvals.md).
+
+## Upgrading from 0.3 to 0.4
+
+Update all eight SDK dependencies to exactly 0.4.0 together. Subscription
+requests, projections and lookups now carry `EventSubscriptionScope`, which
+preserves either a collection ID or system scope. Use `scope().collection_id()`
+when an optional collection is required. `TaskKind` is shared through
+`hubuum-domain`; subscription filters add `task_kinds`.
+
+Implement `load_event_notification`, `enqueue_event_notification_test` and
+`finish_event_delivery` on complete adapters. Preserve test purpose and deferral
+reason, validate event scope and sink identity before preview/test, and audit
+actual test requests. Atomically fence sink admission by the current unexpired
+claim. Persist per-sink spacing and provider cooldown across workers. Deferrals
+must leave attempts unchanged, clear claims, and honor their next attempt time;
+permanent errors terminate delivery. Claim batches must allow other sinks to
+make progress. Logical backups preserve delivery policy, system subscriptions
+and terminal test deliveries; transient admission state resets on restore.
+
+The built-in PostgreSQL and memory backends share application contract tests in
+`src/tests/storage_contract/chat_notifications.rs`; retain adapter-specific
+locking and lease-loss tests when implementing these guarantees.

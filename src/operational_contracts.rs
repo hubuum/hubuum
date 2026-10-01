@@ -2510,7 +2510,7 @@ fn document_contracts() -> DocumentContracts {
                 )
                 .map(str::to_string)
                 .collect(),
-            rejection_policy: "reject any backup_version other than the current version",
+            rejection_policy: "accept backup versions 6 and 7; normalize version 6 event configuration and delivery defaults",
         },
         import: VersionedDocumentContract {
             version: Some(CURRENT_IMPORT_VERSION),

@@ -1278,6 +1278,7 @@ impl MemoryStorage {
                     id, parts.name, parts.kind, created_at, updated_at, revision,
                 )
                 .configuration(parts.config)
+                .delivery_policy(parts.delivery_policy)
                 .secret_ref(parts.secret_ref)
                 .enabled(parts.enabled)
                 .try_build()
@@ -1327,7 +1328,7 @@ impl MemoryStorage {
                     .event_subscriptions
                     .values()
                     .find(|subscription| {
-                        subscription.collection_id() == collection_id
+                        subscription.scope().collection_id() == Some(collection_id)
                             && subscription.name() == parts.name
                     })
                     .cloned();

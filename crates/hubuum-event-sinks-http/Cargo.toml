@@ -1,0 +1,21 @@
+[package]
+name = "hubuum-event-sinks-http"
+version = "0.0.1"
+edition = "2024"
+description = "Shared event notification support for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
+hubuum-outbound-http = { path = "../hubuum-outbound-http" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+rstest = "0.26"

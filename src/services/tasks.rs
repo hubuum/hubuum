@@ -1,3 +1,4 @@
+use crate::models::task::task_kind_from_db;
 use hubuum_domain::PrincipalId;
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
@@ -760,7 +761,7 @@ fn task_status_to_storage(status: TaskStatus) -> StorageTaskStatus {
 }
 
 pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiError> {
-    let kind = TaskKind::from_db(task.kind().as_str())?;
+    let kind = task_kind_from_db(task.kind().as_str())?;
     let status = TaskStatus::from_db(task.status().as_str())?;
     let scope = task.scope_snapshot();
     let progress = task.progress();

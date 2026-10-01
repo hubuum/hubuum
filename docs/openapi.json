@@ -11740,6 +11740,162 @@
         ]
       }
     },
+    "/api/v1/event-sinks/{sink_id}/preview": {
+      "post": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Post Api V1 Event Sinks By Sink Id Preview",
+        "description": "Auto-generated documentation for POST /api/v1/event-sinks/{sink_id}/preview.",
+        "operationId": "postApiV1EventSinksBySinkIdPreview",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rendered test notification; no secret resolution or delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventNotificationPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid source or configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-sinks/{sink_id}/test": {
+      "post": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Post Api V1 Event Sinks By Sink Id Test",
+        "description": "Auto-generated documentation for POST /api/v1/event-sinks/{sink_id}/test.",
+        "operationId": "postApiV1EventSinksBySinkIdTest",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Test delivery queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid source or configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/events": {
       "get": {
         "tags": [
@@ -20358,6 +20514,433 @@
         ]
       }
     },
+    "/api/v1/system-event-subscriptions": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 System Event Subscriptions",
+        "description": "Auto-generated documentation for GET /api/v1/system-event-subscriptions.",
+        "operationId": "getApiV1SystemEventSubscriptions",
+        "responses": {
+          "200": {
+            "description": "Event subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SystemEventSubscription"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Post Api V1 System Event Subscriptions",
+        "description": "Auto-generated documentation for POST /api/v1/system-event-subscriptions.",
+        "operationId": "postApiV1SystemEventSubscriptions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Event subscription created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/system-event-subscriptions/{subscription_id}": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 System Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for GET /api/v1/system-event-subscriptions/{subscription_id}.",
+        "operationId": "getApiV1SystemEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event subscription",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventSubscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Delete Api V1 System Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/system-event-subscriptions/{subscription_id}.",
+        "operationId": "deleteApiV1SystemEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Event subscription deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Patch Api V1 System Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/system-event-subscriptions/{subscription_id}.",
+        "operationId": "patchApiV1SystemEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Event subscription updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/tasks": {
       "get": {
         "tags": [
@@ -22894,6 +23477,28 @@
           }
         }
       },
+      "EventDeliveryPolicy": {
+        "type": "object",
+        "description": "An optional minimum interval between admissions to one sink.",
+        "properties": {
+          "min_interval_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 86400000,
+            "minimum": 1
+          }
+        }
+      },
+      "EventDeliveryPurpose": {
+        "type": "string",
+        "enum": [
+          "event",
+          "test"
+        ]
+      },
       "EventDeliveryQueueHealth": {
         "type": "object",
         "required": [
@@ -22931,7 +23536,8 @@
           "attempts",
           "next_attempt_at",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "purpose"
         ],
         "properties": {
           "attempts": {
@@ -22941,6 +23547,12 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "deferred_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "event_id": {
             "type": "integer",
@@ -22966,6 +23578,9 @@
           "next_attempt_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/EventDeliveryPurpose"
           },
           "status": {
             "type": "string"
@@ -23082,6 +23697,37 @@
             "$ref": "#/components/schemas/EventWorkerHealth"
           }
         }
+      },
+      "EventNotificationPreview": {
+        "type": "object",
+        "required": [
+          "sink_kind",
+          "payload"
+        ],
+        "properties": {
+          "payload": {},
+          "sink_kind": {
+            "$ref": "#/components/schemas/EventSinkKind"
+          }
+        }
+      },
+      "EventNotificationRequest": {
+        "type": "object",
+        "description": "Source for administrator preview and test requests.",
+        "required": [
+          "subscription_id",
+          "event_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "subscription_id": {
+            "$ref": "#/components/schemas/EventSubscriptionID"
+          }
+        },
+        "additionalProperties": false
       },
       "EventResponse": {
         "type": "object",
@@ -23212,6 +23858,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "delivery_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -23306,6 +23962,8 @@
         "type": "string",
         "enum": [
           "webhook",
+          "slack",
+          "mattermost",
           "amqp",
           "valkey_stream",
           "email"
@@ -23383,7 +24041,6 @@
         "required": [
           "subscription_id",
           "subscription_name",
-          "collection_id",
           "sink_id",
           "sink_name",
           "sink_kind",
@@ -23394,7 +24051,10 @@
         ],
         "properties": {
           "collection_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32"
           },
           "counts": {
@@ -23494,8 +24154,20 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "task_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskKind"
+            }
           }
         }
+      },
+      "EventSubscriptionID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive event subscription id.",
+        "minimum": 1
       },
       "EventWorkerHealth": {
         "type": "object",
@@ -26271,6 +26943,16 @@
             ]
           },
           "config": {},
+          "delivery_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -27967,6 +28649,16 @@
         ],
         "properties": {
           "config": {},
+          "delivery_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -32830,6 +33522,68 @@
         ],
         "description": "One resource catalog selected by a structured search request.\n\nObject searches may optionally be constrained to one exact class. All\nother target variants are property-free tagged objects."
       },
+      "SystemEventSubscription": {
+        "type": "object",
+        "required": [
+          "id",
+          "sink_id",
+          "name",
+          "description",
+          "entity_types",
+          "actions",
+          "routing",
+          "enabled",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "entity_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter": {
+            "$ref": "#/components/schemas/EventSubscriptionFilter"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "routing": {},
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "TaskCancelRequest": {
         "type": "object",
         "description": "An idempotent stop request. The optional expected status protects queued-only withdrawals.",
@@ -33933,6 +34687,16 @@
         "type": "object",
         "properties": {
           "config": {},
+          "delivery_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
+              }
+            ]
+          },
           "enabled": {
             "type": [
               "boolean",

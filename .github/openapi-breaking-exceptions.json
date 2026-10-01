@@ -200,6 +200,18 @@
         "77ec4cf612af",
         "7a4cc3401793"
       ]
+    },
+    {
+      "id": "v0.0.16-system-subscription-health",
+      "baseline": "v0.0.16",
+      "expires": "2027-01-31",
+      "reason": "System subscriptions have no collection. Their health entries use the same response with a nullable collection_id, represented as optional by the schema generator.",
+      "migration": "Update clients to accept null.",
+      "changelog_entry": "event-delivery health subscription entries now return a nullable",
+      "fingerprints": [
+        "3b38339d6b20",
+        "87b55b5ff097"
+      ]
     }
   ]
 }

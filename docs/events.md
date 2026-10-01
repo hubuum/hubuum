@@ -141,6 +141,9 @@ External delivery is configured in two layers:
 - Event subscriptions are collection-scoped routing rules. Callers need
   `ManageEventSubscription` on the collection and manage them through
   `/api/v1/collections/{collection_id}/event-subscriptions`.
+- Administrators manage collection-less events through
+  `/api/v1/system-event-subscriptions`. System subscriptions match only events
+  with neither a direct collection nor related collections.
 
 A sink describes how to deliver. A subscription describes which events should
 be delivered to a sink. The primary subscription filters are `entity_types` and
@@ -162,6 +165,7 @@ Supported `filter` fields are:
 | `initiator_user_ids` | Match root task initiator principal ids |
 | `request_ids` | Match request UUIDs |
 | `correlation_ids` | Match correlation ids exactly |
+| `task_kinds` | Match recognized task kinds in task-event metadata; missing metadata does not match |
 
 Each field is optional. Empty and omitted fields match all events for that
 dimension. Multiple populated fields are combined with AND; values inside one
@@ -206,13 +210,14 @@ Example collection subscription:
 
 For email sinks, create narrow subscriptions rather than sending every audit
 event to human recipients. For example, this subscription sends only failed
-task lifecycle events from a collection to the configured mailbox:
+task lifecycle events to the configured mailbox. Create it through
+`POST /api/v1/system-event-subscriptions`:
 
 ```json
 {
   "sink_id": 2,
   "name": "task-failures-to-ops",
-  "description": "Email ops when collection tasks fail",
+  "description": "Email ops when tasks fail",
   "entity_types": ["task"],
   "actions": ["failed"],
   "filter": {
@@ -607,3 +612,119 @@ Prometheus recording and alerting rules, SLO definitions and response runbooks.
 The same assets work with the optional single-host stack, independently managed
 Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
 your server release and scrape every process directly with deployment labels.
+
+## Slack And Mattermost
+
+Both chat sinks are available in default builds. They consume existing raw
+events; no threshold evaluator, time-window aggregation or alert-state machine
+is added to the event core. Failed backups already emit task lifecycle events.
+Queue delay and database pressure should come from a metrics alerting system,
+unless a component explicitly emits a corresponding raw event.
+
+Create an incoming webhook in Slack or Mattermost, then store its **complete
+URL** in the configured [secret source](secret_sources.md). Create the sink:
+
+```json
+{
+  "name": "ops-slack",
+  "kind": "slack",
+  "config": { "transport": "webhook" },
+  "secret_ref": "ops_slack_webhook",
+  "delivery_policy": { "min_interval_ms": 1000 },
+  "enabled": true
+}
+```
+
+For Mattermost, use `"kind": "mattermost"`. Webhook subscriptions use
+`"routing": {}`; the webhook selects the channel. Hubuum rejects channel
+and credential overrides in routing.
+
+For bot delivery, store the bot token under `secret_ref`. Slack configuration
+is `{"transport":"bot"}` and uses `chat.postMessage`. Grant the bot
+`chat:write` and invite it to its destination. Mattermost configuration is
+`{"transport":"bot","server_url":"https://chat.example.com"}` and uses
+`POST /api/v4/posts`. Both require subscription routing with a channel ID:
+
+```json
+{
+  "sink_id": 3,
+  "name": "failed-backups",
+  "description": "Notify operations of failed backup tasks",
+  "entity_types": ["task"],
+  "actions": ["failed"],
+  "filter": { "task_kinds": ["backup"] },
+  "routing": { "channel_id": "C0123456789" },
+  "enabled": true
+}
+```
+
+Post this subscription to `/api/v1/system-event-subscriptions`. Use the
+Mattermost channel's ID for Mattermost bots. System CRUD uses the same ETag
+preconditions and pagination conventions as collection subscriptions and is
+restricted to unscoped administrators. System scope is fixed by the route.
+
+Both providers support `text_template`. Slack additionally supports
+`blocks_template`; Mattermost supports `attachments_template`. Rich templates
+must render JSON arrays of objects. The same bounded, isolated MiniJinja engine
+and event context are shared with email. Use `tojson` for inserted JSON values:
+
+```json
+{
+  "transport": "webhook",
+  "text_template": "Hubuum: {{ summary }}",
+  "blocks_template": "[{\"type\":\"section\",\"text\":{\"type\":\"plain_text\",\"text\":{{ summary | tojson }}}}]"
+}
+```
+
+Templates cannot override transport, authentication or routing. Empty text is
+rejected. Text is bounded to 4,000 characters for Slack and 16,000 for
+Mattermost; rich arrays allow at most 50 blocks or 100 attachments, including
+the test marker. Template execution has fuel, recursion, context and output
+limits; the global outbound request limit also applies. HTTPS, DNS screening,
+private-target policy, response limits, timeouts and redirect restrictions use
+the shared HTTP executor used by webhooks.
+
+Administrators can preview or enqueue a test with an existing event UUID and
+saved subscription. Preview performs no secret lookup or network request:
+
+```http
+POST /api/v1/event-sinks/3/preview
+Content-Type: application/json
+
+{"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}
+```
+
+Use `/api/v1/event-sinks/3/test` with the same body to enqueue a delivery. Replace
+the example identifiers with real saved records. Both verify sink and event
+scope. Tests bypass subscription filters and enabled flags for setup, but
+respect throttling. Preview shows the test marker that delivery will use.
+The test route returns `202` with an inspectable delivery and a Location header;
+the actual request is audited as `event_sink.invoked`. Repeated tests create
+separate `purpose: "test"` records without suppressing normal event delivery.
+Workers render using saved configuration when they execute the delivery.
+
+New chat sinks default to one admission per second per sink. Other sink kinds
+remain unlimited unless `delivery_policy.min_interval_ms` is set. Values range
+from 1 to 86,400,000 milliseconds; `null` disables configured spacing. The
+persisted schedule is shared across workers and subscriptions using that sink.
+It spaces sends without dropping or aggregating events. A deferred delivery
+stays pending with `deferred_reason` (`configured_rate` or `provider_rate`) and
+`next_attempt_at`, without consuming failure attempts. Distinct sinks sharing
+one provider channel still share the provider's limits.
+
+HTTP 429 and Slack's logical `ratelimited` responses defer delivery; HTTP
+`Retry-After` delta seconds are honored when valid, otherwise the delay is 60
+seconds. HTTP 408/5xx and transport failures retry; permanent HTTP failures and
+known Slack authentication, channel and payload errors dead-letter immediately.
+Slack bot success requires `ok: true`; Mattermost bot success requires a 201
+response with a post ID. Provider response bodies, tokens and webhook URLs are
+not included in delivery errors. Delivery remains at least once: an accepted
+message followed by a lost acknowledgement can produce a duplicate.
+
+Upgrade by stopping older API and worker processes, applying the single chat
+migration, reconciling database role grants and starting matching binaries.
+Mixed old/new workers are unsupported. Rollback rejects remaining chat sinks,
+system subscriptions, rate policies and test/deferred deliveries; export or
+remove incompatible records deliberately before rolling back. Format 7 backups
+preserve these settings and terminal delivery history, while transient sink
+scheduling resets after restore. Format 6 backups restore legacy defaults.

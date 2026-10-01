@@ -643,7 +643,7 @@ fn validate_backup_state_references(document: &BackupDocument) -> Result<(), Api
         validate_optional_reference("remote_targets", row, "class_id", &classes)?;
     }
     for row in required_state_section(document, StorageBackupStateSection::EventSubscriptions)? {
-        validate_required_reference("event_subscriptions", row, "collection_id", &collections)?;
+        validate_optional_reference("event_subscriptions", row, "collection_id", &collections)?;
         validate_required_reference("event_subscriptions", row, "sink_id", &sinks)?;
     }
     Ok(())
@@ -713,6 +713,7 @@ pub(crate) fn verify_restored_backup_matches(
 ) -> Result<(), ApiError> {
     let mut source = source.clone();
     let mut restored = restored.clone();
+    normalize_legacy_event_configuration(&mut source);
     normalize_legacy_class_schema_policies(&mut source);
     if let Some(history) = &mut source.history {
         for (section, rows) in &mut history.sections {
@@ -867,6 +868,7 @@ pub(crate) fn validate_document_fields(
     schema_limits: JsonSchemaLimits,
 ) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
+    normalize_legacy_event_configuration(document);
     normalize_legacy_class_schema_policies(document);
     validate_backup_metadata(document)?;
     let item_counts = validate_backup_manifest(document)?;
@@ -888,6 +890,47 @@ pub(crate) fn validate_document_fields(
         includes_history: document.history.is_some(),
         total_items,
     })
+}
+
+fn normalize_legacy_event_configuration(document: &mut BackupDocument) {
+    if document.backup_version != 6 {
+        return;
+    }
+    fn defaults(rows: Option<&mut Vec<StorageBackupRow>>, fields: &[(&str, Value)]) {
+        if let Some(rows) = rows {
+            for row in rows {
+                let mut value = row.fields().clone();
+                for (name, default) in fields {
+                    value
+                        .entry((*name).to_owned())
+                        .or_insert_with(|| default.clone());
+                }
+                *row = StorageBackupRow::try_from_value(Value::Object(value))
+                    .expect("object remains an object");
+            }
+        }
+    }
+    defaults(
+        document
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::EventSinks),
+        &[(
+            "delivery_policy",
+            serde_json::json!({"min_interval_ms":null}),
+        )],
+    );
+    defaults(
+        document.history.as_mut().and_then(|history| {
+            history
+                .sections
+                .get_mut(&StorageBackupHistorySection::TerminalEventDeliveries)
+        }),
+        &[
+            ("purpose", Value::String("event".into())),
+            ("deferred_reason", Value::Null),
+        ],
+    );
 }
 
 fn normalize_legacy_class_schema_policies(document: &mut BackupDocument) {
@@ -1697,8 +1740,9 @@ mod tests {
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
         RestoreSettings, confirmation_is_stale, normalize_legacy_class_schema_policies,
-        restore_capability_matches, restore_error_for_storage, sha256,
-        validate_computed_field_definitions, verify_backup_document,
+        normalize_legacy_event_configuration, restore_capability_matches,
+        restore_error_for_storage, sha256, validate_computed_field_definitions,
+        verify_backup_document,
     };
     use crate::errors::ApiError;
     use crate::models::{
@@ -1817,6 +1861,34 @@ mod tests {
             history: None,
             manifest,
         }
+    }
+
+    #[test]
+    fn format_six_notifications_restore_with_legacy_defaults() {
+        let mut document = minimally_valid_document();
+        document.backup_version = 6;
+        document.state.sections.insert(
+            StorageBackupStateSection::EventSinks,
+            vec![StorageBackupRow::try_from_value(json!({"id": 1, "kind": "webhook"})).unwrap()],
+        );
+        document.history = Some(BackupHistory {
+            sections: BTreeMap::from([(
+                StorageBackupHistorySection::TerminalEventDeliveries,
+                vec![
+                    StorageBackupRow::try_from_value(json!({"id": 1, "status": "succeeded"}))
+                        .unwrap(),
+                ],
+            )]),
+        });
+        normalize_legacy_event_configuration(&mut document);
+        assert_eq!(
+            document.state.sections[&StorageBackupStateSection::EventSinks][0].fields()["delivery_policy"],
+            json!({"min_interval_ms": null}),
+        );
+        let delivery = &document.history.unwrap().sections
+            [&StorageBackupHistorySection::TerminalEventDeliveries][0];
+        assert_eq!(delivery.fields()["purpose"], "event");
+        assert_eq!(delivery.fields()["deferred_reason"], json!(null));
     }
 
     #[test]

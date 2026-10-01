@@ -104,20 +104,21 @@ pub use credential_approval::*;
 pub use event_administration::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageEventDelivery,
-    StorageEventDeliveryBuilder, StorageEventDeliveryListQuery, StorageEventSink,
-    StorageEventSinkBuilder, StorageEventSinkCreate, StorageEventSinkCreateBuilder,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
+    StorageEventDeliveryBuilder, StorageEventDeliveryListQuery, StorageEventNotificationInput,
+    StorageEventNotificationSelection, StorageEventSink, StorageEventSinkBuilder,
+    StorageEventSinkCreate, StorageEventSinkCreateBuilder, StorageEventSinkDelete,
+    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
+    StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
     StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
-    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliveryLease,
-    StorageEventDeliverySink, StorageEventDeliverySubscription, StorageEventDeliveryWorkItem,
-    StorageEventFanoutOutcome, StorageEventRetentionBatch, StorageEventRetentionBatchId,
-    StorageEventRetentionSummary, StorageRecordedEvent, StorageRetainedEvent,
-    execute_event_retention_batch,
+    StorageEventDeliveryBatch, StorageEventDeliveryClaim, StorageEventDeliveryDisposition,
+    StorageEventDeliveryLease, StorageEventDeliverySink, StorageEventDeliverySubscription,
+    StorageEventDeliveryWorkItem, StorageEventFanoutOutcome, StorageEventRetentionBatch,
+    StorageEventRetentionBatchId, StorageEventRetentionSummary, StorageRecordedEvent,
+    StorageRetainedEvent, execute_event_retention_batch,
 };
 pub use execution::{
     ExecutionStorage, StorageCallSite, StorageExecutionScope, StorageRevisionPrecondition,

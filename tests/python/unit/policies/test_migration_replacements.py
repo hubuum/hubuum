@@ -1,6 +1,7 @@
 """Regression coverage for reviewed enum CHECK widening; standard library only."""
 
 import unittest
+import hashlib
 
 from support import load_script
 
@@ -47,3 +48,29 @@ class ReplacementTests(unittest.TestCase):
         for name, baseline in cases.items():
             with self.subTest(name=name):
                 self.assertEqual(MODULE.approved_replacements(baseline, CANDIDATE), set())
+
+
+class OfflineReviewTests(unittest.TestCase):
+    def review(self, content):
+        return {"schema_version": 1, "reviews": [{"migration": "up.sql", "sha256": hashlib.sha256(content.encode()).hexdigest(), "reason": "test", "upgrade_action": "stop writers", "drop_constraints": {"deliveries": ["normal_unique"]}}]}
+
+    def test_exact_review_permits_only_named_constraint(self):
+        content = "ALTER TABLE deliveries DROP CONSTRAINT normal_unique;"
+        self.assertEqual(MODULE.approved_offline_drops(self.review(content), "up.sql", content), {"OFFLINE:DELIVERIES:NORMAL_UNIQUE"})
+
+    def test_changed_sql_requires_review(self):
+        with self.assertRaises(ValueError):
+            MODULE.approved_offline_drops(self.review("old"), "up.sql", "new")
+
+    def test_other_migration_has_no_permission(self):
+        self.assertEqual(MODULE.approved_offline_drops(self.review("old"), "other.sql", "old"), set())
+
+    def test_operator_action_is_required(self):
+        review = self.review("sql")
+        review["reviews"][0]["upgrade_action"] = ""
+        with self.assertRaises(ValueError):
+            MODULE.approved_offline_drops(review, "up.sql", "sql")
+
+
+if __name__ == "__main__":
+    unittest.main()

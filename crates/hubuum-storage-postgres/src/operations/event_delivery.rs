@@ -1,8 +1,12 @@
+use hubuum_domain::EventDeliveryPurpose;
+use hubuum_storage_core::StorageEventDeliveryDisposition;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use chrono::{NaiveDateTime, Utc};
-use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
+#[cfg(feature = "integration-test-support")]
+use diesel::BoolExpressionMethods;
+use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
 use diesel::{OptionalExtension, Queryable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
@@ -31,6 +35,7 @@ struct DeliveryRow {
     subscription_id: i32,
     attempts: i32,
     claim_token: Option<Uuid>,
+    purpose: String,
 }
 
 #[derive(Queryable)]
@@ -82,7 +87,7 @@ fn delivery_sink_value(
 }
 
 #[derive(Queryable)]
-struct AdministrationDeliveryRow {
+pub(super) struct AdministrationDeliveryRow {
     id: i64,
     event_id: i64,
     subscription_id: i32,
@@ -94,6 +99,8 @@ struct AdministrationDeliveryRow {
     _claim_token: Option<Uuid>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
+    purpose: String,
+    deferred_reason: Option<String>,
 }
 
 impl TryFrom<AdministrationDeliveryRow> for StorageEventDelivery {
@@ -112,6 +119,11 @@ impl TryFrom<AdministrationDeliveryRow> for StorageEventDelivery {
             row.created_at.and_utc(),
             row.updated_at.and_utc(),
         )
+        .purpose(
+            EventDeliveryPurpose::parse(&row.purpose)
+                .ok_or_else(|| PostgresStorageError::invalid_input("Invalid delivery purpose"))?,
+        )
+        .deferred_reason(row.deferred_reason)
         .attempts(row.attempts)
         .last_error(row.last_error)
         .locked_until(row.locked_until.map(|timestamp| timestamp.and_utc()))
@@ -274,29 +286,21 @@ async fn select_due_delivery_ids(
     now: NaiveDateTime,
     settings: EventDeliverySettings,
 ) -> Result<Vec<i64>, PostgresStorageError> {
-    use crate::schema::event_deliveries::dsl::{
-        event_deliveries, id, locked_until, next_attempt_at, status,
-    };
-
-    event_deliveries
-        .filter(
-            status
-                .eq(EventDeliveryStatus::Pending.as_str())
-                .or(status
-                    .eq(EventDeliveryStatus::Failed.as_str())
-                    .and(next_attempt_at.le(now)))
-                .or(status
-                    .eq(EventDeliveryStatus::InFlight.as_str())
-                    .and(locked_until.lt(now))),
-        )
-        .order((next_attempt_at.asc(), id.asc()))
-        .for_update()
-        .skip_locked()
-        .limit(settings.query_batch_size())
-        .select(id)
-        .load::<i64>(connection)
-        .await
-        .map_err(PostgresStorageError::from)
+    #[derive(QueryableByName)]
+    struct Candidate {
+        #[diesel(sql_type = BigInt)]
+        id: i64,
+    }
+    diesel::sql_query("WITH candidates AS MATERIALIZED (
+        SELECT d.id, s.delivery_policy->>'min_interval_ms' IS NOT NULL AS spaced,
+               row_number() OVER (PARTITION BY s.id ORDER BY d.next_attempt_at, d.id) AS position
+        FROM event_deliveries d JOIN event_subscriptions sub ON sub.id=d.subscription_id JOIN event_sinks s ON s.id=sub.sink_id
+        WHERE (d.status IN ('pending','failed') AND d.next_attempt_at <= $1) OR (d.status='in_flight' AND d.locked_until < $1)
+    ) SELECT d.id FROM candidates c JOIN event_deliveries d ON d.id=c.id
+      WHERE NOT c.spaced OR c.position=1 ORDER BY d.next_attempt_at, d.id
+      LIMIT $2 FOR UPDATE OF d SKIP LOCKED")
+        .bind::<Timestamp,_>(now).bind::<BigInt,_>(settings.query_batch_size())
+        .load::<Candidate>(connection).await.map(|rows| rows.into_iter().map(|row| row.id).collect()).map_err(PostgresStorageError::from)
 }
 
 async fn claim_delivery_ids(
@@ -322,7 +326,14 @@ async fn claim_delivery_ids(
             locked_until.eq(Some(lock_deadline)),
             claim_token.eq(Some(claim)),
         ))
-        .returning((id, event_id, subscription_id, attempts, claim_token))
+        .returning((
+            id,
+            event_id,
+            subscription_id,
+            attempts,
+            claim_token,
+            crate::schema::event_deliveries::purpose,
+        ))
         .get_results::<DeliveryRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -412,7 +423,8 @@ async fn load_work_items(
                 claim_token,
             )
             .map_err(|error| invalid_delivery_value("event delivery claim", error))?;
-            let subscription = delivery_subscription_value(subscription)?;
+            let subscription =
+                delivery_subscription_value(subscription)?.for_test(delivery.purpose == "test");
             let sink = delivery_sink_value(sink)?;
 
             Ok(StorageEventDeliveryWorkItem::new(
@@ -433,7 +445,7 @@ async fn next_wakeup_on_connection(
         "WITH scheduled AS ( \
              (SELECT next_attempt_at AS wakeup_at \
               FROM event_deliveries \
-              WHERE status = 'failed' \
+              WHERE status IN ('pending','failed') \
                 AND next_attempt_at > $1 \
               ORDER BY next_attempt_at \
               LIMIT 1) \
@@ -472,8 +484,11 @@ pub async fn begin_event_delivery(
     }
 
     let check_started = Instant::now();
-    runtime
-        .with_connection(async |connection| {
+    let result = runtime
+        .with_transaction(async |connection| {
+            if !admit_sink_delivery(connection, claim).await? {
+                return Ok(None);
+            }
             let remaining = diesel::sql_query(
                 "SELECT floor(extract(epoch FROM
                     (locked_until - (clock_timestamp() AT TIME ZONE 'UTC'))) * 1000000)::bigint
@@ -487,11 +502,6 @@ pub async fn begin_event_delivery(
             .get_result::<RemainingLease>(connection)
             .await
             .optional()?;
-            crate::reach_fault_point(
-                crate::PostgresFaultPoint::EventDeliveryAfterOwnershipCheck,
-                Some(connection),
-            )
-            .await?;
             remaining
                 .filter(|value| value.remaining_micros > 0)
                 .map(|value| {
@@ -504,7 +514,109 @@ pub async fn begin_event_delivery(
                 })
                 .transpose()
         })
-        .await
+        .await?;
+    crate::reach_fault_point(
+        crate::PostgresFaultPoint::EventDeliveryAfterOwnershipCheck,
+        None,
+    )
+    .await?;
+    Ok(result)
+}
+
+/// Serialize admissions for a sink, without holding a database lock during HTTP.
+async fn admit_sink_delivery(
+    connection: &mut PostgresConnection,
+    claim: &StorageEventDeliveryClaim,
+) -> Result<bool, PostgresStorageError> {
+    #[derive(QueryableByName)]
+    struct Admission {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        sink_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Jsonb)]
+        delivery_policy: Value,
+        #[diesel(sql_type = Timestamp)]
+        now: NaiveDateTime,
+    }
+    let row = diesel::sql_query("SELECT s.id AS sink_id, s.delivery_policy, clock_timestamp() AT TIME ZONE 'UTC' AS now FROM event_deliveries d JOIN event_subscriptions sub ON sub.id=d.subscription_id JOIN event_sinks s ON s.id=sub.sink_id WHERE d.id=$1 AND d.claim_token=$2 AND d.status='in_flight' AND d.locked_until > (clock_timestamp() AT TIME ZONE 'UTC') FOR UPDATE OF d")
+        .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token())
+        .get_result::<Admission>(connection).await.optional()?;
+    let Some(row) = row else { return Ok(false) };
+    diesel::sql_query(
+        "INSERT INTO event_sink_delivery_state(sink_id) VALUES ($1) ON CONFLICT DO NOTHING",
+    )
+    .bind::<diesel::sql_types::Integer, _>(row.sink_id)
+    .execute(connection)
+    .await?;
+    #[derive(QueryableByName)]
+    struct Schedule {
+        #[diesel(sql_type = Timestamp)]
+        eligible: NaiveDateTime,
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        provider: bool,
+    }
+    let schedule = diesel::sql_query("SELECT greatest(next_allowed_at,blocked_until,$2) AS eligible, blocked_until > $2 AS provider FROM event_sink_delivery_state WHERE sink_id=$1 FOR UPDATE")
+        .bind::<diesel::sql_types::Integer,_>(row.sink_id).bind::<Timestamp,_>(row.now).get_result::<Schedule>(connection).await?;
+    #[derive(QueryableByName)]
+    struct Clock {
+        #[diesel(sql_type = Timestamp)]
+        now: NaiveDateTime,
+    }
+    let clock = diesel::sql_query("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now FROM event_deliveries WHERE id=$1 AND claim_token=$2 AND locked_until > (clock_timestamp() AT TIME ZONE 'UTC')")
+        .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token()).get_result::<Clock>(connection).await.optional()?;
+    let Some(clock) = clock else { return Ok(false) };
+    if schedule.eligible > clock.now {
+        diesel::sql_query("UPDATE event_deliveries SET status='pending', next_attempt_at=$2, deferred_reason=$3, claim_token=NULL, locked_until=NULL, last_error=NULL WHERE id=$1")
+            .bind::<BigInt,_>(claim.delivery_id().id()).bind::<Timestamp,_>(schedule.eligible)
+            .bind::<diesel::sql_types::Text,_>(if schedule.provider { "provider_rate" } else { "configured_rate" }).execute(connection).await?;
+        return Ok(false);
+    }
+    let policy: hubuum_domain::EventDeliveryPolicy = serde_json::from_value(row.delivery_policy)
+        .map_err(|error| invalid_delivery_value("delivery policy", error))?;
+    let next =
+        clock.now + chrono::Duration::milliseconds(policy.min_interval_ms().unwrap_or(0) as i64);
+    diesel::sql_query("UPDATE event_sink_delivery_state SET next_allowed_at=$2 WHERE sink_id=$1")
+        .bind::<diesel::sql_types::Integer, _>(row.sink_id)
+        .bind::<Timestamp, _>(next)
+        .execute(connection)
+        .await?;
+    diesel::sql_query("UPDATE event_deliveries SET deferred_reason=NULL WHERE id=$1")
+        .bind::<BigInt, _>(claim.delivery_id().id())
+        .execute(connection)
+        .await?;
+    Ok(true)
+}
+
+pub async fn finish_event_delivery(
+    runtime: &PostgresRuntime,
+    claim: &StorageEventDeliveryClaim,
+    disposition: StorageEventDeliveryDisposition,
+) -> Result<(), PostgresStorageError> {
+    runtime.with_transaction(async |connection| -> Result<(), PostgresStorageError> {
+        #[derive(QueryableByName)]
+        struct Owned {
+            #[diesel(sql_type = diesel::sql_types::Integer)]
+            sink_id: i32,
+            #[diesel(sql_type = Timestamp)]
+            now: NaiveDateTime,
+        }
+        let owned = diesel::sql_query("SELECT sub.sink_id, clock_timestamp() AT TIME ZONE 'UTC' AS now FROM event_deliveries d JOIN event_subscriptions sub ON sub.id=d.subscription_id WHERE d.id=$1 AND d.claim_token=$2 AND d.status='in_flight' AND d.locked_until > (clock_timestamp() AT TIME ZONE 'UTC') FOR UPDATE OF d")
+            .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token()).get_result::<Owned>(connection).await?;
+        match disposition {
+            StorageEventDeliveryDisposition::Permanent(ref error) => {
+                diesel::sql_query("UPDATE event_deliveries SET status='dead', attempts=attempts+1, last_error=$2, claim_token=NULL, locked_until=NULL, deferred_reason=NULL WHERE id=$1")
+                    .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Text,_>(error).execute(connection).await?;
+            }
+            StorageEventDeliveryDisposition::RateLimited(delay) => {
+                let delay = chrono::Duration::from_std(delay).map_err(|_| PostgresStorageError::invalid_input("Provider cooldown exceeds supported duration"))?;
+                let until = owned.now.checked_add_signed(delay).ok_or_else(|| PostgresStorageError::invalid_input("Provider cooldown exceeds supported timestamp"))?;
+                diesel::sql_query("INSERT INTO event_sink_delivery_state(sink_id,blocked_until) VALUES ($1,$2) ON CONFLICT (sink_id) DO UPDATE SET blocked_until=greatest(event_sink_delivery_state.blocked_until,EXCLUDED.blocked_until)")
+                    .bind::<diesel::sql_types::Integer,_>(owned.sink_id).bind::<Timestamp,_>(until).execute(connection).await?;
+                diesel::sql_query("UPDATE event_deliveries SET status='pending', next_attempt_at=$2, deferred_reason='provider_rate', last_error=NULL, claim_token=NULL, locked_until=NULL WHERE id=$1")
+                    .bind::<BigInt,_>(claim.delivery_id().id()).bind::<Timestamp,_>(until).execute(connection).await?;
+            }
+        }
+        Ok(())
+    }).await
 }
 
 /// Mark an in-flight claim as successfully delivered.
@@ -522,7 +634,10 @@ pub async fn mark_event_delivery_succeeded(
                 event_deliveries
                     .filter(id.eq(claim.delivery_id().id()))
                     .filter(claim_token.eq(claim.token()))
-                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
+                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str()))
+                    .filter(locked_until.gt(diesel::dsl::sql::<Nullable<Timestamp>>(
+                        "clock_timestamp() AT TIME ZONE 'UTC'",
+                    ))),
             )
             .set((
                 status.eq(EventDeliveryStatus::Succeeded.as_str()),
@@ -576,7 +691,10 @@ pub async fn mark_event_delivery_failed(
                 event_deliveries
                     .filter(id.eq(claim.delivery_id().id()))
                     .filter(claim_token.eq(claim.token()))
-                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
+                    .filter(status.eq(EventDeliveryStatus::InFlight.as_str()))
+                    .filter(locked_until.gt(diesel::dsl::sql::<Nullable<Timestamp>>(
+                        "clock_timestamp() AT TIME ZONE 'UTC'",
+                    ))),
             )
             .set((
                 status.eq(next_status.as_str()),
@@ -894,7 +1012,14 @@ pub async fn claim_event_delivery_by_id(
                     locked_until.eq(Some(lock_deadline)),
                     claim_token.eq(Some(token)),
                 ))
-                .returning((id, event_id, subscription_id, attempts, claim_token))
+                .returning((
+                    id,
+                    event_id,
+                    subscription_id,
+                    attempts,
+                    claim_token,
+                    crate::schema::event_deliveries::purpose,
+                ))
                 .get_result::<DeliveryRow>(connection)
                 .await?;
 

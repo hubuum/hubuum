@@ -4,7 +4,7 @@ use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
     imports, me, principals, relations, remote_targets, restores, runtime_config, schema_evolution,
-    search, service_accounts, tasks, users,
+    search, service_accounts, system_event_subscriptions, tasks, users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -212,6 +212,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         events::get_group_events,
         events::get_export_template_events,
         events::get_remote_target_events,
+        event_sinks::preview_event_sink,
+        event_sinks::test_event_sink,
         event_sinks::create_event_sink,
         event_sinks::get_event_sinks,
         event_sinks::get_event_sink,
@@ -222,6 +224,11 @@ use utoipa::{Modify, OpenApi, ToSchema};
         event_deliveries::get_event_delivery,
         event_deliveries::retry_event_delivery,
         event_deliveries::dead_letter_event_delivery,
+        system_event_subscriptions::create_system_event_subscription,
+        system_event_subscriptions::get_system_event_subscriptions,
+        system_event_subscriptions::get_system_event_subscription,
+        system_event_subscriptions::patch_system_event_subscription,
+        system_event_subscriptions::delete_system_event_subscription,
         event_subscriptions::create_event_subscription,
         event_subscriptions::get_event_subscriptions,
         event_subscriptions::get_event_subscription,
@@ -815,6 +822,14 @@ const CONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
     ("delete", "/api/v1/event-sinks/{sink_id}"),
     (
         "patch",
+        "/api/v1/system-event-subscriptions/{subscription_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/system-event-subscriptions/{subscription_id}",
+    ),
+    (
+        "patch",
         "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
     ),
     (
@@ -895,6 +910,11 @@ const ETAGGED_OPERATIONS: &[(&str, &str)] = &[
     ),
     ("post", "/api/v1/event-sinks"),
     ("get", "/api/v1/event-sinks/{sink_id}"),
+    ("post", "/api/v1/system-event-subscriptions"),
+    (
+        "get",
+        "/api/v1/system-event-subscriptions/{subscription_id}",
+    ),
     (
         "post",
         "/api/v1/collections/{collection_id}/event-subscriptions",
@@ -1603,6 +1623,10 @@ mod tests {
             "/api/v1/event-deliveries/{delivery_id}/dead",
             "/api/v1/event-sinks",
             "/api/v1/event-sinks/{sink_id}",
+            "/api/v1/event-sinks/{sink_id}/preview",
+            "/api/v1/event-sinks/{sink_id}/test",
+            "/api/v1/system-event-subscriptions",
+            "/api/v1/system-event-subscriptions/{subscription_id}",
             "/api/v1/collections/{collection_id}/event-subscriptions",
             "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
             "/api/v1/export-templates",
