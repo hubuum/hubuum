@@ -134,7 +134,7 @@ def dashboards():
             ("Status distribution", f'sum by (deployment, status_family) (rate(hubuum_http_requests_total{{{s},route=~"/api/.*"}}[5m]))', "reqps", "All application statuses, including client errors."),
             ("Requests by route and method", f'sum by (deployment, route, method) (rate(hubuum_http_requests_total{{{s},route=~"/api/.*"}}[5m]))', "reqps", "Bounded route templates and methods, never raw URL paths."),
             *[(f"Latency p{int(q*100)} by route and method", f'hubuum:api_route_latency_p{int(q*100)}:5m{{{s}}}', "s", "Stable route templates and methods only; successful API requests.") for q in (.5, .95, .99)],
-            ("In-flight requests", f'sum by (deployment, route) (hubuum_http_requests_in_flight{{{s}}})', "short", "Process-local gauges summed across replicas."),
+            ("In-flight requests", f'sum by (deployment, route) (hubuum_http_requests_in_flight{{{s},route=~"/api/.*"}})', "short", "Process-local API requests summed across replicas; excludes probes and metrics."),
             ("Authorization and request errors", f'sum by (deployment, class) (rate(hubuum_api_errors_total{{{s}}}[5m]))', "ops", "Bounded public error classes include permission and input/resource limits."),
             ("Allowlist rejections", f'sum by (deployment, reason) (rate(hubuum_client_allowlist_rejections_total{{{s}}}[5m]))', "ops", "No source addresses or user identities are exposed."),
             ("Authentication failures", f'sum by (deployment, outcome) (rate(hubuum_login_attempts_total{{{s},outcome!="success"}}[5m]))', "ops", "Bounded outcomes without principals or addresses."),

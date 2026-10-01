@@ -224,7 +224,7 @@
       "id": 7,
       "title": "In-flight requests",
       "type": "timeseries",
-      "description": "Process-local gauges summed across replicas.",
+      "description": "Process-local API requests summed across replicas; excludes probes and metrics.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -244,7 +244,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (deployment, route) (hubuum_http_requests_in_flight{deployment=~\"$deployment\"})",
+          "expr": "sum by (deployment, route) (hubuum_http_requests_in_flight{deployment=~\"$deployment\",route=~\"/api/.*\"})",
           "legendFormat": "__auto"
         }
       ]
