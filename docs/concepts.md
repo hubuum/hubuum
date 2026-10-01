@@ -1,6 +1,7 @@
 # Core concepts
 
-Hubuum provides a common model and access layer for inventory data. It can hold
+Hubuum is a flexible configuration management database (CMDB) with a common
+model and access layer for inventory data. It can hold
 resources from several authoritative systems without requiring all of them to
 use the same native data model. Your integration decides how to collect and
 refresh that data; Hubuum stores, validates, relates, and exposes it.
@@ -9,10 +10,10 @@ refresh that data; Hubuum stores, validates, relates, and exposes it.
 
 | Concept | What it represents | Example |
 | --- | --- | --- |
-| Collection | An organizational and permission boundary in a hierarchy | A platform team's inventory |
-| Class | A type of resource, with an optional JSON Schema | Server, application, or location |
-| Object | One instance of a class, with JSON data | `web-01` and its hostname, owner, and environment |
-| Relation | A link between classes or their objects | An application runs on a server |
+| Collection | An organizational and permission boundary in a hierarchy | `atlas-demo`, containing the service catalogue and context |
+| Class | A type of resource, with an optional JSON Schema | `Service`, `Server`, `Location`, or `Context` |
+| Object | One instance of a class, with JSON data | `Atlas` in `Service`, or `web-01` in `Server` |
+| Relation | A link between classes or their objects | `Atlas` runs on `web-01` |
 
 Each class and each object belongs to one collection. Do not assume that access
 to a class also grants access to its objects: permissions are evaluated against
@@ -23,6 +24,20 @@ Collections form a tree under the system `root`. Group grants apply to a
 collection and its descendants. Inheritance is additive; a child does not deny
 a parent's grant. See [collection hierarchy](collection_hierarchy.md) and
 [permissions](permissions.md) before designing tenant or team boundaries.
+
+## Classes, schema policy, and authority
+
+Define a class for each kind of resource you manage. Its objects carry the JSON
+data. In the [loadable Atlas example](getting-started/example-dataset.md), the
+Service class requires a schema, while Context accepts schema-free notes and
+observations. Both have objects that connect to other objects through relations.
+Class relations describe which classes can connect; object relations connect
+their instances.
+
+The example also distinguishes records maintained authoritatively in Hubuum
+from reference copies owned by an upstream inventory or facilities system.
+Either kind can be schema-bound or schema-free. Source ownership is a modeling
+and integration choice, independent of the class's validation policy.
 
 ## Identity and access
 

@@ -46,18 +46,22 @@ headers, and status codes match the corresponding ID-addressed endpoint.
 
 Both class-scoped object creation routes infer `hubuum_class_id` and
 `collection_id` from the path. A name-addressed request therefore needs no
-prior class lookup:
+prior class lookup. After loading the [Atlas dataset](getting-started/example-dataset.md),
+create an additional server (web-03 is a tutorial exercise, not part of the
+ten-object baseline):
 
 ```http
-POST /api/v1/classes/by-name/server/objects
+POST /api/v1/classes/by-name/Server/objects
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "name": "web-01",
-  "description": "Web server",
+  "name": "web-03",
+  "description": "Additional Atlas web server",
   "data": {
-    "environment": "production"
+    "hostname": "web-03.example.invalid",
+    "environment": "production",
+    "source": "inventory.example.invalid"
   }
 }
 ```

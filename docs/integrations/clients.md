@@ -1,5 +1,10 @@
 # Clients, CLI, and frontend
 
+All interfaces can use the [Atlas example dataset](../getting-started/example-dataset.md).
+Load it into one evaluation server, then use the same Service/Atlas,
+Server/web-01, Location/Oslo, and Context/Research notes records across clients.
+Resolve numeric IDs from names; import does not promise fixed IDs.
+
 These are the current companion projects. Their documentation remains with
 their source so installation details and examples can track each release.
 

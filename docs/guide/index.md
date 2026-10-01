@@ -1,5 +1,9 @@
 # Working with Hubuum
 
+The [Atlas example dataset](../getting-started/example-dataset.md) supplies the
+shared Service, Server, Location, and Context classes used in the guides. Load it
+once to explore the same objects and relationships throughout the documentation.
+
 Use this guide to model inventory and carry out everyday data workflows.
 The examples describe the server's behavior across the web interface, CLI, and
 API. Interface-specific controls are documented with the

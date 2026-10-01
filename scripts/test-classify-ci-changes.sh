@@ -73,7 +73,10 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
-  test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py; do
+  test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py \
+  docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \
+  docs/assets/atlas/atlas.manifest.json docs/getting-started/example-dataset.md \
+  scripts/example-corpus.py scripts/test-example-corpus.py; do
   corpus_output="$(bash "$classifier" "$corpus_path")"
   assert_flag "$corpus_output" code true
   assert_flag "$corpus_output" container true
@@ -108,6 +111,12 @@ for document_input in docs/new-page.md docs/deleted-page.md docs/openapi.json \
   document_output="$(bash "$classifier" "$document_input")"
   assert_flag "$document_output" documentation true
 done
+
+# Python tooling also runs for Markdown changes so newly marked Atlas data
+# snippets are checked without maintaining a second list of documentation paths.
+atlas_example_output="$(bash "$classifier" docs/getting-started/first-requests.md)"
+assert_flag "$atlas_example_output" markdown true
+assert_flag "$atlas_example_output" documentation true
 
 unrelated_output="$(bash "$classifier" src/main.rs README.md)"
 assert_flag "$unrelated_output" documentation false

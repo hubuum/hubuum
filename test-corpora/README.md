@@ -12,6 +12,12 @@ file into their own disposable deployment. No repository checkout or dataset
 generation is required. The file replaces all application data through the
 existing restore workflow.
 
+For documentation walkthroughs and small demonstrations, use the separate
+[Atlas example dataset](../docs/getting-started/example-dataset.md). Its import
+and backup live under `docs/assets/atlas/` so each documentation edition can
+serve its own downloads. This larger corpus retains its existing edge-case and
+scale scenarios.
+
 ## Contents
 
 The corpus contains exactly **3,000 live objects in twelve classes**. Names and

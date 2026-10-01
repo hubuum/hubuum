@@ -1,7 +1,8 @@
 # Make your first API requests
 
-You need a running server and a human account. An administrator must grant your
-group access to the collection you will use. These HTTP examples show request
+You need a running server and a human account. Ask an administrator to load the
+[Atlas example dataset](example-dataset.md) and grant your group read access.
+Membership in its atlas-readers group gives access to the complete example. These HTTP examples show request
 and response shapes; substitute your URL and values in your HTTP client.
 
 ## Sign in
@@ -31,61 +32,84 @@ GET /api/v1/collections
 Authorization: Bearer <token>
 ```
 
-Choose a collection you are allowed to use and note its `id`. An administrator
-can create one using the [collection guide](../collection_hierarchy.md). The
-following example uses illustrative collection ID `42`.
+Find `atlas-demo` and its `atlas-demo-operations` child. The service catalogue
+and context live in the parent; server and location records live in the child.
+Permissions are evaluated on the relevant collection.
 
-## Create a class
+## Inspect a class
 
-You need `CreateClass` on the collection. Choose a unique class name:
+A class defines a type of resource and its optional schema. Read the Server
+class to see the schema used for inventory records:
 
 ```http
-POST /api/v1/classes
+GET /api/v1/classes/by-name/Server
 Authorization: Bearer <token>
-Content-Type: application/json
+```
 
+It requires a string hostname and a production or staging environment. Compare
+it with Context, which has no schema:
+
+```http
+GET /api/v1/classes/by-name/Context
+Authorization: Bearer <token>
+```
+
+## Read an object
+
+An object is one instance of its class. Read web-01 in the Server class:
+
+```http
+GET /api/v1/classes/by-name/Server/objects/by-name/web-01
+Authorization: Bearer <token>
+```
+
+Its response includes IDs, timestamps, a revision, and this `data`:
+
+<!-- atlas-data: object:web-01 -->
+```json
 {
-  "name": "example-server",
-  "description": "Servers in the example inventory",
-  "collection_id": 42,
-  "validate_schema": false
+  "hostname": "web-01.example.invalid",
+  "environment": "production",
+  "cpu_cores": 8,
+  "memory_gib": 32,
+  "costs": {
+    "compute": 45,
+    "storage": 5
+  },
+  "source": "inventory.example.invalid"
 }
 ```
 
-This evaluation class starts without enforced schema validation. For managed
-data, use [class schemas and compliance](../schema_evolution.md).
+The hostname and capacity are example reference data from an upstream inventory.
+The source field is ordinary JSON metadata; your integration controls how it
+is collected and refreshed.
 
-## Create and read an object
+## Follow the relationships
 
-You need `CreateObject` on the class's collection. The name-addressed creation
-route infers the class and collection:
+Read Atlas in the Service class, then inspect its connections:
 
 ```http
-POST /api/v1/classes/by-name/example-server/objects
+GET /api/v1/classes/by-name/Service/objects/by-name/Atlas
 Authorization: Bearer <token>
-Content-Type: application/json
 
-{
-  "name": "web-01",
-  "description": "Example web server",
-  "data": {
-    "hostname": "web-01.example.com",
-    "environment": "evaluation"
-  }
-}
-```
-
-Read it with `ReadObject` access:
-
-```http
-GET /api/v1/classes/by-name/example-server/objects/by-name/web-01
+GET /api/v1/classes/by-name/Service/objects/by-name/Atlas/related/relations
 Authorization: Bearer <token>
 ```
 
-You have now created a class and an object with your own JSON data. Next, try
-[filtering and pagination](../querying.md), add
-[relationships](../relationship_endpoints.md), or use a
-[client library](../integrations/clients.md).
+Atlas connects directly to web-01, web-02, Research notes, and Migration checklist.
+Those object relations use the Service–Server and Service–Context class
+relations. The [dataset guide](example-dataset.md) explains the complete model.
+
+## Make a change
+
+Reading does not require write access. To try creating an additional object,
+ask for the atlas-operators role and follow the [name-addressed creation
+example](../name_addressing.md#creating-an-object-without-ids). It adds web-03
+to Server; the ten-object corpus remains the documented starting point.
+
+Next, try [filtering and pagination](../querying.md), explore
+[class schemas](../schema_evolution.md), or use a
+[client library](../integrations/clients.md) against the same dataset.
 
 ## Understand common responses
 

@@ -76,3 +76,9 @@ Use [the administration guide](../administration/index.md) to configure TLS,
 client allowlists, groups, backups, and monitoring. A web restore additionally
 requires `hubuum-admin --restore-executor` as a separate supervised process.
 Follow [backup and restore](../backup-restore.md) before relying on recovery.
+
+## Add an example inventory
+
+[Load the Atlas dataset](example-dataset.md) for four classes and ten connected
+objects you can explore through every Hubuum interface. Then follow
+[your first API requests](first-requests.md).

@@ -1,5 +1,11 @@
 # Import API
 
+The [Atlas example dataset](getting-started/example-dataset.md#load-through-the-api)
+provides a complete, executable import containing classes, objects, relations,
+computed fields, groups, and collection grants. It uses strict atomicity and
+collision rejection and is tested against the real import worker. The smaller
+fragments below illustrate individual parts of the contract.
+
 The import API accepts a graph-shaped request, stores it in the generic task framework, and executes it asynchronously.
 
 Endpoints:

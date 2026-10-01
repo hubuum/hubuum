@@ -1,5 +1,10 @@
 # Relationship endpoints
 
+The [Atlas dataset](getting-started/example-dataset.md#relations-connect-the-instances)
+contains both class relations (such as Service–Server) and object relations
+(such as Atlas–web-01). The Server–Location class relation allows at most one
+location per server and any number of servers per location.
+
 This document summarizes the current class-relation, object-relation, and related-resource endpoints.
 
 For filtering, sorting, and cursor pagination support, see:

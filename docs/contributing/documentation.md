@@ -78,6 +78,57 @@ not part of the static site. Keep generated references generated: use the
 [OpenAPI](../integrations/api.md), [inventory](../generated/project_inventory.md),
 and [operational-contract](../operational_contracts.md) workflows.
 
+## Shared example dataset
+
+Use the [Atlas example](../getting-started/example-dataset.md) for tutorials,
+client walkthroughs, screenshots, and product diagrams. Introduce the class
+before the object: Service/Atlas, Server/web-01, Location/Oslo, and
+Context/Research notes are the central examples. Keep class names and object
+names case-sensitive. Numeric IDs and revisions are runtime values, not fixture
+identities.
+
+The canonical recipe is `docs/assets/atlas/atlas.import.json`. The neighboring
+backup is produced by the real server, never assembled by hand. Its manifest
+records checksums, sizes, counts, and the producing server version. Both files
+are published within each documentation edition, so release snapshots keep
+their original dataset. Client repositories should link to a matching server
+edition and reuse its files rather than maintaining independent seed data.
+
+When showing complete object data in Markdown, put an `atlas-data` comment
+immediately before the JSON fence, for example `<!-- atlas-data: object:Atlas -->`.
+The offline check compares marked examples with the canonical import. Mark
+partial payloads and tutorial additions explicitly; do not label them as the
+unchanged baseline. Specialized contract examples may use placeholders or
+additional resources where Atlas does not cover the behavior.
+
+Run from the repository root with Python 3.11+ and the production image built
+as described in [development](../development.md):
+
+```sh
+python3 scripts/test-example-corpus.py
+python3 scripts/example-corpus.py check
+python3 scripts/example-corpus.py verify --image hubuum-server:verify
+```
+
+After changing the import, regenerate the backup and manifest:
+
+```sh
+python3 scripts/example-corpus.py generate --image hubuum-server:verify
+```
+
+The generator and verifier reuse `scripts/test-corpus.py`'s isolated Docker
+harness. They create their own network, databases, and temporary credentials;
+they do not accept an existing database URL. Generation publishes files only
+after import, application scenarios, and two restore rounds succeed. No
+third-party Python packages are required. For a regeneration check that leaves
+committed files untouched, add `--directory target/generated-atlas-corpus`.
+
+CI checks metadata and documentation drift, imports and restores the committed
+corpus against the candidate production server, and regenerates into a temporary
+output directory. Changes to the dataset, its guide, or its tooling select the
+required checks. The larger [functional corpus](https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md)
+continues to cover scale and specialized edge cases.
+
 ## GitHub Pages publishing
 
 The intended public URL is **<https://hubuum.github.io/hubuum/>**. The root opens

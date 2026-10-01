@@ -4,9 +4,11 @@ description: Find your starting point for modeling assets, running Hubuum, and b
 
 # Hubuum documentation
 
-Hubuum is an open-source asset management service. Define the kinds of resources
-your organization needs, connect them with relationships, and query them through
-a shared API with group-based access control.
+Hubuum is an open-source configuration management database (CMDB). Define
+classes for the resources your organization manages, store schema-bound or
+schema-free objects, and connect them through relations. Authoritative records
+and reference data from other systems share one API with group-based access
+control.
 
 <!-- markdownlint-disable-next-line MD033 -->
 <div class="grid cards" markdown>
@@ -45,6 +47,7 @@ a shared API with group-based access control.
 
 | I need to… | Start here |
 | --- | --- |
+| Explore a ready-made inventory | [Load the Atlas example dataset](getting-started/example-dataset.md) |
 | Deploy the server and web interface | [Single-host deployment](deployment.md) |
 | Configure the server | [Configuration reference](quick_start.md) |
 | Decide who can access data | [Permissions](permissions.md) |
