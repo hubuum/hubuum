@@ -61,8 +61,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - **Breaking:** storage SDK 0.4 adds scoped subscriptions, notification testing
   and delivery admission capabilities. Upgrade all eight SDK crates together
-  and implement the new adapter methods. Stop older workers before applying the
-  chat-event migration and restart only matching application versions.
+  and implement the new adapter methods. Stop older API and worker processes
+  before applying the chat-event migration and restart only matching application versions.
 - **Breaking:** backups now use format 7; format 6 remains accepted with legacy
   defaults. Older servers cannot restore format 7. Restore resets transient
   sink scheduling while preserving configuration and terminal delivery history.

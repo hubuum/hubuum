@@ -109,7 +109,15 @@ async fn shared_sink_deferral_preserves_attempts_and_fences_old_claims(#[case] p
                     .id(),
             );
         }
-        let policy = EventDeliverySettings::builder().build().unwrap();
+        let policy = EventDeliverySettings::builder()
+            .batch_size(10)
+            .lock_timeout_ms(30_000)
+            .transport_timeout_ms(15_000)
+            .retry_backoff_base_ms(1_000)
+            .retry_backoff_max_ms(60_000)
+            .max_attempts(10)
+            .build()
+            .unwrap();
         let mut claims = Vec::new();
         for id in ids {
             let item = if backend.descriptor().kind() == StorageBackendKind::Postgres {

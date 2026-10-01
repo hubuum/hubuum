@@ -160,7 +160,7 @@ pub(crate) async fn process_event_delivery_work_item(
             Some(transport) => match tokio::time::timeout(settings.transport_timeout(), transport.prepare(&envelope, &subscription, &sink)).await {
                 Ok(Ok(prepared)) => prepared,
                 result => {
-                    let error = match result { Ok(Err(error)) => error, _ => SinkError::permanent("Notification preparation exceeded its time budget") };
+                    let error = match result { Ok(Err(error)) => error, _ => SinkError::new("Notification preparation exceeded its time budget") };
                     match error.failure() {
                         SinkFailure::Permanent => storage.finish_event_delivery(&claim, StorageEventDeliveryDisposition::Permanent(error.to_string())).await?,
                         _ => storage.mark_event_delivery_failed(&claim, settings, &error.to_string()).await?,

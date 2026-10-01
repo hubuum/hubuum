@@ -12,6 +12,7 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS,
 };
+use crate::events::PreparedNotification;
 use crate::events::{process_event_delivery_batch_for_test, process_event_delivery_work_item};
 use crate::tests::test_scope;
 
@@ -38,6 +39,7 @@ fn default_settings() -> EventDeliverySettings {
 
 struct SlowSink {
     delay: Duration,
+    delay_preparation: bool,
     sends: Mutex<HashMap<Uuid, usize>>,
 }
 
@@ -45,6 +47,7 @@ impl SlowSink {
     fn new(delay: Duration) -> Self {
         Self {
             delay,
+            delay_preparation: false,
             sends: Mutex::new(HashMap::new()),
         }
     }
@@ -57,6 +60,21 @@ impl SinkResolver for SlowSink {
 }
 
 impl Sink for SlowSink {
+    fn prepare<'a>(
+        &'a self,
+        _: &'a EventEnvelope,
+        _: &'a StorageEventDeliverySubscription,
+        _: &'a StorageEventDeliverySink,
+    ) -> BoxFuture<'a, Result<Option<PreparedNotification>, SinkError>> {
+        async move {
+            if self.delay_preparation {
+                sleep(self.delay).await;
+            }
+            Ok(None)
+        }
+        .boxed()
+    }
+
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
@@ -100,6 +118,30 @@ async fn memory_deliveries(count: usize) -> MemoryAuditContractFixture {
         .await
         .unwrap();
     fixture
+}
+
+#[actix_web::test]
+async fn preparation_timeout_remains_retryable_without_starting_transport() {
+    let fixture = memory_deliveries(1).await;
+    let policy = settings(2_000, 100);
+    let mut sink = SlowSink::new(Duration::from_secs(1));
+    sink.delay_preparation = true;
+    let (mut work, _) = fixture
+        .backend
+        .claim_event_delivery_batch(policy)
+        .await
+        .unwrap()
+        .into_parts();
+    let item = work.remove(0);
+    let id = item.clone().into_parts().0.delivery_id();
+    process_event_delivery_work_item(&fixture.backend, policy, &sink, item)
+        .await
+        .unwrap();
+    let delivery = fixture.backend.get_event_delivery(id).await.unwrap();
+    assert_eq!(delivery.status(), EventDeliveryStatus::Failed);
+    assert_eq!(delivery.attempts(), 1);
+    assert!(sink.sends.lock().unwrap().is_empty());
+    fixture.cleanup().await.unwrap();
 }
 
 async fn drain_worker(
