@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -4148,6 +4175,10 @@
 
 
 <h1 id="search-api">Search API<a class="headerlink" href="#search-api" title="Permanent link">&para;</a></h1>
+<p>For an inventory to search, load the <a href="../getting-started/example-dataset/">Atlas dataset</a>.
+<code>GET /api/v1/search?q=Atlas&amp;kinds=object</code> discovers its service object; the
+structured class target <code>{"kind":"object","class":{"name":"Server"}}</code> searches
+its three server objects.</p>
 <p>Hubuum keeps discovery and structured querying at the central search
 resource:</p>
 <ul>

@@ -565,6 +565,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#classes-schema-policy-and-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classes, schema policy, and authority
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#identity-and-access" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -761,6 +772,33 @@
     
   
   Run your first server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
 
     
   </span>
@@ -3802,6 +3840,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#classes-schema-policy-and-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classes, schema policy, and authority
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#identity-and-access" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3864,7 +3913,8 @@
 
 
 <h1 id="core-concepts">Core concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h1>
-<p>Hubuum provides a common model and access layer for inventory data. It can hold
+<p>Hubuum is a flexible configuration management database (CMDB) with a common
+model and access layer for inventory data. It can hold
 resources from several authoritative systems without requiring all of them to
 use the same native data model. Your integration decides how to collect and
 refresh that data; Hubuum stores, validates, relates, and exposes it.</p>
@@ -3881,22 +3931,22 @@ refresh that data; Hubuum stores, validates, relates, and exposes it.</p>
 <tr>
 <td>Collection</td>
 <td>An organizational and permission boundary in a hierarchy</td>
-<td>A platform team's inventory</td>
+<td><code>atlas-demo</code>, containing the service catalogue and context</td>
 </tr>
 <tr>
 <td>Class</td>
 <td>A type of resource, with an optional JSON Schema</td>
-<td>Server, application, or location</td>
+<td><code>Service</code>, <code>Server</code>, <code>Location</code>, or <code>Context</code></td>
 </tr>
 <tr>
 <td>Object</td>
 <td>One instance of a class, with JSON data</td>
-<td><code>web-01</code> and its hostname, owner, and environment</td>
+<td><code>Atlas</code> in <code>Service</code>, or <code>web-01</code> in <code>Server</code></td>
 </tr>
 <tr>
 <td>Relation</td>
 <td>A link between classes or their objects</td>
-<td>An application runs on a server</td>
+<td><code>Atlas</code> runs on <code>web-01</code></td>
 </tr>
 </tbody>
 </table>
@@ -3908,6 +3958,17 @@ as the data model becomes clearer.</p>
 collection and its descendants. Inheritance is additive; a child does not deny
 a parent's grant. See <a href="../collection_hierarchy/">collection hierarchy</a> and
 <a href="../permissions/">permissions</a> before designing tenant or team boundaries.</p>
+<h2 id="classes-schema-policy-and-authority">Classes, schema policy, and authority<a class="headerlink" href="#classes-schema-policy-and-authority" title="Permanent link">&para;</a></h2>
+<p>Define a class for each kind of resource you manage. Its objects carry the JSON
+data. In the <a href="../getting-started/example-dataset/">loadable Atlas example</a>, the
+Service class requires a schema, while Context accepts schema-free notes and
+observations. Both have objects that connect to other objects through relations.
+Class relations describe which classes can connect; object relations connect
+their instances.</p>
+<p>The example also distinguishes records maintained authoritatively in Hubuum
+from reference copies owned by an upstream inventory or facilities system.
+Either kind can be schema-bound or schema-free. Source ownership is a modeling
+and integration choice, independent of the class's validation policy.</p>
 <h2 id="identity-and-access">Identity and access<a class="headerlink" href="#identity-and-access" title="Permanent link">&para;</a></h2>
 <p>A <strong>principal</strong> is a human user or a service account. Principals gain permissions
 through group membership. A bearer token identifies a principal and can narrow

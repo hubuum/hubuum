@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -3948,6 +3975,10 @@
 
 
 <h1 id="collection-hierarchy">Collection Hierarchy<a class="headerlink" href="#collection-hierarchy" title="Permanent link">&para;</a></h1>
+<p>In the <a href="../getting-started/example-dataset/">Atlas example</a>, atlas-demo contains
+Service and Context; its atlas-demo-operations child contains Server and
+Location. Read access granted to atlas-readers on the parent reaches both
+collections. The hierarchy below describes the general contract.</p>
 <p>Hubuum collections form a tree. The system creates one root collection named
 <code>root</code>, and every other collection has exactly one parent. Classes, objects,
 templates, remote targets, and event subscriptions still belong to one concrete

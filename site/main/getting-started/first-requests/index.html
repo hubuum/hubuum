@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://hubuum.github.io/hubuum/main/getting-started/first-requests/">
       
       
-        <link rel="prev" href="../first-server/">
+        <link rel="prev" href="../example-dataset/">
       
       
         <link rel="next" href="../../guide/">
@@ -686,6 +686,33 @@
                   
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
     
   
   
@@ -770,10 +797,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-a-class" class="md-nav__link">
+  <a href="#inspect-a-class" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Create a class
+        Inspect a class
       </span>
     </span>
   </a>
@@ -781,10 +808,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-and-read-an-object" class="md-nav__link">
+  <a href="#read-an-object" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Create and read an object
+        Read an object
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-the-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Follow the relationships
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-a-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Make a change
       </span>
     </span>
   </a>
@@ -3824,10 +3873,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-a-class" class="md-nav__link">
+  <a href="#inspect-a-class" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Create a class
+        Inspect a class
       </span>
     </span>
   </a>
@@ -3835,10 +3884,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-and-read-an-object" class="md-nav__link">
+  <a href="#read-an-object" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Create and read an object
+        Read an object
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-the-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Follow the relationships
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-a-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Make a change
       </span>
     </span>
   </a>
@@ -3886,8 +3957,9 @@
 
 
 <h1 id="make-your-first-api-requests">Make your first API requests<a class="headerlink" href="#make-your-first-api-requests" title="Permanent link">&para;</a></h1>
-<p>You need a running server and a human account. An administrator must grant your
-group access to the collection you will use. These HTTP examples show request
+<p>You need a running server and a human account. Ask an administrator to load the
+<a href="../example-dataset/">Atlas example dataset</a> and grant your group read access.
+Membership in its atlas-readers group gives access to the complete example. These HTTP examples show request
 and response shapes; substitute your URL and values in your HTTP client.</p>
 <h2 id="sign-in">Sign in<a class="headerlink" href="#sign-in" title="Permanent link">&para;</a></h2>
 <p>Authentication uses the existing <code>/api/v0/auth</code> routes. Resource operations use
@@ -3908,48 +3980,61 @@ external identity provider, supply the appropriate <code>identity_scope</code>; 
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">GET /api/v1/collections</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
 </code></pre></div>
-<p>Choose a collection you are allowed to use and note its <code>id</code>. An administrator
-can create one using the <a href="../../collection_hierarchy/">collection guide</a>. The
-following example uses illustrative collection ID <code>42</code>.</p>
-<h2 id="create-a-class">Create a class<a class="headerlink" href="#create-a-class" title="Permanent link">&para;</a></h2>
-<p>You need <code>CreateClass</code> on the collection. Choose a unique class name:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/v1/classes</span>
+<p>Find <code>atlas-demo</code> and its <code>atlas-demo-operations</code> child. The service catalogue
+and context live in the parent; server and location records live in the child.
+Permissions are evaluated on the relevant collection.</p>
+<h2 id="inspect-a-class">Inspect a class<a class="headerlink" href="#inspect-a-class" title="Permanent link">&para;</a></h2>
+<p>A class defines a type of resource and its optional schema. Read the Server
+class to see the schema used for inventory records:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">GET /api/v1/classes/by-name/Server</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">{</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="err">  "name": "example-server",</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="err">  "description": "Servers in the example inventory",</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="err">  "collection_id": 42,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="err">  "validate_schema": false</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="err">}</span>
 </code></pre></div>
-<p>This evaluation class starts without enforced schema validation. For managed
-data, use <a href="../../schema_evolution/">class schemas and compliance</a>.</p>
-<h2 id="create-and-read-an-object">Create and read an object<a class="headerlink" href="#create-and-read-an-object" title="Permanent link">&para;</a></h2>
-<p>You need <code>CreateObject</code> on the class's collection. The name-addressed creation
-route infers the class and collection:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">POST /api/v1/classes/by-name/example-server/objects</span>
+<p>It requires a string hostname and a production or staging environment. Compare
+it with Context, which has no schema:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">GET /api/v1/classes/by-name/Context</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="err">{</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="err">  "name": "web-01",</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="err">  "description": "Example web server",</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="err">  "data": {</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="err">    "hostname": "web-01.example.com",</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="err">    "environment": "evaluation"</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="err">  }</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="err">}</span>
 </code></pre></div>
-<p>Read it with <code>ReadObject</code> access:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/v1/classes/by-name/example-server/objects/by-name/web-01</span>
+<h2 id="read-an-object">Read an object<a class="headerlink" href="#read-an-object" title="Permanent link">&para;</a></h2>
+<p>An object is one instance of its class. Read web-01 in the Server class:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/v1/classes/by-name/Server/objects/by-name/web-01</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
 </code></pre></div>
-<p>You have now created a class and an object with your own JSON data. Next, try
-<a href="../../querying/">filtering and pagination</a>, add
-<a href="../../relationship_endpoints/">relationships</a>, or use a
-<a href="../../integrations/clients/">client library</a>.</p>
+<p>Its response includes IDs, timestamps, a revision, and this <code>data</code>:</p>
+<!-- atlas-data: object:web-01 -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"web-01.example.invalid"</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"environment"</span><span class="p">:</span><span class="w"> </span><span class="s2">"production"</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"cpu_cores"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"memory_gib"</span><span class="p">:</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">"costs"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">"compute"</span><span class="p">:</span><span class="w"> </span><span class="mi">45</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">"storage"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory.example.invalid"</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">}</span>
+</code></pre></div>
+<p>The hostname and capacity are example reference data from an upstream inventory.
+The source field is ordinary JSON metadata; your integration controls how it
+is collected and refreshed.</p>
+<h2 id="follow-the-relationships">Follow the relationships<a class="headerlink" href="#follow-the-relationships" title="Permanent link">&para;</a></h2>
+<p>Read Atlas in the Service class, then inspect its connections:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/v1/classes/by-name/Service/objects/by-name/Atlas</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="err">GET /api/v1/classes/by-name/Service/objects/by-name/Atlas/related/relations</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>Atlas connects directly to web-01, web-02, Research notes, and Migration checklist.
+Those object relations use the Service–Server and Service–Context class
+relations. The <a href="../example-dataset/">dataset guide</a> explains the complete model.</p>
+<h2 id="make-a-change">Make a change<a class="headerlink" href="#make-a-change" title="Permanent link">&para;</a></h2>
+<p>Reading does not require write access. To try creating an additional object,
+ask for the atlas-operators role and follow the <a href="../../name_addressing/#creating-an-object-without-ids">name-addressed creation
+example</a>. It adds web-03
+to Server; the ten-object corpus remains the documented starting point.</p>
+<p>Next, try <a href="../../querying/">filtering and pagination</a>, explore
+<a href="../../schema_evolution/">class schemas</a>, or use a
+<a href="../../integrations/clients/">client library</a> against the same dataset.</p>
 <h2 id="understand-common-responses">Understand common responses<a class="headerlink" href="#understand-common-responses" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4019,7 +4104,7 @@ route infers the class and collection:</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../first-server/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Run your first server">
+          <a href="../example-dataset/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Explore the Atlas dataset">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4029,7 +4114,7 @@ route infers the class and collection:</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Run your first server
+                Explore the Atlas dataset
               </div>
             </div>
           </a>

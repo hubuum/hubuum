@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -4070,6 +4097,10 @@
 
 
 <h1 id="backup-and-restore">Backup and restore<a class="headerlink" href="#backup-and-restore" title="Permanent link">&para;</a></h1>
+<p>For a small recovery exercise, use the <a href="../getting-started/example-dataset/#restore-the-starting-point">Atlas example backup</a>.
+It restores the same four-class inventory used in tutorials. Its separate import
+file adds that inventory through the normal merge API; the backup replaces all
+application data.</p>
 <p>Hubuum can create versioned full-system logical backups and perform a staged,
 destructive system restore. Backup generation uses one PostgreSQL
 <code>REPEATABLE READ, READ ONLY</code> transaction, so every section in a document is

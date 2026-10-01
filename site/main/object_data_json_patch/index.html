@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -3926,6 +3953,11 @@
 
 
 <h1 id="object-data-json-patch">Object Data JSON Patch<a class="headerlink" href="#object-data-json-patch" title="Permanent link">&para;</a></h1>
+<p>To practice with real data, load the <a href="../getting-started/example-dataset/">Atlas dataset</a>.
+The name-addressed path for its web server is
+<code>/api/v1/classes/by-name/Server/objects/by-name/web-01/data</code>. The
+<code>/memory_gib</code> JSON Pointer selects its memory capacity. A patch changes your
+example instance; restore the Atlas backup in a disposable deployment to reset it.</p>
 <p>Hubuum supports targeted, atomic updates to an object's raw JSON <code>data</code>
 document:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">PATCH /api/v1/classes/{class_id}/{object_id}/data</span>

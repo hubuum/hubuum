@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -3992,6 +4019,10 @@
 
 
 <h1 id="computed-object-fields">Computed object fields<a class="headerlink" href="#computed-object-fields" title="Permanent link">&para;</a></h1>
+<p>The <a href="../getting-started/example-dataset/">Atlas example</a> includes the Server
+class with a shared monthly_cost field. Read Server/web-01 with
+<code>include=computed</code>: its compute cost of 45 and storage cost of 5 produce 50,
+without changing raw object data.</p>
 <p>Hubuum can derive response-only values from the raw JSON in one object's
 <code>data</code> document. Computed fields are deterministic and cannot read relations,
 other objects, database state, time, configuration, or external services. A

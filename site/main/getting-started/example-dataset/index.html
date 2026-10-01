@@ -10,36 +10,36 @@
       
       
       
-        <link rel="canonical" href="https://hubuum.github.io/hubuum/main/computed_field_locking/">
+        <link rel="canonical" href="https://hubuum.github.io/hubuum/main/getting-started/example-dataset/">
       
       
-        <link rel="prev" href="../task_system/">
+        <link rel="prev" href="../first-server/">
       
       
-        <link rel="next" href="../generated/project_inventory/">
+        <link rel="next" href="../first-requests/">
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="zensical-0.0.64">
     
     
       
-        <title>Computed-field locking - Hubuum documentation</title>
+        <title>Explore the Atlas dataset - Hubuum documentation</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.40d3fdbb.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -54,7 +54,7 @@
     
       <link rel="stylesheet" href="https://hubuum.github.io/assets/stylesheets/hubuum.css">
     
-    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
@@ -79,7 +79,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#computed-field-transaction-lock-protocol" class="md-skip">
+        <a href="#explore-the-atlas-example-dataset" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +110,7 @@
   
   <label for="docs-version">Version</label>
   <select id="docs-version" data-version="main"
-    data-manifest="../../versions.json">
+    data-manifest="../../../versions.json">
     <option value="main">main</option>
   </select>
   
@@ -128,7 +128,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="./.." title="Hubuum documentation" class="md-header__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+    <a href="../.." title="Hubuum documentation" class="md-header__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Computed-field locking
+              Explore the Atlas dataset
             
           </span>
         </div>
@@ -231,7 +231,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="./.." class="md-tabs__link">
+        <a href="../.." class="md-tabs__link">
           
   
   Overview
@@ -246,14 +246,16 @@
   
   
   
+    
+  
   
     
       
     
     
     
-      <li class="md-tabs__item">
-        <a href="../getting-started/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Get started
@@ -275,7 +277,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../guide/" class="md-tabs__link">
+        <a href="../../guide/" class="md-tabs__link">
           
   
   User guide
@@ -297,7 +299,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../administration/" class="md-tabs__link">
+        <a href="../../administration/" class="md-tabs__link">
           
   
   Administration
@@ -319,7 +321,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../integrations/" class="md-tabs__link">
+        <a href="../../integrations/" class="md-tabs__link">
           
   
   API & integrations
@@ -334,16 +336,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../contributing/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../contributing/" class="md-tabs__link">
           
   
   Contributing
@@ -382,7 +382,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="./.." title="Hubuum documentation" class="md-nav__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+    <a href="../.." title="Hubuum documentation" class="md-nav__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
@@ -463,7 +463,7 @@
   
   
     <li class="md-nav__item">
-      <a href="./.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -490,7 +490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/" class="md-nav__link">
+      <a href="../../concepts/" class="md-nav__link">
         
   
   
@@ -517,7 +517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ecosystem/" class="md-nav__link">
+      <a href="../../ecosystem/" class="md-nav__link">
         
   
   
@@ -544,7 +544,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../releases/" class="md-nav__link">
+      <a href="../../releases/" class="md-nav__link">
         
   
   
@@ -576,26 +576,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -613,7 +618,7 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
             <label class="md-nav__title" for="__nav_2">
               <span class="md-nav__icon md-icon"></span>
               
@@ -630,7 +635,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -657,7 +662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/first-server/" class="md-nav__link">
+      <a href="../first-server/" class="md-nav__link">
         
   
   
@@ -681,10 +686,36 @@
                   
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../getting-started/example-dataset/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -699,6 +730,115 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#classes-define-the-model-objects-hold-the-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classes define the model; objects hold the data
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relations-connect-the-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Relations connect the instances
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#download-a-matching-edition" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Download a matching edition
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load-through-the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Load through the API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-the-loaded-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore the loaded inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-collection-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore collection permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#restore-the-starting-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restore the starting point
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reuse-it-for-demonstrations-and-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reuse it for demonstrations and tests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -711,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/first-requests/" class="md-nav__link">
+      <a href="../first-requests/" class="md-nav__link">
         
   
   
@@ -797,7 +937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/" class="md-nav__link">
+      <a href="../../guide/" class="md-nav__link">
         
   
   
@@ -875,7 +1015,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../collection_hierarchy/" class="md-nav__link">
+      <a href="../../collection_hierarchy/" class="md-nav__link">
         
   
   
@@ -902,7 +1042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../permissions/" class="md-nav__link">
+      <a href="../../permissions/" class="md-nav__link">
         
   
   
@@ -929,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../schema_evolution/" class="md-nav__link">
+      <a href="../../schema_evolution/" class="md-nav__link">
         
   
   
@@ -956,7 +1096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../computed_fields/" class="md-nav__link">
+      <a href="../../computed_fields/" class="md-nav__link">
         
   
   
@@ -983,7 +1123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../temporal_history/" class="md-nav__link">
+      <a href="../../temporal_history/" class="md-nav__link">
         
   
   
@@ -1070,7 +1210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../querying/" class="md-nav__link">
+      <a href="../../querying/" class="md-nav__link">
         
   
   
@@ -1097,7 +1237,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../search_api/" class="md-nav__link">
+      <a href="../../search_api/" class="md-nav__link">
         
   
   
@@ -1124,7 +1264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../relationship_endpoints/" class="md-nav__link">
+      <a href="../../relationship_endpoints/" class="md-nav__link">
         
   
   
@@ -1151,7 +1291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../name_addressing/" class="md-nav__link">
+      <a href="../../name_addressing/" class="md-nav__link">
         
   
   
@@ -1178,7 +1318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../object_data_json_patch/" class="md-nav__link">
+      <a href="../../object_data_json_patch/" class="md-nav__link">
         
   
   
@@ -1205,7 +1345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../resource_revisions/" class="md-nav__link">
+      <a href="../../resource_revisions/" class="md-nav__link">
         
   
   
@@ -1292,7 +1432,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../import_api/" class="md-nav__link">
+      <a href="../../import_api/" class="md-nav__link">
         
   
   
@@ -1319,7 +1459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../export_api/" class="md-nav__link">
+      <a href="../../export_api/" class="md-nav__link">
         
   
   
@@ -1346,7 +1486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../export_template_guide/" class="md-nav__link">
+      <a href="../../export_template_guide/" class="md-nav__link">
         
   
   
@@ -1373,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../task_api/" class="md-nav__link">
+      <a href="../../task_api/" class="md-nav__link">
         
   
   
@@ -1400,7 +1540,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../remote_targets/" class="md-nav__link">
+      <a href="../../remote_targets/" class="md-nav__link">
         
   
   
@@ -1427,7 +1567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../events/" class="md-nav__link">
+      <a href="../../events/" class="md-nav__link">
         
   
   
@@ -1522,7 +1662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../administration/" class="md-nav__link">
+      <a href="../../administration/" class="md-nav__link">
         
   
   
@@ -1600,7 +1740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../deployment/" class="md-nav__link">
+      <a href="../../deployment/" class="md-nav__link">
         
   
   
@@ -1627,7 +1767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../distributed_deployment/" class="md-nav__link">
+      <a href="../../distributed_deployment/" class="md-nav__link">
         
   
   
@@ -1654,7 +1794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../quick_start/" class="md-nav__link">
+      <a href="../../quick_start/" class="md-nav__link">
         
   
   
@@ -1681,7 +1821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../database_roles/" class="md-nav__link">
+      <a href="../../database_roles/" class="md-nav__link">
         
   
   
@@ -1708,7 +1848,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
+      <a href="../../backup-restore/" class="md-nav__link">
         
   
   
@@ -1735,7 +1875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../supply-chain-security/" class="md-nav__link">
+      <a href="../../supply-chain-security/" class="md-nav__link">
         
   
   
@@ -1822,7 +1962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../auth_model/" class="md-nav__link">
+      <a href="../../auth_model/" class="md-nav__link">
         
   
   
@@ -1849,7 +1989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../external_auth/" class="md-nav__link">
+      <a href="../../external_auth/" class="md-nav__link">
         
   
   
@@ -1876,7 +2016,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../credential_approvals/" class="md-nav__link">
+      <a href="../../credential_approvals/" class="md-nav__link">
         
   
   
@@ -1903,7 +2043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../secret_sources/" class="md-nav__link">
+      <a href="../../secret_sources/" class="md-nav__link">
         
   
   
@@ -1930,7 +2070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../login_rate_limiting/" class="md-nav__link">
+      <a href="../../login_rate_limiting/" class="md-nav__link">
         
   
   
@@ -1957,7 +2097,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../treetop/" class="md-nav__link">
+      <a href="../../treetop/" class="md-nav__link">
         
   
   
@@ -2044,7 +2184,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../administration/troubleshooting/" class="md-nav__link">
+      <a href="../../administration/troubleshooting/" class="md-nav__link">
         
   
   
@@ -2071,7 +2211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../metrics/" class="md-nav__link">
+      <a href="../../metrics/" class="md-nav__link">
         
   
   
@@ -2098,7 +2238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../metrics-reference/" class="md-nav__link">
+      <a href="../../metrics-reference/" class="md-nav__link">
         
   
   
@@ -2152,7 +2292,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../logging/" class="md-nav__link">
+      <a href="../../logging/" class="md-nav__link">
         
   
   
@@ -2179,7 +2319,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tracing/" class="md-nav__link">
+      <a href="../../tracing/" class="md-nav__link">
         
   
   
@@ -2206,7 +2346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../performance/" class="md-nav__link">
+      <a href="../../performance/" class="md-nav__link">
         
   
   
@@ -2233,7 +2373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../runtime_hardening/" class="md-nav__link">
+      <a href="../../runtime_hardening/" class="md-nav__link">
         
   
   
@@ -2260,7 +2400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../json_schema_validation/" class="md-nav__link">
+      <a href="../../json_schema_validation/" class="md-nav__link">
         
   
   
@@ -2287,7 +2427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../background_workers/" class="md-nav__link">
+      <a href="../../background_workers/" class="md-nav__link">
         
   
   
@@ -2314,7 +2454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../template_worker/" class="md-nav__link">
+      <a href="../../template_worker/" class="md-nav__link">
         
   
   
@@ -2409,7 +2549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integrations/" class="md-nav__link">
+      <a href="../../integrations/" class="md-nav__link">
         
   
   
@@ -2436,7 +2576,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integrations/api/" class="md-nav__link">
+      <a href="../../integrations/api/" class="md-nav__link">
         
   
   
@@ -2463,7 +2603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integrations/clients/" class="md-nav__link">
+      <a href="../../integrations/clients/" class="md-nav__link">
         
   
   
@@ -2490,7 +2630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../query_support_matrix/" class="md-nav__link">
+      <a href="../../query_support_matrix/" class="md-nav__link">
         
   
   
@@ -2517,7 +2657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integration-coverage/" class="md-nav__link">
+      <a href="../../integration-coverage/" class="md-nav__link">
         
   
   
@@ -2549,31 +2689,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -2591,7 +2726,7 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
             <label class="md-nav__title" for="__nav_6">
               <span class="md-nav__icon md-icon"></span>
               
@@ -2608,7 +2743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/" class="md-nav__link">
+      <a href="../../contributing/" class="md-nav__link">
         
   
   
@@ -2635,7 +2770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../development/" class="md-nav__link">
+      <a href="../../development/" class="md-nav__link">
         
   
   
@@ -2662,7 +2797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/documentation/" class="md-nav__link">
+      <a href="../../contributing/documentation/" class="md-nav__link">
         
   
   
@@ -2689,7 +2824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/documentation-review/" class="md-nav__link">
+      <a href="../../contributing/documentation-review/" class="md-nav__link">
         
   
   
@@ -2713,31 +2848,26 @@
                   
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
             
   
   
@@ -2755,7 +2885,7 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="true">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
             <label class="md-nav__title" for="__nav_6_5">
               <span class="md-nav__icon md-icon"></span>
               
@@ -2772,7 +2902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/" class="md-nav__link">
+      <a href="../../storage_boundary/" class="md-nav__link">
         
   
   
@@ -2799,7 +2929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../task_system/" class="md-nav__link">
+      <a href="../../task_system/" class="md-nav__link">
         
   
   
@@ -2823,36 +2953,10 @@
                   
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Computed-field locking
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../computed_field_locking/" class="md-nav__link">
         
   
   
@@ -2867,71 +2971,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#capability-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Capability boundary
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#operation-ordering" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Operation ordering
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#runtime-checks-and-limits" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Runtime checks and limits
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#escape-hatches-and-database-limits" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Escape hatches and database limits
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2944,7 +2983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../generated/project_inventory/" class="md-nav__link">
+      <a href="../../generated/project_inventory/" class="md-nav__link">
         
   
   
@@ -2986,20 +3025,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
             
   
   
@@ -3034,7 +3070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_adapter_sdk/" class="md-nav__link">
+      <a href="../../storage_adapter_sdk/" class="md-nav__link">
         
   
   
@@ -3061,7 +3097,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/contract/" class="md-nav__link">
+      <a href="../../storage_boundary/contract/" class="md-nav__link">
         
   
   
@@ -3088,7 +3124,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/backend-author-guide/" class="md-nav__link">
+      <a href="../../storage_boundary/backend-author-guide/" class="md-nav__link">
         
   
   
@@ -3115,7 +3151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/maintainer-guide/" class="md-nav__link">
+      <a href="../../storage_boundary/maintainer-guide/" class="md-nav__link">
         
   
   
@@ -3142,7 +3178,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/capability-families/" class="md-nav__link">
+      <a href="../../storage_boundary/capability-families/" class="md-nav__link">
         
   
   
@@ -3169,7 +3205,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/query-semantics/" class="md-nav__link">
+      <a href="../../storage_boundary/query-semantics/" class="md-nav__link">
         
   
   
@@ -3196,7 +3232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/transactions-and-events/" class="md-nav__link">
+      <a href="../../storage_boundary/transactions-and-events/" class="md-nav__link">
         
   
   
@@ -3223,7 +3259,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_boundary/testing/" class="md-nav__link">
+      <a href="../../storage_boundary/testing/" class="md-nav__link">
         
   
   
@@ -3265,20 +3301,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
             
   
   
@@ -3313,7 +3346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api_boundary/" class="md-nav__link">
+      <a href="../../rust_api_boundary/" class="md-nav__link">
         
   
   
@@ -3340,7 +3373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-computed-fields/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-computed-fields/" class="md-nav__link">
         
   
   
@@ -3367,7 +3400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-domain/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-domain/" class="md-nav__link">
         
   
   
@@ -3394,7 +3427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-events-core/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-events-core/" class="md-nav__link">
         
   
   
@@ -3421,7 +3454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-query/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-query/" class="md-nav__link">
         
   
   
@@ -3448,7 +3481,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
         
   
   
@@ -3475,7 +3508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-storage-conformance/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-storage-conformance/" class="md-nav__link">
         
   
   
@@ -3502,7 +3535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-storage-core/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-storage-core/" class="md-nav__link">
         
   
   
@@ -3529,7 +3562,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_api/hubuum-task-core/" class="md-nav__link">
+      <a href="../../rust_api/hubuum-task-core/" class="md-nav__link">
         
   
   
@@ -3571,20 +3604,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
             
   
   
@@ -3619,7 +3649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../releasing/" class="md-nav__link">
+      <a href="../../releasing/" class="md-nav__link">
         
   
   
@@ -3646,7 +3676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../operational_contracts/" class="md-nav__link">
+      <a href="../../operational_contracts/" class="md-nav__link">
         
   
   
@@ -3673,7 +3703,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../scale_benchmarks/" class="md-nav__link">
+      <a href="../../scale_benchmarks/" class="md-nav__link">
         
   
   
@@ -3700,7 +3730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../performance/runtime_hardening/" class="md-nav__link">
+      <a href="../../performance/runtime_hardening/" class="md-nav__link">
         
   
   
@@ -3727,7 +3757,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../performance/template_worker/" class="md-nav__link">
+      <a href="../../performance/template_worker/" class="md-nav__link">
         
   
   
@@ -3754,7 +3784,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../treetop/test-fixture/" class="md-nav__link">
+      <a href="../../treetop/test-fixture/" class="md-nav__link">
         
   
   
@@ -3832,10 +3862,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#capability-boundary" class="md-nav__link">
+  <a href="#classes-define-the-model-objects-hold-the-data" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Capability boundary
+        Classes define the model; objects hold the data
       </span>
     </span>
   </a>
@@ -3843,10 +3873,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#operation-ordering" class="md-nav__link">
+  <a href="#relations-connect-the-instances" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Operation ordering
+        Relations connect the instances
       </span>
     </span>
   </a>
@@ -3854,10 +3884,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#runtime-checks-and-limits" class="md-nav__link">
+  <a href="#download-a-matching-edition" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Runtime checks and limits
+        Download a matching edition
       </span>
     </span>
   </a>
@@ -3865,10 +3895,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#escape-hatches-and-database-limits" class="md-nav__link">
+  <a href="#load-through-the-api" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Escape hatches and database limits
+        Load through the API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-the-loaded-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore the loaded inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-collection-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore collection permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#restore-the-starting-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restore the starting point
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reuse-it-for-demonstrations-and-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reuse it for demonstrations and tests
       </span>
     </span>
   </a>
@@ -3891,63 +3965,12 @@
 
 
 
-  <nav class="md-path" aria-label="Navigation" >
-    <ol class="md-path__list">
-      
-      
-        
-  
-  
-    
-    
-    
-    
-    
-      <li class="md-path__item">
-        <a href="../contributing/" class="md-path__link">
-          
-  
-  <span class="md-ellipsis">
-    Contributing
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-      
-        
-  
-  
-    
-    
-    
-    
-    
-      <li class="md-path__item">
-        <a href="../storage_boundary/" class="md-path__link">
-          
-  
-  <span class="md-ellipsis">
-    Architecture
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-      
-    </ol>
-  </nav>
-
               
               <article class="md-content__inner md-typeset">
                 
                   
   
-    <a href="https://github.com/hubuum/hubuum/edit/main/docs/computed_field_locking.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/hubuum/hubuum/edit/main/docs/getting-started/example-dataset.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3955,137 +3978,242 @@
   
 
 
-<h1 id="computed-field-transaction-lock-protocol">Computed-field transaction lock protocol<a class="headerlink" href="#computed-field-transaction-lock-protocol" title="Permanent link">&para;</a></h1>
-<p>The PostgreSQL adapter protects backfill and read-repair object batches with
-transaction-bound capabilities in
-<code>crates/hubuum-storage-postgres/src/operations/computed_fields/locking.rs</code>.
-The invariant is: before explicitly locking any batch object, the same
-transaction holds the class's shared definition advisory lock and its row's
-<code>FOR KEY SHARE</code> lock. Materialization uses only objects reloaded under those
-locks, filtered to the capability's class, and the current definition revision.</p>
-<p>This prevents the class/object lock inversion identified in issue #374.
-An object writer can hold a class row while waiting for an object row. A batch
-must therefore acquire the class lock before its object locks, including the
-class key-share lock that a later materialization foreign-key check needs.
-Read repair must also acquire the definition advisory lock before object rows:
-a definition writer can hold the advisory lock while waiting for the class.</p>
-<h2 id="capability-boundary">Capability boundary<a class="headerlink" href="#capability-boundary" title="Permanent link">&para;</a></h2>
-<p><code>with_computed_transaction</code> starts a transaction through the existing runtime's
-<code>with_transaction</code>. Its callback receives a <code>ComputedTransaction</code>, which owns
-the exclusive borrow of the connection. It exposes no raw connection,
-arbitrary SQL callback, transaction controls, or savepoints.</p>
-<p>The entry capability is consumed when acquiring <code>LockedComputedClass</code>. Only
-that class capability can acquire <code>LockedComputedObjects</code>; locking objects
-consumes the class capability too. Fields and constructors are private. The
-caller cannot reacquire a different class after taking object locks, change a
-capability's identity, or substitute source objects from another transaction.
-The higher-ranked callback prevents returning either capability beyond the
-transaction. Test-only reexports under <code>integration-test-support</code> allow
-compile-fail doctests to exercise this actual API, alongside a compiling
-positive example. These exports are absent from production builds.</p>
-<p>Dropping a Rust value does <strong>not</strong> release a PostgreSQL transaction lock.
-Success commits; errors roll back the transaction and its writes together.
-There is no rollback-to-savepoint operation while a capability exists, so a
-token cannot survive a rollback that released its database locks. Nested
-transactions and raw-connection constructors are deliberately absent from this
-protocol. No Rust <code>unsafe</code> is involved.</p>
-<h2 id="operation-ordering">Operation ordering<a class="headerlink" href="#operation-ordering" title="Permanent link">&para;</a></h2>
-<p>The table describes explicit acquisitions and relevant subsequent writes.
-Foreign keys and triggers can acquire additional database locks.</p>
+<h1 id="explore-the-atlas-example-dataset">Explore the Atlas example dataset<a class="headerlink" href="#explore-the-atlas-example-dataset" title="Permanent link">&para;</a></h1>
+<p>Atlas is the shared example inventory for Hubuum's documentation, demonstrations,
+and client testing. Load it once, then follow the same classes and objects through
+the API, CLI, web frontend, and client libraries.</p>
+<p>It is deliberately small: <strong>four classes, ten objects, four class relations,
+and ten object relations</strong>, in two collections. All data is fictional;
+hostnames use <code>example.invalid</code>. No external systems are contacted.</p>
+<h2 id="classes-define-the-model-objects-hold-the-data">Classes define the model; objects hold the data<a class="headerlink" href="#classes-define-the-model-objects-hold-the-data" title="Permanent link">&para;</a></h2>
+<p>A <strong>class</strong> defines a kind of resource and its schema policy. An <strong>object</strong> is
+one instance of that class, with its own JSON data.</p>
 <table>
 <thead>
 <tr>
-<th>Operation</th>
-<th>Acquisition and write order</th>
-<th>Enforcement</th>
+<th>Class</th>
+<th>Schema policy</th>
+<th>Objects</th>
+<th>Authority in this example</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Canonical object create</td>
-<td>Shared definition advisory lock; resolved class <code>FOR UPDATE</code>; object insert; optional schema evidence; materialization; audit/event writes</td>
-<td>Existing operation implementation and runtime revision checks</td>
+<td><code>Service</code></td>
+<td>Enforced JSON Schema</td>
+<td><code>Atlas</code>, <code>Beacon</code></td>
+<td>Maintained in Hubuum</td>
 </tr>
 <tr>
-<td>Canonical object update or patch</td>
-<td>Shared definition advisory lock; resolved class <code>FOR UPDATE</code>; resolved object <code>FOR UPDATE</code>; revision and schema checks; object write; schema evidence; materialization; audit/event writes</td>
-<td>Existing operation implementation and runtime identity/revision checks</td>
+<td><code>Server</code></td>
+<td>Enforced JSON Schema</td>
+<td><code>web-01</code>, <code>web-02</code>, <code>worker-01</code></td>
+<td>Reference copies from a server inventory</td>
 </tr>
 <tr>
-<td>Canonical object delete</td>
-<td>Shared definition advisory lock; class <code>FOR UPDATE</code>; object <code>FOR UPDATE</code>; revision check; delete with cascades; audit/event writes</td>
-<td>Existing operation implementation</td>
+<td><code>Location</code></td>
+<td>Schema-free</td>
+<td><code>Oslo</code>, <code>Bergen</code></td>
+<td>Reference copies from a facilities directory</td>
 </tr>
 <tr>
-<td>Computed backfill batch</td>
-<td>Shared definition advisory lock; runnable task claim <code>FOR UPDATE</code>; class <code>FOR KEY SHARE</code>; ascending object IDs <code>FOR UPDATE</code>; computation-state/revision check; materialization writes; runnable claim recheck</td>
-<td>Capabilities for class/object order; database claim fencing and revision checks</td>
-</tr>
-<tr>
-<td>Ordinary enriched-read snapshot</td>
-<td>Shared definition advisory locks in ascending class ID order; definitions, state and cache reads; end read-only snapshot</td>
-<td>Existing snapshot implementation; no object row locks or materialization writes</td>
-</tr>
-<tr>
-<td>Read-repair batch</td>
-<td>Shared definition advisory lock; class <code>FOR KEY SHARE</code>; ascending object IDs <code>FOR UPDATE</code>; current computation state and definitions; materialization writes</td>
-<td>Capabilities for class/object order and source ownership</td>
-</tr>
-<tr>
-<td>Shared definition create/update/delete or manual rebuild request</td>
-<td>Exclusive definition advisory lock; class <code>FOR SHARE</code>; definition row lock where applicable; computation-state changes; active-task inspection/enqueue; audit/event writes where applicable</td>
-<td>Existing operation implementation plus database revision/uniqueness constraints</td>
-</tr>
-<tr>
-<td>Backfill completion</td>
-<td>Shared definition advisory lock; runnable task claim <code>FOR UPDATE</code>; fenced computation-state update; terminal task/event writes</td>
-<td>Existing claim and target-revision fencing; no object locks</td>
+<td><code>Context</code></td>
+<td>Schema-free</td>
+<td><code>Research notes</code>, <code>Migration checklist</code>, <code>Capacity observation</code></td>
+<td>Notes and checklist maintained in Hubuum; observation from telemetry</td>
 </tr>
 </tbody>
 </table>
-<p>Personal definition creation uses an advisory lock scoped to the class and
-owner; updates and deletes lock the applicable definition row. These operations
-read the class without an explicit row lock and do not maintain shared
-materializations or acquire batch object locks.
-Import object writes acquire the shared definition advisory lock, validate
-against a locked class, then insert or lock/update the object and materialize
-it. Imports can also hold task claims and locks from earlier commands in their
-transaction. Restore, schema-evolution and class-level orchestration retain
-their existing transaction protocols. These paths are inspected here, but are
-not converted into the batch capability API.</p>
-<h2 id="runtime-checks-and-limits">Runtime checks and limits<a class="headerlink" href="#runtime-checks-and-limits" title="Permanent link">&para;</a></h2>
-<p>Backfills retain the configured batch size, original object upper bound,
-ascending ID cursor, shared advisory lock, and class key-share lock strength.
-Task lease/token, cancellation/deadline, active-task identity and evaluation
-revision checks remain in the transaction; the runnable claim is checked again
-after materialization. Types do not replace this fencing.</p>
-<p>Read repair groups stale IDs by class and splits them using the same configured
-batch size. Each batch gets its own transaction and releases all its locks
-before the next one. Its query filters by both object IDs and the locked class;
-deleted objects or objects moved by outside writers are skipped. Definitions
-and state are loaded once per batch, and source data is reloaded from locked
-rows. The original response retains its consistent read snapshot and live
-fallback; repair failures remain best-effort and observable. Earlier successful
-repair batches remain committed if a later batch fails.</p>
-<p>The protocol adds no global lock or stronger class row lock. Different classes
-remain independent. Same-class batches retain compatible shared advisory and
-key-share locks, while overlapping object writes serialize at their row locks.
-Query-budget tests cover batched enrichment, and deterministic concurrency
-tests cover backfill/update, read repair versus class and definition locks,
-and definitions changing between the read snapshot and repair.</p>
-<h2 id="escape-hatches-and-database-limits">Escape hatches and database limits<a class="headerlink" href="#escape-hatches-and-database-limits" title="Permanent link">&para;</a></h2>
-<p>Canonical object writes, imports, definition mutations, and other adapter
-operations still use raw PostgreSQL connections internally. Their materializer
-and advisory-lock helpers are implementation escape hatches, not proofs of
-prior acquisitions. The batch protocol encapsulates its connection throughout
-its operation; an unrestricted marker passed alongside a connection would not
-provide this guarantee. Extending the protected scope requires bringing the
-whole operation under that boundary, including transaction control.</p>
-<p>PostgreSQL clients outside this API, migrations, triggers, foreign keys, lock
-upgrades, and earlier locks in composed transactions are not statically
-controlled. Dynamic ordering across multiple classes and objects remains an
-explicit runtime/design responsibility. This protocol enforces the covered
-explicit acquisitions; it does not prove that the database is deadlock-free.</p>
+<p>Authority and structure are independent. Hubuum can hold authoritative or
+reference data with either schema policy—even within the same class.
+The example's <code>data.source</code> field records that choice as ordinary application
+data. It does not enable synchronization, establish trust, or prevent writes.
+Your integrations and permission design determine how records are maintained.</p>
+<p><code>Service</code> requires an owner, a tier from 1 to 3, and a production or staging
+environment. Optional fields demonstrate a decimal availability target, a
+boolean, an array of strings, and a nested object, validated using the
+<a href="https://json-schema.org/specification">JSON Schema standard</a>.
+Here is the complete data for its <code>Atlas</code> object:</p>
+<!-- atlas-data: object:Atlas -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"owner"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Platform"</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"tier"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">"environment"</span><span class="p">:</span><span class="w"> </span><span class="s2">"production"</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">"availability"</span><span class="p">:</span><span class="w"> </span><span class="mf">99.9</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">"tags"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="s2">"api"</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="s2">"public"</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">"support"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="nt">"hours"</span><span class="p">:</span><span class="w"> </span><span class="s2">"24/7"</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum"</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>Context</code> has no JSON Schema. Its <code>Research notes</code> object contains:</p>
+<!-- atlas-data: object:Research notes -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"purpose"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Explore new hosting"</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"questions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="s2">"Capacity?"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="s2">"Location?"</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"candidate"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum"</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>Other objects in that class have different shapes: a checklist of steps and a
+timestamped capacity observation. See <a href="../../schema_evolution/">schema evolution</a>
+when you are ready to introduce or change a schema.</p>
+<h2 id="relations-connect-the-instances">Relations connect the instances<a class="headerlink" href="#relations-connect-the-instances" title="Permanent link">&para;</a></h2>
+<p>Class relations connect <code>Service–Server</code>, <code>Server–Location</code>, <code>Service–Context</code>,
+and <code>Server–Context</code>. Object relations instantiate those connections:</p>
+<ul>
+<li>Atlas runs on web-01 and web-02; Beacon runs on worker-01.</li>
+<li>web-01 and worker-01 are located in Oslo; web-02 is located in Bergen.</li>
+<li>Atlas links to Research notes and Migration checklist.</li>
+<li>Beacon also links to Migration checklist.</li>
+<li>web-01 links to Capacity observation.</li>
+</ul>
+<p>The Server–Location class relation limits each server to one location, while
+a location can relate to many servers. Relation aliases such as <code>servers</code> and
+<code>location</code> give templates useful names. The phrases “runs on” and “located in”
+describe the example's meaning; they are not additional relation-type fields.
+See <a href="../../relationship_endpoints/">relations</a>.</p>
+<h2 id="download-a-matching-edition">Download a matching edition<a class="headerlink" href="#download-a-matching-edition" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../assets/atlas/atlas.import.json">Atlas import</a>: add the inventory through the API.</li>
+<li><a href="../../assets/atlas/atlas.backup.json">Atlas backup</a>: reset a disposable installation.</li>
+<li><a href="../../assets/atlas/atlas.manifest.json">Manifest</a>: checksums, sizes, counts, and producing server version.</li>
+</ul>
+<p>These files travel with this documentation edition. Select the edition matching
+your server before downloading; development documentation is under <code>main</code>.
+For reproducible tests, pin a released edition or an exact Git commit rather
+than a moving branch. Older documentation editions published before Atlas was
+introduced do not contain this dataset.</p>
+<h2 id="load-through-the-api">Load through the API<a class="headerlink" href="#load-through-the-api" title="Permanent link">&para;</a></h2>
+<p>Use an evaluation installation and an unscoped administrator token. This import
+creates collections and groups, which require administrator access. It contains
+no passwords, users, tokens, or group memberships.</p>
+<p>Save the import as <code>atlas.import.json</code>. With <code>HUBUUM_URL</code> set to your API origin
+and <code>HUBUUM_TOKEN</code> to your administrator token:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--silent<span class="w"> </span>--show-error<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--data-binary<span class="w"> </span>@atlas.import.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/imports"</span>
+</code></pre></div>
+<p>The response contains a task <code>id</code>. Poll it until <code>status</code> is <code>succeeded</code>, then
+inspect the item results. A <code>202</code> response alone does not mean the data is loaded.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">GET /api/v1/imports/{task_id}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="err">GET /api/v1/imports/{task_id}/results</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>The import uses strict atomicity and aborts on name collisions. If a class such
+as <code>Server</code> already exists, or Atlas is already loaded, the entire import fails
+without overwriting inventory. Resolve the conflict in your evaluation setup
+or start a fresh instance. Classes have globally unique names; placing them in
+another collection does not avoid a class-name collision.</p>
+<p>For a preview, set the downloaded document's <code>dry_run</code> to <code>true</code>, submit it,
+and inspect its results. Set it back to <code>false</code> to load. A dry run reserves
+nothing. See the <a href="../../import_api/">import contract</a>.</p>
+<h2 id="explore-the-loaded-inventory">Explore the loaded inventory<a class="headerlink" href="#explore-the-loaded-inventory" title="Permanent link">&para;</a></h2>
+<p>Read a class, then one of its objects:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/v1/classes/by-name/Service</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="err">GET /api/v1/classes/by-name/Service/objects/by-name/Atlas</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>Find the two web servers in name order:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/v1/classes/by-name/Server/objects?name__startswith=web-&amp;sort=name</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>The result contains <code>web-01</code> followed by <code>web-02</code>. Walk Atlas's direct
+connections, or request its neighborhood graph:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/v1/classes/by-name/Service/objects/by-name/Atlas/related/relations</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="err">GET /api/v1/classes/by-name/Service/objects/by-name/Atlas/related/graph</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>Atlas has four direct object relations. The neighborhood can include objects
+reached through other objects, such as locations. See <a href="../../querying/">querying</a>
+and <a href="../../name_addressing/">name addressing</a>.</p>
+<p>The Server class also has a shared <code>monthly_cost</code> computed field:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">GET /api/v1/classes/by-name/Server/objects/by-name/web-01?include=computed</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>After the background computation completes,
+<code>computed.shared.values.monthly_cost</code> is <code>50</code>: compute cost <code>45</code> plus storage
+cost <code>5</code>, in fictional cost units. Raw <code>data</code> is unchanged. See
+<a href="../../computed_fields/">computed fields</a>.</p>
+<h2 id="explore-collection-permissions">Explore collection permissions<a class="headerlink" href="#explore-collection-permissions" title="Permanent link">&para;</a></h2>
+<p>The collection hierarchy is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>root
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>└── atlas-demo
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    └── atlas-demo-operations
+</code></pre></div>
+<p><code>Service</code> and <code>Context</code> live in <code>atlas-demo</code>; <code>Server</code> and <code>Location</code> live
+in its operations child. Each object's collection initially matches its class.</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Grant</th>
+<th>What a member can do with an unscoped token</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>atlas-readers</code></td>
+<td>Read collections, classes, objects, and relations on <code>atlas-demo</code></td>
+<td>Read all ten objects through inherited access; no writes</td>
+</tr>
+<tr>
+<td><code>atlas-operators</code></td>
+<td>The same read permissions plus object create, update, and delete on <code>atlas-demo-operations</code></td>
+<td>Read and maintain the five servers/locations; cannot read the service catalogue or its context</td>
+</tr>
+</tbody>
+</table>
+<p>The groups start with <strong>no members</strong>. Assign your own evaluation users or service
+accounts using the <a href="../../permissions/">identity and permission guides</a>. Test
+with a non-admin principal: administrators bypass these collection restrictions.
+Membership in both groups combines their grants. Token scopes can narrow them.
+Relations with an unreadable endpoint remain hidden.</p>
+<h2 id="restore-the-starting-point">Restore the starting point<a class="headerlink" href="#restore-the-starting-point" title="Permanent link">&para;</a></h2>
+<p><strong>A full restore replaces all application data. Use a disposable demo
+installation.</strong> The import above is the merge path; this backup is the reset path.</p>
+<p>Configure <code>hubuum-admin</code> for that disposable database, then:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>hubuum-admin<span class="w"> </span>--verify-backup<span class="w"> </span>atlas.backup.json<span class="w"> </span>--json
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>hubuum-admin<span class="w"> </span>--restore<span class="w"> </span>atlas.backup.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>--restore-confirmation<span class="w"> </span><span class="s2">"REPLACE ALL HUBUUM DATA"</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>hubuum-admin<span class="w"> </span>--reset-password<span class="w"> </span>admin
+</code></pre></div>
+<p>The generated backup contains only the standard administrator and the two
+empty example groups. Passwords and tokens are excluded. Use the newly printed
+password to sign in and obtain a fresh token after restore.</p>
+<p>Use the matching server's administrative binary. Follow <a href="../../backup-restore/">backup and restore</a>
+for container mounts, split-role credentials, staged web restore, and the restore
+executor. This corpus is a standard Hubuum backup; it needs no special restore API.</p>
+<h2 id="reuse-it-for-demonstrations-and-tests">Reuse it for demonstrations and tests<a class="headerlink" href="#reuse-it-for-demonstrations-and-tests" title="Permanent link">&para;</a></h2>
+<p>Use the same downloads for the frontend, CLI, and client libraries. Resolve IDs
+from class/object names; IDs and revisions can differ after an import. Preserve
+the names and relationships when writing examples so readers can continue
+across interfaces.</p>
+<p>The repository's corpus checks exercise dry runs, successful imports, repeated
+import rejection, pagination, filters, computed values, schema rejection,
+schema-free writes, permissions, and backup/restore round trips against a real
+server in an isolated deployment. Marked JSON examples above are checked against
+the import file to catch documentation drift.</p>
+<p>For larger pagination, advisory schemas, temporal history, and broader edge
+cases, use the separate <a href="https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md">3,000-object functional corpus</a>.
+See <a href="../../contributing/documentation/#shared-example-dataset">documentation maintenance</a>
+for the canonical files and verification commands.</p>
 
 
 
@@ -4123,7 +4251,7 @@ explicit acquisitions; it does not prove that the database is deadlock-free.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../task_system/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Task execution">
+          <a href="../first-server/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Run your first server">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4133,20 +4261,20 @@ explicit acquisitions; it does not prove that the database is deadlock-free.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Task execution
+                Run your first server
               </div>
             </div>
           </a>
         
         
           
-          <a href="../generated/project_inventory/" class="md-footer__link md-footer__link--next" aria-label="Next: Project inventory">
+          <a href="../first-requests/" class="md-footer__link md-footer__link--next" aria-label="Next: Make your first API requests">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Project inventory
+                Make your first API requests
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -4193,12 +4321,12 @@ explicit acquisitions; it does not prove that the database is deadlock-free.</p>
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["navigation.tabs","navigation.tabs.sticky","navigation.sections","navigation.path","navigation.top","navigation.footer","navigation.instant","navigation.instant.progress","content.action.edit","content.code.copy","toc.follow"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["navigation.tabs","navigation.tabs.sticky","navigation.sections","navigation.path","navigation.top","navigation.footer","navigation.instant","navigation.instant.progress","content.action.edit","content.code.copy","toc.follow"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c04ba553.min.js"></script>
       
-        <script src="../assets/javascripts/versions.js"></script>
+        <script src="../../assets/javascripts/versions.js"></script>
       
     
   </body>

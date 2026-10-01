@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -1113,6 +1140,17 @@
       On this page
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#try-it-with-atlas" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Try it with Atlas
+      </span>
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#query-syntax" class="md-nav__link">
@@ -3979,6 +4017,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#try-it-with-atlas" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Try it with Atlas
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#query-syntax" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4285,6 +4334,15 @@
 <p>For endpoint-specific field support, see <a href="../query_support_matrix/">query_support_matrix.md</a>.
 The mutation-side contract is documented in
 <a href="../resource_revisions/">Resource revisions and conditional mutations</a>.</p>
+<h2 id="try-it-with-atlas">Try it with Atlas<a class="headerlink" href="#try-it-with-atlas" title="Permanent link">&para;</a></h2>
+<p>Load the <a href="../getting-started/example-dataset/">Atlas dataset</a> to use the same
+objects as the other guides. This query returns web-01 followed by web-02:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">GET /api/v1/classes/by-name/Server/objects?name__startswith=web-&amp;sort=name</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>Use <code>limit=1</code> to page through them and pass the response's <code>X-Next-Cursor</code> as
+<code>cursor</code> on the next request while preserving the filter and sort. The corpus
+checks verify the filtered result and pagination against the server.</p>
 <h2 id="query-syntax">Query syntax<a class="headerlink" href="#query-syntax" title="Permanent link">&para;</a></h2>
 <p>Query parameters are passed as standard query string parameters:</p>
 <ul>
@@ -4295,7 +4353,7 @@ The mutation-side contract is documented in
 <li>one common resource query may contain at most 128 parameters and 64 filters</li>
 </ul>
 <p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/api/v1/iam/users?name__contains=alice&amp;email__endswith=@example.org&amp;sort=name.asc
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/api/v1/iam/users?name__contains=alice&amp;email__endswith=@example.org&amp;sort=name.asc
 </code></pre></div>
 <h2 id="supported-operators">Supported operators<a class="headerlink" href="#supported-operators" title="Permanent link">&para;</a></h2>
 <h3 id="string-fields">String fields<a class="headerlink" href="#string-fields" title="Permanent link">&para;</a></h3>
@@ -4332,11 +4390,11 @@ continuous interval.</p>
 <p>Revisioned resource and temporal-history lists expose the positive <code>BIGINT</code>
 field <code>revision</code>. It supports exact, <code>in</code>, comparison, and <code>between</code> filters,
 plus ascending or descending sorting:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>revision=17
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>revision__in=15,16,17
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>revision__gte=10&amp;revision__lt=20
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>revision__between=10,20
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>sort=-revision
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>revision=17
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>revision__in=15,16,17
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>revision__gte=10&amp;revision__lt=20
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>revision__between=10,20
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>sort=-revision
 </code></pre></div>
 <p>Revision parsing is independent of 32-bit resource IDs. Zero, negative,
 overflowing, malformed, and oversized list values return <code>400 Bad Request</code>.
@@ -4398,9 +4456,9 @@ belong to different resources.</p>
 <h2 id="computed-filtering">Computed filtering<a class="headerlink" href="#computed-filtering" title="Permanent link">&para;</a></h2>
 <p>Class object lists and class object-aggregate queries can filter enabled
 computed fields with the same scope and alias names used for computed sorting:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>GET /api/v1/classes/12/object-aggregates?computed.shared.lifecycle__equals=active&amp;group_by=description
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>GET /api/v1/classes/12/object-aggregates?computed.shared.lifecycle__equals=active&amp;group_by=description
 </code></pre></div>
 <p>Computed filtering is intentionally endpoint-specific. Other endpoints reject
 computed filter parameters instead of silently ignoring them. The
@@ -4414,14 +4472,14 @@ Computed keys may contain <code>__</code>; only a recognized operator at the fin
 <h2 id="filtering-class-objects-by-related-targets">Filtering class objects by related targets<a class="headerlink" href="#filtering-class-objects-by-related-targets" title="Permanent link">&para;</a></h2>
 <p>The two class object-list routes support bounded, bidirectional relationship
 filters:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>GET /api/v1/classes/{class_id}/
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>GET /api/v1/classes/by-name/{class_name}/objects
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>GET /api/v1/classes/{class_id}/
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>GET /api/v1/classes/by-name/{class_name}/objects
 </code></pre></div>
 <p>Every related target is a named group. The group alias correlates its class,
 object, and depth parameters:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>related.&lt;alias&gt;.class.name=Room
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>related.&lt;alias&gt;.object.name__iequals=foo
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>related.&lt;alias&gt;.depth__lte=5
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>related.&lt;alias&gt;.class.name=Room
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>related.&lt;alias&gt;.object.name__iequals=foo
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>related.&lt;alias&gt;.depth__lte=5
 </code></pre></div>
 <p>Use exactly one unnegated equality class selector in each group:
 <code>class.name=&lt;name&gt;</code> or <code>class.id=&lt;id&gt;</code>. The alias must start with an ASCII
@@ -4445,7 +4503,7 @@ cannot be used for sorting.</p>
 <p>Groups are independent existential predicates and are combined with <code>AND</code>.
 For example, this returns hosts related to a room named <code>foo</code>, a person named
 <code>bar</code>, and a person named <code>zoot</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>GET /api/v1/classes/by-name/Host/objects?related.room.class.name=Room&amp;related.room.object.name=foo&amp;related.bar.class.name=Person&amp;related.bar.object.name=bar&amp;related.zoot.class.name=Person&amp;related.zoot.object.name=zoot
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>GET /api/v1/classes/by-name/Host/objects?related.room.class.name=Room&amp;related.room.object.name=foo&amp;related.bar.class.name=Person&amp;related.bar.object.name=bar&amp;related.zoot.class.name=Person&amp;related.zoot.object.name=zoot
 </code></pre></div>
 <p>The two person aliases may resolve to distinct targets. The same target may
 also satisfy more than one compatible group. Ordinary filters and computed
@@ -4511,56 +4569,56 @@ narrow the target predicates or reduce the requested depth.</p>
 <p>Clients should read the effective default and maximum limits from the public
 client configuration endpoint rather than assuming the built-in values shown
 above:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>GET /api/v1/config
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>GET /api/v1/config
 </code></pre></div>
 <p>The served <code>/api-doc/openapi.json</code> also applies the effective values to the
 <code>default</code> and <code>maximum</code> schema constraints for <code>limit</code> and unified search's
 <code>limit_per_kind</code>. The committed <code>docs/openapi.json</code> is a build-time snapshot and
 normally reflects the built-in defaults.</p>
 <p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>GET /api/v1/classes?collections=12&amp;limit=2&amp;sort=id.asc
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>GET /api/v1/classes?collections=12&amp;limit=2&amp;sort=id.asc
 </code></pre></div>
 <p>Example response header:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>X-Total-Count: 6
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>X-Next-Cursor: eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>X-Total-Count: 6
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>X-Next-Cursor: eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
 </code></pre></div>
 <p>Next page:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>GET /api/v1/classes?collections=12&amp;limit=2&amp;sort=id.asc&amp;cursor=eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>GET /api/v1/classes?collections=12&amp;limit=2&amp;sort=id.asc&amp;cursor=eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
 </code></pre></div>
 <h2 id="json-filtering">JSON filtering<a class="headerlink" href="#json-filtering" title="Permanent link">&para;</a></h2>
 <p>JSON filters are only available on endpoints that expose JSON-backed fields such as <code>json_schema</code>, <code>json_data</code>, <code>from_json_data</code>, or <code>to_json_data</code>.</p>
 <h3 id="class-json_schema-example">Class <code>json_schema</code> example<a class="headerlink" href="#class-json_schema-example" title="Permanent link">&para;</a></h3>
 <p>If a class schema contains a numeric property definition such as:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">"properties"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">"latitude"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"number"</span><span class="p">,</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">"minimum"</span><span class="p">:</span><span class="w"> </span><span class="mi">-90</span><span class="p">,</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">"maximum"</span><span class="p">:</span><span class="w"> </span><span class="mi">90</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">"properties"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">"latitude"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"number"</span><span class="p">,</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">"minimum"</span><span class="p">:</span><span class="w"> </span><span class="mi">-90</span><span class="p">,</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">      </span><span class="nt">"maximum"</span><span class="p">:</span><span class="w"> </span><span class="mi">90</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="p">}</span>
 </code></pre></div>
 <p>you can filter classes whose schema defines a latitude minimum below zero:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/api/v1/classes?json_schema__lt=properties,latitude,minimum=0
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>/api/v1/classes?json_schema__lt=properties,latitude,minimum=0
 </code></pre></div>
 <h3 id="object-json_data-example">Object <code>json_data</code> example<a class="headerlink" href="#object-json_data-example" title="Permanent link">&para;</a></h3>
 <p>If objects store payloads such as:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"srv-01"</span><span class="p">,</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"active"</span><span class="p">,</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">"ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.0.0.10"</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"srv-01"</span><span class="p">,</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"active"</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">"ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.0.0.10"</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>you can filter objects in a class by JSON field value:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>/api/v1/classes/12/?json_data__equals=status=active
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/api/v1/classes/12/?json_data__equals=status=active
 </code></pre></div>
 <p>You can also use string-oriented operators for textual JSON values:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/api/v1/classes/12/?json_data__contains=hostname=srv
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>/api/v1/classes/12/?json_data__contains=hostname=srv
 </code></pre></div>
 <p>Nested JSON paths use comma-separated keys. Every path segment must be
 non-empty and contain only ASCII letters, digits, <code>_</code>, or <code>$</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>/api/v1/classes/12/?json_data__equals=network,address=10.0.0.10
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/api/v1/classes/12/?json_data__equals=network,address=10.0.0.10
 </code></pre></div>
 <p>JSON-backed numeric, boolean, and date/datetime values build on the same filter interface used elsewhere:</p>
 <ul>
@@ -4568,11 +4626,11 @@ non-empty and contain only ASCII letters, digits, <code>_</code>, or <code>$</co
 <li>boolean operators: <code>equals</code></li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/api/v1/classes/12/?json_data__equals=metrics,cpu_count=8
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>/api/v1/classes/12/?json_data__gte=metrics,cpu_count=4
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>/api/v1/classes/12/?json_data__equals=flags,enabled=true
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>/api/v1/classes/12/?json_data__gt=maintenance,window_start=2026-03-01
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>/api/v1/classes/12/?json_data__between=maintenance,window_start=2026-03-01,2026-03-31
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>/api/v1/classes/12/?json_data__equals=metrics,cpu_count=8
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>/api/v1/classes/12/?json_data__gte=metrics,cpu_count=4
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>/api/v1/classes/12/?json_data__equals=flags,enabled=true
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>/api/v1/classes/12/?json_data__gt=maintenance,window_start=2026-03-01
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>/api/v1/classes/12/?json_data__between=maintenance,window_start=2026-03-01,2026-03-31
 </code></pre></div>
 <p>Date-oriented JSON filters accept the same date formats as other date filters:</p>
 <ul>
@@ -4604,11 +4662,11 @@ non-empty and contain only ASCII letters, digits, <code>_</code>, or <code>$</co
   Example: stored <code>10.0.0.0/24</code>, filter <code>10.0.0.0/25</code> -&gt; no match.</li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>/api/v1/classes/12/?json_data__within_network=network,address=10.0.0.0/24
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>/api/v1/classes/12/?json_data__contains_network=network,address=10.0.0.0/25
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>/api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>/api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>/api/v1/classes/12/?json_data__inet_equals=network,address=10.0.0.10
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>/api/v1/classes/12/?json_data__within_network=network,address=10.0.0.0/24
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>/api/v1/classes/12/?json_data__contains_network=network,address=10.0.0.0/25
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>/api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>/api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>/api/v1/classes/12/?json_data__inet_equals=network,address=10.0.0.10
 </code></pre></div>
 <h3 id="json-array-and-structure-operators">JSON array and structure operators<a class="headerlink" href="#json-array-and-structure-operators" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4634,19 +4692,19 @@ non-empty and contain only ASCII letters, digits, <code>_</code>, or <code>$</co
   Example: <code>json_data__is_null=optional_field</code> matches if <code>optional_field</code> is missing or JSON <code>null</code>.</li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>/api/v1/classes/12/?json_data__in=status=active,standby,maintenance
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>/api/v1/classes/12/?json_data__all=tags=web,api
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>/api/v1/classes/12/?json_data__array_length=tags=2
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>/api/v1/classes/12/?json_data__has_key=config=hostname
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>/api/v1/classes/12/?json_data__is_null=decommissioned_at
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>/api/v1/classes/12/?json_data__not_is_null=hostname
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>/api/v1/classes/12/?json_data__in=status=active,standby,maintenance
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>/api/v1/classes/12/?json_data__all=tags=web,api
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>/api/v1/classes/12/?json_data__array_length=tags=2
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>/api/v1/classes/12/?json_data__has_key=config=hostname
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>/api/v1/classes/12/?json_data__is_null=decommissioned_at
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>/api/v1/classes/12/?json_data__not_is_null=hostname
 </code></pre></div>
 <p>If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.</p>
 <h2 id="aggregated-object-queries">Aggregated object queries<a class="headerlink" href="#aggregated-object-queries" title="Permanent link">&para;</a></h2>
 <p>Object aggregation is a separate read-only collection resource, so the normal
 object-list response remains unchanged:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>GET /api/v1/classes/{class_id}/object-aggregates
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>GET /api/v1/classes/by-name/{class_name}/object-aggregates
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>GET /api/v1/classes/{class_id}/object-aggregates
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>GET /api/v1/classes/by-name/{class_name}/object-aggregates
 </code></pre></div>
 <p>The explicit <code>by-name</code> alias applies the same query behavior while treating
 numeric-looking class names as names.</p>
@@ -4671,7 +4729,7 @@ type is <code>number</code> or <code>integer</code>.</p>
 <p>At least one <code>group_by</code> or <code>aggregate</code> parameter is required. Omitting
 <code>group_by</code> produces one global aggregate row when at least one readable,
 filtered source object exists. For example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>GET /api/v1/classes/12/object-aggregates?aggregate=sum:json_data.cost&amp;aggregate=average:computed.shared.health_score
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>GET /api/v1/classes/12/object-aggregates?aggregate=sum:json_data.cost&amp;aggregate=average:computed.shared.health_score
 </code></pre></div>
 <p>Each measure includes <code>value_count</code>, the number of finite supported numeric
 values that contributed, and <code>skipped_count</code>, the remaining objects in the
@@ -4686,7 +4744,7 @@ source filters use the same typed operators, <code>public</code>/<code>private</
 two-filter limit as class object lists. For example, this request first applies
 JSON and computed filters, groups the remaining readable objects by country
 and shared lifecycle, and calculates a cost total per group:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&amp;computed.shared.environment__equals=production&amp;group_by=json_data.location,country&amp;group_by=computed.shared.lifecycle&amp;aggregate=sum:json_data.cost&amp;sort=object_count.desc&amp;limit=50
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&amp;computed.shared.environment__equals=production&amp;group_by=json_data.location,country&amp;group_by=computed.shared.lifecycle&amp;aggregate=sum:json_data.cost&amp;sort=object_count.desc&amp;limit=50
 </code></pre></div>
 <p>Grouping by <code>created_at</code> or <code>updated_at</code> uses the exact timestamp. The endpoint
 does not accept date bucketing, arbitrary expressions, or object-list sort
@@ -4716,33 +4774,33 @@ not retain a database connection during its calls, and its compacted
 intermediate aggregate rows are also limited to 8 MiB. Narrow the source
 filters, grouping dimensions, or measures when either bound is exceeded.</p>
 <p>Each response row is self-describing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">[</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="p">{</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">    </span><span class="nt">"dimensions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">      </span><span class="p">{</span>
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"json_data.location,country"</span><span class="p">,</span>
-<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
-<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"NO"</span>
-<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="w">      </span><span class="p">},</span>
-<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">      </span><span class="p">{</span>
-<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"computed.shared.lifecycle"</span><span class="p">,</span>
-<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
-<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"production"</span>
-<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="w">      </span><span class="p">}</span>
-<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="w">    </span><span class="p">],</span>
-<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a><span class="w">    </span><span class="nt">"measures"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a><span class="w">      </span><span class="p">{</span>
-<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"json_data.cost"</span><span class="p">,</span>
-<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="w">        </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sum"</span><span class="p">,</span>
-<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
-<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="w">        </span><span class="nt">"value_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">35</span><span class="p">,</span>
-<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="w">        </span><span class="nt">"skipped_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="mf">917.5</span>
-<a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="w">      </span><span class="p">}</span>
-<a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="w">    </span><span class="p">],</span>
-<a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a><span class="w">    </span><span class="nt">"object_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">37</span>
-<a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-22-27" name="__codelineno-22-27" href="#__codelineno-22-27"></a><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">[</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="p">{</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">"dimensions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">      </span><span class="p">{</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"json_data.location,country"</span><span class="p">,</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"NO"</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">      </span><span class="p">},</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">      </span><span class="p">{</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"computed.shared.lifecycle"</span><span class="p">,</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"production"</span>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="w">    </span><span class="p">],</span>
+<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="w">    </span><span class="nt">"measures"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="w">      </span><span class="p">{</span>
+<a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="w">        </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"json_data.cost"</span><span class="p">,</span>
+<a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">        </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sum"</span><span class="p">,</span>
+<a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">        </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"value"</span><span class="p">,</span>
+<a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">        </span><span class="nt">"value_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">35</span><span class="p">,</span>
+<a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">        </span><span class="nt">"skipped_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">        </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="mf">917.5</span>
+<a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="w">    </span><span class="p">],</span>
+<a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a><span class="w">    </span><span class="nt">"object_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">37</span>
+<a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a><span class="p">]</span>
 </code></pre></div>
 <p>Dimension states have explicit meanings:</p>
 <ul>

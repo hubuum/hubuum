@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -2716,6 +2743,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shared-example-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared example dataset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-pages-publishing" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3892,6 +3930,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shared-example-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared example dataset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-pages-publishing" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4102,6 +4151,45 @@ third-party font request.</p>
 not part of the static site. Keep generated references generated: use the
 <a href="../../integrations/api/">OpenAPI</a>, <a href="../../generated/project_inventory/">inventory</a>,
 and <a href="../../operational_contracts/">operational-contract</a> workflows.</p>
+<h2 id="shared-example-dataset">Shared example dataset<a class="headerlink" href="#shared-example-dataset" title="Permanent link">&para;</a></h2>
+<p>Use the <a href="../../getting-started/example-dataset/">Atlas example</a> for tutorials,
+client walkthroughs, screenshots, and product diagrams. Introduce the class
+before the object: Service/Atlas, Server/web-01, Location/Oslo, and
+Context/Research notes are the central examples. Keep class names and object
+names case-sensitive. Numeric IDs and revisions are runtime values, not fixture
+identities.</p>
+<p>The canonical recipe is <code>docs/assets/atlas/atlas.import.json</code>. The neighboring
+backup is produced by the real server, never assembled by hand. Its manifest
+records checksums, sizes, counts, and the producing server version. Both files
+are published within each documentation edition, so release snapshots keep
+their original dataset. Client repositories should link to a matching server
+edition and reuse its files rather than maintaining independent seed data.</p>
+<p>When showing complete object data in Markdown, put an <code>atlas-data</code> comment
+immediately before the JSON fence, for example <code>&lt;!-- atlas-data: object:Atlas --&gt;</code>.
+The offline check compares marked examples with the canonical import. Mark
+partial payloads and tutorial additions explicitly; do not label them as the
+unchanged baseline. Specialized contract examples may use placeholders or
+additional resources where Atlas does not cover the behavior.</p>
+<p>Run from the repository root with Python 3.11+ and the production image built
+as described in <a href="../../development/">development</a>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python3<span class="w"> </span>scripts/test-example-corpus.py
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>check
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+</code></pre></div>
+<p>After changing the import, regenerate the backup and manifest:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>generate<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+</code></pre></div>
+<p>The generator and verifier reuse <code>scripts/test-corpus.py</code>'s isolated Docker
+harness. They create their own network, databases, and temporary credentials;
+they do not accept an existing database URL. Generation publishes files only
+after import, application scenarios, and two restore rounds succeed. No
+third-party Python packages are required. For a regeneration check that leaves
+committed files untouched, add <code>--directory target/generated-atlas-corpus</code>.</p>
+<p>CI checks metadata and documentation drift, imports and restores the committed
+corpus against the candidate production server, and regenerates into a temporary
+output directory. Changes to the dataset, its guide, or its tooling select the
+required checks. The larger <a href="https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md">functional corpus</a>
+continues to cover scale and specialized edge cases.</p>
 <h2 id="github-pages-publishing">GitHub Pages publishing<a class="headerlink" href="#github-pages-publishing" title="Permanent link">&para;</a></h2>
 <p>The intended public URL is <strong><a href="https://hubuum.github.io/hubuum/">https://hubuum.github.io/hubuum/</a></strong>. The root opens
 the latest published stable release, with immutable releases at <code>/vX.Y.Z/</code> and

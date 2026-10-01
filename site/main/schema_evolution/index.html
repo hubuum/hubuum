@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -4070,6 +4097,11 @@
 
 
 <h1 id="class-schema-evolution">Class schema evolution<a class="headerlink" href="#class-schema-evolution" title="Permanent link">&para;</a></h1>
+<p>Try this workflow with the <a href="../getting-started/example-dataset/">Atlas dataset</a>:
+Service and Server begin with enforced schemas, while Location and Context
+begin schema-free. Use the Research notes object when exploring how a free-form
+class acquires a schema. Resolve class IDs from their names before using the
+ID-addressed revision endpoints below.</p>
 <p>Every class has an immutable schema revision, including classes without an
 object-validation requirement. Schema changes can be staged, analyzed, and
 activated without rewriting existing object JSON. PostgreSQL and the experimental

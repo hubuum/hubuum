@@ -684,6 +684,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/first-requests/" class="md-nav__link">
         
   
@@ -4402,6 +4429,11 @@
 
 
 <h1 id="import-api">Import API<a class="headerlink" href="#import-api" title="Permanent link">&para;</a></h1>
+<p>The <a href="../getting-started/example-dataset/#load-through-the-api">Atlas example dataset</a>
+provides a complete, executable import containing classes, objects, relations,
+computed fields, groups, and collection grants. It uses strict atomicity and
+collision rejection and is tested against the real import worker. The smaller
+fragments below illustrate individual parts of the contract.</p>
 <p>The import API accepts a graph-shaped request, stores it in the generic task framework, and executes it asynchronously.</p>
 <p>Endpoints:</p>
 <ul>
