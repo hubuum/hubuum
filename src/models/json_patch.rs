@@ -129,7 +129,7 @@ mod tests {
     #[case::replace(json!({"op": "replace", "path": "/key", "value": {"nested": [1]}}), true)]
     #[case::move_value(json!({"op": "move", "from": "/source", "path": "/key"}), true)]
     #[case::copy(json!({"op": "copy", "from": "/source", "path": "/key"}), true)]
-    #[case::test(json!({"op": "test", "path": "/key", "value": false}), true)]
+    #[case::test_value(json!({"op": "test", "path": "/key", "value": false}), true)]
     #[case::missing_value(json!({"op": "add", "path": "/key"}), false)]
     #[case::missing_from(json!({"op": "move", "path": "/key"}), false)]
     #[case::missing_path(json!({"op": "remove"}), false)]
