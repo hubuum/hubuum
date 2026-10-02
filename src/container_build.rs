@@ -310,9 +310,9 @@ fn container_dependency_images_are_pinned() {
             .expect("benchmark workflow should be readable");
     let installer = read_repository_text("scripts/install-single-host.sh");
 
-    assert!(workflow.contains("postgres:18.4@sha256:"));
-    assert!(benchmark_workflow.contains("postgres:18.4-alpine3.24@sha256:"));
-    assert!(installer.contains("postgres:18.4-alpine3.24@sha256:"));
+    assert!(workflow.contains("postgres:18.6@sha256:"));
+    assert!(benchmark_workflow.contains("postgres:18.6-alpine3.24@sha256:"));
+    assert!(installer.contains("postgres:18.6-alpine3.24@sha256:"));
 }
 
 #[test]

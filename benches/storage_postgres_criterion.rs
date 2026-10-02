@@ -26,7 +26,7 @@ use tokio::runtime::{Builder, Runtime};
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
 
 const POSTGRES_DATABASE: &str = "hubuum_bench";
-const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
+const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873";
 const STRUCTURED_SEARCH_CHAINS: i32 = 128;
 const UNRELATED_HYDRATION_RELATIONS: i32 = 100_000;
 
