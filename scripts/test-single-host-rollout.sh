@@ -68,6 +68,15 @@ if [[ "${1:-}" == "inspect" ]]; then
   exit 0
 fi
 
+if [[ "$*" == *" ps --help" ]]; then
+  if [[ "$ENGINE_BIN" == "docker" ]]; then
+    printf '%s\n' '  -a, --all  Show all stopped containers'
+  else
+    printf '%s\n' '  -q, --quiet  Only display container IDs'
+  fi
+  exit 0
+fi
+
 if [[ "$*" == *" ps "* ]]; then
   [[ "$*" == *" ps -q" || ( "$ENGINE_BIN" == "docker" && "$*" == *" ps -a -q" ) ]] || {
     echo "service arguments to compose ps are unsupported" >&2

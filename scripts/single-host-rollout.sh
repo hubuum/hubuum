@@ -325,13 +325,15 @@ hubuum_roll_monitoring() {
     hubuum_wait_for_rollout_health prometheus
     hubuum_wait_for_rollout_health grafana
   else
-    local container_ids container_id service
-    local -a ps_options=(-a -q)
+    local container_ids container_id service ps_help
+    local -a ps_options=(-q)
     local -a monitoring_containers=()
 
     # podman-compose already includes stopped containers and older versions
-    # do not accept -a. Both providers include this project's orphaned services.
-    [[ "${ENGINE_BIN:-docker}" != "podman" ]] || ps_options=(-q)
+    # do not accept -a. Detect the provider's option, since `docker` may be a
+    # Podman compatibility command. Both providers include project orphans.
+    ps_help="$("${COMPOSE_CMD[@]}" ps --help)" || return 1
+    [[ "$ps_help" != *"--all"* ]] || ps_options=(-a -q)
     container_ids="$("${COMPOSE_CMD[@]}" ps "${ps_options[@]}")" || return 1
     while IFS= read -r container_id; do
       [[ -n "$container_id" ]] || continue
