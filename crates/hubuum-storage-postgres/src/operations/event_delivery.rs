@@ -1153,6 +1153,7 @@ mod tests {
 mod scheduling_tests {
     use super::*;
     use crate::test_support::integration_test_pool;
+    use chrono::NaiveDate;
     use diesel_async::SimpleAsyncConnection;
     use rstest::rstest;
 
@@ -1183,7 +1184,11 @@ mod scheduling_tests {
                  INSERT INTO event_subscriptions VALUES (1,1),(2,2);
                  INSERT INTO event_sinks VALUES (2,'{}');"
             ).await?;
-            let now = Utc::now().naive_utc();
+            // Keep the clock deterministic and exactly representable by PostgreSQL.
+            let now = NaiveDate::from_ymd_opt(2026, 10, 1)
+                .unwrap()
+                .and_hms_micro_opt(12, 0, 0, 123_456)
+                .unwrap();
             let future = now + chrono::Duration::seconds(60);
             diesel::sql_query("INSERT INTO event_sinks VALUES (1,$1)")
                 .bind::<diesel::sql_types::Jsonb,_>(serde_json::json!({"min_interval_ms": configured.then_some(60_000)}))
