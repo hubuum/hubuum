@@ -84,6 +84,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Reduce buffer reallocations when rendering templates by reserving a small
   initial buffer capped by the configured output limit.
+- Email payload limits apply to the original event envelope before its template
+  alias is added. Delivery workers skip sinks during cooldowns, and rate-policy
+  changes reschedule deferred notifications while preserving provider cooldowns.
+- Chat-event migration rollback rejects retained notification-test audit records
+  with instructions to archive and remove them before downgrading.
 - Documentation tables keep long environment-variable names readable, use wider
   reference layouts, and scroll within the table on small screens. Shared style
   fixes also reach retained release documentation.

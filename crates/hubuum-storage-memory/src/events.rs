@@ -226,6 +226,52 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
+        if sink.delivery_policy() != current.delivery_policy() {
+            let now = Utc::now();
+            if let Some((next, blocked)) = state.event_sink_schedule.get_mut(&sink.id().id()) {
+                *next = match (
+                    current.delivery_policy().min_interval_ms(),
+                    sink.delivery_policy().min_interval_ms(),
+                ) {
+                    (Some(old), Some(new)) => {
+                        *next + chrono::Duration::milliseconds(new as i64 - old as i64)
+                    }
+                    _ => now,
+                };
+                let eligible = (*next).max(*blocked).max(now);
+                let reason = if *blocked > now {
+                    Some("provider_rate")
+                } else if *next > now {
+                    Some("configured_rate")
+                } else {
+                    None
+                };
+                let subscriptions = state
+                    .event_subscriptions
+                    .values()
+                    .filter(|subscription| subscription.sink_id() == sink.id())
+                    .map(|subscription| subscription.id())
+                    .collect::<std::collections::HashSet<_>>();
+                for delivery in state.event_deliveries.values_mut().filter(|delivery| {
+                    subscriptions.contains(&delivery.subscription_id())
+                        && delivery.status() == EventDeliveryStatus::Pending
+                        && delivery.deferred_reason().is_some()
+                }) {
+                    *delivery = delivery_metadata(
+                        rebuild_event_delivery(
+                            delivery,
+                            delivery.status(),
+                            delivery.attempts(),
+                            eligible,
+                            delivery.last_error().map(str::to_owned),
+                            delivery.locked_until(),
+                        )?,
+                        delivery.purpose(),
+                        reason.map(str::to_owned),
+                    )?;
+                }
+            }
+        }
         state.event_sinks.insert(sink.id().id(), sink.clone());
         let receipt = state.append_simple_event(
             EntityType::EventSink,
@@ -671,7 +717,9 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 .get(&delivery.subscription_id().id())
                 .and_then(|subscription| state.event_sinks.get(&subscription.sink_id().id()));
             sink.is_none_or(|sink| {
-                sink.delivery_policy().min_interval_ms().is_none() || spaced_sinks.insert(sink.id())
+                sink_delivery_deadline(&state, sink).is_none_or(|deadline| deadline <= now)
+                    && (sink.delivery_policy().min_interval_ms().is_none()
+                        || spaced_sinks.insert(sink.id()))
             })
         });
         candidates.truncate(settings.batch_size());
@@ -731,7 +779,36 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 delivery_sink,
             ));
         }
-        Ok(StorageEventDeliveryBatch::new(work, None))
+        let next_wakeup_in = if work.is_empty() {
+            state
+                .event_deliveries
+                .values()
+                .filter_map(|delivery| {
+                    let deadline = match delivery.status() {
+                        EventDeliveryStatus::Pending | EventDeliveryStatus::Failed
+                            if delivery.attempts() < settings.max_attempts() =>
+                        {
+                            delivery.next_attempt_at()
+                        }
+                        EventDeliveryStatus::InFlight => delivery.locked_until()?,
+                        _ => return None,
+                    };
+                    let sink = state
+                        .event_subscriptions
+                        .get(&delivery.subscription_id().id())
+                        .and_then(|subscription| {
+                            state.event_sinks.get(&subscription.sink_id().id())
+                        })?;
+                    let deadline = sink_delivery_deadline(&state, sink)
+                        .map_or(deadline, |eligible| deadline.max(eligible));
+                    (deadline > now).then_some(deadline)
+                })
+                .min()
+                .and_then(|deadline| (deadline - now).to_std().ok())
+        } else {
+            None
+        };
+        Ok(StorageEventDeliveryBatch::new(work, next_wakeup_in))
     }
 
     async fn begin_event_delivery(
@@ -777,6 +854,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .get(&sink_id)
             .copied()
             .unwrap_or((now, now));
+        let next = if interval == 0 { now } else { next };
         if next.max(blocked) > now {
             let deferred = rebuild_event_delivery(
                 &delivery,
@@ -1462,6 +1540,19 @@ impl HistoryStorage for MemoryStorage {
             _ => unreachable!("remote-target history filter guarantees the variant"),
         }
     }
+}
+
+fn sink_delivery_deadline(state: &MemoryState, sink: &StorageEventSink) -> Option<DateTime<Utc>> {
+    state
+        .event_sink_schedule
+        .get(&sink.id().id())
+        .map(|(next, blocked)| {
+            if sink.delivery_policy().min_interval_ms().is_some() {
+                (*next).max(*blocked)
+            } else {
+                *blocked
+            }
+        })
 }
 
 fn delivery_metadata(

@@ -1,4 +1,7 @@
 DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM events WHERE entity_type = 'event_sink' AND action = 'invoked') THEN
+        RAISE EXCEPTION 'Cannot roll back while event_sink.invoked audit events remain. Stop API and worker processes, archive these audit records, then remove them and their dependent deliveries before retrying rollback';
+    END IF;
     IF EXISTS (SELECT 1 FROM event_sinks WHERE kind IN ('slack','mattermost') OR delivery_policy->>'min_interval_ms' IS NOT NULL)
        OR EXISTS (SELECT 1 FROM event_subscriptions WHERE collection_id IS NULL)
        OR EXISTS (SELECT 1 FROM event_deliveries WHERE purpose = 'test' OR deferred_reason IS NOT NULL) THEN

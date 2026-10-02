@@ -388,6 +388,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn envelope_limit_does_not_count_the_event_alias() {
+        let mut value = serde_json::to_value(envelope()).unwrap();
+        value["after"] = serde_json::json!({"data": "x".repeat(600_000)});
+        let envelope = serde_json::from_value(value).unwrap();
+        let mut config = config();
+        config.body_template = "{{ summary }} / {{ event.summary }}".into();
+
+        let rendered = render_email(&envelope, &config).await.unwrap();
+
+        assert_eq!(rendered.body, "collection created / collection created");
+    }
+
+    #[tokio::test]
+    async fn rejects_envelope_above_payload_limit() {
+        let envelope = envelope();
+        let mut config = config();
+        config.max_payload_bytes = Some(serde_json::to_vec(&envelope).unwrap().len() - 1);
+
+        let error = render_email(&envelope, &config).await.unwrap_err();
+
+        assert_eq!(error.to_string(), "Event envelope exceeds its size limit");
+    }
+
+    #[tokio::test]
     async fn template_context_exposes_provenance() {
         let mut config = config();
         config.body_template =

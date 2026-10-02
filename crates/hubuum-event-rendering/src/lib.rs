@@ -41,10 +41,15 @@ impl<'a> EventTemplate<'a> {
     }
 }
 
-/// Preserve the established email context, including the `event` alias.
+/// Bound the serialized envelope before adding the established `event` alias.
 pub fn event_context(envelope: &EventEnvelope, max_bytes: usize) -> Result<Value, SinkError> {
     let event = serde_json::to_value(envelope)
         .map_err(|_| SinkError::permanent("Cannot serialize event template context"))?;
+    if event.to_string().len() > max_bytes {
+        return Err(SinkError::permanent(
+            "Event envelope exceeds its size limit",
+        ));
+    }
     let mut root = event
         .as_object()
         .cloned()
@@ -54,21 +59,15 @@ pub fn event_context(envelope: &EventEnvelope, max_bytes: usize) -> Result<Value
         "occurred_at".into(),
         Value::String(envelope.occurred_at().naive_utc().to_string()),
     );
-    let context = Value::Object(root);
-    if context.to_string().len() > max_bytes {
-        return Err(SinkError::permanent(
-            "Event template context exceeds its size limit",
-        ));
-    }
-    Ok(context)
+    Ok(Value::Object(root))
 }
 
 pub async fn render(
     envelope: &EventEnvelope,
     templates: &[EventTemplate<'_>],
-    max_context_bytes: usize,
+    max_envelope_bytes: usize,
 ) -> Result<Vec<String>, SinkError> {
-    let context = event_context(envelope, max_context_bytes)?;
+    let context = event_context(envelope, max_envelope_bytes)?;
     let mut batch = TemplateBatch::new(templates.iter().map(|template| template.max_bytes).sum());
     for template in templates {
         batch

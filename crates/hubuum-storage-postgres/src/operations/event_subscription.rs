@@ -445,7 +445,7 @@ pub async fn update_event_sink(
 
                 let before = event_sinks
                     .filter(id.eq(sink_id))
-                    .for_update()
+                    .for_no_key_update()
                     .first::<EventSinkRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -463,6 +463,15 @@ pub async fn update_event_sink(
                     .set(changes)
                     .get_result::<EventSinkRow>(connection)
                     .await?;
+                if before.delivery_policy != updated.delivery_policy {
+                    super::event_delivery::reconcile_sink_delivery_policy(
+                        connection,
+                        request.id(),
+                        decode_json(before.delivery_policy.clone(), "event delivery policy")?,
+                        decode_json(updated.delivery_policy.clone(), "event delivery policy")?,
+                    )
+                    .await?;
+                }
                 let audit = append_sink_audit(
                     connection,
                     Action::Updated,
