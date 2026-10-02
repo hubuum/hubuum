@@ -15,7 +15,7 @@ deprecation, and release rules in the
 [Storage Adapter SDK Compatibility policy](../storage_adapter_sdk.md). The
 release-train MSRV is Rust 1.88.
 
-The default feature set is empty. The `schema` feature adds Utoipa schema
+The default feature set is empty. The `schema` feature adds Utoipa 6 schema
 implementations and is supported. Serialized event values are compatible only
 where their type documentation or Hubuum's persisted event format says so;
 ordinary Rust helper representations are not independent wire protocols.

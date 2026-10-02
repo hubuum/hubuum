@@ -85,7 +85,11 @@ impl TreetopPermissionBackend {
         let client = builder.build().map_err(treetop_to_api_error)?;
 
         // Startup health check — fail-closed-fatal per Q9 of the spec.
-        client.health().await.map_err(treetop_to_api_error)?;
+        if !client.readyz().await.map_err(treetop_to_api_error)? {
+            return Err(ApiError::PermissionBackendUnavailable(
+                "treetop is not ready".to_string(),
+            ));
+        }
 
         Ok(Self { client, storage })
     }
@@ -687,8 +691,12 @@ impl PermissionBackend for TreetopPermissionBackend {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
     use std::path::PathBuf;
 
+    use actix_web::{App, HttpResponse, HttpServer, http::StatusCode, web};
+    use clap::Parser;
+    use rstest::rstest;
     use serde_json::{Value, from_value, json};
     use uuid::Uuid;
 
@@ -735,11 +743,50 @@ mod tests {
     fn response(results: Value, successful: usize, failed: usize) -> AuthorizeBriefResponse {
         from_value(json!({
             "results": results,
-            "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+            "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
             "successful": successful,
             "failed": failed
         }))
         .unwrap()
+    }
+
+    #[rstest]
+    #[case::ready(StatusCode::OK, true)]
+    #[case::not_ready(StatusCode::SERVICE_UNAVAILABLE, false)]
+    #[case::unavailable(StatusCode::INTERNAL_SERVER_ERROR, false)]
+    #[actix_web::test]
+    async fn startup_requires_treetop_readiness(
+        #[case] status: StatusCode,
+        #[case] expected_ready: bool,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = HttpServer::new(move || {
+            App::new().route(
+                "/readyz",
+                web::get().to(move || async move { HttpResponse::build(status).body("ready") }),
+            )
+        })
+        .workers(1)
+        .listen(listener)
+        .unwrap()
+        .run();
+        let handle = server.handle();
+        let task = actix_web::rt::spawn(server);
+        let config = AppConfig::parse_from(["hubuum"]);
+
+        let result =
+            TreetopPermissionBackend::connect(&url, &config, StorageHandle::memory()).await;
+
+        handle.stop(true).await;
+        task.await.unwrap().unwrap();
+        assert_eq!(result.is_ok(), expected_ready);
+        if !expected_ready {
+            assert!(matches!(
+                result,
+                Err(ApiError::PermissionBackendUnavailable(_))
+            ));
+        }
     }
 
     #[test]
@@ -885,7 +932,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Allow",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": "allow"
                     }
                 },
@@ -894,7 +941,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Deny",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": ""
                     }
                 }
@@ -918,7 +965,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Allow",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": "allow"
                     }
                 },
@@ -927,7 +974,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Deny",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": ""
                     }
                 }
@@ -950,7 +997,7 @@ mod tests {
                 "status": "success",
                 "result": {
                     "decision": "Allow",
-                    "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                    "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                     "policy_id": "allow"
                 }
             }]),
@@ -973,7 +1020,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Deny",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": ""
                     }
                 },
@@ -982,7 +1029,7 @@ mod tests {
                     "status": "success",
                     "result": {
                         "decision": "Allow",
-                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z", "label_set": null, "generation": 1 },
                         "policy_id": "allow"
                     }
                 }

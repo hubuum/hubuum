@@ -16,7 +16,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PROMETHEUS = "docker.io/prom/prometheus:v3.5.0@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24"
+PROMETHEUS = "docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
 
 
 def validate(root):

@@ -45,9 +45,10 @@ root collection in the disposable CI PostgreSQL database when missing.
 
 The runner uses strict schema validation and waits until the status endpoint
 reports both a loaded policy and a schema-backed request context. Its fixture
-server withholds each policy fetch until Treetop has fetched the schema. The
-server consumes one schema handoff for each policy fetch so a restarted service
-cannot reuse a stale readiness signal and race strict validation. Uploads remain
+server withholds each policy fetch until Treetop has fetched the schema and its
+status endpoint confirms that the schema is loaded. The server consumes one
+schema handoff for each policy fetch so a restarted service cannot reuse a stale
+readiness signal and race strict validation. Uploads remain
 disabled, so no upload token is generated or stored.
 
 ## Shared semantic corpus

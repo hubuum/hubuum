@@ -21,4 +21,4 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 thiserror = "2"
 
 [dev-dependencies]
-rstest = "0.26"
+rstest = "0.27"

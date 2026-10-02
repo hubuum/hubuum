@@ -21,7 +21,7 @@ FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:main"
 IMAGE_TAG=""
 BACKEND_TAG=""
 FRONTEND_TAG=""
-POSTGRES_IMAGE="docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
+POSTGRES_IMAGE="docker.io/library/postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 EXTERNAL_DATABASE_URL=""
@@ -82,7 +82,7 @@ Options:
                           Database roles: single or split. Default: single
   --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
-  --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.4 on Alpine 3.24 (digest-pinned)
+  --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.6 on Alpine 3.24 (digest-pinned)
   --valkey-image IMAGE    Valkey image. Default: docker.io/valkey/valkey:9-alpine
   --caddy-image IMAGE     Caddy image. Default: docker.io/library/caddy:2-alpine
   --network-subnet CIDR   Container bridge subnet. Default: 172.30.42.0/24

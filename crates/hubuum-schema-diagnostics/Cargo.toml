@@ -15,13 +15,13 @@ policy-document = "docs/rust_api/hubuum-schema-diagnostics.md"
 release-train = "storage-sdk"
 
 [dependencies]
-jsonschema = { version = "0.49", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
-utoipa = { version = "5", optional = true }
+utoipa = { version = "6", optional = true }
 
 [features]
 openapi = ["dep:utoipa"]
 
 [dev-dependencies]
-rstest = "0.26"
+rstest = "0.27"

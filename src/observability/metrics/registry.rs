@@ -112,7 +112,7 @@ fn duration_histogram(meter: &Meter, name: &'static str) -> CheckedHistogram {
 fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, ApiError> {
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
-        .without_scope_info()
+        .scope_info_enabled(false)
         .without_target_info()
         .build()
         .map_err(|error| {
