@@ -117,7 +117,9 @@ impl SizeLimitedWriter {
     pub fn new(max_bytes: usize) -> Self {
         Self {
             max_bytes,
-            buffer: Vec::new(),
+            // Template renderers emit many small fragments. Avoid repeated early
+            // reallocations without reserving the entire output budget.
+            buffer: Vec::with_capacity(max_bytes.min(1024)),
             exceeded: false,
         }
     }
@@ -563,21 +565,47 @@ mod tests {
         assert_eq!(output.into_parts().0, expected);
     }
 
-    #[test]
-    fn size_limited_writer_accumulates_under_limit() {
-        let mut writer = SizeLimitedWriter::new(16);
-        writer.write_all(b"hello ").unwrap();
-        writer.write_all(b"world").unwrap();
+    #[rstest]
+    #[case::empty(0, 0, 0)]
+    #[case::under_limit(16, 6, 5)]
+    #[case::at_limit(11, 6, 5)]
+    #[case::growing(2048, 1024, 1024)]
+    #[case::large_budget(usize::MAX, 6, 5)]
+    fn size_limited_writer_accumulates_under_limit(
+        #[case] max_bytes: usize,
+        #[case] first_bytes: usize,
+        #[case] second_bytes: usize,
+    ) {
+        let mut writer = SizeLimitedWriter::new(max_bytes);
+        writer
+            .write_all("a".repeat(first_bytes).as_bytes())
+            .unwrap();
+        writer
+            .write_all("b".repeat(second_bytes).as_bytes())
+            .unwrap();
         assert!(!writer.exceeded());
-        assert_eq!(writer.into_string().unwrap(), "hello world");
+        assert_eq!(
+            writer.into_string().unwrap(),
+            format!("{}{}", "a".repeat(first_bytes), "b".repeat(second_bytes))
+        );
     }
 
-    #[test]
-    fn size_limited_writer_aborts_over_limit() {
-        let mut writer = SizeLimitedWriter::new(4);
-        let err = writer.write_all(b"toolong").unwrap_err();
+    #[rstest]
+    #[case::zero_budget(0, "", "a")]
+    #[case::first_write(4, "", "toolong")]
+    #[case::remaining_budget(4, "abc", "de")]
+    #[case::full(4, "abcd", "e")]
+    fn size_limited_writer_aborts_over_limit(
+        #[case] max_bytes: usize,
+        #[case] retained: &str,
+        #[case] rejected: &str,
+    ) {
+        let mut writer = SizeLimitedWriter::new(max_bytes);
+        writer.write_all(retained.as_bytes()).unwrap();
+        let err = writer.write_all(rejected.as_bytes()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Other);
         assert!(writer.exceeded());
+        assert_eq!(writer.into_string().unwrap(), retained);
     }
 
     #[test]

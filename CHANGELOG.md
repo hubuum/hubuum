@@ -40,6 +40,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Reduce buffer reallocations when rendering templates by reserving a small
+  initial buffer capped by the configured output limit.
 - Documentation tables keep long environment-variable names readable, use wider
   reference layouts, and scroll within the table on small screens. Shared style
   fixes also reach retained release documentation.
