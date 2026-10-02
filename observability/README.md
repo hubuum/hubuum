@@ -77,6 +77,12 @@ and dashboards under `monitoring/grafana/dashboards/`; reserve supplied filename
 for the maintained package. `targets.json` is regenerated for the configured
 port and deployment label. Copy a supplied dashboard to a new UID to customize it.
 
+To disable monitoring, set `MONITORING_ENABLED=false` in `.env` and run the
+updater. This removes the monitoring containers and Caddy routes while retaining
+configuration, credentials, Grafana's encryption key, and data volumes. Re-enable
+with `update-single-host.sh --monitoring` to reuse that data and authentication.
+Re-running the installer, including `--recreate`, also preserves these secrets.
+
 Stop and ordinary uninstall preserve data and configuration. Explicit
 `uninstall-single-host.sh --purge` removes Compose volumes and the installation
 directory, including monitoring data. Application backups do not contain these

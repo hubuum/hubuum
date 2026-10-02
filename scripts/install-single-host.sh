@@ -27,6 +27,10 @@ CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 MONITORING_ENABLED="false"
 MONITORING_ASSETS_REF="auto"
 MONITORING_DEPLOYMENT=""
+MONITORING_HOST=""
+GRAFANA_ADMIN_PASSWORD=""
+GRAFANA_SECRET_KEY=""
+PROMETHEUS_PASSWORD=""
 PROMETHEUS_IMAGE="docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
 GRAFANA_IMAGE="docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
 PROMETHEUS_RETENTION_TIME="31d"
@@ -266,7 +270,8 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env POSTGRES_IMAGE POSTGRES_IMAGE
   reuse_from_env VALKEY_IMAGE VALKEY_IMAGE
   reuse_from_env CADDY_IMAGE CADDY_IMAGE
-  for setting in MONITORING_ENABLED MONITORING_ASSETS_REF MONITORING_DEPLOYMENT \
+  for setting in MONITORING_ENABLED MONITORING_ASSETS_REF MONITORING_DEPLOYMENT MONITORING_HOST \
+    GRAFANA_ADMIN_PASSWORD GRAFANA_SECRET_KEY PROMETHEUS_PASSWORD \
     PROMETHEUS_IMAGE GRAFANA_IMAGE PROMETHEUS_RETENTION_TIME PROMETHEUS_RETENTION_SIZE \
     PROMETHEUS_MEMORY_LIMIT GRAFANA_MEMORY_LIMIT; do
     reuse_from_env "$setting" "$setting"
@@ -598,9 +603,11 @@ if [[ "$MODE" == "all" ]]; then
 fi
 
 MONITORING_CADDY_IMPORT=""
+# Load saved monitoring settings even when disabled: the retained Grafana
+# database still requires its original credentials and encryption key.
+# shellcheck source=scripts/single-host-monitoring.sh
+source "$INSTALL_DIR/single-host-monitoring.sh"
 if [[ "$MONITORING_ENABLED" == "true" ]]; then
-  # shellcheck source=scripts/single-host-monitoring.sh
-  source "$INSTALL_DIR/single-host-monitoring.sh"
   hubuum_prepare_monitoring
   MONITORING_CADDY_IMPORT="import monitoring"
 fi
@@ -626,7 +633,8 @@ write_deployment_env() {
   printf 'VALKEY_IMAGE=%s\n' "$VALKEY_IMAGE"
   printf 'CADDY_IMAGE=%s\n' "$CADDY_IMAGE"
   printf 'MONITORING_ENABLED=%s\n' "$MONITORING_ENABLED"
-  if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  if [[ "$MONITORING_ENABLED" == "true" || -d "$INSTALL_DIR/monitoring" ||
+    -n "$GRAFANA_ADMIN_PASSWORD$GRAFANA_SECRET_KEY$PROMETHEUS_PASSWORD" ]]; then
     hubuum_monitoring_env
   fi
   printf 'DATABASE_MANAGED=%s\n' "$DATABASE_MANAGED"

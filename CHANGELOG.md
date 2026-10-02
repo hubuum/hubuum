@@ -20,7 +20,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   persistent data and automatic provisioning. The shared operator package
   provides seven dashboards, recording rules, SLO and operational alerts,
   runbooks, Prometheus Operator resources and external job-result recording
-  for distributed installations as well.
+  for distributed installations as well. Disabling monitoring removes its
+  containers and proxy routes while preserving configuration, credentials,
+  Grafana's encryption key and data for later re-enabling.
 
 - A shared Atlas example inventory for documentation, demonstrations, and client
   testing: four classes and ten connected objects, with downloadable import and

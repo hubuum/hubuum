@@ -57,11 +57,8 @@ hubuum_prepare_monitoring() {
   done < "$staging/manifest.txt"
   [[ -s "$staging/prometheus/alerts.json" && -s "$staging/prometheus/recording-rules.json" && -s "$staging/dashboards/overview.json" ]] || { rm -rf "$staging"; die "incomplete operator package"; }
 
-  # Preserve these even on --recreate: Grafana's initial password only takes
-  # effect when its persistent database is first initialized.
-  GRAFANA_ADMIN_PASSWORD="$(read_env_value GRAFANA_ADMIN_PASSWORD || true)"
-  GRAFANA_SECRET_KEY="$(read_env_value GRAFANA_SECRET_KEY || true)"
-  PROMETHEUS_PASSWORD="$(read_env_value PROMETHEUS_PASSWORD || true)"
+  # The installer loads saved secrets even when disabled or using --recreate.
+  # Generate them only when monitoring is first enabled.
   [[ -n "$GRAFANA_ADMIN_PASSWORD" ]] || GRAFANA_ADMIN_PASSWORD="$(random_hex 24)"
   [[ -n "$GRAFANA_SECRET_KEY" ]] || GRAFANA_SECRET_KEY="$(random_hex 32)"
   [[ -n "$PROMETHEUS_PASSWORD" ]] || PROMETHEUS_PASSWORD="$(random_hex 24)"
@@ -150,7 +147,9 @@ hubuum_monitoring_env() {
   printf 'GRAFANA_MEMORY_LIMIT=%s\n' "$GRAFANA_MEMORY_LIMIT"
   for setting in MONITORING_ASSETS_REF MONITORING_DEPLOYMENT MONITORING_HOST \
     GRAFANA_ADMIN_PASSWORD GRAFANA_SECRET_KEY PROMETHEUS_PASSWORD; do
-    printf '%s=%s\n' "$setting" "${!setting}"
+    if [[ -n "${!setting}" ]]; then
+      printf '%s=%s\n' "$setting" "${!setting}"
+    fi
   done
 }
 

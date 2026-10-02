@@ -324,6 +324,29 @@ hubuum_roll_monitoring() {
     "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate prometheus grafana
     hubuum_wait_for_rollout_health prometheus
     hubuum_wait_for_rollout_health grafana
+  else
+    local container_ids container_id service
+    local -a ps_options=(-a -q)
+    local -a monitoring_containers=()
+
+    # podman-compose already includes stopped containers and older versions
+    # do not accept -a. Both providers include this project's orphaned services.
+    [[ "${ENGINE_BIN:-docker}" != "podman" ]] || ps_options=(-q)
+    container_ids="$("${COMPOSE_CMD[@]}" ps "${ps_options[@]}")" || return 1
+    while IFS= read -r container_id; do
+      [[ -n "$container_id" ]] || continue
+      service="$("$ENGINE_PATH" inspect \
+        --format '{{ index .Config.Labels "com.docker.compose.service" }}' \
+        "$container_id")" || return 1
+      case "$service" in
+        prometheus|grafana) monitoring_containers+=("$container_id") ;;
+      esac
+    done <<< "$container_ids"
+    if [[ "${#monitoring_containers[@]}" -gt 0 ]]; then
+      echo "Removing disabled monitoring containers; retaining their data volumes..."
+      "$ENGINE_PATH" stop "${monitoring_containers[@]}" || return 1
+      "$ENGINE_PATH" rm "${monitoring_containers[@]}" || return 1
+    fi
   fi
 }
 

@@ -68,14 +68,20 @@ if [[ "${1:-}" == "inspect" ]]; then
   exit 0
 fi
 
-if [[ "$*" == *" ps -q"* ]]; then
-  [[ "$*" == *" ps -q" ]] || {
+if [[ "$*" == *" ps "* ]]; then
+  [[ "$*" == *" ps -q" || ( "$ENGINE_BIN" == "docker" && "$*" == *" ps -a -q" ) ]] || {
     echo "service arguments to compose ps are unsupported" >&2
     exit 2
   }
 
   for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby prometheus grafana; do
-    if [[ -e "$TEST_ROOT/stopped-$service" ]]; then
+    if [[ -e "$TEST_ROOT/removed-$service" ]]; then
+      continue
+    fi
+    if [[ ( "$service" == "prometheus" || "$service" == "grafana" ) && "$FAKE_MONITORING_PRESENT" != "true" ]]; then
+      continue
+    fi
+    if [[ -e "$TEST_ROOT/stopped-$service" && "$ENGINE_BIN" != "podman" && "$*" != *" ps -a -q" ]]; then
       continue
     fi
     if [[ "$service" == "caddy" && "$FAKE_CADDY_RUNNING" != "true" && ! -e "$TEST_ROOT/started-caddy" ]]; then
@@ -85,6 +91,17 @@ if [[ "$*" == *" ps -q"* ]]; then
       printf 'container-%s\n' "$service"
     fi
   done
+fi
+
+if [[ "${1:-}" == "stop" || "${1:-}" == "rm" ]]; then
+  action="$1"
+  shift
+  for container in "$@"; do
+    service="${container#container-}"
+    [[ "$action" == "stop" ]] && touch "$TEST_ROOT/stopped-$service"
+    [[ "$action" == "rm" ]] && touch "$TEST_ROOT/removed-$service"
+  done
+  exit 0
 fi
 
 if [[ "$*" == *" up "* ]]; then
@@ -112,6 +129,8 @@ export COMMAND_LOG FAKE_CADDY_DEPENDENCIES FAKE_CADDY_RELOAD_FAIL
 export FAKE_CADDY_RUNNING FAKE_MIGRATION_FAIL TEST_ROOT
 export FAKE_MISSING_SERVICES=""
 export FAKE_UNHEALTHY_SERVICES=""
+export FAKE_MONITORING_PRESENT="false"
+export ENGINE_BIN="docker"
 ENGINE_PATH="$FAKE_ENGINE"
 COMPOSE_CMD=("$FAKE_ENGINE" compose --env-file .env -f compose.yml)
 API_PORT=8080
@@ -124,7 +143,7 @@ assert_commands() {
   local expected="$1"
   local actual="$TEST_ROOT/actual.log"
 
-  grep -E '(^| )(run|up|exec|start|stop) ' "$COMMAND_LOG" > "$actual"
+  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" > "$actual"
   diff -u "$expected" "$actual"
 }
 
@@ -134,7 +153,7 @@ assert_commands_with_unordered_prefix() {
   local actual="$TEST_ROOT/actual.log"
   local ordered_start=$((unordered_count + 1))
 
-  grep -E '(^| )(run|up|exec|start|stop) ' "$COMMAND_LOG" > "$actual"
+  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" > "$actual"
   diff -u \
     <(head -n "$unordered_count" "$expected" | sort) \
     <(head -n "$unordered_count" "$actual" | sort)
@@ -409,9 +428,30 @@ assert_commands "$TEST_ROOT/expected-managed-single-role-migration.log"
 MONITORING_ENABLED="false"
 : > "$COMMAND_LOG"
 hubuum_roll_monitoring
-[[ ! -s "$COMMAND_LOG" ]]
+! grep -Eq '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG"
+
+for ENGINE_BIN in docker podman; do
+  # One service is running and the other stopped; both must be removed after
+  # configuration refresh has made them orphans. Other project services stay.
+  FAKE_MONITORING_PRESENT="true"
+  rm -f "$TEST_ROOT"/{stopped,removed}-{prometheus,grafana}
+  touch "$TEST_ROOT/stopped-grafana"
+  : > "$COMMAND_LOG"
+  hubuum_roll_monitoring
+  cat > "$TEST_ROOT/expected-monitoring-disabled.log" <<EOF
+stop container-prometheus container-grafana
+rm container-prometheus container-grafana
+EOF
+  assert_commands "$TEST_ROOT/expected-monitoring-disabled.log"
+  [[ -e "$TEST_ROOT/removed-prometheus" && -e "$TEST_ROOT/removed-grafana" ]]
+  : > "$COMMAND_LOG"
+  hubuum_roll_monitoring
+  ! grep -Eq '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG"
+done
 
 MONITORING_ENABLED="true"
+ENGINE_BIN="docker"
+rm -f "$TEST_ROOT"/{stopped,removed}-{prometheus,grafana}
 : > "$COMMAND_LOG"
 hubuum_roll_monitoring
 cat > "$TEST_ROOT/expected-monitoring.log" <<EOF

@@ -109,6 +109,39 @@ class MonitoringTests(tags.InstallerFixture):
         self.assertIn("GRAFANA_ADMIN_PASSWORD", result.stdout)
         self.assertNotIn(self.values()["GRAFANA_ADMIN_PASSWORD"], result.stdout)
 
+    def test_disabled_monitoring_preserves_settings_for_reenable(self):
+        for engine in ("docker", "podman"):
+            for mode in ("all", "backend"):
+                for script, options in (("install-single-host.sh", ()),
+                                        ("install-single-host.sh", ("--recreate",)),
+                                        ("update-single-host.sh", ())):
+                    with self.subTest(engine=engine, mode=mode, script=script, options=options):
+                        shutil.rmtree(self.installation, ignore_errors=True)
+                        self.engine = engine
+                        self.install("--mode", mode, "--monitoring")
+                        environment = self.installation / ".env"
+                        environment.write_text(environment.read_text().replace(
+                            "PROMETHEUS_RETENTION_TIME=31d", "PROMETHEUS_RETENTION_TIME=45d"))
+                        before = {key: value for key, value in self.values().items()
+                                  if key.startswith(("GRAFANA_", "PROMETHEUS_", "MONITORING_"))
+                                  and key != "MONITORING_ENABLED"}
+                        environment.write_text(environment.read_text().replace(
+                            "MONITORING_ENABLED=true", "MONITORING_ENABLED=false"))
+                        self.commands.write_text("")
+                        self.run_script(script, *options)
+                        disabled = self.values()
+                        self.assertEqual(disabled["MONITORING_ENABLED"], "false")
+                        for key, value in before.items():
+                            self.assertEqual(disabled.get(key), value, key)
+                        self.assertEqual(environment.stat().st_mode & 0o777, 0o600)
+                        self.assertNotIn("hash-password", self.commands.read_text())
+                        self.assertNotIn("  grafana:", (self.installation / "compose.yml").read_text())
+                        self.assertNotIn("import monitoring", (self.installation / "Caddyfile").read_text())
+                        self.assertIn("  grafana_data:", (self.installation / "compose.yml").read_text())
+                        self.run_script(script, "--monitoring")
+                        for key, value in before.items():
+                            self.assertEqual(self.values().get(key), value, key)
+
     def test_lifecycle_preserves_until_explicit_purge(self):
         for engine in ("docker", "podman"):
             for mode in ("all", "backend"):
@@ -257,13 +290,65 @@ def live(engine, without_resource_limits=False):
                 raise AssertionError("Grafana credentials did not survive recreation")
             restored = request(historic_query, values["PROMETHEUS_PASSWORD"])
             assert json.loads(restored[1])["data"]["result"] == json.loads(historic[1])["data"]["result"], restored
+            # Refresh removes monitoring from Compose before rollout runs. Use
+            # the actual cleanup helper against those orphans, including a
+            # stopped Grafana container, then reopen the retained databases.
+            for mode in ("all", "backend"):
+                containers = json.loads(run(engine, "inspect", *run(*compose, "ps", "-q").stdout.split()).stdout)
+                retained = {item["Id"] for item in containers
+                            if item["Config"]["Labels"]["com.docker.compose.service"] not in ("prometheus", "grafana")}
+                if mode == "all":
+                    run(*compose, "stop", "grafana")
+                environment.write_text(environment.read_text().replace("MONITORING_ENABLED=true", "MONITORING_ENABLED=false"))
+                refresh = ["bash", str(scripts / "install-single-host.sh"), "--dir", str(installation),
+                           "--engine", engine, "--refresh-config", "--mode", mode, "--web", "localhost",
+                           "--api", "localhost", "--shared-host-routing", "bff" if mode == "all" else ""]
+                run(*refresh)
+                assert "  grafana:" not in (installation / "compose.yml").read_text()
+                run("bash", "-euc", '''
+source "$1"
+ENGINE_BIN="$2"
+ENGINE_PATH="$(command -v "$2")"
+shift 2
+COMPOSE_CMD=("$@")
+MONITORING_ENABLED=false
+hubuum_roll_monitoring
+hubuum_roll_monitoring
+''', "monitoring-cleanup", str(ROOT / "scripts/single-host-rollout.sh"), engine, *compose)
+                remaining_ids = run(engine, "ps", "-a", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.ID}}").stdout.split()
+                remaining_containers = json.loads(run(engine, "inspect", *remaining_ids).stdout)
+                assert {item["Id"] for item in remaining_containers} == retained
+                volumes = run(engine, "volume", "ls", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.Name}}").stdout
+                assert "grafana_data" in volumes and "prometheus_data" in volumes, volumes
+                run(*refresh, "--monitoring")
+                restored_values = dict(line.split("=", 1) for line in environment.read_text().splitlines() if "=" in line)
+                for key in ("GRAFANA_ADMIN_PASSWORD", "GRAFANA_SECRET_KEY", "PROMETHEUS_PASSWORD"):
+                    assert restored_values[key] == values[key], key
+                environment.write_text(environment.read_text().replace("MONITORING_HOST=localhost\n", f"MONITORING_HOST=localhost:{port}\n"))
+                (installation / "compose.yml").write_text(content)
+                caddy.write_text(caddy.read_text().replace("localhost {", "localhost {\n\ttls internal"))
+                run(*compose, "up", "-d", "--no-deps", "prometheus", "grafana")
+                run(*compose, "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile")
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline:
+                    try:
+                        dashboard = request("/grafana/api/dashboards/uid/persistence-test", password)
+                        restored = request(historic_query, values["PROMETHEUS_PASSWORD"])
+                        if dashboard[0] == 200 and restored[0] == 200:
+                            break
+                    except OSError:
+                        pass
+                    time.sleep(1)
+                else:
+                    raise AssertionError("Monitoring data or credentials did not survive disable/re-enable")
+                assert json.loads(restored[1])["data"]["result"] == json.loads(historic[1])["data"]["result"], restored
             run(*compose, "down")
             volumes = run(engine, "volume", "ls", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.Name}}").stdout
             assert "grafana_data" in volumes and "prometheus_data" in volumes, volumes
             run(*compose, "down", "--volumes")
             remaining = run(engine, "volume", "ls", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.Name}}").stdout
             assert not remaining.strip(), remaining
-            print(f"Live monitoring passed using {engine}: authentication, both targets, seven dashboards, rules, and retained volumes")
+            print(f"Live monitoring passed using {engine}: authentication, both targets, seven dashboards, rules, disable/re-enable, and retained volumes")
         except BaseException:
             diagnostics = subprocess.run([*compose, "logs", "--tail", "60"], text=True, capture_output=True, check=False)
             print(diagnostics.stdout + diagnostics.stderr, file=sys.stderr)
