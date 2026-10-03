@@ -23863,10 +23863,10 @@
           "delivery_policy": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
               },
               {
-                "$ref": "#/components/schemas/EventDeliveryPolicy"
+                "type": "null"
               }
             ]
           },
@@ -26946,10 +26946,10 @@
           "delivery_policy": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
               },
               {
-                "$ref": "#/components/schemas/EventDeliveryPolicy"
+                "type": "null"
               }
             ]
           },
@@ -28654,10 +28654,10 @@
           "delivery_policy": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
               },
               {
-                "$ref": "#/components/schemas/EventDeliveryPolicy"
+                "type": "null"
               }
             ]
           },
@@ -34694,10 +34694,10 @@
           "delivery_policy": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/EventDeliveryPolicy"
               },
               {
-                "$ref": "#/components/schemas/EventDeliveryPolicy"
+                "type": "null"
               }
             ]
           },

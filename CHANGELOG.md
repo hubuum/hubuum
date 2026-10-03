@@ -24,8 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Configurable JSON webhooks with bounded payload templates, independent
   secret-backed URLs and bearer authentication, declarative acknowledgement and
   retry rules, administrator preview/test delivery, and durable per-sink pacing
-  and HTTP cooldowns. Slack and Mattermost incoming webhooks use documented
-  configurations of the same transport; legacy webhook defaults are preserved.
+  and HTTP cooldowns. A setup guide covers Slack, Mattermost, Discord, and
+  Apprise bridge configurations of the same transport, including secrets and
+  preview/test delivery; legacy webhook defaults are preserved.
 - Administrator system event subscriptions and task-kind filtering, including
   failed-backup notifications from existing task lifecycle events.
 - A searchable Zensical documentation website, automatically published to GitHub

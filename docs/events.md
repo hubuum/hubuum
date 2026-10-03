@@ -236,8 +236,9 @@ without deleting historical events or existing delivery rows.
 
 ## Webhook Sinks
 
-Webhook delivery is the reference concrete sink. A webhook subscription posts
-the event envelope as JSON to the URL in the subscription `routing` object:
+Webhook delivery is the reference concrete sink. For a setup walkthrough, see
+[chat and notification webhooks](webhook_notifications.md). By default, a webhook
+subscription posts the event envelope as JSON to the URL in its `routing` object:
 
 ```json
 {
@@ -423,8 +424,9 @@ render to non-empty text. Webhook `max_request_bytes` and the transport
 Delivery is at least once. A successful transport-specific acknowledgement
 marks the delivery `succeeded`; transport errors or failed acknowledgements are
 retried with backoff until the configured attempt limit, then marked `dead`.
-For webhooks, any `2xx` response is successful and non-`2xx` responses are
-retried.
+By default, webhooks treat any `2xx` response as successful and retry non-`2xx`
+responses. Optional [response policies](#response-and-delivery-policies) can
+require an acknowledgement, classify permanent errors, or defer HTTP 429.
 
 Hubuum does not guarantee ordering across events. Consumers that need ordering
 should reconcile with `occurred_at` and the internal monotonic `id`, while still
@@ -652,65 +654,15 @@ remain JSON `POST`s; templates cannot change transport, headers, or credentials.
 
 ### Slack And Mattermost Incoming Webhook Example
 
-Create an incoming webhook in the destination service and store its complete
-URL under `ops_chat_webhook` in the secret source. Both services accept the
-simple `text` payload below. Create this ordinary webhook sink:
+Follow [Set Up Chat And Notification Webhooks](webhook_notifications.md) for
+provider setup, secret storage, complete sink and subscription requests, and
+preview/test delivery. It includes separate Slack and Mattermost instructions,
+plus Discord and Apprise bridge recipes.
 
-```json
-{
-  "name": "ops-chat",
-  "kind": "webhook",
-  "config": {
-    "url_secret_ref": "ops_chat_webhook",
-    "body_template": "{\"text\": {{ (test_marker ~ 'Hubuum: ' ~ summary) | tojson }}}",
-    "response": {
-      "rate_limit": true,
-      "retry_statuses": [408, 500, 502, 503, 504],
-      "body": { "kind": "text_equals", "value": "ok" }
-    }
-  },
-  "delivery_policy": { "min_interval_ms": 1000 },
-  "enabled": true
-}
-```
-
-The webhook selects its destination channel. Rich Slack blocks or Mattermost
-attachments can be expressed as JSON in `body_template`; the operator owns
-provider-specific fields and size limits. Hubuum validates JSON and execution
-budgets without maintaining either provider's API. Bot workflows, OAuth refresh,
-and channel discovery belong in an external integration service.
-
-For failed backups, post this subscription to
-`POST /api/v1/system-event-subscriptions`, replacing `sink_id` with the created
-sink's ID:
-
-```json
-{
-  "sink_id": 3,
-  "name": "failed-backups",
-  "description": "Notify operations of failed backup tasks",
-  "entity_types": ["task"],
-  "actions": ["failed"],
-  "filter": { "task_kinds": ["backup"] },
-  "routing": {},
-  "enabled": true
-}
-```
-
-System CRUD uses the same ETag preconditions and pagination conventions as
-collection subscriptions and is restricted to unscoped administrators. System
-scope is fixed by the route and excludes events with direct or related collections.
-
-An Apprise API destination can instead use a JSON payload template such as:
-
-```jinja
-{"title": "Hubuum", "body": {{ (test_marker ~ summary) | tojson }}}
-```
-
-Configure destinations in that external service and point the subscription at
-its notification endpoint. Authentication can use the existing bearer secret
-or configured headers. Match response handling to the destination's documented
-contract; the chat acknowledgement example is not an Apprise preset.
+All examples use `kind: "webhook"`. Keep provider credentials in the secret
+source, use `tojson` for dynamic payload values, and select an acknowledgement
+policy matching the destination. No provider-specific sink or bot client is
+required.
 
 ### Response And Delivery Policies
 
