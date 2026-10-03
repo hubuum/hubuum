@@ -47,7 +47,6 @@ for command_name in cargo curl docker jq openssl python3 socat; do
   fi
 done
 
-python3 "$repo_root/scripts/test-serve-treetop-fixture.py"
 
 case "$HUBUUM_TREETOP_TEST_IMAGE" in
   *@sha256:????????????????????????????????????????????????????????????????) ;;
@@ -71,7 +70,7 @@ jq --null-input \
   '{schema_version: 1, image: $image, source_revision: $revision}' \
   > "$report_dir/fixture.json"
 
-python3 "$repo_root/scripts/serve-treetop-fixture.py" \
+python3 "$repo_root/tests/python/run.py" integration treetop-server \
   --port "$HUBUUM_TREETOP_FIXTURE_PORT" \
   --bind 127.0.0.1 \
   --directory "$fixture_dir" \

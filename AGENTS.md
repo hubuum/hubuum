@@ -112,6 +112,15 @@
 
 ## Tests
 
+- Rust owns domain/API behavior, authorization, persistence invariants, concurrency,
+  and production-adapter assertions. Python owns repository-tool regressions and
+  packaged-deployment integration checks; it may provision fixtures for Rust tests.
+  Follow `docs/testing.md` when choosing where new coverage belongs.
+- Add Python regressions as discoverable `test_*.py` modules under
+  `tests/python/unit/`; run `python3 -I -S tests/python/run.py unit`.
+  Put explicit live-system drivers in `tests/python/integration/` and reusable
+  fixtures in `tests/python/support/`. Keep operational tools in `scripts/`;
+  do not add standalone `scripts/test-*.py` entrypoints.
 - Prefer the shared test utilities in `src/tests/*` for API requests, fixtures, scoped names, and assertions.
 - Use `TestScope` or `TestContext` for database-backed tests so test data is isolated and names do not collide under parallel execution.
 - Clean up fixtures where tests create persistent domain objects outside existing fixture helpers.

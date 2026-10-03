@@ -5,8 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT
 
-python3 "$repo_root/scripts/test-operational-contract-compatibility.py"
-
 cargo run --quiet --features embedded-migrations \
   --bin hubuum-operational-contracts -- json > "$temporary_dir/baseline.json"
 HUBUUM_OPERATIONAL_CONTRACT_BASELINE_FILE="$temporary_dir/baseline.json" \

@@ -195,10 +195,6 @@ jobs:
           python-version-file: .python-version
       - name: Validate immutable inputs and exception metadata
         run: python3 scripts/check-supply-chain-policy.py
-      - name: Test supply-chain policy validation
-        run: python3 scripts/test-supply-chain-policy.py
-      - name: Test Windows PostgreSQL archive installation
-        run: python3 scripts/test-install-windows-postgresql.py
       - name: Test release SBOM composition
         run: bash scripts/test-generate-release-sbom.sh
       - name: Test container evidence input validation
@@ -220,7 +216,7 @@ jobs:
         run: exit 1
 
   python-tooling:
-    name: Python tooling (${{ matrix.python-version }})
+    name: Python tests (${{ matrix.python-version }})
     needs: changes
     if: >-
       always() &&
@@ -241,37 +237,45 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Test Python requirements and standard-library-only checks
-        run: python3 scripts/test-python-version.py
-      - name: Test integration fixture readiness and cleanup
-        run: python3 scripts/test-event-transport-runner.py
-      - name: Test adjacent-release credential approval compatibility
-        run: python3 scripts/test-adjacent-release-api.py
+      - name: Run discovered Python regression tests without site packages
+        run: python3 -I -S tests/python/run.py unit
+
+  monitoring-integration:
+    name: Monitoring integration (${{ matrix.engine }})
+    needs: changes
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.code == 'true' ||
+        needs.changes.outputs.markdown == 'true'
+      )
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
       - name: Validate operator dashboards, metric references and alert behavior
-        run: |
-          python3 scripts/observability.py check --promtool
-          python3 scripts/observability.py test
+        if: matrix.engine == 'docker'
+        run: python3 scripts/observability.py check --promtool
       - name: Test monitoring with Docker Compose
-        if: matrix.python-version == '3.12'
-        run: python3 scripts/observability.py test-fixture --engine docker
+        if: matrix.engine == 'docker'
+        run: python3 tests/python/run.py integration monitoring-fixture --engine docker
       - name: Install rootful Podman Compose
-        if: matrix.python-version == '3.12'
+        if: matrix.engine == 'podman'
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes podman podman-compose
       - name: Test monitoring with rootful Podman Compose
-        if: matrix.python-version == '3.12'
-        run: sudo env PODMAN_COMPOSE_PROVIDER=/usr/bin/podman-compose "$(command -v python3)" scripts/observability.py test-fixture --engine podman
-      - name: Test Rust API classification policy
-        run: python3 scripts/test-rust-api-policy.py
-      - name: Test supply-chain policy validation
-        run: python3 scripts/test-supply-chain-policy.py
-      - name: Test functional corpus tooling and committed metadata
-        run: |
-          python3 scripts/test-corpus-tooling.py
-          python3 scripts/test-corpus.py check
-          python3 scripts/test-example-corpus.py
-          python3 scripts/example-corpus.py check
+        if: matrix.engine == 'podman'
+        run: sudo env PODMAN_COMPOSE_PROVIDER=/usr/bin/podman-compose "$(command -v python3)" tests/python/run.py integration monitoring-fixture --engine podman
 
   rust-api-policy:
     name: Rust API policy
@@ -295,10 +299,6 @@ jobs:
           python-version-file: .python-version
       - name: Validate Rust API classifications
         run: python3 scripts/check-rust-api-policy.py
-      - name: Test Rust API classification policy
-        run: python3 scripts/test-rust-api-policy.py
-      - name: Test Rust API registry baseline detection
-        run: python3 scripts/test-crates-io-baseline.py
       - name: Select supported Rust packages
         id: supported
         run: |
@@ -385,14 +385,8 @@ jobs:
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
       - name: Test deployment script refresh
         run: bash scripts/test-install-script-refresh.sh
-      - name: Test single-host image tag selection
-        run: python3 scripts/test-single-host-tags.py
-      - name: Test single-host monitoring configuration and lifecycle
-        run: python3 scripts/observability.py test
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
-      - name: Test health probe transport retry boundaries
-        run: python3 scripts/test-single-host-health-probe.py
       - name: Test migration compatibility policy
         run: |
           bash scripts/test-migration-compatibility.sh
@@ -869,7 +863,7 @@ jobs:
       - name: Cache Cargo and target directories
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test production transports against pinned TLS fixtures
-        run: python3 scripts/test-event-transports.py
+        run: python3 tests/python/run.py integration event-transports
 
   treetop-authorization-conformance:
     name: Treetop authorization conformance
@@ -1369,7 +1363,7 @@ jobs:
       - name: Verify installer monitoring with real server data and alerts
         timeout-minutes: 20
         run: |
-          python3 scripts/observability.py test-live --image hubuum-server:ci \
+          python3 tests/python/run.py integration monitoring --image hubuum-server:ci \
             --report monitoring-acceptance.json
       - name: Upload monitoring acceptance evidence
         if: always() && hashFiles('monitoring-acceptance.json') != ''
@@ -1378,16 +1372,16 @@ jobs:
           name: monitoring-acceptance
           path: monitoring-acceptance.json
       - name: Verify committed functional corpus against the production image
-        run: python3 scripts/test-corpus.py verify --image hubuum-server:ci
+        run: python3 tests/python/run.py integration corpus verify --image hubuum-server:ci
       - name: Verify the Atlas documentation corpus against the production image
-        run: python3 scripts/example-corpus.py verify --image hubuum-server:ci
+        run: python3 tests/python/run.py integration atlas verify --image hubuum-server:ci
       - name: Verify Atlas corpus regeneration separately
         run: |
-          python3 scripts/example-corpus.py generate \
+          python3 tests/python/run.py integration atlas generate \
             --image hubuum-server:ci --directory target/generated-atlas-corpus
       - name: Verify functional corpus regeneration separately
         run: |
-          python3 scripts/test-corpus.py generate \
+          python3 tests/python/run.py integration corpus generate \
             --image hubuum-server:ci --directory target/generated-test-corpus
       - name: Test live single-host zero-downtime rollout
         env:
@@ -1459,6 +1453,7 @@ jobs:
       - static-checks
       - dependency-policy
       - python-tooling
+      - monitoring-integration
       - rust-api-policy
       - lint
       - release-metadata
@@ -1527,6 +1522,7 @@ jobs:
       needs.verify-tag-main-ci-success.result == 'success' &&
       needs.dependency-policy.result == 'success' &&
       needs.python-tooling.result == 'success' &&
+      needs.monitoring-integration.result == 'success' &&
       needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
       needs.operational-contract.result == 'success' &&
@@ -1538,6 +1534,7 @@ jobs:
       - verify-tag-main-ci-success
       - dependency-policy
       - python-tooling
+      - monitoring-integration
       - rust-api-policy
       - openapi-contract
       - operational-contract

@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "run by scripts/check-json-schema-budget.py under process resource limits"]
+    #[ignore = "run by tests/python/integration/schema_budget.py under process resource limits"]
     fn schema_budget_resource_probe() {
         use std::time::Instant;
 

@@ -1,6 +1,6 @@
 # Production integration coverage
 
-Run `python3 scripts/test-event-transports.py` with Python 3.11+, OpenSSL and
+Run `python3 tests/python/run.py integration event-transports` with Python 3.11+, OpenSSL and
 Docker. Production features are compiled with the locked dependency graph.
 Fixture images are pinned by digest in the runner and `integration-fixtures.py`.
 Only loopback ports are exposed; private CAs and disposable credentials are

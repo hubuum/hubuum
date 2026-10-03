@@ -204,8 +204,8 @@ cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --lock
 docker build \
   --build-arg 'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release' \
   --tag hubuum-server:verify .
-python3 scripts/test-corpus.py check
-python3 scripts/test-corpus.py verify
+python3 tests/python/run.py integration corpus check
+python3 tests/python/run.py integration corpus verify
 ```
 
 `check` verifies metadata, payloads, schemas, definitions, ownership and anchors
@@ -221,7 +221,7 @@ Refresh the committed files after changing the recipe or after an incompatible
 backup, restore, schema or scenario change:
 
 ```bash
-python3 scripts/test-corpus.py generate
+python3 tests/python/run.py integration corpus generate
 ```
 
 Generation creates the data through supported APIs, writes a production backup,
@@ -234,8 +234,8 @@ the same behavior rather than identical bytes.
 To test regeneration without changing the committed files:
 
 ```bash
-python3 scripts/test-corpus.py generate --directory target/generated-test-corpus
-python3 scripts/test-corpus-tooling.py
+python3 tests/python/run.py integration corpus generate --directory target/generated-test-corpus
+python3 tests/python/run.py unit tooling.test_corpus
 ```
 
 The uncompressed file must remain below 25 MiB. CI restores the committed file

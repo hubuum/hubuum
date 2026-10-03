@@ -25,8 +25,9 @@ use uuid::Uuid;
 fn fixture(name: &str) -> String {
     // Match the production application's process-wide TLS initialization.
     install_default_crypto_provider().unwrap();
-    std::env::var(format!("HUBUUM_CONTRACT_{name}"))
-        .expect("run with python3 scripts/test-event-transports.py; fixtures are mandatory")
+    std::env::var(format!("HUBUUM_CONTRACT_{name}")).expect(
+        "run with python3 tests/python/run.py integration event-transports; fixtures are mandatory",
+    )
 }
 
 fn secret() -> SecretValue {

@@ -254,8 +254,8 @@ initial rule group remains maintained in `prometheus/alerts.json`. Run:
 ```sh
 python3 scripts/observability.py generate
 python3 scripts/observability.py check --promtool
-python3 scripts/observability.py test
-python3 scripts/observability.py test-fixture --engine docker
+python3 tests/python/run.py unit monitoring deployment.test_monitoring
+python3 tests/python/run.py integration monitoring-fixture --engine docker
 ```
 
 Validation checks every dashboard/rule metric, label and enum against the
@@ -263,12 +263,12 @@ server contract and explicit external list, checks runbooks in both directions,
 rejects direct sums of shared gauges, checks SLI exclusions, and compares
 Operator/direct groups. Pinned Prometheus parses every query and evaluates
 firing, recovery, deduplication and SLI-exclusion fixtures. CI exercises installer
-configuration and lifecycle. The `test-fixture` command checks Docker and Podman
+configuration and lifecycle. The `integration monitoring-fixture` command checks Docker and Podman
 transport/routing with two independent metrics fixtures. The production-container
 CI job also runs the real-server acceptance test:
 
 ```sh
-python3 scripts/observability.py test-live --image hubuum-server:ci \
+python3 tests/python/run.py integration monitoring --image hubuum-server:ci \
   --report target/monitoring-acceptance.json
 ```
 

@@ -104,8 +104,8 @@ requires the complete compilation budget and local-reference policy to pass.
 Run the standard-library-only probe from the repository root:
 
 ```bash
-python3 scripts/check-json-schema-budget.py
-python3 scripts/check-json-schema-budget.py --release
+python3 tests/python/run.py integration schema-budget
+python3 tests/python/run.py integration schema-budget --release
 ```
 
 The script builds the `hubuum-domain` test executable, then runs only the

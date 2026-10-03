@@ -94,6 +94,7 @@ nav = [
   { "Contributing" = [
     { "Contributor guide" = "contributing/index.md" },
     { "Development setup" = "development.md" },
+    { "Testing" = "testing.md" },
     { "Documentation" = "contributing/documentation.md" },
     { "Documentation review & roadmap" = "contributing/documentation-review.md" },
     { "Architecture" = [

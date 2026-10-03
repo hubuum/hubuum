@@ -14,7 +14,6 @@ adapter_migrations="$test_root/crates/hubuum-storage-postgres/migrations"
 mkdir -p "$test_root/scripts" "$legacy_migrations/0001_safe"
 cp "$repository_root/scripts/check-migration-compatibility.sh" "$test_root/scripts/"
 cp "$repository_root/scripts/check-migration-check-replacements.py" "$test_root/scripts/"
-python3 "$repository_root/scripts/test-migration-check-replacements.py"
 printf '%s\n' 'SELECT 1;' 'SELECT 2;' 'SELECT 3;' 'SELECT 4;' \
   "ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export'));" \
   > "$legacy_migrations/0001_safe/up.sql"
