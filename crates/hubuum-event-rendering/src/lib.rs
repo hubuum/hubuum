@@ -68,6 +68,14 @@ pub async fn render(
     max_envelope_bytes: usize,
 ) -> Result<Vec<String>, SinkError> {
     let context = event_context(envelope, max_envelope_bytes)?;
+    render_context(&context, templates).await
+}
+
+/// Render a caller-owned, bounded event context without exposing secrets.
+pub async fn render_context(
+    context: &Value,
+    templates: &[EventTemplate<'_>],
+) -> Result<Vec<String>, SinkError> {
     let mut batch = TemplateBatch::new(templates.iter().map(|template| template.max_bytes).sum());
     for template in templates {
         batch
@@ -86,7 +94,7 @@ pub async fn render(
             })?;
     }
     batch
-        .render(&context)
+        .render(context)
         .await
         .map(|outputs| {
             outputs
@@ -108,58 +116,4 @@ pub async fn render(
                 ),
             }
         })
-}
-
-pub fn default_text_template() -> String {
-    concat!("Hubuum: {{ summary }}\n", "Entity: {{ entity_type }}{% if entity_name %} {{ entity_name }}{% elif entity_id %} {{ entity_id }}{% endif %}\n",
-        "Action: {{ action }}{% if metadata.task_kind %}\nTask kind: {{ metadata.task_kind }}{% endif %}\n",
-        "Occurred: {{ occurred_at }}\nEvent: {{ event_id }}").to_string()
-}
-
-pub fn rich_array(rendered: &str, max_items: usize) -> Result<Vec<Value>, SinkError> {
-    let value: Value = serde_json::from_str(rendered).map_err(|_| {
-        SinkError::permanent(
-            "Rich message template must render valid JSON; use tojson for event values",
-        )
-    })?;
-    match value {
-        Value::Array(items) if items.len() <= max_items && items.iter().all(Value::is_object) => {
-            Ok(items)
-        }
-        _ => Err(SinkError::permanent(
-            "Rich message must be a bounded JSON array of objects",
-        )),
-    }
-}
-
-pub fn validate_text(text: &str, max_chars: usize) -> Result<(), SinkError> {
-    if text.trim().is_empty() || text.chars().count() > max_chars {
-        return Err(SinkError::permanent(format!(
-            "Message text must contain 1 to {max_chars} characters"
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case("{}")]
-    #[case("[1]")]
-    #[case("not json")]
-    #[case("[{},{}]")]
-    fn rejects_invalid_rich_arrays(#[case] value: &str) {
-        assert!(rich_array(value, 1).is_err());
-    }
-
-    #[test]
-    fn accepts_json_escaped_event_values() {
-        assert_eq!(
-            rich_array(r#"[{"text":"quote: \" and newline: \n"}]"#, 1).unwrap()[0]["text"],
-            "quote: \" and newline: \n"
-        );
-    }
 }

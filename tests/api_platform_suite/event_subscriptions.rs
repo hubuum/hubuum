@@ -254,10 +254,10 @@ mod tests {
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
     }
     #[actix_web::test]
-    async fn chat_preview_and_test_require_admin_and_preserve_real_source_event() {
+    async fn webhook_preview_and_test_require_admin_and_preserve_real_source_event() {
         let context = TestContext::new().await;
         let resp = post_request(&context.pool, &context.admin_token, SINKS_ENDPOINT, &json!({
-            "name":context.scoped_name("preview_slack"), "kind":"slack", "config":{"transport":"webhook"},
+            "name":context.scoped_name("preview_webhook"), "kind":"webhook", "config":{"url_secret_ref":"unresolved_url", "body_template":r#"{"text":{{ (test_marker ~ summary) | tojson }}}"#},
             "secret_ref":"unresolved_preview_only", "enabled":false
         })).await;
         let sink: serde_json::Value =

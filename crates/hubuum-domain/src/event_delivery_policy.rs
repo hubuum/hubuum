@@ -29,11 +29,6 @@ impl EventDeliveryPolicy {
         }
         Ok(Self { min_interval_ms })
     }
-    pub const fn chat_default() -> Self {
-        Self {
-            min_interval_ms: Some(1000),
-        }
-    }
     pub const fn min_interval_ms(self) -> Option<u64> {
         self.min_interval_ms
     }

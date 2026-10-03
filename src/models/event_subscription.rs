@@ -18,8 +18,6 @@ pub use hubuum_events_core::redact_event_sink_config;
 #[serde(rename_all = "snake_case")]
 pub enum EventSinkKind {
     Webhook,
-    Slack,
-    Mattermost,
     Amqp,
     ValkeyStream,
     Email,
@@ -29,8 +27,6 @@ impl EventSinkKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Webhook => "webhook",
-            Self::Slack => "slack",
-            Self::Mattermost => "mattermost",
             Self::Amqp => "amqp",
             Self::ValkeyStream => "valkey_stream",
             Self::Email => "email",
@@ -39,7 +35,7 @@ impl EventSinkKind {
 
     pub fn ensure_enabled(self) -> Result<(), ApiError> {
         match self {
-            Self::Webhook | Self::Slack | Self::Mattermost => Ok(()),
+            Self::Webhook => Ok(()),
             Self::Amqp if cfg!(feature = "amqp") => Ok(()),
             Self::ValkeyStream if cfg!(feature = "valkey") => Ok(()),
             Self::Email if cfg!(feature = "email") => Ok(()),
@@ -57,8 +53,6 @@ impl FromStr for EventSinkKind {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "webhook" => Ok(Self::Webhook),
-            "slack" => Ok(Self::Slack),
-            "mattermost" => Ok(Self::Mattermost),
             "amqp" => Ok(Self::Amqp),
             "valkey_stream" => Ok(Self::ValkeyStream),
             "email" => Ok(Self::Email),
@@ -103,6 +97,7 @@ pub struct EventSink {
     pub name: String,
     pub kind: EventSinkKind,
     #[serde(serialize_with = "serialize_redacted_event_sink_value")]
+    /// Transport settings. Webhooks support body_template, url_secret_ref, and response rules.
     pub config: serde_json::Value,
     #[serde(default)]
     pub delivery_policy: Option<EventDeliveryPolicy>,
@@ -120,6 +115,7 @@ pub struct NewEventSink {
     pub name: String,
     pub kind: EventSinkKind,
     #[serde(default = "empty_json_object")]
+    /// Transport settings. Webhooks support body_template, url_secret_ref, and response rules.
     pub config: serde_json::Value,
     #[serde(default)]
     pub delivery_policy: Option<EventDeliveryPolicy>,
@@ -134,6 +130,7 @@ impl_redacted_event_sink_debug!(NewEventSink, name, kind, enabled);
 pub struct UpdateEventSink {
     pub name: Option<String>,
     pub kind: Option<EventSinkKind>,
+    /// Replacement transport settings, including optional webhook payload and response policies.
     pub config: Option<serde_json::Value>,
     pub delivery_policy: Option<EventDeliveryPolicy>,
     #[serde(
@@ -292,21 +289,9 @@ pub(crate) fn validate_sink_parts(
             "secret_ref must not be empty".to_string(),
         ));
     }
-    match kind {
-        EventSinkKind::Slack => {
-            hubuum_event_sink_slack::Configuration::parse(config)
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        }
-        EventSinkKind::Mattermost => {
-            hubuum_event_sink_mattermost::Configuration::parse(config)
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        }
-        _ => {}
-    }
-    if matches!(kind, EventSinkKind::Slack | EventSinkKind::Mattermost) && secret_ref.is_none() {
-        return Err(ApiError::BadRequest(
-            "Chat sinks require secret_ref".to_string(),
-        ));
+    if kind == EventSinkKind::Webhook {
+        hubuum_event_sink_webhook::Configuration::parse(config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
     Ok(())
 }
@@ -699,24 +684,16 @@ pub struct EventNotificationPreview {
     pub payload: serde_json::Value,
 }
 
-pub(crate) async fn validate_chat_templates(
+pub(crate) async fn validate_webhook_templates(
     kind: EventSinkKind,
     config: &serde_json::Value,
 ) -> Result<(), ApiError> {
-    let result = match kind {
-        EventSinkKind::Slack => {
-            hubuum_event_sink_slack::Configuration::parse(config)
-                .map_err(|e| ApiError::BadRequest(e.to_string()))?
-                .validate()
-                .await
-        }
-        EventSinkKind::Mattermost => {
-            hubuum_event_sink_mattermost::Configuration::parse(config)
-                .map_err(|e| ApiError::BadRequest(e.to_string()))?
-                .validate()
-                .await
-        }
-        _ => Ok(()),
-    };
-    result.map_err(|e| ApiError::BadRequest(e.to_string()))
+    if kind == EventSinkKind::Webhook {
+        hubuum_event_sink_webhook::Configuration::parse(config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?
+            .validate()
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    }
+    Ok(())
 }

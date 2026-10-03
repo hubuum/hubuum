@@ -607,16 +607,7 @@ fn remote_target_to_storage(
 fn event_sink_to_storage(input: ImportEventSinkInput) -> Result<StorageImportEventSink, ApiError> {
     Ok(StorageImportEventSink::from_parts(
         StorageImportEventSinkParts {
-            delivery_policy: input.delivery_policy.unwrap_or_else(|| {
-                if matches!(
-                    input.kind,
-                    crate::models::EventSinkKind::Slack | crate::models::EventSinkKind::Mattermost
-                ) {
-                    hubuum_domain::EventDeliveryPolicy::chat_default()
-                } else {
-                    hubuum_domain::EventDeliveryPolicy::default()
-                }
-            }),
+            delivery_policy: input.delivery_policy.unwrap_or_default(),
             reference: input.ref_,
             name: input.name,
             kind: input.kind.as_str().to_string(),

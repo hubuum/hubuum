@@ -3,10 +3,6 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
-ALTER TABLE event_sinks DROP CONSTRAINT event_sinks_kind_check; -- hubuum-compat: reviewed-offline-drop
-ALTER TABLE event_sinks ADD CONSTRAINT event_sinks_kind_check
-    CHECK (kind IN ('webhook', 'amqp', 'valkey_stream', 'email', 'slack', 'mattermost')) NOT VALID;
-ALTER TABLE event_sinks VALIDATE CONSTRAINT event_sinks_kind_check;
 ALTER TABLE event_sinks ADD COLUMN delivery_policy JSONB NOT NULL DEFAULT '{"min_interval_ms":null}';
 ALTER TABLE event_sinks ADD CONSTRAINT event_sinks_delivery_policy_check CHECK (
     jsonb_typeof(delivery_policy) = 'object' AND

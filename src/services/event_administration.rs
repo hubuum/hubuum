@@ -1,5 +1,5 @@
 use crate::models::SystemEventSubscription;
-use crate::models::event_subscription::validate_chat_templates;
+use crate::models::event_subscription::validate_webhook_templates;
 use hubuum_domain::{CollectionId, PrincipalId};
 use hubuum_events_core::EventSubscriptionScope;
 use std::collections::HashMap;
@@ -267,15 +267,9 @@ pub(crate) async fn create_event_sink(
     event_context: EventContext,
 ) -> Result<EventSink, ApiError> {
     validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
-    validate_chat_templates(sink.kind, &sink.config).await?;
+    validate_webhook_templates(sink.kind, &sink.config).await?;
     let request = StorageEventSinkCreate::builder(sink.name, sink.kind.as_str(), event_context)
-        .delivery_policy(sink.delivery_policy.unwrap_or_else(|| {
-            if matches!(sink.kind, EventSinkKind::Slack | EventSinkKind::Mattermost) {
-                hubuum_domain::EventDeliveryPolicy::chat_default()
-            } else {
-                hubuum_domain::EventDeliveryPolicy::default()
-            }
-        }))
+        .delivery_policy(sink.delivery_policy.unwrap_or_default())
         .configuration(sink.config)
         .secret_ref(normalize_optional_string(sink.secret_ref))
         .enabled(sink.enabled)
@@ -302,7 +296,7 @@ pub(crate) async fn update_event_sink(
         None => existing.secret_ref.as_deref(),
     };
     validate_sink_parts(kind, config, secret_ref)?;
-    validate_chat_templates(
+    validate_webhook_templates(
         update.kind.unwrap_or(existing.kind),
         update.config.as_ref().unwrap_or(&existing.config),
     )
@@ -422,7 +416,7 @@ pub(crate) async fn create_event_subscription(
     let sink = storage_handle(backend)
         .get_event_sink(subscription.sink_id)
         .await?;
-    validate_chat_routing(&sink, &subscription.routing)?;
+    validate_webhook_routing(&sink, &subscription.routing)?;
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,
@@ -474,7 +468,7 @@ pub(crate) async fn update_event_subscription(
     let sink_id = update
         .sink_id
         .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
-    validate_chat_routing(
+    validate_webhook_routing(
         &storage_handle(backend).get_event_sink(sink_id).await?,
         routing,
     )?;
@@ -595,7 +589,7 @@ pub(crate) async fn create_system_event_subscription(
     let sink = storage_handle(backend)
         .get_event_sink(subscription.sink_id)
         .await?;
-    validate_chat_routing(&sink, &subscription.routing)?;
+    validate_webhook_routing(&sink, &subscription.routing)?;
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,
@@ -646,7 +640,7 @@ pub(crate) async fn update_system_event_subscription(
     let sink_id = update
         .sink_id
         .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
-    validate_chat_routing(
+    validate_webhook_routing(
         &storage_handle(backend).get_event_sink(sink_id).await?,
         routing,
     )?;
@@ -774,14 +768,12 @@ pub(crate) async fn mark_event_delivery_dead(
     ))
 }
 
-fn validate_chat_routing(
+fn validate_webhook_routing(
     sink: &StorageEventSink,
     routing: &serde_json::Value,
 ) -> Result<(), ApiError> {
     let result = match sink.kind() {
-        "slack" => hubuum_event_sink_slack::Configuration::parse(sink.configuration())
-            .and_then(|c| c.validate_routing(routing)),
-        "mattermost" => hubuum_event_sink_mattermost::Configuration::parse(sink.configuration())
+        "webhook" => hubuum_event_sink_webhook::Configuration::parse(sink.configuration())
             .and_then(|c| c.validate_routing(routing)),
         _ => Ok(()),
     };
@@ -801,28 +793,26 @@ pub(crate) async fn preview_event_notification(
         ))
         .await?;
     let kind = EventSinkKind::from_str(input.sink().kind())?;
-    let result = match kind {
-        EventSinkKind::Slack => {
-            hubuum_event_sink_slack::Configuration::parse(input.sink().configuration())
-                .map_err(|e| ApiError::BadRequest(e.to_string()))?
-                .preview(input.event(), input.subscription().routing(), true)
-                .await
-        }
-        EventSinkKind::Mattermost => {
-            hubuum_event_sink_mattermost::Configuration::parse(input.sink().configuration())
-                .map_err(|e| ApiError::BadRequest(e.to_string()))?
-                .preview(input.event(), input.subscription().routing(), true)
-                .await
-        }
-        _ => {
-            return Err(ApiError::BadRequest(
-                "Preview and test are supported for Slack and Mattermost sinks".to_string(),
-            ));
-        }
-    };
+    if kind != EventSinkKind::Webhook {
+        return Err(ApiError::BadRequest(
+            "Preview and test are supported for webhook sinks".to_string(),
+        ));
+    }
+    let prepared = crate::events::webhook_sink()
+        .prepare(
+            input.event(),
+            hubuum_event_sinks_common::SinkDelivery::new(
+                input.sink().configuration(),
+                input.subscription().routing(),
+                None,
+            )
+            .for_test(true),
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(crate::models::EventNotificationPreview {
         sink_kind: kind,
-        payload: result.map_err(|e| ApiError::BadRequest(e.to_string()))?,
+        payload: prepared.payload().clone(),
     })
 }
 

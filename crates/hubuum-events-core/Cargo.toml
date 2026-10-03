@@ -27,4 +27,4 @@ default = []
 schema = ["dep:utoipa", "hubuum-domain/openapi"]
 
 [dev-dependencies]
-rstest = "0.26"
+rstest = "0.27"

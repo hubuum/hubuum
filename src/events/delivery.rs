@@ -142,8 +142,6 @@ pub(crate) async fn process_event_delivery_work_item(
         "email" => "email",
         "valkey_stream" => "valkey_stream",
         "webhook" => "webhook",
-        "slack" => "slack",
-        "mattermost" => "mattermost",
         _ => "unsupported",
     };
     let span = info_span!(
@@ -158,7 +156,7 @@ pub(crate) async fn process_event_delivery_work_item(
         let transport = resolver.resolve(sink.kind());
         let prepared = match transport {
             Some(transport) => match tokio::time::timeout(settings.transport_timeout(), transport.prepare(&envelope, &subscription, &sink)).await {
-                Ok(Ok(prepared)) => prepared,
+                Ok(Ok(prepared)) => prepared.map(|prepared| prepared.for_delivery(claim.delivery_id())),
                 result => {
                     let error = match result { Ok(Err(error)) => error, _ => SinkError::new("Notification preparation exceeded its time budget") };
                     match error.failure() {

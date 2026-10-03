@@ -7,6 +7,33 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Optional single-host Prometheus and Grafana installation with authenticated
+  `/prometheus/` and `/grafana/` paths, private container ports, pinned images,
+  persistent data and automatic provisioning. The shared operator package
+  provides seven dashboards, recording rules, SLO and operational alerts,
+  runbooks, Prometheus Operator resources and external job-result recording
+  for distributed installations as well. Disabling monitoring removes its
+  containers and proxy routes while preserving configuration, credentials,
+  Grafana's encryption key and data for later re-enabling.
+- A shared Atlas example inventory for documentation, demonstrations, and client
+  testing: four classes and ten connected objects, with downloadable import and
+  restorable backup files, schema and permission examples, and automated checks
+  against a real server.
+- Configurable JSON webhooks with bounded payload templates, independent
+  secret-backed URLs and bearer authentication, declarative acknowledgement and
+  retry rules, administrator preview/test delivery, and durable per-sink pacing
+  and HTTP cooldowns. Slack and Mattermost incoming webhooks use documented
+  configurations of the same transport; legacy webhook defaults are preserved.
+- Administrator system event subscriptions and task-kind filtering, including
+  failed-backup notifications from existing task lifecycle events.
+- A searchable Zensical documentation website, automatically published to GitHub
+  Pages with immutable `/vX.Y.Z/` release snapshots, the latest release as the
+  default, an explicit development edition, and on-demand older-release
+  publishing. Guided paths cover users, administrators, integrators, and
+  contributors, with links to the CLI, frontend, and client-library guides.
+
 ### Changed
 
 - Refresh runtime and development dependencies, pinned GitHub Actions, CI tools,
@@ -20,49 +47,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   crates' `openapi` features and events-core's `schema` feature now implement
   Utoipa 6 traits. Consumers composing these schemas must upgrade their Utoipa
   dependency to version 6.
-
 - Documentation uses the shared warm Hubuum theme from the ecosystem site's
   unversioned stylesheet, including retained release editions. Future styling
   updates no longer require changes or rebuilds in this repository.
-
-
-### Added
-
-- Optional single-host Prometheus and Grafana installation with authenticated
-  `/prometheus/` and `/grafana/` paths, private container ports, pinned images,
-  persistent data and automatic provisioning. The shared operator package
-  provides seven dashboards, recording rules, SLO and operational alerts,
-  runbooks, Prometheus Operator resources and external job-result recording
-  for distributed installations as well. Disabling monitoring removes its
-  containers and proxy routes while preserving configuration, credentials,
-  Grafana's encryption key and data for later re-enabling.
-
-- A shared Atlas example inventory for documentation, demonstrations, and client
-  testing: four classes and ten connected objects, with downloadable import and
-  restorable backup files, schema and permission examples, and automated checks
-  against a real server.
-- Slack and Mattermost event sinks with incoming webhooks, bot tokens, bounded
-  text and rich templates, administrator preview/test delivery, and durable
-  per-sink throttling with provider cooldowns.
-- Administrator system event subscriptions and task-kind filtering, including
-  failed-backup notifications from existing task lifecycle events.
-
-- A searchable Zensical documentation website, automatically published to GitHub
-  Pages with immutable `/vX.Y.Z/` release snapshots, the latest release as the
-  default, an explicit development edition, and on-demand older-release
-  publishing. Guided paths cover users, administrators, integrators, and
-  contributors, with links to the CLI, frontend, and client-library guides.
-
-### Changed
-
-- Documentation uses the shared warm Hubuum theme from the ecosystem site's
-  unversioned stylesheet, including retained release editions. Future styling
-  updates no longer require changes or rebuilds in this repository.
-
 - **Breaking:** storage SDK 0.4 adds scoped subscriptions, notification testing
   and delivery admission capabilities. Upgrade all eight SDK crates together
   and implement the new adapter methods. Stop older API and worker processes
-  before applying the chat-event migration and restart only matching application versions.
+  before applying the webhook-notification migration and restart only matching application versions.
 - **Breaking:** backups now use format 7; format 6 remains accepted with legacy
   defaults. Older servers cannot restore format 7. Restore resets transient
   sink scheduling while preserving configuration and terminal delivery history.
@@ -81,13 +72,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   API on Linux, including after configuration refresh. Existing provider files
   keep their contents and permissions; deployment instructions now specify
   group read access for the container process.
-
 - Reduce buffer reallocations when rendering templates by reserving a small
   initial buffer capped by the configured output limit.
 - Email payload limits apply to the original event envelope before its template
   alias is added. Delivery workers skip sinks during cooldowns, and rate-policy
   changes reschedule deferred notifications while preserving provider cooldowns.
-- Chat-event migration rollback rejects retained notification-test audit records
+- Webhook-notification migration rollback rejects retained notification-test audit records
   with instructions to archive and remove them before downgrading.
 - Documentation tables keep long environment-variable names readable, use wider
   reference layouts, and scroll within the table on small screens. Shared style

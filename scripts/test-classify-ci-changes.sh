@@ -689,13 +689,12 @@ assert workflow.count("      - monitoring-integration\n") == 2, "CI and release 
 assert "needs.monitoring-integration.result == 'success'" in workflow
 PY
 
-python3 "$repo_root/scripts/test-ci-changed-paths.py"
-for notification_path in crates/hubuum-event-sink-slack/Cargo.toml crates/hubuum-event-sink-mattermost/Cargo.toml crates/hubuum-event-rendering/Cargo.toml crates/hubuum-event-sinks-http/Cargo.toml; do
+for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubuum-event-rendering/Cargo.toml crates/hubuum-event-sink-webhook/src/response.rs; do
   notification_output="$(bash "$classifier" "$notification_path")"
   assert_flag "$notification_output" code true
   assert_flag "$notification_output" container true
 done
-notification_output="$(bash "$classifier" src/tests/storage_contract/chat_notifications.rs)"
+notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
 assert_flag "$notification_output" code true
 
 notification_output="$(bash "$classifier" .github/migration-offline-reviews.json)"

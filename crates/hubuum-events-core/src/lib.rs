@@ -1997,7 +1997,9 @@ pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.iter()
                 .map(|(key, value)| {
-                    let redacted = if is_sensitive_config_key(key) {
+                    let redacted = if key == "url_secret_ref" {
+                        value.clone()
+                    } else if is_sensitive_config_key(key) {
                         serde_json::Value::String("[redacted]".to_string())
                     } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
                         redact_uri_value(value)
@@ -2712,6 +2714,13 @@ mod tests {
         assert_eq!(document.after(), envelope.after());
         assert_eq!(document.metadata(), envelope.metadata());
         assert_eq!(document.schema_version(), envelope.schema_version());
+    }
+
+    #[test]
+    fn sink_redaction_preserves_the_url_secret_alias() {
+        let redacted =
+            redact_event_sink_config(&serde_json::json!({"url_secret_ref":"ops_webhook"}));
+        assert_eq!(redacted["url_secret_ref"], "ops_webhook");
     }
 
     #[test]

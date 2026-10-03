@@ -15,8 +15,8 @@ async fn setup(
 ) {
     let created = backend
         .create_event_sink(
-            StorageEventSinkCreate::builder(name.clone(), "slack", EventContext::system())
-                .configuration(serde_json::json!({"transport":"webhook"}))
+            StorageEventSinkCreate::builder(name.clone(), "webhook", EventContext::system())
+                .configuration(serde_json::json!({"body_template":"{{ event | tojson }}"}))
                 .delivery_policy(EventDeliveryPolicy::new(Some(60_000)).unwrap())
                 .enabled(false)
                 .try_build()

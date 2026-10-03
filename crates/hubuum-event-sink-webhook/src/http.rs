@@ -1,4 +1,4 @@
-//! Shared hardened HTTP execution for event transports.
+//! Hardened HTTP execution for webhook deliveries.
 use hubuum_event_sinks_common::{SinkError, ensure_payload_within_limit};
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundMethod, OutboundRequest, OutboundResponse, validate_outbound_url,
@@ -124,80 +124,4 @@ pub fn validate_url(url: &str) -> Result<(), SinkError> {
     validate_outbound_url(url).map(|_| ()).map_err(|_| {
         SinkError::permanent("Sink URL must be an HTTPS URL without embedded credentials")
     })
-}
-
-pub fn json_headers(token: Option<&str>) -> Result<OutboundHeaders, SinkError> {
-    let mut headers = OutboundHeaders::new();
-    headers
-        .insert("content-type", "application/json")
-        .map_err(|_| SinkError::permanent("Invalid JSON header"))?;
-    if let Some(token) = token {
-        headers
-            .insert("authorization", &format!("Bearer {token}"))
-            .map_err(|_| SinkError::permanent("Bot token is not a valid header"))?;
-    }
-    Ok(headers)
-}
-
-pub fn check_chat_status(response: &OutboundResponse) -> Result<(), SinkError> {
-    check_status(
-        response.status_code(),
-        response
-            .headers()
-            .get("retry-after")
-            .and_then(serde_json::Value::as_str),
-    )
-}
-
-fn check_status(status: u16, retry_after: Option<&str>) -> Result<(), SinkError> {
-    match status {
-        429 => {
-            let seconds = retry_after
-                .and_then(|value| value.parse::<u32>().ok())
-                .filter(|value| *value > 0)
-                .unwrap_or(60);
-            Err(SinkError::rate_limited(Duration::from_secs(u64::from(
-                seconds,
-            ))))
-        }
-        200..=299 => Ok(()),
-        408 | 500..=599 => Err(SinkError::new(format!(
-            "Provider temporarily unavailable (HTTP {})",
-            status
-        ))),
-        status => Err(SinkError::permanent(format!(
-            "Provider rejected notification (HTTP {status}); check credentials, destination and payload"
-        ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hubuum_event_sinks_common::SinkFailure;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case(Some("5"), 5)]
-    #[case(Some("86401"), 86401)]
-    #[case(None, 60)]
-    #[case(Some("bad"), 60)]
-    #[case(Some("-1"), 60)]
-    #[case(Some("0"), 60)]
-    fn rate_limit_uses_valid_delta_or_fallback(#[case] header: Option<&str>, #[case] seconds: u64) {
-        assert_eq!(
-            check_status(429, header).unwrap_err().failure(),
-            SinkFailure::RateLimited(Duration::from_secs(seconds))
-        );
-    }
-
-    #[rstest]
-    #[case(400, SinkFailure::Permanent)]
-    #[case(401, SinkFailure::Permanent)]
-    #[case(403, SinkFailure::Permanent)]
-    #[case(408, SinkFailure::Retryable)]
-    #[case(500, SinkFailure::Retryable)]
-    fn classifies_http_failure(#[case] status: u16, #[case] expected: SinkFailure) {
-        assert_eq!(check_status(status, None).unwrap_err().failure(), expected);
-    }
 }

@@ -14,9 +14,6 @@ RUN apk add --no-cache build-base openssl-dev openssl-libs-static perl pkgconf
 # parity with the workspace members in Cargo.toml.
 COPY Cargo.toml Cargo.lock ./
 COPY crates/hubuum-event-rendering/Cargo.toml ./crates/hubuum-event-rendering/Cargo.toml
-COPY crates/hubuum-event-sinks-http/Cargo.toml ./crates/hubuum-event-sinks-http/Cargo.toml
-COPY crates/hubuum-event-sink-slack/Cargo.toml ./crates/hubuum-event-sink-slack/Cargo.toml
-COPY crates/hubuum-event-sink-mattermost/Cargo.toml ./crates/hubuum-event-sink-mattermost/Cargo.toml
 COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
 COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
 COPY crates/hubuum-computed-fields/Cargo.toml ./crates/hubuum-computed-fields/Cargo.toml

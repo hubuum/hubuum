@@ -2094,8 +2094,6 @@ dependencies = [
  "hubuum-domain",
  "hubuum-event-sink-amqp",
  "hubuum-event-sink-email",
- "hubuum-event-sink-mattermost",
- "hubuum-event-sink-slack",
  "hubuum-event-sink-valkey",
  "hubuum-event-sink-webhook",
  "hubuum-event-sinks-common",
@@ -2202,10 +2200,7 @@ version = "0.0.1"
 dependencies = [
  "hubuum-event-sinks-common",
  "hubuum-templates",
- "rstest",
- "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -2241,38 +2236,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hubuum-event-sink-mattermost"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "hubuum-event-rendering",
- "hubuum-event-sinks-common",
- "hubuum-event-sinks-http",
- "hubuum-events-core",
- "rstest",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "hubuum-event-sink-slack"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "hubuum-event-rendering",
- "hubuum-event-sinks-common",
- "hubuum-event-sinks-http",
- "hubuum-events-core",
- "rstest",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "hubuum-event-sink-valkey"
 version = "0.0.1"
 dependencies = [
@@ -2294,17 +2257,17 @@ version = "0.0.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
- "futures",
+ "hubuum-domain",
+ "hubuum-event-rendering",
  "hubuum-event-sinks-common",
- "hubuum-event-sinks-http",
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-secrets",
+ "rstest",
  "serde",
  "serde_json",
  "tokio",
  "tokio-rustls",
- "tracing",
  "uuid",
 ]
 
@@ -2315,18 +2278,6 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-secrets",
  "percent-encoding",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "hubuum-event-sinks-http"
-version = "0.0.1"
-dependencies = [
- "hubuum-event-sinks-common",
- "hubuum-outbound-http",
- "rstest",
  "serde",
  "serde_json",
  "tokio",

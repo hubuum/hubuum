@@ -2,7 +2,7 @@
   "schema_version": 1,
   "exceptions": [
     {
-      "id": "chat-sink-backup-format-7",
+      "id": "webhook-notification-backup-format-7",
       "baseline": "v0.0.16",
       "expires": "2027-01-31",
       "reason": "Format 7 preserves scoped subscriptions, sink delivery policies and test delivery purpose while continuing to accept format 6.",

@@ -11,19 +11,19 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-hubuum-event-sinks-http = { path = "../hubuum-event-sinks-http" }
-futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+hubuum-domain = { path = "../hubuum-domain" }
+hubuum-event-rendering = { path = "../hubuum-event-rendering" }
 hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
 hubuum-events-core = { path = "../hubuum-events-core" }
 hubuum-outbound-http = { path = "../hubuum-outbound-http" }
 hubuum-secrets = { path = "../hubuum-secrets" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tracing = "0.1"
 
 [dev-dependencies]
 base64 = "0.23"
-chrono = { version = "0.4", features = ["serde"] }
+rstest = "0.27"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
 tokio-rustls = "0.26"
 uuid = { version = "1", features = ["v4", "serde"] }

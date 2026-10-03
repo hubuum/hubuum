@@ -11,10 +11,7 @@ use crate::storage::{StorageEventDeliverySink, StorageEventDeliverySubscription}
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
-pub enum PreparedNotification {
-    Slack(hubuum_event_sink_slack::PreparedNotification),
-    Mattermost(hubuum_event_sink_mattermost::PreparedNotification),
-}
+pub use hubuum_event_sink_webhook::PreparedWebhook as PreparedNotification;
 
 pub trait Sink: Send + Sync {
     fn prepare<'a>(
@@ -66,8 +63,6 @@ pub struct DefaultSinkResolver {
     #[cfg(feature = "valkey")]
     valkey: hubuum_event_sink_valkey::ValkeySink,
     webhook: hubuum_event_sink_webhook::WebhookSink,
-    slack: hubuum_event_sink_slack::SlackSink,
-    mattermost: hubuum_event_sink_mattermost::MattermostSink,
 }
 
 impl Default for DefaultSinkResolver {
@@ -80,8 +75,6 @@ impl Default for DefaultSinkResolver {
             #[cfg(feature = "valkey")]
             valkey: hubuum_event_sink_valkey::ValkeySink::default(),
             webhook: hubuum_event_sink_webhook::WebhookSink::new(webhook_settings()),
-            slack: hubuum_event_sink_slack::SlackSink::new(webhook_settings()),
-            mattermost: hubuum_event_sink_mattermost::MattermostSink::new(webhook_settings()),
         }
     }
 }
@@ -96,8 +89,6 @@ impl SinkResolver for DefaultSinkResolver {
             #[cfg(feature = "valkey")]
             "valkey_stream" => Some(&self.valkey),
             "webhook" => Some(&self.webhook),
-            "slack" => Some(&self.slack),
-            "mattermost" => Some(&self.mattermost),
             _ => None,
         }
     }
@@ -145,30 +136,11 @@ fn webhook_settings() -> WebhookSinkSettings {
         .dangerous_allow_localhost(cfg!(test))
 }
 
+pub(crate) fn webhook_sink() -> hubuum_event_sink_webhook::WebhookSink {
+    hubuum_event_sink_webhook::WebhookSink::new(webhook_settings())
+}
+
 impl Sink for hubuum_event_sink_webhook::WebhookSink {
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        subscription: &'a StorageEventDeliverySubscription,
-        sink: &'a StorageEventDeliverySink,
-    ) -> BoxFuture<'a, Result<(), SinkError>> {
-        async move {
-            let secret = sink_secret(sink).await?;
-            self.deliver(
-                envelope,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
-            )
-            .await
-        }
-        .boxed()
-    }
-}
-
-impl Sink for hubuum_event_sink_mattermost::MattermostSink {
     fn prepare<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
@@ -178,32 +150,30 @@ impl Sink for hubuum_event_sink_mattermost::MattermostSink {
         async move {
             self.prepare(envelope, sink_delivery(subscription, sink, None))
                 .await
-                .map(PreparedNotification::Mattermost)
                 .map(Some)
         }
         .boxed()
     }
+
     fn deliver_prepared<'a>(
         &'a self,
         prepared: Option<&'a PreparedNotification>,
         _envelope: &'a EventEnvelope,
-        subscription: &'a StorageEventDeliverySubscription,
+        _subscription: &'a StorageEventDeliverySubscription,
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            let Some(PreparedNotification::Mattermost(prepared)) = prepared else {
-                return Err(SinkError::permanent(
-                    "Missing prepared Mattermost notification",
-                ));
+            let prepared =
+                prepared.ok_or_else(|| SinkError::permanent("Missing prepared webhook"))?;
+            let bearer = sink_secret(sink).await?;
+            let destination = match prepared.url_secret_ref() {
+                Some(alias) => Some(crate::secrets::resolve_event_sink_secret(alias).await?),
+                None => None,
             };
-            let secret = sink_secret(sink).await?;
             self.send(
                 prepared,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
+                bearer.as_ref().map(|secret| secret.value()),
+                destination.as_ref().map(|secret| secret.value()),
             )
             .await
         }
@@ -217,78 +187,11 @@ impl Sink for hubuum_event_sink_mattermost::MattermostSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            let secret = sink_secret(sink).await?;
-            self.deliver(
-                envelope,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
-            )
-            .await
-        }
-        .boxed()
-    }
-}
-
-impl Sink for hubuum_event_sink_slack::SlackSink {
-    fn prepare<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        subscription: &'a StorageEventDeliverySubscription,
-        sink: &'a StorageEventDeliverySink,
-    ) -> BoxFuture<'a, Result<Option<PreparedNotification>, SinkError>> {
-        async move {
-            self.prepare(envelope, sink_delivery(subscription, sink, None))
+            let prepared = self
+                .prepare(envelope, sink_delivery(subscription, sink, None))
+                .await?;
+            self.deliver_prepared(Some(&prepared), envelope, subscription, sink)
                 .await
-                .map(PreparedNotification::Slack)
-                .map(Some)
-        }
-        .boxed()
-    }
-    fn deliver_prepared<'a>(
-        &'a self,
-        prepared: Option<&'a PreparedNotification>,
-        _envelope: &'a EventEnvelope,
-        subscription: &'a StorageEventDeliverySubscription,
-        sink: &'a StorageEventDeliverySink,
-    ) -> BoxFuture<'a, Result<(), SinkError>> {
-        async move {
-            let Some(PreparedNotification::Slack(prepared)) = prepared else {
-                return Err(SinkError::permanent("Missing prepared Slack notification"));
-            };
-            let secret = sink_secret(sink).await?;
-            self.send(
-                prepared,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
-            )
-            .await
-        }
-        .boxed()
-    }
-
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        subscription: &'a StorageEventDeliverySubscription,
-        sink: &'a StorageEventDeliverySink,
-    ) -> BoxFuture<'a, Result<(), SinkError>> {
-        async move {
-            let secret = sink_secret(sink).await?;
-            self.deliver(
-                envelope,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
-            )
-            .await
         }
         .boxed()
     }

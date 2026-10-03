@@ -180,7 +180,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(delete_event_sink);
 }
 
-#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/preview", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 200, description = "Rendered test notification; no secret resolution or delivery", body = crate::models::EventNotificationPreview), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/preview", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 200, description = "Rendered webhook test payload; no secret resolution or delivery", body = crate::models::EventNotificationPreview), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
 #[actix_web::post("/{sink_id}/preview")]
 pub async fn preview_event_sink(
     context: AppContext,
@@ -198,7 +198,7 @@ pub async fn preview_event_sink(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/test", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 202, description = "Test delivery queued", body = crate::models::EventDeliveryResponse), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/test", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 202, description = "Webhook test delivery queued", body = crate::models::EventDeliveryResponse), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
 #[actix_web::post("/{sink_id}/test")]
 pub async fn test_event_sink(
     context: AppContext,

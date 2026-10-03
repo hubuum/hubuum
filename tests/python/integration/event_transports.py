@@ -127,13 +127,13 @@ class HttpsHandler(http.server.BaseHTTPRequestHandler):
         payload = self.rfile.read(length)
         with self.server.observed_lock:
             self.server.observed.setdefault(identity, []).append(behavior)
-        if behavior == "chat":
+        if behavior == "ack":
             self.reply(200, b"ok")
         elif behavior == "limited":
             self.reply(429, b"private-provider-detail")
         elif behavior == "denied":
             self.reply(403, b"private-provider-detail")
-        elif behavior == "mattermost":
+        elif behavior == "templated":
             body = json.loads(payload)
             if (self.headers.get("Authorization") == "Bearer fixture-bot-token"
                     and body.get("channel_id") == "channel123"

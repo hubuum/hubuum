@@ -11771,7 +11771,7 @@
         },
         "responses": {
           "200": {
-            "description": "Rendered test notification; no secret resolution or delivery",
+            "description": "Rendered webhook test payload; no secret resolution or delivery",
             "content": {
               "application/json": {
                 "schema": {
@@ -11849,7 +11849,7 @@
         },
         "responses": {
           "202": {
-            "description": "Test delivery queued",
+            "description": "Webhook test delivery queued",
             "content": {
               "application/json": {
                 "schema": {
@@ -23853,7 +23853,9 @@
           "revision"
         ],
         "properties": {
-          "config": {},
+          "config": {
+            "description": "Transport settings. Webhooks support body_template, url_secret_ref, and response rules."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -23962,8 +23964,6 @@
         "type": "string",
         "enum": [
           "webhook",
-          "slack",
-          "mattermost",
           "amqp",
           "valkey_stream",
           "email"
@@ -28648,7 +28648,9 @@
           "kind"
         ],
         "properties": {
-          "config": {},
+          "config": {
+            "description": "Transport settings. Webhooks support body_template, url_secret_ref, and response rules."
+          },
           "delivery_policy": {
             "oneOf": [
               {
@@ -34686,7 +34688,9 @@
       "UpdateEventSink": {
         "type": "object",
         "properties": {
-          "config": {},
+          "config": {
+            "description": "Replacement transport settings, including optional webhook payload and response policies."
+          },
           "delivery_policy": {
             "oneOf": [
               {

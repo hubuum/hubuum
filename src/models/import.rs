@@ -917,7 +917,7 @@ impl ImportRequest {
         }
         for sink in &self.graph.event_sinks {
             validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
-            crate::models::event_subscription::validate_chat_templates(sink.kind, &sink.config)
+            crate::models::event_subscription::validate_webhook_templates(sink.kind, &sink.config)
                 .await?;
         }
         for subscription in &self.graph.event_subscriptions {

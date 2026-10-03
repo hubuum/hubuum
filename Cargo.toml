@@ -25,9 +25,6 @@ members = [
     "crates/hubuum-computed-fields",
     "crates/hubuum-domain",
     "crates/hubuum-event-rendering",
-    "crates/hubuum-event-sinks-http",
-    "crates/hubuum-event-sink-slack",
-    "crates/hubuum-event-sink-mattermost",
     "crates/hubuum-event-sink-amqp",
     "crates/hubuum-event-sink-email",
     "crates/hubuum-event-sink-valkey",
@@ -97,8 +94,6 @@ hubuum-domain = { path = "crates/hubuum-domain", features = ["openapi"] }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
 hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
 hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }
-hubuum-event-sink-slack = { path = "crates/hubuum-event-sink-slack" }
-hubuum-event-sink-mattermost = { path = "crates/hubuum-event-sink-mattermost" }
 hubuum-event-sink-webhook = { path = "crates/hubuum-event-sink-webhook" }
 hubuum-event-sinks-common = { path = "crates/hubuum-event-sinks-common" }
 hubuum-templates = { path = "crates/hubuum-templates" }

@@ -613,37 +613,76 @@ The same assets work with the optional single-host stack, independently managed
 Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
 your server release and scrape every process directly with deployment labels.
 
-## Slack And Mattermost
+## Configurable Webhook Notifications
 
-Both chat sinks are available in default builds. They consume existing raw
-events; no threshold evaluator, time-window aggregation or alert-state machine
-is added to the event core. Failed backups already emit task lifecycle events.
-Queue delay and database pressure should come from a metrics alerting system,
-unless a component explicitly emits a corresponding raw event.
+The `webhook` sink can send the original event envelope or render a custom JSON
+payload. Slack, Mattermost, and notification bridges use this same transport;
+there are no provider-specific sink kinds or bot API clients. Events remain raw
+facts: no threshold evaluator, aggregation, or alert-state machine is added.
+System subscriptions and `task_kinds` filters can select existing failed-backup
+events. Metrics alerting systems remain appropriate for queue delay and database
+pressure unless a component emits a corresponding raw event.
 
-Create an incoming webhook in Slack or Mattermost, then store its **complete
-URL** in the configured [secret source](secret_sources.md). Create the sink:
+### Payload Templates And Secrets
+
+Set `config.body_template` to a MiniJinja template that renders valid JSON.
+Omitting it preserves the original event envelope. Templates expose the same
+bounded event context as email: envelope fields at the top level and the full
+original envelope as `event`. Use `tojson` for inserted values so quotes,
+newlines, and Unicode remain valid JSON. Templates share the isolated execution
+engine with fuel, recursion, context, and output limits. The rendered request
+also respects `max_request_bytes` and the global outbound request limit.
+
+The additional context fields `test` and `test_marker` identify test deliveries.
+`test_marker` is `[TEST]` followed by a space for tests and an empty string for normal delivery.
+Templates choose where to display it; Hubuum does not inject fields into the
+receiver's payload. Test sends also carry `X-Hubuum-Delivery-Purpose: test`.
+
+For a destination containing credentials, set `config.url_secret_ref` to an
+alias in the configured [secret source](secret_sources.md). Its value must be
+the **complete HTTPS URL**. This is independent of the sink's existing
+`secret_ref`, which continues to supply a bearer token. Neither credential is
+available to templates or previews. A secret-backed destination requires
+omitting `routing.url`; subscriptions cannot override that destination.
+Without `url_secret_ref`, the subscription's `routing.url` works as before.
+
+HTTPS validation, DNS screening, private-target policy, timeouts, response caps,
+and redirect refusal apply equally to literal and secret-backed URLs. Requests
+remain JSON `POST`s; templates cannot change transport, headers, or credentials.
+
+### Slack And Mattermost Incoming Webhook Example
+
+Create an incoming webhook in the destination service and store its complete
+URL under `ops_chat_webhook` in the secret source. Both services accept the
+simple `text` payload below. Create this ordinary webhook sink:
 
 ```json
 {
-  "name": "ops-slack",
-  "kind": "slack",
-  "config": { "transport": "webhook" },
-  "secret_ref": "ops_slack_webhook",
+  "name": "ops-chat",
+  "kind": "webhook",
+  "config": {
+    "url_secret_ref": "ops_chat_webhook",
+    "body_template": "{\"text\": {{ (test_marker ~ 'Hubuum: ' ~ summary) | tojson }}}",
+    "response": {
+      "rate_limit": true,
+      "retry_statuses": [408, 500, 502, 503, 504],
+      "body": { "kind": "text_equals", "value": "ok" }
+    }
+  },
   "delivery_policy": { "min_interval_ms": 1000 },
   "enabled": true
 }
 ```
 
-For Mattermost, use `"kind": "mattermost"`. Webhook subscriptions use
-`"routing": {}`; the webhook selects the channel. Hubuum rejects channel
-and credential overrides in routing.
+The webhook selects its destination channel. Rich Slack blocks or Mattermost
+attachments can be expressed as JSON in `body_template`; the operator owns
+provider-specific fields and size limits. Hubuum validates JSON and execution
+budgets without maintaining either provider's API. Bot workflows, OAuth refresh,
+and channel discovery belong in an external integration service.
 
-For bot delivery, store the bot token under `secret_ref`. Slack configuration
-is `{"transport":"bot"}` and uses `chat.postMessage`. Grant the bot
-`chat:write` and invite it to its destination. Mattermost configuration is
-`{"transport":"bot","server_url":"https://chat.example.com"}` and uses
-`POST /api/v4/posts`. Both require subscription routing with a channel ID:
+For failed backups, post this subscription to
+`POST /api/v1/system-event-subscriptions`, replacing `sink_id` with the created
+sink's ID:
 
 ```json
 {
@@ -653,39 +692,71 @@ is `{"transport":"bot"}` and uses `chat.postMessage`. Grant the bot
   "entity_types": ["task"],
   "actions": ["failed"],
   "filter": { "task_kinds": ["backup"] },
-  "routing": { "channel_id": "C0123456789" },
+  "routing": {},
   "enabled": true
 }
 ```
 
-Post this subscription to `/api/v1/system-event-subscriptions`. Use the
-Mattermost channel's ID for Mattermost bots. System CRUD uses the same ETag
-preconditions and pagination conventions as collection subscriptions and is
-restricted to unscoped administrators. System scope is fixed by the route.
+System CRUD uses the same ETag preconditions and pagination conventions as
+collection subscriptions and is restricted to unscoped administrators. System
+scope is fixed by the route and excludes events with direct or related collections.
 
-Both providers support `text_template`. Slack additionally supports
-`blocks_template`; Mattermost supports `attachments_template`. Rich templates
-must render JSON arrays of objects. The same bounded, isolated MiniJinja engine
-and event context are shared with email. Use `tojson` for inserted JSON values:
+An Apprise API destination can instead use a JSON payload template such as:
 
-```json
-{
-  "transport": "webhook",
-  "text_template": "Hubuum: {{ summary }}",
-  "blocks_template": "[{\"type\":\"section\",\"text\":{\"type\":\"plain_text\",\"text\":{{ summary | tojson }}}}]"
-}
+```jinja
+{"title": "Hubuum", "body": {{ (test_marker ~ summary) | tojson }}}
 ```
 
-Templates cannot override transport, authentication or routing. Empty text is
-rejected. Text is bounded to 4,000 characters for Slack and 16,000 for
-Mattermost; rich arrays allow at most 50 blocks or 100 attachments, including
-the test marker. Template execution has fuel, recursion, context and output
-limits; the global outbound request limit also applies. HTTPS, DNS screening,
-private-target policy, response limits, timeouts and redirect restrictions use
-the shared HTTP executor used by webhooks.
+Configure destinations in that external service and point the subscription at
+its notification endpoint. Authentication can use the existing bearer secret
+or configured headers. Match response handling to the destination's documented
+contract; the chat acknowledgement example is not an Apprise preset.
 
-Administrators can preview or enqueue a test with an existing event UUID and
-saved subscription. Preview performs no secret lookup or network request:
+### Response And Delivery Policies
+
+Without `config.response`, webhooks retain their existing behavior: every 2xx
+is successful and every other HTTP status retries with backoff. Response rules
+are optional and declarative:
+
+| Field | Meaning |
+| ----- | ------- |
+| `success_statuses` | Explicit successful 2xx statuses; omitted or empty accepts all 2xx |
+| `retry_statuses` | Non-success 3xx/4xx/5xx statuses to retry; omitted retries all failures, while an empty list makes all HTTP failures permanent |
+| `rate_limit` | When true, HTTP 429 defers without consuming failure attempts, taking precedence over `retry_statuses`; defaults to false |
+| `body` | Optional acknowledgement check, applied only after a successful status |
+
+For `body`, use `{"kind":"text_equals","value":"ok"}` to compare trimmed
+response text, or `{"kind":"json_equals","pointer":"/ok","value":true}`
+to compare a JSON value using an RFC 6901 pointer. A missing value, invalid JSON,
+or failed comparison is a permanent failure. Response bodies that reach the
+configured capture limit cannot be safely checked for truncation and retry
+instead. Status errors and failed acknowledgements never include response
+contents or destination URLs. These rules do not interpret provider error names.
+
+When `rate_limit` is enabled, valid `Retry-After` delta seconds or HTTP dates
+control the cooldown; invalid or absent values use 60 seconds. Transport failures
+remain retryable. Permanent failures dead-letter immediately. All sinks remain
+unlimited unless `delivery_policy.min_interval_ms` is configured. Values range
+from 1 to 86,400,000 milliseconds; `null` disables configured spacing.
+
+The persisted schedule is shared across workers and subscriptions using a sink.
+It spaces sends without dropping or aggregating events. Deferred deliveries stay
+pending with `deferred_reason` (`configured_rate` or `provider_rate`) and
+`next_attempt_at`, without consuming failure attempts. Separate sinks do not
+share their schedules, even if they target the same external channel.
+
+Delivery remains at least once: a received request followed by a lost
+acknowledgement can produce a duplicate. Custom payloads may include `event_id`
+for receiver deduplication; `X-Hubuum-Event-Id` always identifies the source event.
+Normal deliveries keep the event UUID as `Idempotency-Key`. Queued tests use
+`{event_uuid}-test-{delivery_id}`, stable across retries and distinct for each
+test, so tests cannot suppress normal sends at receivers using that header.
+
+### Preview And Test
+
+Administrators can preview or enqueue a webhook test using an existing event
+UUID and saved subscription. Preview resolves no secrets and performs no HTTP
+request; it returns only the JSON payload and sink kind:
 
 ```http
 POST /api/v1/event-sinks/3/preview
@@ -694,37 +765,28 @@ Content-Type: application/json
 {"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}
 ```
 
-Use `/api/v1/event-sinks/3/test` with the same body to enqueue a delivery. Replace
-the example identifiers with real saved records. Both verify sink and event
-scope. Tests bypass subscription filters and enabled flags for setup, but
-respect throttling. Preview shows the test marker that delivery will use.
-The test route returns `202` with an inspectable delivery and a Location header;
-the actual request is audited as `event_sink.invoked`. Repeated tests create
-separate `purpose: "test"` records without suppressing normal event delivery.
-Workers render using saved configuration when they execute the delivery.
+Use `/api/v1/event-sinks/3/test` with the same body to enqueue a delivery.
+Replace the example identifiers with real saved records. Both verify sink and
+event scope. Tests bypass filters and enabled flags for setup but respect
+throttling. Preview renders the same test context as delivery. Include
+`test_marker` in templates when a visible message label is wanted.
 
-New chat sinks default to one admission per second per sink. Other sink kinds
-remain unlimited unless `delivery_policy.min_interval_ms` is set. Values range
-from 1 to 86,400,000 milliseconds; `null` disables configured spacing. The
-persisted schedule is shared across workers and subscriptions using that sink.
-It spaces sends without dropping or aggregating events. A deferred delivery
-stays pending with `deferred_reason` (`configured_rate` or `provider_rate`) and
-`next_attempt_at`, without consuming failure attempts. Distinct sinks sharing
-one provider channel still share the provider's limits.
+The test route returns `202` with an inspectable delivery and Location header.
+The request is audited as `event_sink.invoked`. Repeated tests create separate
+`purpose: "test"` records without suppressing normal event delivery. Workers
+render using the saved configuration at execution time.
 
-HTTP 429 and Slack's logical `ratelimited` responses defer delivery; HTTP
-`Retry-After` delta seconds are honored when valid, otherwise the delay is 60
-seconds. HTTP 408/5xx and transport failures retry; permanent HTTP failures and
-known Slack authentication, channel and payload errors dead-letter immediately.
-Slack bot success requires `ok: true`; Mattermost bot success requires a 201
-response with a post ID. Provider response bodies, tokens and webhook URLs are
-not included in delivery errors. Delivery remains at least once: an accepted
-message followed by a lost acknowledgement can produce a duplicate.
+### Upgrade And Rollback
 
-Upgrade by stopping older API and worker processes, applying the single chat
-migration, reconciling database role grants and starting matching binaries.
-Mixed old/new workers are unsupported. Rollback rejects remaining chat sinks,
-system subscriptions, rate policies and test/deferred deliveries; export or
-remove incompatible records deliberately before rolling back. Format 7 backups
-preserve these settings and terminal delivery history, while transient sink
-scheduling resets after restore. Format 6 backups restore legacy defaults.
+Stop older API and worker processes, apply
+`2026-10-01-000001_webhook_notifications`, reconcile database role grants, and
+start matching binaries. Mixed old/new workers are unsupported because normal
+and test deliveries now use purpose-aware uniqueness.
+
+Rollback rejects enhanced webhook configuration, system subscriptions, rate
+policies, and test/deferred deliveries. Archive and remove retained
+`event_sink.invoked` audit records and their dependent deliveries with processes
+stopped before rollback. Format 7 backups preserve these settings and terminal
+delivery history, while transient scheduling resets on restore. Format 6
+backups restore legacy defaults. Remove enhanced webhook settings before using
+older binaries, which cannot interpret their request or response rules.

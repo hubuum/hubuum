@@ -1,9 +1,9 @@
 mod authorization_resources;
-mod chat_notifications;
 mod credential_approvals;
 mod event_delivery;
 mod schema_evolution;
 mod task_control;
+mod webhook_notifications;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};

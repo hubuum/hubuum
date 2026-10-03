@@ -81,9 +81,6 @@ manifest.
 | `hubuum-computed-fields` | Experimental public |
 | `hubuum-domain` | Experimental public |
 | `hubuum-event-rendering` | Workspace-internal |
-| `hubuum-event-sinks-http` | Workspace-internal |
-| `hubuum-event-sink-slack` | Workspace-internal |
-| `hubuum-event-sink-mattermost` | Workspace-internal |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |

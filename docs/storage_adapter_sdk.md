@@ -331,5 +331,5 @@ make progress. Logical backups preserve delivery policy, system subscriptions
 and terminal test deliveries; transient admission state resets on restore.
 
 The built-in PostgreSQL and memory backends share application contract tests in
-`src/tests/storage_contract/chat_notifications.rs`; retain adapter-specific
+`src/tests/storage_contract/webhook_notifications.rs`; retain adapter-specific
 locking and lease-loss tests when implementing these guarantees.
