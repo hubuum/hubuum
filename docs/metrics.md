@@ -373,5 +373,8 @@ per-class detail. See [class schema evolution](schema_evolution.md).
 
 ## Operator package
 
-See the [operator package](https://github.com/hubuum/hubuum/blob/main/observability/README.md) for the initial Grafana
-overview, tested Prometheus alerts, deployment labels and response runbooks.
+See the [operator package](../observability/README.md) for seven shared Grafana
+dashboards, recording rules, tested alerts, SLO definitions and response runbooks.
+The optional single-host installer and distributed installations consume the
+same assets; a matching Prometheus Operator resource is included. Review this
+package in the same pull request whenever the metric contract changes.

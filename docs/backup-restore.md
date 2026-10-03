@@ -396,3 +396,11 @@ These fresh-authentication requirements apply to the HTTP API used by frontend
 and API CLI clients. The offline `hubuum-admin` recovery workflow continues to
 use explicit privileged database credentials and its existing confirmation
 checks; it does not depend on a live human API session during recovery.
+
+## Operator monitoring
+
+Use the [shared operator package](../observability/README.md) for Grafana dashboards,
+Prometheus recording and alerting rules, SLO definitions and response runbooks.
+The same assets work with the optional single-host stack, independently managed
+Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
+your server release and scrape every process directly with deployment labels.

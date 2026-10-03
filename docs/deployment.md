@@ -99,8 +99,10 @@ separate Prometheus targets. They intentionally do not fail over to one another,
 because doing so would mix independent counters and produce invalid rates.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
-authentication. Use `--auth-config` to point the deployment at an existing
-external-auth TOML file instead.
+authentication. This empty placeholder is mode `0644` so the non-root API can
+read it. Before adding provider credentials, apply the protected ownership and
+permissions described below. Use `--auth-config` to point the deployment at an
+existing external-auth TOML file instead.
 
 By default, the installer starts the stack directly with Compose. Pass `--systemd` to also write `/etc/systemd/system/hubuum.service`, enable it, and start the stack through that unit.
 
@@ -108,6 +110,24 @@ Default app images:
 
 - Backend: `ghcr.io/hubuum/hubuum-server:main`
 - Frontend: `ghcr.io/hubuum/hubuum-frontend:main`
+
+### Optional monitoring
+
+Add `--monitoring` during installation, or run
+`sudo /opt/hubuum/update-single-host.sh --monitoring` to enable Prometheus and
+Grafana later. Caddy serves `/grafana/` and `/prometheus/` on the frontend domain
+in `all` mode, or the API domain in `backend` mode. This works with each
+shared-host routing mode. Grafana has its own login; Prometheus uses a separate
+Caddy password gate. Both have generated credentials in the root-readable
+`.env`, private container ports, persistent volumes and pinned images.
+
+The [shared operator package](../observability/README.md) documents credential
+retrieval, seven dashboards, SLOs, limits, notifications and a walkthrough.
+The installer loads those same dashboards and rules for both process targets;
+distributed deployments can consume the files directly or through Prometheus
+Operator. Updates preserve credentials and data, stop/uninstall preserve volumes,
+and explicit `--purge` removes them. External monitoring is needed to report a
+complete host outage independently.
 
 ### Choosing Image Tags
 
@@ -316,12 +336,17 @@ absolute host path in `/opt/hubuum/.env`, and bind-mounts it read-only as
 `HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml` automatically. The file is not
 copied into the installation directory.
 
-Keep provider credentials readable only by the account administering the
-rootful container engine. For example:
+Provider files must be readable by the API process inside the container. The
+standard image uses UID/GID `10001:10001`; keep root ownership and grant that
+group read access before adding credentials. For example:
 
 ```bash
-sudo install -o root -g root -m 0600 auth.toml /etc/hubuum/auth.toml
+sudo install -o root -g 10001 -m 0640 auth.toml /etc/hubuum/auth.toml
 ```
+
+For a custom image, use its configured process group instead of `10001`. The
+installer preserves the contents and permissions of existing provider files;
+it only repairs permissions on its own empty local-only placeholder.
 
 Re-running the installer without `--auth-config` preserves the stored host
 path. To use a different file while updating, pass it to the update helper:
@@ -567,6 +592,15 @@ Common optional parameters:
 - `--frontend-ref`: source build frontend Git ref. Default: `main`.
 - `--recreate`: regenerate generated secrets. The managed Postgres password is preserved, because the existing database volume was initialized with it and rotating it would break authentication. To reset the database, uninstall with `--purge` first, then reinstall.
 - `--no-pull`: skip pulling images before starting.
+
+Managed PostgreSQL explicitly sets `PGDATA=/var/lib/postgresql/data`, matching
+its named-volume mount. This preserves the existing layout when refreshing
+configuration and avoids PostgreSQL 18's changed default data directory. It does
+not perform PostgreSQL major-version upgrades; those still require migration.
+The parent directory uses temporary storage to prevent PostgreSQL 18 from creating
+an anonymous volume; database contents remain in the persistent named volume.
+The restore executor has no HTTP listener, so its container health check measures
+process liveness, not restore success or database readiness.
 
 ## Mounted Secret Files
 

@@ -313,7 +313,43 @@ hubuum_start_stack() {
     hubuum_wait_for_rollout_health hubuum-web-standby
   fi
 
+  hubuum_roll_monitoring
   "${COMPOSE_CMD[@]}" up -d --no-deps caddy
+}
+
+hubuum_roll_monitoring() {
+  if [[ "${MONITORING_ENABLED:-false}" == "true" ]]; then
+    # Recreate to load refreshed rules/provisioning and resolve current backend
+    # container addresses. Named volumes retain time series and Grafana accounts.
+    "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate prometheus grafana
+    hubuum_wait_for_rollout_health prometheus
+    hubuum_wait_for_rollout_health grafana
+  else
+    local container_ids container_id service ps_help
+    local -a ps_options=(-q)
+    local -a monitoring_containers=()
+
+    # podman-compose already includes stopped containers and older versions
+    # do not accept -a. Detect the provider's option, since `docker` may be a
+    # Podman compatibility command. Both providers include project orphans.
+    ps_help="$("${COMPOSE_CMD[@]}" ps --help)" || return 1
+    [[ "$ps_help" != *"--all"* ]] || ps_options=(-a -q)
+    container_ids="$("${COMPOSE_CMD[@]}" ps "${ps_options[@]}")" || return 1
+    while IFS= read -r container_id; do
+      [[ -n "$container_id" ]] || continue
+      service="$("$ENGINE_PATH" inspect \
+        --format '{{ index .Config.Labels "com.docker.compose.service" }}' \
+        "$container_id")" || return 1
+      case "$service" in
+        prometheus|grafana) monitoring_containers+=("$container_id") ;;
+      esac
+    done <<< "$container_ids"
+    if [[ "${#monitoring_containers[@]}" -gt 0 ]]; then
+      echo "Removing disabled monitoring containers; retaining their data volumes..."
+      "$ENGINE_PATH" stop "${monitoring_containers[@]}" || return 1
+      "$ENGINE_PATH" rm "${monitoring_containers[@]}" || return 1
+    fi
+  fi
 }
 
 hubuum_rollout() {
@@ -335,6 +371,7 @@ hubuum_rollout() {
   fi
 
   hubuum_remove_legacy_caddy_dependencies
+  hubuum_roll_monitoring
   hubuum_ensure_infrastructure
   if hubuum_drain_primary_workers_for_migrations; then
     primary_workers_drained="true"

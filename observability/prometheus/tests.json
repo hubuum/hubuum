@@ -31,7 +31,8 @@
               "exp_labels": {
                 "deployment": "test",
                 "instance": "one",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "database"
               },
               "exp_annotations": {
                 "summary": "Database pool remains above 90% utilization",
@@ -74,7 +75,8 @@
               "exp_labels": {
                 "deployment": "test",
                 "kind": "export",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "tasks"
               },
               "exp_annotations": {
                 "summary": "Queued work has exceeded five minutes",
@@ -112,7 +114,8 @@
             {
               "exp_labels": {
                 "deployment": "test",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "tasks"
               },
               "exp_annotations": {
                 "summary": "Task workers are reporting errors",
@@ -155,7 +158,8 @@
               "exp_labels": {
                 "deployment": "test",
                 "queue": "delivery",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "events"
               },
               "exp_annotations": {
                 "summary": "Event processing has exceeded five minutes",
@@ -193,7 +197,8 @@
             {
               "exp_labels": {
                 "deployment": "test",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "recovery"
               },
               "exp_annotations": {
                 "summary": "A backup task failed during the last hour",
@@ -233,7 +238,8 @@
                 "deployment": "test",
                 "instance": "one",
                 "source": "inventory",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "metrics"
               },
               "exp_annotations": {
                 "summary": "Metrics inventory has not refreshed for five minutes",
@@ -298,7 +304,8 @@
                 "deployment": "test",
                 "instance": "one",
                 "source": "inventory",
-                "severity": "warning"
+                "severity": "warning",
+                "component": "metrics"
               },
               "exp_annotations": {
                 "summary": "Metrics inventory has not refreshed for five minutes",

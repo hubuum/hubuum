@@ -9,7 +9,8 @@
           "expr": "max by (deployment, instance) (hubuum_db_pool_connections{state=\"checked_out\"}) / max by (deployment, instance) (hubuum_db_pool_connections{state=\"configured\"}) > 0.9",
           "for": "10m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "database"
           },
           "annotations": {
             "summary": "Database pool remains above 90% utilization",
@@ -21,7 +22,8 @@
           "expr": "max by (deployment, kind) (hubuum_task_oldest_age_seconds{state=\"queued\"}) > 300",
           "for": "10m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "tasks"
           },
           "annotations": {
             "summary": "Queued work has exceeded five minutes",
@@ -33,7 +35,8 @@
           "expr": "sum by (deployment) (increase(hubuum_task_worker_iterations_total{outcome=\"error\"}[10m])) > 0",
           "for": "5m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "tasks"
           },
           "annotations": {
             "summary": "Task workers are reporting errors",
@@ -45,7 +48,8 @@
           "expr": "max by (deployment, queue) (hubuum_event_oldest_age_seconds) > 300",
           "for": "10m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "events"
           },
           "annotations": {
             "summary": "Event processing has exceeded five minutes",
@@ -57,7 +61,8 @@
           "expr": "sum by (deployment) (increase(hubuum_task_completions_total{kind=\"backup\",final_status=\"failed\"}[1h])) > 0",
           "for": "0m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "recovery"
           },
           "annotations": {
             "summary": "A backup task failed during the last hour",
@@ -69,11 +74,239 @@
           "expr": "time() - hubuum_metrics_refresh_last_success_timestamp_seconds > 300 or (hubuum_metrics_refresh_failures_total > 0 unless hubuum_metrics_refresh_last_success_timestamp_seconds)",
           "for": "5m",
           "labels": {
-            "severity": "warning"
+            "severity": "warning",
+            "component": "metrics"
           },
           "annotations": {
             "summary": "Metrics inventory has not refreshed for five minutes",
             "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/metrics-stale.md"
+          }
+        }
+      ]
+    },
+    {
+      "name": "hubuum.extended",
+      "interval": "1m",
+      "rules": [
+        {
+          "alert": "HubuumScrapeUnavailable",
+          "expr": "up{job=\"hubuum\"} == 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "process"
+          },
+          "annotations": {
+            "summary": "A configured Hubuum process cannot be scraped",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
+          }
+        },
+        {
+          "alert": "HubuumNoReadyApi",
+          "expr": "max by (deployment) (probe_success{job=\"hubuum-readiness\"}) == 0",
+          "for": "2m",
+          "labels": {
+            "severity": "critical",
+            "component": "api"
+          },
+          "annotations": {
+            "summary": "No probed API replica is ready",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
+          }
+        },
+        {
+          "alert": "HubuumApiAvailabilityBurn",
+          "expr": "hubuum:api_error_budget_burn:rate1h > 14.4 and hubuum:api_error_budget_burn:rate5m > 14.4",
+          "for": "2m",
+          "labels": {
+            "severity": "critical",
+            "component": "api"
+          },
+          "annotations": {
+            "summary": "API availability is consuming the monthly budget rapidly",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+          }
+        },
+        {
+          "alert": "HubuumApiAvailabilitySlowBurn",
+          "expr": "hubuum:api_error_budget_burn:rate6h > 6 and hubuum:api_error_budget_burn:rate30m > 6",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "api"
+          },
+          "annotations": {
+            "summary": "API availability is consuming the monthly budget",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+          }
+        },
+        {
+          "alert": "HubuumApiLatencyBurn",
+          "expr": "hubuum:api_latency_budget_burn:rate1h > 14.4 and hubuum:api_latency_budget_burn:rate5m > 14.4",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "api"
+          },
+          "annotations": {
+            "summary": "Successful API requests are exceeding the latency objective",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+          }
+        },
+        {
+          "alert": "HubuumDatabaseAcquireFailures",
+          "expr": "sum by (deployment, instance) (increase(hubuum_db_connection_acquire_failures_total[10m])) > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "database"
+          },
+          "annotations": {
+            "summary": "Database connection acquisition is failing",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/database-pool.md"
+          }
+        },
+        {
+          "alert": "HubuumNoTaskWorkers",
+          "expr": "max by (deployment) (hubuum_tasks{status=\"queued\"}) > 0 unless on (deployment) (sum by (deployment) (hubuum_task_workers_configured * on (deployment, instance) group_left() (up{job=\"hubuum\"} == 1)) > 0)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "tasks"
+          },
+          "annotations": {
+            "summary": "Queued tasks have no reachable configured workers",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/worker-errors.md"
+          }
+        },
+        {
+          "alert": "HubuumEventDeadLetters",
+          "expr": "max by (deployment) (hubuum_event_queue_items{queue=\"delivery\",state=\"dead\"}) > 0",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "component": "events"
+          },
+          "annotations": {
+            "summary": "Dead event deliveries require investigation",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+          }
+        },
+        {
+          "alert": "HubuumEventClaimsStale",
+          "expr": "max by (deployment, queue) (hubuum_event_stale_claims) > 0",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "component": "events"
+          },
+          "annotations": {
+            "summary": "Event claims remain stale",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+          }
+        },
+        {
+          "alert": "HubuumIdentityBackendFailures",
+          "expr": "sum by (deployment) (increase(hubuum_login_limiter_backend_failures_total[10m])) > 0 or sum by (deployment) (increase(hubuum_api_errors_total{class=\"permission_backend_unavailable\"}[10m])) > 0 or sum by (deployment) (increase(hubuum_login_attempts_total{outcome=\"internal_error\"}[10m])) > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "identity"
+          },
+          "annotations": {
+            "summary": "Authentication or authorization dependencies are failing",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/identity.md"
+          }
+        },
+        {
+          "alert": "HubuumEphemeralTokenKey",
+          "expr": "max by (deployment, instance) (hubuum_token_hash_key_info{mode=\"ephemeral\"}) == 1",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "component": "identity"
+          },
+          "annotations": {
+            "summary": "A token key will change on process restart",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/identity.md"
+          }
+        },
+        {
+          "alert": "HubuumOutputCleanupFailures",
+          "expr": "sum by (deployment, kind) (increase(hubuum_task_output_cleanup_failures_total[1h])) > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "storage"
+          },
+          "annotations": {
+            "summary": "Stored output retention cleanup is failing",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/retention.md"
+          }
+        },
+        {
+          "alert": "HubuumEventRetentionFailures",
+          "expr": "sum by (deployment) (increase(hubuum_db_operation_errors_total{caller=\"event_retention\"}[1h])) > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "storage"
+          },
+          "annotations": {
+            "summary": "Event retention database operations are failing",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/retention.md"
+          }
+        },
+        {
+          "alert": "HubuumOperatorJobFailed",
+          "expr": "hubuum_operator_job_success == 0",
+          "for": "0m",
+          "labels": {
+            "severity": "warning",
+            "component": "recovery"
+          },
+          "annotations": {
+            "summary": "An externally supervised operator job failed",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/operator-jobs.md"
+          }
+        },
+        {
+          "alert": "HubuumOperatorJobOverdue",
+          "expr": "(time() - hubuum_operator_job_last_success_timestamp_seconds > hubuum_operator_job_max_age_seconds) or (hubuum_operator_job_expected == 1 unless on (deployment, operation) hubuum_operator_job_last_success_timestamp_seconds)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "recovery"
+          },
+          "annotations": {
+            "summary": "An expected operator job has no recent successful completion",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/operator-jobs.md"
+          }
+        },
+        {
+          "alert": "HubuumIntegrationProbeFailed",
+          "expr": "probe_success{job=\"hubuum-integrations\"} == 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "component": "{{ $labels.component }}"
+          },
+          "annotations": {
+            "summary": "An external integration probe is failing",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/integrations.md"
+          }
+        },
+        {
+          "alert": "HubuumFileDescriptorsHigh",
+          "expr": "(process_open_fds{job=\"hubuum\"} / process_max_fds{job=\"hubuum\"} > 0.9) and (process_max_fds{job=\"hubuum\"} > 0)",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "component": "process"
+          },
+          "annotations": {
+            "summary": "A process is close to its file descriptor limit",
+            "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
           }
         }
       ]

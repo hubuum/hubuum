@@ -19,13 +19,14 @@ Check the selection with:
 
 ```bash
 python3 scripts/check-python-version.py
-python3 scripts/test-python-version.py
+python3 -I -S tests/python/run.py unit
 ```
 
 CI selects Python 3.11 explicitly from `.python-version` in jobs that execute
-Python tooling, including shell wrappers. A separate required job exercises the
-Rust API, supply-chain, and generated inventory checks on Python 3.11 and 3.12
-without site packages, and tests the unsupported-version errors.
+Python tooling, including shell wrappers. A dedicated required job discovers all local Python regression tests on Python
+3.11 and 3.12 without site packages. Live monitoring tests run in separate jobs.
+See the [testing guide](testing.md) for the Rust/Python ownership boundary and
+unit and integration commands.
 
 ## Git Hooks Setup
 
@@ -77,7 +78,7 @@ TLS fixtures with Python 3.11+, Docker or its Podman compatibility command, and
 OpenSSL on `PATH`:
 
 ```sh
-python3 scripts/test-event-transports.py
+python3 tests/python/run.py integration event-transports
 ```
 
 The runner uses digest-pinned OpenLDAP, Mailpit, RabbitMQ and Valkey images and a source-controlled
@@ -287,8 +288,8 @@ promoted to experimental or stable public status, the same job adds rustdoc,
 clean package, and semantic compatibility checks automatically. The change
 classifier discovers each declared policy document so deleting or moving one
 still selects this job in an otherwise documentation-only change. Run the local
-fixtures with `python3 scripts/test-rust-api-policy.py` and
-`python3 scripts/test-crates-io-baseline.py`.
+fixtures with `python3 tests/python/run.py unit policies.test_rust_api` and
+`python3 tests/python/run.py unit policies.test_crates_io_baseline`.
 
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`

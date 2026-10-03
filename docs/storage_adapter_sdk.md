@@ -168,7 +168,7 @@ The local publication checks are:
 
 ```bash
 python3 scripts/check-rust-api-policy.py
-python3 scripts/test-rust-api-policy.py
+python3 tests/python/run.py unit policies.test_rust_api
 cargo package --locked \
   --package hubuum-computed-fields \
   --package hubuum-domain \

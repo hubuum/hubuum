@@ -1,0 +1,162 @@
+{
+  "groups": [
+    {
+      "name": "hubuum.recording",
+      "interval": "30s",
+      "rules": [
+        {
+          "record": "hubuum:api_requests:rate5m",
+          "expr": "sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[5m]))"
+        },
+        {
+          "record": "hubuum:api_error_ratio:rate5m",
+          "expr": "(sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=\"5xx\"}[5m])) or (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[5m])) * 0)) / (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:api_error_budget_burn:rate5m",
+          "expr": "hubuum:api_error_ratio:rate5m / 0.001"
+        },
+        {
+          "record": "hubuum:api_latency_bad_ratio:rate5m",
+          "expr": "1 - (sum by (deployment) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\",le=\"1\"}[5m]))) / (sum by (deployment) (rate(hubuum_http_request_duration_seconds_count{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:api_latency_budget_burn:rate5m",
+          "expr": "hubuum:api_latency_bad_ratio:rate5m / 0.01"
+        },
+        {
+          "record": "hubuum:api_requests:rate30m",
+          "expr": "sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30m]))"
+        },
+        {
+          "record": "hubuum:api_error_ratio:rate30m",
+          "expr": "(sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=\"5xx\"}[30m])) or (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30m])) * 0)) / (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30m])))"
+        },
+        {
+          "record": "hubuum:api_error_budget_burn:rate30m",
+          "expr": "hubuum:api_error_ratio:rate30m / 0.001"
+        },
+        {
+          "record": "hubuum:api_latency_bad_ratio:rate30m",
+          "expr": "1 - (sum by (deployment) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\",le=\"1\"}[30m]))) / (sum by (deployment) (rate(hubuum_http_request_duration_seconds_count{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[30m])))"
+        },
+        {
+          "record": "hubuum:api_latency_budget_burn:rate30m",
+          "expr": "hubuum:api_latency_bad_ratio:rate30m / 0.01"
+        },
+        {
+          "record": "hubuum:api_requests:rate1h",
+          "expr": "sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[1h]))"
+        },
+        {
+          "record": "hubuum:api_error_ratio:rate1h",
+          "expr": "(sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=\"5xx\"}[1h])) or (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[1h])) * 0)) / (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[1h])))"
+        },
+        {
+          "record": "hubuum:api_error_budget_burn:rate1h",
+          "expr": "hubuum:api_error_ratio:rate1h / 0.001"
+        },
+        {
+          "record": "hubuum:api_latency_bad_ratio:rate1h",
+          "expr": "1 - (sum by (deployment) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\",le=\"1\"}[1h]))) / (sum by (deployment) (rate(hubuum_http_request_duration_seconds_count{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[1h])))"
+        },
+        {
+          "record": "hubuum:api_latency_budget_burn:rate1h",
+          "expr": "hubuum:api_latency_bad_ratio:rate1h / 0.01"
+        },
+        {
+          "record": "hubuum:api_requests:rate6h",
+          "expr": "sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[6h]))"
+        },
+        {
+          "record": "hubuum:api_error_ratio:rate6h",
+          "expr": "(sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=\"5xx\"}[6h])) or (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[6h])) * 0)) / (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[6h])))"
+        },
+        {
+          "record": "hubuum:api_error_budget_burn:rate6h",
+          "expr": "hubuum:api_error_ratio:rate6h / 0.001"
+        },
+        {
+          "record": "hubuum:api_latency_bad_ratio:rate6h",
+          "expr": "1 - (sum by (deployment) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\",le=\"1\"}[6h]))) / (sum by (deployment) (rate(hubuum_http_request_duration_seconds_count{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[6h])))"
+        },
+        {
+          "record": "hubuum:api_latency_budget_burn:rate6h",
+          "expr": "hubuum:api_latency_bad_ratio:rate6h / 0.01"
+        },
+        {
+          "record": "hubuum:api_requests:rate30d",
+          "expr": "sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30d]))"
+        },
+        {
+          "record": "hubuum:api_error_ratio:rate30d",
+          "expr": "(sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=\"5xx\"}[30d])) or (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30d])) * 0)) / (sum by (deployment) (rate(hubuum_http_requests_total{route=~\"/api/.*\",status_family=~\"2xx|3xx|5xx\"}[30d])))"
+        },
+        {
+          "record": "hubuum:api_error_budget_burn:rate30d",
+          "expr": "hubuum:api_error_ratio:rate30d / 0.001"
+        },
+        {
+          "record": "hubuum:api_latency_bad_ratio:rate30d",
+          "expr": "1 - (sum by (deployment) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\",le=\"1\"}[30d]))) / (sum by (deployment) (rate(hubuum_http_request_duration_seconds_count{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[30d])))"
+        },
+        {
+          "record": "hubuum:api_latency_budget_burn:rate30d",
+          "expr": "hubuum:api_latency_bad_ratio:rate30d / 0.01"
+        },
+        {
+          "record": "hubuum:api_route_latency_p50:5m",
+          "expr": "histogram_quantile(0.5, sum by (deployment, route, method, le) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:api_route_latency_p95:5m",
+          "expr": "histogram_quantile(0.95, sum by (deployment, route, method, le) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:api_route_latency_p99:5m",
+          "expr": "histogram_quantile(0.99, sum by (deployment, route, method, le) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:api_latency_p95:5m",
+          "expr": "histogram_quantile(0.95, sum by (deployment, le) (rate(hubuum_http_request_duration_seconds_bucket{route=~\"/api/.*\",status_family=~\"2xx|3xx\"}[5m])))"
+        },
+        {
+          "record": "hubuum:pool_utilization:ratio",
+          "expr": "max by (deployment, instance) (hubuum_db_pool_connections{state=\"checked_out\"}) / max by (deployment, instance) (hubuum_db_pool_connections{state=\"configured\"})"
+        },
+        {
+          "record": "hubuum:task_queue_age:seconds",
+          "expr": "max by (deployment, kind) (hubuum_task_oldest_age_seconds{state=\"queued\"})"
+        },
+        {
+          "record": "hubuum:event_queue_age:seconds",
+          "expr": "max by (deployment, queue) (hubuum_event_oldest_age_seconds)"
+        },
+        {
+          "record": "hubuum:event_queue:items",
+          "expr": "max by (deployment, queue, state) (hubuum_event_queue_items)"
+        },
+        {
+          "record": "hubuum:api_replicas:available",
+          "expr": "sum by (deployment) ((up{job=\"hubuum\"} == 1) * on (deployment, instance) group_left() (hubuum_runtime_info{role=~\"all|api\"} == 1))"
+        },
+        {
+          "record": "hubuum:worker_processes:available",
+          "expr": "sum by (deployment) ((up{job=\"hubuum\"} == 1) * on (deployment, instance) group_left() (hubuum_runtime_info{role=~\"all|worker\"} == 1))"
+        },
+        {
+          "record": "hubuum:task_failure:recent",
+          "expr": "time() - max by (deployment, kind) (hubuum_task_last_terminal_timestamp_seconds{status=\"failed\"}) < bool 3600"
+        },
+        {
+          "record": "hubuum:event_dead:increase1h",
+          "expr": "clamp_min(delta(hubuum:event_queue:items{queue=\"delivery\",state=\"dead\"}[1h]), 0)"
+        },
+        {
+          "record": "hubuum:scrape_age:seconds",
+          "expr": "time() - timestamp(up{job=\"hubuum\"})"
+        }
+      ]
+    }
+  ]
+}

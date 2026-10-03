@@ -105,18 +105,18 @@ Run from the repository root with Python 3.11+ and the production image built
 as described in [development](../development.md):
 
 ```sh
-python3 scripts/test-example-corpus.py
-python3 scripts/example-corpus.py check
-python3 scripts/example-corpus.py verify --image hubuum-server:verify
+python3 tests/python/run.py unit tooling.test_atlas
+python3 tests/python/run.py integration atlas check
+python3 tests/python/run.py integration atlas verify --image hubuum-server:verify
 ```
 
 After changing the import, regenerate the backup and manifest:
 
 ```sh
-python3 scripts/example-corpus.py generate --image hubuum-server:verify
+python3 tests/python/run.py integration atlas generate --image hubuum-server:verify
 ```
 
-The generator and verifier reuse `scripts/test-corpus.py`'s isolated Docker
+The generator and verifier reuse `tests/python/integration/corpus.py`'s isolated Docker
 harness. They create their own network, databases, and temporary credentials;
 they do not accept an existing database URL. Generation publishes files only
 after import, application scenarios, and two restore rounds succeed. No

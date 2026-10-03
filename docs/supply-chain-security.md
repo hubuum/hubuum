@@ -56,7 +56,7 @@ selected as `python3` on `PATH`:
 
 ```bash
 python3 scripts/check-supply-chain-policy.py
-python3 scripts/test-supply-chain-policy.py
+python3 tests/python/run.py unit policies.test_supply_chain
 bash scripts/test-generate-container-evidence.sh
 bash scripts/test-generate-release-sbom.sh
 ```

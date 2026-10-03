@@ -639,3 +639,11 @@ Schedule a quiet period for the migration's constraint validation and partial
 deadline index build. Lock waits are limited to five seconds and each statement
 to sixty seconds. A timeout rolls back the entire migration; retry during a
 quieter period with these limits in place.
+
+## Operator monitoring
+
+Use the [shared operator package](../observability/README.md) for Grafana dashboards,
+Prometheus recording and alerting rules, SLO definitions and response runbooks.
+The same assets work with the optional single-host stack, independently managed
+Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
+your server release and scrape every process directly with deployment labels.

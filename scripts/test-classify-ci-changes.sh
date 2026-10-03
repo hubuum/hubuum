@@ -44,14 +44,14 @@ assert_literal_include_is_code() {
 }
 
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
-  observability/dashboards/overview.json scripts/check-observability.py; do
+  observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
   assert_flag "$operator_output" code true
-  assert_flag "$operator_output" container false
+  assert_flag "$operator_output" container true
 done
 
-for transport_path in scripts/test-event-transports.py scripts/integration-fixtures.py \
-  scripts/test-event-transport-runner.py tests/event_transport_contract.rs tests/integration_services/mod.rs; do
+for transport_path in tests/python/integration/event_transports.py tests/python/support/event_services.py \
+  tests/python/unit/tooling/test_event_transport_runner.py tests/event_transport_contract.rs tests/integration_services/mod.rs; do
   transport_output="$(bash "$classifier" "$transport_path")"
   assert_flag "$transport_output" code true
 done
@@ -73,10 +73,10 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
-  test-corpora/recipe.json test-corpora/README.md scripts/test-corpus.py scripts/test-corpus-tooling.py \
+  test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \
   docs/assets/atlas/atlas.manifest.json docs/getting-started/example-dataset.md \
-  scripts/example-corpus.py scripts/test-example-corpus.py; do
+  tests/python/integration/atlas.py tests/python/unit/tooling/test_atlas.py; do
   corpus_output="$(bash "$classifier" "$corpus_path")"
   assert_flag "$corpus_output" code true
   assert_flag "$corpus_output" container true
@@ -129,20 +129,28 @@ for flag in code openapi operational_contract container artifacts benchmarks run
   assert_flag "$python_version_output" "$flag" true
 done
 
-for python_tool in scripts/check-python-version.py scripts/test-python-version.py; do
+for python_tool in scripts/check-python-version.py tests/python/unit/tooling/test_python_version.py; do
   python_tool_output="$(bash "$classifier" "$python_tool")"
   assert_flag "$python_tool_output" code true
 done
 
-for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py \
-  scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py; do
+for probe_path in scripts/single-host-health-probe.py tests/python/unit/deployment/test_health_probe.py \
+  scripts/install-single-host.sh scripts/update-single-host.sh tests/python/unit/deployment/test_image_tags.py \
+  scripts/single-host-monitoring.sh scripts/observability.py \
+  tests/python/integration/monitoring.py tests/python/integration/monitoring_events.py \
+  tests/python/unit/monitoring/test_package.py tests/python/unit/monitoring/test_events.py \
+  scripts/monitoring/generate.py scripts/monitoring/validate.py \
+  scripts/monitoring/jobs.py tests/python/integration/monitoring_fixture.py \
+  tests/python/unit/deployment/test_monitoring.py scripts/monitoring/__init__.py \
+  observability/manifest.txt observability/dashboards/events.json \
+  observability/prometheus/operator-rule.json observability/runbooks/availability.md; do
   probe_output="$(bash "$classifier" "$probe_path")"
   assert_flag "$probe_output" code true
   assert_flag "$probe_output" container true
 done
 
 for migration_policy_path in scripts/check-migration-check-replacements.py \
-  scripts/test-migration-check-replacements.py; do
+  tests/python/unit/policies/test_migration_replacements.py; do
   migration_policy_output="$(bash "$classifier" "$migration_policy_path")"
   assert_flag "$migration_policy_output" code true
 done
@@ -220,7 +228,7 @@ supply_chain_output="$(bash "$classifier" \
   scripts/generate-container-evidence.sh \
   scripts/install-cargo-semver-checks.sh \
   scripts/test-generate-container-evidence.sh \
-  scripts/test-supply-chain-policy.py)"
+  tests/python/unit/policies/test_supply_chain.py)"
 assert_flag "$supply_chain_output" code true
 assert_flag "$supply_chain_output" container true
 assert_flag "$supply_chain_output" artifacts true
@@ -234,9 +242,9 @@ assert_flag "$supply_chain_docs_output" artifacts true
 
 rust_api_policy_output="$(bash "$classifier" \
   scripts/check-rust-api-policy.py \
-  scripts/test-rust-api-policy.py \
+  tests/python/unit/policies/test_rust_api.py \
   scripts/check-crates-io-baseline.py \
-  scripts/test-crates-io-baseline.py)"
+  tests/python/unit/policies/test_crates_io_baseline.py)"
 assert_flag "$rust_api_policy_output" code true
 assert_flag "$rust_api_policy_output" container false
 assert_flag "$rust_api_policy_output" artifacts false
@@ -267,7 +275,7 @@ operational_contract_output="$(bash "$classifier" \
   scripts/check-operational-contract-compatibility.py \
   scripts/resolve-operational-contract-baseline.sh \
   scripts/test-operational-contract-github-api.sh \
-  scripts/test-operational-contract-compatibility.py \
+  tests/python/unit/policies/test_operational_contract.py \
   scripts/test-operational-contract-compatibility.sh)"
 assert_flag "$operational_contract_output" operational_contract true
 assert_flag "$operational_contract_output" code true
@@ -325,8 +333,8 @@ treetop_output="$(bash "$classifier" \
   src/permissions/treetop/mod.rs \
   src/models/token_scope.rs \
   scripts/run-treetop-conformance.sh \
-  scripts/serve-treetop-fixture.py \
-  scripts/test-serve-treetop-fixture.py)"
+  tests/python/support/treetop_server.py \
+  tests/python/unit/tooling/test_treetop_fixture.py)"
 assert_flag "$treetop_output" code true
 assert_flag "$treetop_output" markdown false
 assert_flag "$treetop_output" treetop_conformance true
@@ -498,7 +506,7 @@ assert_flag "$classifier_output" runtime_benchmark true
 assert_flag "$classifier_output" scale_benchmark true
 assert_flag "$classifier_output" artifacts false
 
-for windows_setup_path in scripts/install-windows-postgresql.py scripts/test-install-windows-postgresql.py; do
+for windows_setup_path in scripts/install-windows-postgresql.py tests/python/unit/deployment/test_windows_postgresql.py; do
   windows_setup_output="$(bash "$classifier" "$windows_setup_path")"
   assert_flag "$windows_setup_output" code true
   assert_flag "$windows_setup_output" benchmarks false
@@ -510,7 +518,7 @@ assert_flag "$docker_output" container true
 assert_flag "$docker_output" artifacts true
 
 for compatibility_path in scripts/test-adjacent-release-upgrade.sh \
-  scripts/adjacent-release-api.sh scripts/test-adjacent-release-api.py; do
+  scripts/adjacent-release-api.sh tests/python/unit/deployment/test_adjacent_release_api.py; do
   compatibility_output="$(bash "$classifier" "$compatibility_path")"
   assert_flag "$compatibility_output" code true
   assert_flag "$compatibility_output" container true
@@ -576,7 +584,7 @@ batch_benchmark="$(bash "$classifier" benches/template_schema_concurrency/main.r
 assert_flag "$batch_benchmark" code true
 assert_flag "$batch_benchmark" benchmarks true
 
-for schema_input in scripts/check-json-schema-budget.py \
+for schema_input in tests/python/integration/schema_budget.py \
   crates/hubuum-domain/src/json_schema.rs \
   crates/hubuum-schema-diagnostics/src/lib.rs \
   crates/hubuum-domain/src/json_schema/budget.rs \
@@ -637,7 +645,7 @@ for approval_path in src/api/v1/handlers/credential_approvals.rs src/services/cr
   assert_flag "$approval_output" treetop_conformance true
 done
 
-for ci_input in scripts/ci-changed-paths.sh scripts/test-ci-changed-paths.py; do
+for ci_input in scripts/ci-changed-paths.sh tests/python/unit/tooling/test_ci_changed_paths.py; do
   output="$(bash "$classifier" "$ci_input")"
   assert_flag "$output" code true
   assert_flag "$output" documentation true
@@ -645,4 +653,38 @@ for ci_input in scripts/ci-changed-paths.sh scripts/test-ci-changed-paths.py; do
 done
 unknown_document="$(bash "$classifier" docs/future-contract.json)"
 assert_flag "$unknown_document" code true
-python3 "$repo_root/scripts/test-ci-changed-paths.py"
+
+
+# New tests are discovered automatically; their changed paths still need the right CI jobs.
+for python_container_input in tests/python/run.py tests/python/support/__init__.py \
+  tests/python/support/installer.py tests/python/integration/__init__.py \
+  tests/python/integration/monitoring.py tests/python/integration/monitoring_fixture.py \
+  tests/python/unit/deployment/test_new_installer_case.py \
+  tests/python/unit/monitoring/test_new_panel_case.py; do
+  python_output="$(bash "$classifier" "$python_container_input")"
+  assert_flag "$python_output" code true
+  assert_flag "$python_output" container true
+  case "$python_container_input" in
+    tests/python/run.py | tests/python/support/__init__.py)
+      assert_flag "$python_output" runtime_benchmark true
+      assert_flag "$python_output" scale_benchmark true
+      assert_flag "$python_output" treetop_conformance true
+      ;;
+  esac
+done
+python_unit_output="$(bash "$classifier" tests/python/unit/tooling/test_new_local_case.py)"
+assert_flag "$python_unit_output" code true
+assert_flag "$python_unit_output" container false
+
+python3 - "$repo_root/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text()
+unit_job = workflow.split("\n  python-tooling:\n", 1)[1].split("\n  monitoring-integration:\n", 1)[0]
+assert "python3 -I -S tests/python/run.py unit" in unit_job
+assert "integration monitoring" not in unit_job
+assert "tests/python/run.py integration monitoring --image hubuum-server:ci" in workflow
+assert workflow.count("      - monitoring-integration\n") == 2, "CI and release gates must require both monitoring engines"
+assert "needs.monitoring-integration.result == 'success'" in workflow
+PY

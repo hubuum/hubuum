@@ -212,8 +212,8 @@ Use [Python 3.11 or newer](development.md#python-tooling), with `python3` on
 
 ```bash
 python3 scripts/check-rust-api-policy.py
-python3 scripts/test-rust-api-policy.py
-python3 scripts/test-crates-io-baseline.py
+python3 tests/python/run.py unit policies.test_rust_api
+python3 tests/python/run.py unit policies.test_crates_io_baseline
 ```
 
 The deterministic JSON inventory is available for review with:

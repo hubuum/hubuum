@@ -1,0 +1,896 @@
+{
+  "rule_files": [
+    "alerts.json",
+    "recording-rules.json"
+  ],
+  "evaluation_interval": "1m",
+  "tests": [
+    {
+      "name": "HubuumScrapeUnavailable fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "up{deployment=\"test\",instance=\"one\",job=\"hubuum\"}",
+          "values": "1+0x4 0+0x20 1+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumScrapeUnavailable",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumScrapeUnavailable",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "job": "hubuum",
+                "severity": "warning",
+                "component": "process"
+              },
+              "exp_annotations": {
+                "summary": "A configured Hubuum process cannot be scraped",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumScrapeUnavailable",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumNoReadyApi fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "probe_success{deployment=\"test\",instance=\"one\",job=\"hubuum-readiness\"}",
+          "values": "1+0x4 0+0x20 1+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumNoReadyApi",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumNoReadyApi",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "critical",
+                "component": "api"
+              },
+              "exp_annotations": {
+                "summary": "No probed API replica is ready",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumNoReadyApi",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumApiAvailabilityBurn fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum:api_error_budget_burn:rate5m{deployment=\"test\"}",
+          "values": "0+0x4 20+0x20 0+0x100"
+        },
+        {
+          "series": "hubuum:api_error_budget_burn:rate1h{deployment=\"test\"}",
+          "values": "0+0x4 20+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumApiAvailabilityBurn",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumApiAvailabilityBurn",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "critical",
+                "component": "api"
+              },
+              "exp_annotations": {
+                "summary": "API availability is consuming the monthly budget rapidly",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumApiAvailabilityBurn",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumApiAvailabilitySlowBurn fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum:api_error_budget_burn:rate30m{deployment=\"test\"}",
+          "values": "0+0x4 10+0x20 0+0x100"
+        },
+        {
+          "series": "hubuum:api_error_budget_burn:rate6h{deployment=\"test\"}",
+          "values": "0+0x4 10+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumApiAvailabilitySlowBurn",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumApiAvailabilitySlowBurn",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "api"
+              },
+              "exp_annotations": {
+                "summary": "API availability is consuming the monthly budget",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumApiAvailabilitySlowBurn",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumApiLatencyBurn fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum:api_latency_budget_burn:rate5m{deployment=\"test\"}",
+          "values": "0+0x4 20+0x20 0+0x100"
+        },
+        {
+          "series": "hubuum:api_latency_budget_burn:rate1h{deployment=\"test\"}",
+          "values": "0+0x4 20+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumApiLatencyBurn",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumApiLatencyBurn",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "api"
+              },
+              "exp_annotations": {
+                "summary": "Successful API requests are exceeding the latency objective",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/api-slo.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumApiLatencyBurn",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumDatabaseAcquireFailures fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_db_connection_acquire_failures_total{deployment=\"test\",instance=\"one\",caller=\"http_request\"}",
+          "values": "0+0x4 1+1x20 21+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumDatabaseAcquireFailures",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumDatabaseAcquireFailures",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "severity": "warning",
+                "component": "database"
+              },
+              "exp_annotations": {
+                "summary": "Database connection acquisition is failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/database-pool.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumDatabaseAcquireFailures",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumNoTaskWorkers fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_tasks{deployment=\"test\",kind=\"export\",status=\"queued\"}",
+          "values": "0+0x4 1+0x20 0+0x100"
+        },
+        {
+          "series": "up{deployment=\"test\",instance=\"one\",job=\"hubuum\"}",
+          "values": "1+0x125"
+        },
+        {
+          "series": "hubuum_task_workers_configured{deployment=\"test\",instance=\"one\"}",
+          "values": "0+0x125"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumNoTaskWorkers",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumNoTaskWorkers",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "tasks"
+              },
+              "exp_annotations": {
+                "summary": "Queued tasks have no reachable configured workers",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/worker-errors.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumNoTaskWorkers",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumEventDeadLetters fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_event_queue_items{deployment=\"test\",queue=\"delivery\",state=\"dead\"}",
+          "values": "0+0x4 1+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumEventDeadLetters",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumEventDeadLetters",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "events"
+              },
+              "exp_annotations": {
+                "summary": "Dead event deliveries require investigation",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumEventDeadLetters",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumEventClaimsStale fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_event_stale_claims{deployment=\"test\",queue=\"delivery\"}",
+          "values": "0+0x4 1+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumEventClaimsStale",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumEventClaimsStale",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "queue": "delivery",
+                "severity": "warning",
+                "component": "events"
+              },
+              "exp_annotations": {
+                "summary": "Event claims remain stale",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/event-backlog.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumEventClaimsStale",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumIdentityBackendFailures fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_login_limiter_backend_failures_total{deployment=\"test\",backend=\"valkey\",operation=\"begin\"}",
+          "values": "0+0x4 1+1x20 21+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumIdentityBackendFailures",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumIdentityBackendFailures",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "identity"
+              },
+              "exp_annotations": {
+                "summary": "Authentication or authorization dependencies are failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/identity.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumIdentityBackendFailures",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumEphemeralTokenKey fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_token_hash_key_info{deployment=\"test\",mode=\"ephemeral\"}",
+          "values": "0+0x4 1+0x20 0+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumEphemeralTokenKey",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumEphemeralTokenKey",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "identity"
+              },
+              "exp_annotations": {
+                "summary": "A token key will change on process restart",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/identity.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumEphemeralTokenKey",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumOutputCleanupFailures fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_task_output_cleanup_failures_total{deployment=\"test\",kind=\"backup\"}",
+          "values": "0+0x4 1+1x20 21+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumOutputCleanupFailures",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumOutputCleanupFailures",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "kind": "backup",
+                "severity": "warning",
+                "component": "storage"
+              },
+              "exp_annotations": {
+                "summary": "Stored output retention cleanup is failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/retention.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumOutputCleanupFailures",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumEventRetentionFailures fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_db_operation_errors_total{deployment=\"test\",caller=\"event_retention\"}",
+          "values": "0+0x4 1+1x20 21+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumEventRetentionFailures",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumEventRetentionFailures",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "severity": "warning",
+                "component": "storage"
+              },
+              "exp_annotations": {
+                "summary": "Event retention database operations are failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/retention.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumEventRetentionFailures",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumOperatorJobFailed fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_operator_job_success{deployment=\"test\",operation=\"restore_verify\"}",
+          "values": "1+0x4 0+0x20 1+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumOperatorJobFailed",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumOperatorJobFailed",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "operation": "restore_verify",
+                "severity": "warning",
+                "component": "recovery"
+              },
+              "exp_annotations": {
+                "summary": "An externally supervised operator job failed",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/operator-jobs.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumOperatorJobFailed",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumOperatorJobOverdue fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_operator_job_last_success_timestamp_seconds{deployment=\"test\",operation=\"restore_verify\"}",
+          "values": "0+60x4 240+0x20 1500+60x100"
+        },
+        {
+          "series": "hubuum_operator_job_max_age_seconds{deployment=\"test\",operation=\"restore_verify\"}",
+          "values": "300+0x125"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumOperatorJobOverdue",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumOperatorJobOverdue",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "operation": "restore_verify",
+                "severity": "warning",
+                "component": "recovery"
+              },
+              "exp_annotations": {
+                "summary": "An expected operator job has no recent successful completion",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/operator-jobs.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumOperatorJobOverdue",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumIntegrationProbeFailed fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "probe_success{deployment=\"test\",job=\"hubuum-integrations\",component=\"ldap\"}",
+          "values": "1+0x4 0+0x20 1+0x100"
+        },
+        {
+          "series": "probe_success{deployment=\"test\",job=\"hubuum-integrations\",component=\"smtp\"}",
+          "values": "1+0x4 0+0x20 1+0x100"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumIntegrationProbeFailed",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumIntegrationProbeFailed",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "job": "hubuum-integrations",
+                "component": "ldap",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "An external integration probe is failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/integrations.md"
+              }
+            },
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "job": "hubuum-integrations",
+                "component": "smtp",
+                "severity": "warning"
+              },
+              "exp_annotations": {
+                "summary": "An external integration probe is failing",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/integrations.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumIntegrationProbeFailed",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "HubuumFileDescriptorsHigh fires and recovers",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "process_open_fds{deployment=\"test\",instance=\"one\",job=\"hubuum\"}",
+          "values": "0+0x4 95+0x20 0+0x100"
+        },
+        {
+          "series": "process_max_fds{deployment=\"test\",instance=\"one\",job=\"hubuum\"}",
+          "values": "100+0x125"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "4m",
+          "alertname": "HubuumFileDescriptorsHigh",
+          "exp_alerts": []
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumFileDescriptorsHigh",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "instance": "one",
+                "job": "hubuum",
+                "severity": "warning",
+                "component": "process"
+              },
+              "exp_annotations": {
+                "summary": "A process is close to its file descriptor limit",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/availability.md"
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "90m",
+          "alertname": "HubuumFileDescriptorsHigh",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "Expected job that never ran",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_operator_job_expected{deployment=\"test\",operation=\"restore_verify\"}",
+          "values": "1+0x20"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "10m",
+          "alertname": "HubuumOperatorJobOverdue",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "deployment": "test",
+                "operation": "restore_verify",
+                "severity": "warning",
+                "component": "recovery"
+              },
+              "exp_annotations": {
+                "summary": "An expected operator job has no recent successful completion",
+                "runbook_url": "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/operator-jobs.md"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Application SLI exclusions and shared database deduplication",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",instance=\"one\",route=\"/api/v1/objects\",status_family=\"2xx\"}",
+          "values": "0+90x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",instance=\"one\",route=\"/api/v1/objects\",status_family=\"5xx\"}",
+          "values": "0+10x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",route=\"/metrics\",status_family=\"2xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",route=\"/readyz\",status_family=\"2xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",route=\"/healthz\",status_family=\"2xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",route=\"/api/v1/objects\",status_family=\"4xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_http_requests_total{deployment=\"test\",route=\"/swagger-ui\",status_family=\"2xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"one\",kind=\"export\",state=\"queued\"}",
+          "values": "120+0x20"
+        },
+        {
+          "series": "hubuum_event_queue_items{deployment=\"test\",instance=\"one\",queue=\"delivery\",state=\"pending\"}",
+          "values": "7+0x20"
+        },
+        {
+          "series": "hubuum_task_oldest_age_seconds{deployment=\"test\",instance=\"two\",kind=\"export\",state=\"queued\"}",
+          "values": "120+0x20"
+        },
+        {
+          "series": "hubuum_event_queue_items{deployment=\"test\",instance=\"two\",queue=\"delivery\",state=\"pending\"}",
+          "values": "7+0x20"
+        },
+        {
+          "series": "hubuum_http_request_duration_seconds_count{deployment=\"test\",route=\"/api/v1/objects\",status_family=\"2xx\"}",
+          "values": "0+100x20"
+        },
+        {
+          "series": "hubuum_http_request_duration_seconds_bucket{deployment=\"test\",route=\"/api/v1/objects\",status_family=\"2xx\",le=\"1\"}",
+          "values": "0+99x20"
+        },
+        {
+          "series": "hubuum_http_request_duration_seconds_count{deployment=\"test\",route=\"/metrics\",status_family=\"2xx\"}",
+          "values": "0+10000x20"
+        },
+        {
+          "series": "hubuum_http_request_duration_seconds_bucket{deployment=\"test\",route=\"/metrics\",status_family=\"2xx\",le=\"1\"}",
+          "values": "0+10000x20"
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "hubuum:api_error_ratio:rate5m",
+          "eval_time": "10m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"hubuum:api_error_ratio:rate5m\",deployment=\"test\"}",
+              "value": 0.1
+            }
+          ]
+        },
+        {
+          "expr": "hubuum:task_queue_age:seconds",
+          "eval_time": "10m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"hubuum:task_queue_age:seconds\",deployment=\"test\",kind=\"export\"}",
+              "value": 120
+            }
+          ]
+        },
+        {
+          "expr": "hubuum:event_queue:items",
+          "eval_time": "10m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"hubuum:event_queue:items\",deployment=\"test\",queue=\"delivery\",state=\"pending\"}",
+              "value": 7
+            }
+          ]
+        },
+        {
+          "expr": "abs(hubuum:api_latency_bad_ratio:rate5m - 0.01) < bool 1e-12",
+          "eval_time": "10m",
+          "exp_samples": [
+            {
+              "labels": "{deployment=\"test\"}",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Absent traffic does not claim a healthy API",
+      "promql_expr_test": [
+        {
+          "expr": "hubuum:api_error_ratio:rate5m >= 0",
+          "eval_time": "10m",
+          "exp_samples": []
+        }
+      ]
+    },
+    {
+      "name": "Unavailable file descriptor limits do not page",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "process_open_fds{job=\"hubuum\",deployment=\"test\"}",
+          "values": "100+0x20"
+        },
+        {
+          "series": "process_max_fds{job=\"hubuum\",deployment=\"test\"}",
+          "values": "0+0x20"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "20m",
+          "alertname": "HubuumFileDescriptorsHigh",
+          "exp_alerts": []
+        }
+      ]
+    }
+  ],
+  "fuzzy_compare": true
+}

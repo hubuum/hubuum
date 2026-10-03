@@ -9,6 +9,7 @@ AUTH_CONFIG_HOST_PATH=""
 IMAGE_TAG=""
 BACKEND_TAG=""
 FRONTEND_TAG=""
+MONITORING_ARGS=()
 DEFAULT_MANAGEMENT_SCRIPT_BASE_URL="https://raw.githubusercontent.com/hubuum/hubuum/main/scripts"
 
 usage() {
@@ -23,6 +24,11 @@ Options:
   --server-tag TAG        Backend tag, overriding --tag (alias: --backend-tag)
   --frontend-tag TAG      Frontend tag, overriding --tag
   --auth-config PATH      Replace the host auth-provider TOML path before rolling the replicas
+  --monitoring            Enable the shared Prometheus/Grafana operator package
+  --monitoring-ref REF    Operator-package Git ref for custom backend images
+  --prometheus-image IMAGE
+                          Replace and remember the monitoring image
+  --grafana-image IMAGE   Replace and remember the monitoring image
   --service-name NAME     systemd service name. Defaults to value in .env or hubuum
   --no-systemd            Retained for compatibility; rolling updates always use Compose directly
   -h, --help              Show this help
@@ -117,6 +123,8 @@ while [[ $# -gt 0 ]]; do
     --server-tag|--backend-tag) validate_image_tag "$1" "${2:-}"; BACKEND_TAG="$2"; shift 2 ;;
     --frontend-tag) validate_image_tag "$1" "${2:-}"; FRONTEND_TAG="$2"; shift 2 ;;
     --auth-config) AUTH_CONFIG_HOST_PATH="$2"; shift 2 ;;
+    --monitoring) MONITORING_ARGS+=("$1"); shift ;;
+    --monitoring-ref|--prometheus-image|--grafana-image) MONITORING_ARGS+=("$1" "$2"); shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --no-systemd) USE_SYSTEMD="false"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -213,7 +221,7 @@ refresh_deployment_files() {
     --refresh-config \
     --dir "$INSTALL_DIR" \
     --engine "$ENGINE_BIN" \
-    --script-base-url "$MANAGEMENT_SCRIPT_BASE_URL"; then
+    --script-base-url "$MANAGEMENT_SCRIPT_BASE_URL" ${MONITORING_ARGS[@]+"${MONITORING_ARGS[@]}"}; then
     [[ -z "$installer_temp" ]] || rm -f "$installer_temp"
     die "could not refresh generated deployment files"
   fi
@@ -261,11 +269,13 @@ if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
   absolute_config_path "$AUTH_CONFIG_HOST_PATH" >/dev/null
 fi
 DATABASE_ROLE_MODE="$(read_env_value HUBUUM_DATABASE_ROLE_MODE || printf 'single')"
+MONITORING_ENABLED="$(read_env_value MONITORING_ENABLED || printf 'false')"
 
 if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   PULL_SERVICES=(caddy)
   [[ "$DATABASE_MANAGED" == "true" ]] && PULL_SERVICES+=(postgres)
   [[ "$INSTALL_MODE" == "all" ]] && PULL_SERVICES+=(valkey)
+  [[ "$MONITORING_ENABLED" == "true" ]] && PULL_SERVICES+=(prometheus grafana)
   "${COMPOSE_CMD[@]}" pull "${PULL_SERVICES[@]}"
   "${COMPOSE_CMD[@]}" build --pull
 else
@@ -280,4 +290,11 @@ if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v system
   echo "Hubuum rolled via ${ENGINE_BIN} compose; ${SERVICE_NAME}.service remained active"
 else
   echo "Hubuum rolled via ${ENGINE_BIN} compose"
+fi
+
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  MONITORING_HOST="$(read_env_value MONITORING_HOST)"
+  # shellcheck source=scripts/single-host-monitoring.sh
+  source "$INSTALL_DIR/single-host-monitoring.sh"
+  hubuum_monitoring_summary
 fi

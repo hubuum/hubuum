@@ -31,11 +31,11 @@ for path in "$@"; do
   fi
 
   case "$path" in
-    scripts/example-corpus.py | scripts/test-example-corpus.py | \
+    tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py | \
       docs/* | zensical.toml | .github/docs-tools.env | \
       .github/workflows/docs.yml | scripts/docs.sh | scripts/classify-ci-changes.sh | \
       scripts/test-classify-ci-changes.sh | scripts/ci-changed-paths.sh | \
-      scripts/test-ci-changed-paths.py | scripts/check-python-version.py | \
+      tests/python/unit/tooling/test_ci_changed_paths.py | scripts/check-python-version.py | \
       .python-version)
       documentation=true
       ;;
@@ -63,8 +63,8 @@ for path in "$@"; do
   case "$path" in
     .github/treetop-conformance.env | .github/workflows/ci.yml | .python-version | \
       Cargo.toml | Cargo.lock | docs/treetop/* | \
-      scripts/run-treetop-conformance.sh | scripts/serve-treetop-fixture.py | \
-      scripts/test-serve-treetop-fixture.py | \
+      scripts/run-treetop-conformance.sh | tests/python/run.py | tests/python/support/__init__.py | tests/python/support/treetop_server.py | \
+      tests/python/unit/tooling/test_treetop_fixture.py | \
       src/config.rs | src/config/* | src/db/traits/authz.rs | src/permissions/* | \
       src/models/permissions.rs | src/models/token.rs | \
       src/models/token_scope.rs | src/models/unified_search.rs | \
@@ -82,9 +82,9 @@ for path in "$@"; do
   esac
 
   case "$path" in
-    test-corpora/* | scripts/test-corpus.py | scripts/test-corpus-tooling.py | .gitattributes | \
+    test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | .gitattributes | \
       docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
-      scripts/example-corpus.py | scripts/test-example-corpus.py)
+      tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
       code=true
       container=true
       ;;
@@ -98,7 +98,7 @@ for path in "$@"; do
       scripts/check-operational-contract-compatibility.py | \
       scripts/resolve-operational-contract-baseline.sh | \
       scripts/test-operational-contract-github-api.sh | \
-      scripts/test-operational-contract-compatibility.py | \
+      tests/python/unit/policies/test_operational_contract.py | \
       scripts/test-operational-contract-compatibility.sh)
       code=true
       operational_contract=true
@@ -140,13 +140,14 @@ for path in "$@"; do
       scripts/generate-container-evidence.sh | scripts/generate-release-sbom.py | \
       scripts/install-cargo-semver-checks.sh | scripts/run-cargo-deny.sh | \
       scripts/test-generate-release-sbom.sh | \
-      scripts/test-generate-container-evidence.sh | scripts/test-supply-chain-policy.py)
+      scripts/test-generate-container-evidence.sh | tests/python/unit/policies/test_supply_chain.py)
       code=true
       container=true
       artifacts=true
       ;;
     observability/*)
       code=true
+      container=true
       ;;
     *.md | docs/assets/* | LICENSE | .gitattributes | .gitignore | \
       .env.example | .env.*.example | .agents/* | .codex/* | \
@@ -194,7 +195,7 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    scripts/test-event-transports.py | src/tests/* | tests/*)
+    tests/python/integration/event_transports.py | src/tests/*)
       code=true
       ;;
     src/*)
@@ -253,23 +254,41 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    scripts/check-json-schema-budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
-      scripts/ci-changed-paths.sh | scripts/test-ci-changed-paths.py)
+    tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
+      scripts/ci-changed-paths.sh | tests/python/unit/tooling/test_ci_changed_paths.py)
       code=true
       benchmarks=true
       runtime_benchmark=true
       scale_benchmark=true
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
+      scripts/single-host-monitoring.sh | scripts/observability.py | scripts/monitoring/* | \
+      tests/python/unit/deployment/* | tests/python/unit/monitoring/* | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
-      scripts/adjacent-release-api.sh | scripts/test-adjacent-release-api.py | \
+      scripts/adjacent-release-api.sh | tests/python/unit/deployment/test_adjacent_release_api.py | \
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
-      scripts/test-install-script-refresh.sh | scripts/test-single-host-tags.py | scripts/test-single-host-rollout.sh | \
+      scripts/test-install-script-refresh.sh | tests/python/unit/deployment/test_image_tags.py | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \
-      scripts/single-host-health-probe.py | scripts/test-single-host-health-probe.py | \
+      scripts/single-host-health-probe.py | tests/python/unit/deployment/test_health_probe.py | \
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
       code=true
       container=true
+      ;;
+    tests/python/run.py | tests/python/support/__init__.py)
+      # The shared runner also launches the resource-budget benchmark probe.
+      code=true
+      container=true
+      benchmarks=true
+      runtime_benchmark=true
+      scale_benchmark=true
+      ;;
+    tests/python/support/* | tests/python/integration/*)
+      # Shared fixture changes must exercise the packaged application as well.
+      code=true
+      container=true
+      ;;
+    tests/*)
+      code=true
       ;;
     scripts/* | run_tests.sh | cleanup_test_databases.sh)
       code=true

@@ -140,3 +140,11 @@ connection closes. This is safe but causes connection churn, visible through
 Server-side statement timeouts are preferable to cancelling an outer future:
 the query returns an error normally, allowing the transaction helper to execute
 its rollback path without replacing the connection.
+
+## Operator monitoring
+
+Use the [shared operator package](../observability/README.md) for Grafana dashboards,
+Prometheus recording and alerting rules, SLO definitions and response runbooks.
+The same assets work with the optional single-host stack, independently managed
+Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
+your server release and scrape every process directly with deployment labels.

@@ -1,0 +1,10 @@
+modules:
+  hubuum_http_ready:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4
+  hubuum_tcp:
+    prober: tcp
+    timeout: 5s

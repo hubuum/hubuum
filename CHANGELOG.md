@@ -27,6 +27,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Optional single-host Prometheus and Grafana installation with authenticated
+  `/prometheus/` and `/grafana/` paths, private container ports, pinned images,
+  persistent data and automatic provisioning. The shared operator package
+  provides seven dashboards, recording rules, SLO and operational alerts,
+  runbooks, Prometheus Operator resources and external job-result recording
+  for distributed installations as well. Disabling monitoring removes its
+  containers and proxy routes while preserving configuration, credentials,
+  Grafana's encryption key and data for later re-enabling.
+
 - A shared Atlas example inventory for documentation, demonstrations, and client
   testing: four classes and ten connected objects, with downloadable import and
   restorable backup files, schema and permission examples, and automated checks
@@ -39,6 +48,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   contributors, with links to the CLI, frontend, and client-library guides.
 
 ### Fixed
+
+- Managed single-host PostgreSQL explicitly uses its existing mounted data
+  directory, allowing fresh PostgreSQL 18 installs without changing the layout
+  of existing databases or orphaning an anonymous parent volume. The restore
+  executor now uses process liveness instead
+  of an inherited HTTP probe for a listener it does not provide.
+- Single-host updates work with Bash 3.2 when no monitoring options are passed.
+- The empty single-host authentication placeholder is readable by the non-root
+  API on Linux, including after configuration refresh. Existing provider files
+  keep their contents and permissions; deployment instructions now specify
+  group read access for the container process.
 
 - Reduce buffer reallocations when rendering templates by reserving a small
   initial buffer capped by the configured output limit.

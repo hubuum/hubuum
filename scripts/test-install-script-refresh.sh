@@ -55,6 +55,7 @@ management_scripts=(
   install-single-host.sh
   update-single-host.sh
   single-host-rollout.sh
+  single-host-monitoring.sh
   stop-single-host.sh
   uninstall-single-host.sh
 )
@@ -115,6 +116,7 @@ eval "$refresh_function_source"
 
 BASH_LOG="$TEST_ROOT/bash.log"
 BUILD_FROM_SOURCE="false"
+MONITORING_ARGS=()
 ENGINE_BIN="docker"
 MANAGEMENT_SCRIPT_BASE_URL="$SCRIPT_BASE_URL"
 bash() {

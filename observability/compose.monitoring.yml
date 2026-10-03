@@ -1,0 +1,53 @@
+# Overlay for docker-compose.yml; paths are relative to the repository root.
+services:
+  prometheus:
+    profiles: [monitoring]
+    image: docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=31d
+      - --storage.tsdb.retention.size=5GB
+      - --web.external-url=https://localhost:9443/prometheus/
+      - --web.route-prefix=/prometheus
+    mem_limit: 512m
+    cpus: 1.0
+    volumes:
+      - ./observability/prometheus/local.yml:/etc/prometheus/prometheus.yml:ro,z
+      - ./observability/prometheus/alerts.json:/etc/prometheus/alerts.json:ro,z
+      - ./observability/prometheus/recording-rules.json:/etc/prometheus/recording-rules.json:ro,z
+      - monitoring_prometheus_data:/prometheus
+  grafana:
+    profiles: [monitoring]
+    image: docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    environment:
+      GF_SERVER_ROOT_URL: https://localhost:9443/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Generate a local Grafana password}
+      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:?Generate and retain a Grafana encryption key}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    mem_limit: 512m
+    cpus: 1.0
+    volumes:
+      - ./observability/grafana/datasource.yml:/etc/grafana/provisioning/datasources/hubuum.yml:ro,z
+      - ./observability/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/hubuum.yml:ro,z
+      - ./observability/dashboards:/etc/grafana/dashboards:ro,z
+      - monitoring_grafana_data:/var/lib/grafana
+  monitoring-proxy:
+    profiles: [monitoring]
+    image: docker.io/library/caddy:2-alpine
+    ports:
+      - "127.0.0.1:9443:443"
+    environment:
+      PROMETHEUS_PASSWORD_HASH: ${PROMETHEUS_PASSWORD_HASH:?Generate a Caddy bcrypt hash}
+    volumes:
+      - ./observability/Caddyfile.local:/etc/caddy/Caddyfile:ro,z
+      - monitoring_caddy_data:/data
+volumes:
+  monitoring_prometheus_data:
+  monitoring_grafana_data:
+  monitoring_caddy_data:
