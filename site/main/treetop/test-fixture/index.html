@@ -4017,9 +4017,10 @@ root collection in the disposable CI PostgreSQL database when missing.</p>
 </ul>
 <p>The runner uses strict schema validation and waits until the status endpoint
 reports both a loaded policy and a schema-backed request context. Its fixture
-server withholds each policy fetch until Treetop has fetched the schema. The
-server consumes one schema handoff for each policy fetch so a restarted service
-cannot reuse a stale readiness signal and race strict validation. Uploads remain
+server withholds each policy fetch until Treetop has fetched the schema and its
+status endpoint confirms that the schema is loaded. The server consumes one
+schema handoff for each policy fetch so a restarted service cannot reuse a stale
+readiness signal and race strict validation. Uploads remain
 disabled, so no upload token is generated or stored.</p>
 <h2 id="shared-semantic-corpus">Shared semantic corpus<a class="headerlink" href="#shared-semantic-corpus" title="Permanent link">&para;</a></h2>
 <p><code>src/tests/permissions/conformance.rs</code> is run once with the local PostgreSQL

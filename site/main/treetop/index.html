@@ -2084,6 +2084,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upgrading-to-treetop-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading to Treetop 0.1
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-501-errors-mean" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3983,6 +3994,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upgrading-to-treetop-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading to Treetop 0.1
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-501-errors-mean" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4179,6 +4201,7 @@
 <li><code>Permission</code> GET responses: synthetic, with placeholder <code>id</code> and timestamps. See "Synthetic Permission rows" below.</li>
 </ul>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>Use Treetop REST 0.1 with this version of Hubuum.</p>
 <p>Set the following environment variables to enable Treetop mode:</p>
 <ul>
 <li><code>HUBUUM_PERMISSION_BACKEND=treetop</code> — required; selects the Treetop backend.</li>
@@ -4220,12 +4243,24 @@
 <p>This generates a Cedar policy bundle that mirrors the current SQL <code>permissions</code> table. Upload <code>policies.cedar</code> to Treetop alongside <code>bootstrap.cedar</code>. (If you're setting up a fresh deployment, skip this step — you'll write your policies from scratch.)</p>
 <ol>
 <li>
-<p><strong>Configure Hubuum and restart.</strong> Set <code>HUBUUM_PERMISSION_BACKEND=treetop</code> and <code>HUBUUM_TREETOP_URL=https://your-treetop-instance</code> in your environment, then restart Hubuum. Hubuum's startup health check runs <code>client.health()</code> against the Treetop server. If the health check fails, Hubuum exits with status code 6 (<code>EXIT_CODE_PERMISSION_BACKEND_ERROR</code>).</p>
+<p><strong>Configure Hubuum and restart.</strong> Set <code>HUBUUM_PERMISSION_BACKEND=treetop</code> and <code>HUBUUM_TREETOP_URL=https://your-treetop-instance</code> in your environment, then restart Hubuum. Hubuum checks the Treetop server's <code>/readyz</code> endpoint at startup. If the server is unavailable or not ready, Hubuum exits with status code 6 (<code>EXIT_CODE_PERMISSION_BACKEND_ERROR</code>).</p>
 </li>
 <li>
 <p><strong>Verify the integration.</strong> Run the parity test suite (see "Verifying the integration" below) to confirm Treetop is wired correctly.</p>
 </li>
 </ol>
+<h2 id="upgrading-to-treetop-01">Upgrading to Treetop 0.1<a class="headerlink" href="#upgrading-to-treetop-01" title="Permanent link">&para;</a></h2>
+<p>Upgrade Treetop REST and its policy configuration before restarting Hubuum with
+the updated client. Treetop 0.1 removes <code>/api/v1/health</code>; Hubuum now requires a
+successful <code>/readyz</code> response and rejects an unready policy service at startup.
+Authorization responses must include the policy version's <code>hash</code>, <code>loaded_at</code>,
+nullable <code>label_set</code>, and unsigned <code>generation</code> fields.</p>
+<p>If you use labels, replace each rule's <code>kind</code> and <code>output</code> with
+<code>target.resource_type</code> and <code>target.attribute</code>. Set bundle and module manifests
+to <code>format_version = 2</code>, rebuild the archives, and re-sign them. Follow the
+<a href="https://github.com/treetop-policy-engine/treetop-rest/blob/v0.1.0/MIGRATION.md">upstream migration guide</a>
+for the complete configuration changes. The local permission backend does not
+require a Treetop upgrade.</p>
 <h2 id="what-501-errors-mean">What <code>501</code> errors mean<a class="headerlink" href="#what-501-errors-mean" title="Permanent link">&para;</a></h2>
 <p>When Treetop mode is enabled, all permission mutation endpoints return <code>501 Not Implemented</code>:</p>
 <ul>
