@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://hubuum.github.io/hubuum/main/contributing/documentation/">
       
       
-        <link rel="prev" href="../../development/">
+        <link rel="prev" href="../../testing/">
       
       
         <link rel="next" href="../documentation-review/">
@@ -2659,6 +2659,33 @@
                   
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
     
   
   
@@ -2901,10 +2928,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
         
           
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="">
             
   
   
@@ -2922,8 +2949,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_5">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_6">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3072,10 +3099,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="">
             
   
   
@@ -3093,8 +3120,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_7">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3351,10 +3378,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
             
   
   
@@ -3372,8 +3399,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_8">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3657,10 +3684,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="">
             
   
   
@@ -3678,8 +3705,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4172,14 +4199,14 @@ unchanged baseline. Specialized contract examples may use placeholders or
 additional resources where Atlas does not cover the behavior.</p>
 <p>Run from the repository root with Python 3.11+ and the production image built
 as described in <a href="../../development/">development</a>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python3<span class="w"> </span>scripts/test-example-corpus.py
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>check
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>tooling.test_atlas
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>atlas<span class="w"> </span>check
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>atlas<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
 </code></pre></div>
 <p>After changing the import, regenerate the backup and manifest:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python3<span class="w"> </span>scripts/example-corpus.py<span class="w"> </span>generate<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>atlas<span class="w"> </span>generate<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
 </code></pre></div>
-<p>The generator and verifier reuse <code>scripts/test-corpus.py</code>'s isolated Docker
+<p>The generator and verifier reuse <code>tests/python/integration/corpus.py</code>'s isolated Docker
 harness. They create their own network, databases, and temporary credentials;
 they do not accept an existing database URL. Generation publishes files only
 after import, application scenarios, and two restore rounds succeed. No
@@ -4376,7 +4403,7 @@ unchanged; only the shared presentation CSS is refreshed.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../../development/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Development setup">
+          <a href="../../testing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Testing">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4386,7 +4413,7 @@ unchanged; only the shared presentation CSS is refreshed.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Development setup
+                Testing
               </div>
             </div>
           </a>

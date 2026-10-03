@@ -16,7 +16,7 @@
         <link rel="prev" href="../contributing/">
       
       
-        <link rel="next" href="../contributing/documentation/">
+        <link rel="next" href="../testing/">
       
       
         
@@ -2914,6 +2914,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/documentation/" class="md-nav__link">
         
   
@@ -2984,10 +3011,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
         
           
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="">
             
   
   
@@ -3005,8 +3032,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_5">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_6">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3155,10 +3182,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="">
             
   
   
@@ -3176,8 +3203,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_7">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3434,10 +3461,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
             
   
   
@@ -3455,8 +3482,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_8">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3740,10 +3767,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="">
             
   
   
@@ -3761,8 +3788,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4239,12 +4266,13 @@ Python version manager, then select it in the shell used for repository commands
 Changing a shell alias is insufficient for scripts that launch <code>python3</code>.
 Check the selection with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span>scripts/check-python-version.py
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python3<span class="w"> </span>scripts/test-python-version.py
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit
 </code></pre></div>
 <p>CI selects Python 3.11 explicitly from <code>.python-version</code> in jobs that execute
-Python tooling, including shell wrappers. A separate required job exercises the
-Rust API, supply-chain, and generated inventory checks on Python 3.11 and 3.12
-without site packages, and tests the unsupported-version errors.</p>
+Python tooling, including shell wrappers. A dedicated required job discovers all local Python regression tests on Python
+3.11 and 3.12 without site packages. Live monitoring tests run in separate jobs.
+See the <a href="../testing/">testing guide</a> for the Rust/Python ownership boundary and
+unit and integration commands.</p>
 <h2 id="git-hooks-setup">Git Hooks Setup<a class="headerlink" href="#git-hooks-setup" title="Permanent link">&para;</a></h2>
 <p>This project includes git hooks to maintain code quality standards. The hooks are stored in the <code>hooks/</code> directory and can be shared across the team.</p>
 <h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
@@ -4279,7 +4307,7 @@ without site packages, and tests the unsupported-version errors.</p>
 <p>Run the production LDAP, SMTP, AMQP, Valkey Streams, and webhook adapters against disposable
 TLS fixtures with Python 3.11+, Docker or its Podman compatibility command, and
 OpenSSL on <code>PATH</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python3<span class="w"> </span>scripts/test-event-transports.py
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>event-transports
 </code></pre></div>
 <p>The runner uses digest-pinned OpenLDAP, Mailpit, RabbitMQ and Valkey images and a source-controlled
 HTTPS fixture. It generates a private CA, verifies certificates through the
@@ -4468,8 +4496,8 @@ promoted to experimental or stable public status, the same job adds rustdoc,
 clean package, and semantic compatibility checks automatically. The change
 classifier discovers each declared policy document so deleting or moving one
 still selects this job in an otherwise documentation-only change. Run the local
-fixtures with <code>python3 scripts/test-rust-api-policy.py</code> and
-<code>python3 scripts/test-crates-io-baseline.py</code>.</p>
+fixtures with <code>python3 tests/python/run.py unit policies.test_rust_api</code> and
+<code>python3 tests/python/run.py unit policies.test_crates_io_baseline</code>.</p>
 <p>The <code>ci:full</code> pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The <code>ci:benchmarks</code>
 label forces all benchmark jobs without expanding the main CI tier. Adding or
@@ -4697,13 +4725,13 @@ See <a href="../schema_evolution/">class schema evolution</a> for routes and inv
         
         
           
-          <a href="../contributing/documentation/" class="md-footer__link md-footer__link--next" aria-label="Next: Documentation">
+          <a href="../testing/" class="md-footer__link md-footer__link--next" aria-label="Next: Testing">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Documentation
+                Testing
               </div>
             </div>
             <div class="md-footer__button md-icon">

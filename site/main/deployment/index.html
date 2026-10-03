@@ -1714,6 +1714,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#optional-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Optional monitoring
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#choosing-image-tags" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2941,6 +2952,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/documentation/" class="md-nav__link">
         
   
@@ -3008,10 +3046,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
         
           
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
             
   
   
@@ -3029,8 +3067,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_5">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_6">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3176,10 +3214,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
             
   
   
@@ -3197,8 +3235,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_7">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3452,10 +3490,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
             
   
   
@@ -3473,8 +3511,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_8">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3755,10 +3793,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
             
   
   
@@ -3776,8 +3814,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4044,6 +4082,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         HTTP Availability Model
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Optional monitoring
       </span>
     </span>
   </a>
@@ -4389,14 +4438,31 @@ primary, while <code>/metrics/standby</code> targets the HTTP-only standby; scra
 separate Prometheus targets. They intentionally do not fail over to one another,
 because doing so would mix independent counters and produce invalid rates.</p>
 <p>The installer also creates an empty <code>/opt/hubuum/auth.toml</code> for local-only
-authentication. Use <code>--auth-config</code> to point the deployment at an existing
-external-auth TOML file instead.</p>
+authentication. This empty placeholder is mode <code>0644</code> so the non-root API can
+read it. Before adding provider credentials, apply the protected ownership and
+permissions described below. Use <code>--auth-config</code> to point the deployment at an
+existing external-auth TOML file instead.</p>
 <p>By default, the installer starts the stack directly with Compose. Pass <code>--systemd</code> to also write <code>/etc/systemd/system/hubuum.service</code>, enable it, and start the stack through that unit.</p>
 <p>Default app images:</p>
 <ul>
 <li>Backend: <code>ghcr.io/hubuum/hubuum-server:main</code></li>
 <li>Frontend: <code>ghcr.io/hubuum/hubuum-frontend:main</code></li>
 </ul>
+<h3 id="optional-monitoring">Optional monitoring<a class="headerlink" href="#optional-monitoring" title="Permanent link">&para;</a></h3>
+<p>Add <code>--monitoring</code> during installation, or run
+<code>sudo /opt/hubuum/update-single-host.sh --monitoring</code> to enable Prometheus and
+Grafana later. Caddy serves <code>/grafana/</code> and <code>/prometheus/</code> on the frontend domain
+in <code>all</code> mode, or the API domain in <code>backend</code> mode. This works with each
+shared-host routing mode. Grafana has its own login; Prometheus uses a separate
+Caddy password gate. Both have generated credentials in the root-readable
+<code>.env</code>, private container ports, persistent volumes and pinned images.</p>
+<p>The <a href="https://github.com/hubuum/hubuum/blob/main/observability/README.md">shared operator package</a> documents credential
+retrieval, seven dashboards, SLOs, limits, notifications and a walkthrough.
+The installer loads those same dashboards and rules for both process targets;
+distributed deployments can consume the files directly or through Prometheus
+Operator. Updates preserve credentials and data, stop/uninstall preserve volumes,
+and explicit <code>--purge</code> removes them. External monitoring is needed to report a
+complete host outage independently.</p>
 <h3 id="choosing-image-tags">Choosing Image Tags<a class="headerlink" href="#choosing-image-tags" title="Permanent link">&para;</a></h3>
 <p>Fresh installations follow <code>main</code> for both application images. Use <code>--tag</code>
 to select a shared tag, or <code>--server-tag</code> and <code>--frontend-tag</code> to choose each
@@ -4558,10 +4624,14 @@ absolute host path in <code>/opt/hubuum/.env</code>, and bind-mounts it read-onl
 <code>/etc/hubuum/auth.toml</code> in the API container. The container receives
 <code>HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml</code> automatically. The file is not
 copied into the installation directory.</p>
-<p>Keep provider credentials readable only by the account administering the
-rootful container engine. For example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>sudo<span class="w"> </span>install<span class="w"> </span>-o<span class="w"> </span>root<span class="w"> </span>-g<span class="w"> </span>root<span class="w"> </span>-m<span class="w"> </span><span class="m">0600</span><span class="w"> </span>auth.toml<span class="w"> </span>/etc/hubuum/auth.toml
+<p>Provider files must be readable by the API process inside the container. The
+standard image uses UID/GID <code>10001:10001</code>; keep root ownership and grant that
+group read access before adding credentials. For example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>sudo<span class="w"> </span>install<span class="w"> </span>-o<span class="w"> </span>root<span class="w"> </span>-g<span class="w"> </span><span class="m">10001</span><span class="w"> </span>-m<span class="w"> </span><span class="m">0640</span><span class="w"> </span>auth.toml<span class="w"> </span>/etc/hubuum/auth.toml
 </code></pre></div>
+<p>For a custom image, use its configured process group instead of <code>10001</code>. The
+installer preserves the contents and permissions of existing provider files;
+it only repairs permissions on its own empty local-only placeholder.</p>
 <p>Re-running the installer without <code>--auth-config</code> preserves the stored host
 path. To use a different file while updating, pass it to the update helper:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">cd</span><span class="w"> </span>/opt/hubuum
@@ -4754,6 +4824,14 @@ pending until the operator schedules their replacement.</p>
 <li><code>--recreate</code>: regenerate generated secrets. The managed Postgres password is preserved, because the existing database volume was initialized with it and rotating it would break authentication. To reset the database, uninstall with <code>--purge</code> first, then reinstall.</li>
 <li><code>--no-pull</code>: skip pulling images before starting.</li>
 </ul>
+<p>Managed PostgreSQL explicitly sets <code>PGDATA=/var/lib/postgresql/data</code>, matching
+its named-volume mount. This preserves the existing layout when refreshing
+configuration and avoids PostgreSQL 18's changed default data directory. It does
+not perform PostgreSQL major-version upgrades; those still require migration.
+The parent directory uses temporary storage to prevent PostgreSQL 18 from creating
+an anonymous volume; database contents remain in the persistent named volume.
+The restore executor has no HTTP listener, so its container health check measures
+process liveness, not restore success or database readiness.</p>
 <h2 id="mounted-secret-files">Mounted Secret Files<a class="headerlink" href="#mounted-secret-files" title="Permanent link">&para;</a></h2>
 <p>The installer generates environment-backed configuration by default. Native
 binaries and custom container deployments can instead select file-backed
