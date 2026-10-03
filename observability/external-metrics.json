@@ -12,23 +12,23 @@
     "labels": [{"name": "component", "values": ["api", "ldap", "treetop", "valkey", "amqp", "smtp", "webhook"]}]
   },
   "hubuum_operator_job_expected": {
-    "source": "scripts/record-operator-job.py through node exporter's textfile collector",
+    "source": "scripts/observability.py record-job through node exporter's textfile collector",
     "labels": [{"name": "operation", "values": ["restore_verify", "event_archive", "retention"]}]
   },
   "hubuum_operator_job_success": {
-    "source": "scripts/record-operator-job.py through node exporter's textfile collector",
+    "source": "scripts/observability.py record-job through node exporter's textfile collector",
     "labels": [{"name": "operation", "values": ["restore_verify", "event_archive", "retention"]}]
   },
   "hubuum_operator_job_max_age_seconds": {
-    "source": "scripts/record-operator-job.py through node exporter's textfile collector",
+    "source": "scripts/observability.py record-job through node exporter's textfile collector",
     "labels": [{"name": "operation", "values": ["restore_verify", "event_archive", "retention"]}]
   },
   "hubuum_operator_job_last_success_timestamp_seconds": {
-    "source": "scripts/record-operator-job.py through node exporter's textfile collector",
+    "source": "scripts/observability.py record-job through node exporter's textfile collector",
     "labels": [{"name": "operation", "values": ["restore_verify", "event_archive", "retention"]}]
   },
   "hubuum_operator_job_duration_seconds": {
-    "source": "scripts/record-operator-job.py through node exporter's textfile collector",
+    "source": "scripts/observability.py record-job through node exporter's textfile collector",
     "labels": [{"name": "operation", "values": ["restore_verify", "event_archive", "retention"]}]
   }
 }

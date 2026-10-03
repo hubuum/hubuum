@@ -953,6 +953,12 @@ if [[ "$DATABASE_MANAGED" == "true" ]]; then
       POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD}
       POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
       PGUSER: ${POSTGRES_USER}
+      # Keep the existing volume layout explicit across PostgreSQL image defaults.
+      PGDATA: /var/lib/postgresql/data
+    # Override PostgreSQL 18's parent VOLUME so uninstall cannot orphan it.
+    # Database contents remain in the named volume mounted below.
+    tmpfs:
+      - /var/lib/postgresql:size=16m,mode=1777
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./set-database-role-passwords.sh:/usr/local/bin/hubuum-set-database-role-passwords:ro
@@ -1030,6 +1036,13 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     restart: unless-stopped
     entrypoint: /usr/local/bin/hubuum-admin
     command: ["--restore-executor"]
+    # This supervised process has no HTTP listener; its exit/restart is its
+    # liveness signal, as with the server's worker-only runtime role.
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777

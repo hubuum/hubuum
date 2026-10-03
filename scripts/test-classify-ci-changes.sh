@@ -44,7 +44,7 @@ assert_literal_include_is_code() {
 }
 
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
-  observability/dashboards/overview.json scripts/check-observability.py; do
+  observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
   assert_flag "$operator_output" code true
   assert_flag "$operator_output" container true
@@ -136,9 +136,11 @@ done
 
 for probe_path in scripts/single-host-health-probe.py scripts/test-single-host-health-probe.py \
   scripts/install-single-host.sh scripts/update-single-host.sh scripts/test-single-host-tags.py \
-  scripts/single-host-monitoring.sh scripts/test-single-host-monitoring.py \
-  scripts/generate-observability.py scripts/check-observability.py \
-  scripts/record-operator-job.py scripts/test-operator-job.py \
+  scripts/single-host-monitoring.sh scripts/observability.py \
+  scripts/monitoring/acceptance.py scripts/monitoring/test_unit.py \
+  scripts/monitoring/generate.py scripts/monitoring/validate.py \
+  scripts/monitoring/jobs.py scripts/monitoring/fixture.py \
+  scripts/monitoring/test_installer.py scripts/monitoring/__init__.py \
   observability/manifest.txt observability/dashboards/events.json \
   observability/prometheus/operator-rule.json observability/runbooks/availability.md; do
   probe_output="$(bash "$classifier" "$probe_path")"

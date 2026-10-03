@@ -262,9 +262,7 @@ for path in "$@"; do
       scale_benchmark=true
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
-      scripts/single-host-monitoring.sh | scripts/test-single-host-monitoring.py | \
-      scripts/generate-observability.py | scripts/check-observability.py | \
-      scripts/record-operator-job.py | scripts/test-operator-job.py | \
+      scripts/single-host-monitoring.sh | scripts/observability.py | scripts/monitoring/* | \
       scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
       scripts/adjacent-release-api.sh | scripts/test-adjacent-release-api.py | \
       scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \

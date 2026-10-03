@@ -249,13 +249,11 @@ jobs:
         run: python3 scripts/test-adjacent-release-api.py
       - name: Validate operator dashboards, metric references and alert behavior
         run: |
-          python3 scripts/check-observability.py --promtool
-          python3 scripts/test-observability.py
-          python3 scripts/test-operator-job.py
-          python3 scripts/test-single-host-monitoring.py
+          python3 scripts/observability.py check --promtool
+          python3 scripts/observability.py test
       - name: Test monitoring with Docker Compose
         if: matrix.python-version == '3.12'
-        run: python3 scripts/test-single-host-monitoring.py --live --engine docker
+        run: python3 scripts/observability.py test-fixture --engine docker
       - name: Install rootful Podman Compose
         if: matrix.python-version == '3.12'
         run: |
@@ -263,7 +261,7 @@ jobs:
           sudo apt-get install --yes podman podman-compose
       - name: Test monitoring with rootful Podman Compose
         if: matrix.python-version == '3.12'
-        run: sudo env PODMAN_COMPOSE_PROVIDER=/usr/bin/podman-compose "$(command -v python3)" scripts/test-single-host-monitoring.py --live --engine podman
+        run: sudo env PODMAN_COMPOSE_PROVIDER=/usr/bin/podman-compose "$(command -v python3)" scripts/observability.py test-fixture --engine podman
       - name: Test Rust API classification policy
         run: python3 scripts/test-rust-api-policy.py
       - name: Test supply-chain policy validation
@@ -390,7 +388,7 @@ jobs:
       - name: Test single-host image tag selection
         run: python3 scripts/test-single-host-tags.py
       - name: Test single-host monitoring configuration and lifecycle
-        run: python3 scripts/test-single-host-monitoring.py
+        run: python3 scripts/observability.py test
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
       - name: Test health probe transport retry boundaries
@@ -1368,6 +1366,17 @@ jobs:
             fi
             sleep 1
           done
+      - name: Verify installer monitoring with real server data and alerts
+        timeout-minutes: 20
+        run: |
+          python3 scripts/observability.py test-live --image hubuum-server:ci \
+            --report monitoring-acceptance.json
+      - name: Upload monitoring acceptance evidence
+        if: always() && hashFiles('monitoring-acceptance.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: monitoring-acceptance
+          path: monitoring-acceptance.json
       - name: Verify committed functional corpus against the production image
         run: python3 scripts/test-corpus.py verify --image hubuum-server:ci
       - name: Verify the Atlas documentation corpus against the production image

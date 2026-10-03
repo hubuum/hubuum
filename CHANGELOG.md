@@ -37,6 +37,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Managed single-host PostgreSQL explicitly uses its existing mounted data
+  directory, allowing fresh PostgreSQL 18 installs without changing the layout
+  of existing databases or orphaning an anonymous parent volume. The restore
+  executor now uses process liveness instead
+  of an inherited HTTP probe for a listener it does not provide.
+- Single-host updates work with Bash 3.2 when no monitoring options are passed.
+
 - Documentation tables keep long environment-variable names readable, use wider
   reference layouts, and scroll within the table on small screens. Shared style
   fixes also reach retained release documentation.

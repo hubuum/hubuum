@@ -1,19 +1,11 @@
-#!/usr/bin/env python3
 """Build the shared operator package. Use --check to detect generated drift."""
-import sys
-
-if sys.version_info < (3, 11):
-    sys.exit(
-        "Hubuum tooling requires Python 3.11 or newer; found "
-        + sys.version.split()[0]
-        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
-    )
 
 import argparse
 import json
-from pathlib import Path
+import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+from . import ROOT
+
 ASSETS = ROOT / "observability"
 RUNBOOK = "https://github.com/hubuum/hubuum/blob/main/observability/runbooks/"
 SCOPE = 'deployment=~"$deployment"'
@@ -215,10 +207,10 @@ def outputs():
     return result
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     stale = []
     for name, content in outputs().items():
         path = ASSETS / name
@@ -237,7 +229,3 @@ def main():
         path.write_text(manifest)
     if stale:
         sys.exit("Regenerate operator assets: " + ", ".join(stale))
-
-
-if __name__ == "__main__":
-    main()

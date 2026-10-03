@@ -1,13 +1,4 @@
-#!/usr/bin/env python3
 """Record bounded operator-job results for node exporter's textfile collector."""
-import sys
-
-if sys.version_info < (3, 11):
-    sys.exit(
-        "Hubuum tooling requires Python 3.11 or newer; found "
-        + sys.version.split()[0]
-        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
-    )
 
 import argparse
 import json
@@ -15,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -42,7 +34,7 @@ def write_metrics(path, labels, maximum_age, result=None):
     os.replace(temporary.name, path)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--deployment", required=True)
@@ -50,7 +42,7 @@ def main():
     parser.add_argument("--max-age-seconds", type=int, default=86400)
     parser.add_argument("--init", action="store_true", help="declare an expected job before its first run")
     parser.add_argument("command", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not re.fullmatch(r"[a-zA-Z0-9_.-]+", args.deployment) or args.max_age_seconds <= 0:
         parser.error("deployment must be a stable identifier and maximum age must be positive")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -71,7 +63,3 @@ def main():
         code = 127
     write_metrics(path, labels, args.max_age_seconds, (code, time.monotonic() - started, time.time()))
     sys.exit(code if code >= 0 else 128 - code)
-
-
-if __name__ == "__main__":
-    main()

@@ -586,6 +586,15 @@ Common optional parameters:
 - `--recreate`: regenerate generated secrets. The managed Postgres password is preserved, because the existing database volume was initialized with it and rotating it would break authentication. To reset the database, uninstall with `--purge` first, then reinstall.
 - `--no-pull`: skip pulling images before starting.
 
+Managed PostgreSQL explicitly sets `PGDATA=/var/lib/postgresql/data`, matching
+its named-volume mount. This preserves the existing layout when refreshing
+configuration and avoids PostgreSQL 18's changed default data directory. It does
+not perform PostgreSQL major-version upgrades; those still require migration.
+The parent directory uses temporary storage to prevent PostgreSQL 18 from creating
+an anonymous volume; database contents remain in the persistent named volume.
+The restore executor has no HTTP listener, so its container health check measures
+process liveness, not restore success or database readiness.
+
 ## Mounted Secret Files
 
 The installer generates environment-backed configuration by default. Native

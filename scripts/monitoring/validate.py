@@ -1,22 +1,15 @@
-#!/usr/bin/env python3
 """Validate operator assets against the committed metric contract and Prometheus."""
-import sys
-
-if sys.version_info < (3, 11):
-    sys.exit(
-        "Hubuum tooling requires Python 3.11 or newer; found "
-        + sys.version.split()[0]
-        + ". Install Python 3.11+ and ensure python3 on PATH selects it."
-    )
 
 import argparse
 import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
+from . import ROOT
+
 PROMETHEUS = "docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
 
 
@@ -118,13 +111,13 @@ def validate(root):
     return expressions
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--promtool", action="store_true", help="also evaluate rule fixtures using pinned Prometheus in Docker")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     expressions = validate(ROOT)
     if args.promtool:
-        subprocess.run([sys.executable, str(ROOT / "scripts/generate-observability.py"), "--check"], check=True)
+        subprocess.run([sys.executable, str(ROOT / "scripts/observability.py"), "generate", "--check"], check=True)
         with tempfile.TemporaryDirectory() as directory:
             queries = []
             for index, expression in enumerate(expressions):
@@ -148,7 +141,3 @@ def main():
                      PROMETHEUS, *arguments], check=True, timeout=120,
                 )
     print("Operator assets match the metric contract")
-
-
-if __name__ == "__main__":
-    main()

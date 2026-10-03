@@ -48,6 +48,8 @@ class PythonVersionTests(unittest.TestCase):
             ("check-rust-api-policy.py", []),
             ("check-supply-chain-policy.py", []),
             ("generate-project-inventory.py", ["--check"]),
+            ("observability.py", ["check"]),
+            ("observability.py", ["generate", "--check"]),
         ):
             with self.subTest(script=script):
                 result = subprocess.run(

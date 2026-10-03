@@ -198,7 +198,7 @@ exporter's textfile collector. Declare an expected job before its first run
 using Python 3.11+ (standard library only):
 
 ```sh
-python3 scripts/record-operator-job.py \
+python3 scripts/observability.py record-job \
   --directory /var/lib/node_exporter/textfile_collector \
   --deployment production --operation restore_verify \
   --max-age-seconds 86400 --init
@@ -208,7 +208,7 @@ Wrap your deployment's isolated verification command in its scheduler:
 
 ```sh
 flock /run/hubuum-restore-verify.lock \
-  python3 scripts/record-operator-job.py \
+  python3 scripts/observability.py record-job \
   --directory /var/lib/node_exporter/textfile_collector \
   --deployment production --operation restore_verify \
   --max-age-seconds 86400 -- /usr/local/sbin/verify-hubuum-backup
@@ -248,16 +248,14 @@ Use external probes and monitoring when that coverage matters.
 
 ## Maintain and validate
 
-Models and additional rules live in `scripts/generate-observability.py`; the
+Models and additional rules live in `scripts/monitoring/generate.py`; the
 initial rule group remains maintained in `prometheus/alerts.json`. Run:
 
 ```sh
-python3 scripts/generate-observability.py
-python3 scripts/check-observability.py --promtool
-python3 scripts/test-observability.py
-python3 scripts/test-operator-job.py
-python3 scripts/test-single-host-monitoring.py
-python3 scripts/test-single-host-monitoring.py --live --engine docker
+python3 scripts/observability.py generate
+python3 scripts/observability.py check --promtool
+python3 scripts/observability.py test
+python3 scripts/observability.py test-fixture --engine docker
 ```
 
 Validation checks every dashboard/rule metric, label and enum against the
@@ -265,8 +263,35 @@ server contract and explicit external list, checks runbooks in both directions,
 rejects direct sums of shared gauges, checks SLI exclusions, and compares
 Operator/direct groups. Pinned Prometheus parses every query and evaluates
 firing, recovery, deduplication and SLI-exclusion fixtures. CI exercises installer
-configuration and lifecycle. The live monitoring test uses two independent
-metrics fixtures; Rust integration tests cover actual server metric semantics.
+configuration and lifecycle. The `test-fixture` command checks Docker and Podman
+transport/routing with two independent metrics fixtures. The production-container
+CI job also runs the real-server acceptance test:
+
+```sh
+python3 scripts/observability.py test-live --image hubuum-server:ci \
+  --report target/monitoring-acceptance.json
+```
+
+Build the production image first. This test runs the actual single-host installer
+in backend mode with PostgreSQL, both Hubuum processes, the restore executor,
+Caddy, Prometheus and Grafana. Add `--mode all` to include the frontend and Valkey.
+It verifies native Grafana login, all dashboard queries, Atlas import/export,
+SQL versus metric counts, exact HTTP counter deltas, SLI exclusions, recording
+rules, and the real five-minute scrape alert followed by recovery. Database
+snapshots are allowed their documented cache and scrape intervals to converge.
+Updates, disable/re-enable, uninstall/restart and purge exercise credentials,
+application data, Grafana state and historical Prometheus samples.
+
+Each run uses a unique Compose project and loopback port and purges its resources,
+including on failure. Only the root guard, download sources, global container
+names, published ports and bridge subnet are adapted in temporary copies; the
+rollout, health checks, database setup and alert hold remain unchanged. The
+provided server image and checkout assets are used throughout updates. Reports
+contain non-secret results and the failing stage, never generated credentials.
+
+The CLI groups generation, validation, tests and external job recording under
+`python3 scripts/observability.py`; its implementation uses normal modules in
+`scripts/monitoring/`, with Python 3.11+ and no third-party packages.
 
 Every metric-contract change requires reviewing this package in the same pull
 request. Update affected models, dependencies, fixtures and runbooks; do not

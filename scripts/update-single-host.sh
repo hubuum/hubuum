@@ -221,7 +221,7 @@ refresh_deployment_files() {
     --refresh-config \
     --dir "$INSTALL_DIR" \
     --engine "$ENGINE_BIN" \
-    --script-base-url "$MANAGEMENT_SCRIPT_BASE_URL" "${MONITORING_ARGS[@]}"; then
+    --script-base-url "$MANAGEMENT_SCRIPT_BASE_URL" ${MONITORING_ARGS[@]+"${MONITORING_ARGS[@]}"}; then
     [[ -z "$installer_temp" ]] || rm -f "$installer_temp"
     die "could not refresh generated deployment files"
   fi
