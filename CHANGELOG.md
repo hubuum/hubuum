@@ -55,6 +55,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   executor now uses process liveness instead
   of an inherited HTTP probe for a listener it does not provide.
 - Single-host updates work with Bash 3.2 when no monitoring options are passed.
+- The empty single-host authentication placeholder is readable by the non-root
+  API on Linux, including after configuration refresh. Existing provider files
+  keep their contents and permissions; deployment instructions now specify
+  group read access for the container process.
 
 - Reduce buffer reallocations when rendering templates by reserving a small
   initial buffer capped by the configured output limit.

@@ -436,11 +436,11 @@ os.execv(ENGINE, [ENGINE, *args])
         if self.report.get('stage') != 'start':
             return
         secrets = {value.strip("'\"") for key, value in self.values().items()
-                   if re.search('PASSWORD|SECRET|TOKEN|KEY|URL', key) and value}
+                   if re.search('PASSWORD|SECRET|_KEY$|_URL$', key) and value}
         for container in containers:
             secrets.update(value for setting in container['Config']['Env']
                            for key, _, value in [setting.partition('=')]
-                           if re.search('PASSWORD|SECRET|TOKEN|KEY|URL', key) and value)
+                           if re.search('PASSWORD|SECRET|_KEY$|_URL$', key) and value)
         self.report['startup_logs'] = {}
         for container in containers:
             service = container['Config']['Labels']['com.docker.compose.service']

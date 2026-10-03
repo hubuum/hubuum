@@ -465,10 +465,16 @@ fi
 if [[ -z "$AUTH_CONFIG_HOST_PATH" ]]; then
   AUTH_CONFIG_HOST_PATH="$INSTALL_DIR/auth.toml"
   if [[ ! -e "$AUTH_CONFIG_HOST_PATH" ]]; then
-    install -m 0600 /dev/null "$AUTH_CONFIG_HOST_PATH"
+    install -m 0644 /dev/null "$AUTH_CONFIG_HOST_PATH"
   fi
 fi
 AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
+# The generated local-only placeholder is empty, but the non-root server must
+# still be able to open it. Repair older empty placeholders during refresh too.
+# Leave populated files and other auth-config paths untouched.
+if [[ "$AUTH_CONFIG_HOST_PATH" == "$(cd -- "$INSTALL_DIR" && pwd -P)/auth.toml" && ! -s "$AUTH_CONFIG_HOST_PATH" ]]; then
+  chmod 0644 "$AUTH_CONFIG_HOST_PATH"
+fi
 
 install_management_script() {
   local script_name="$1"

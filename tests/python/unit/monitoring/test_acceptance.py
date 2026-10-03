@@ -12,7 +12,7 @@ class FailureEvidenceTests(unittest.TestCase):
         installation = Installation.__new__(Installation)
         installation.engine = 'docker'
         installation.report = {'stage': stage}
-        installation.values = Mock(return_value={'POSTGRES_PASSWORD': 'fixture-password'})
+        installation.values = Mock(return_value={'POSTGRES_PASSWORD': 'fixture-password', 'HUBUUM_TOKEN_RETENTION_DAYS': '30'})
         container = {
             'Config': {'Labels': {'com.docker.compose.service': 'hubuum-api'},
                        'Env': ['HUBUUM_TOKEN_HASH_KEY=fixture-token-key']},
@@ -28,13 +28,14 @@ class FailureEvidenceTests(unittest.TestCase):
         installation.compose = Mock(side_effect=[
             'fixture-container',
             'database rejected fixture-password; key=fixture-token-key; '
-            'postgres://user:another-password@localhost/database; fatal startup failure',
+            'postgres://user:another-password@localhost/database; timeout=30000; fatal startup failure',
         ])
         installation.failure_diagnostics()
         evidence = json.dumps(installation.report)
         for secret in ('fixture-password', 'fixture-token-key', 'another-password'):
             self.assertNotIn(secret, evidence)
         self.assertIn('fatal startup failure', evidence)
+        self.assertIn('timeout=30000', evidence)
         self.assertEqual(installation.report['containers'][0]['exit_code'], 1)
 
     def test_later_failures_do_not_publish_application_logs(self):

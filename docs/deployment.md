@@ -99,8 +99,10 @@ separate Prometheus targets. They intentionally do not fail over to one another,
 because doing so would mix independent counters and produce invalid rates.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
-authentication. Use `--auth-config` to point the deployment at an existing
-external-auth TOML file instead.
+authentication. This empty placeholder is mode `0644` so the non-root API can
+read it. Before adding provider credentials, apply the protected ownership and
+permissions described below. Use `--auth-config` to point the deployment at an
+existing external-auth TOML file instead.
 
 By default, the installer starts the stack directly with Compose. Pass `--systemd` to also write `/etc/systemd/system/hubuum.service`, enable it, and start the stack through that unit.
 
@@ -334,12 +336,17 @@ absolute host path in `/opt/hubuum/.env`, and bind-mounts it read-only as
 `HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml` automatically. The file is not
 copied into the installation directory.
 
-Keep provider credentials readable only by the account administering the
-rootful container engine. For example:
+Provider files must be readable by the API process inside the container. The
+standard image uses UID/GID `10001:10001`; keep root ownership and grant that
+group read access before adding credentials. For example:
 
 ```bash
-sudo install -o root -g root -m 0600 auth.toml /etc/hubuum/auth.toml
+sudo install -o root -g 10001 -m 0640 auth.toml /etc/hubuum/auth.toml
 ```
+
+For a custom image, use its configured process group instead of `10001`. The
+installer preserves the contents and permissions of existing provider files;
+it only repairs permissions on its own empty local-only placeholder.
 
 Re-running the installer without `--auth-config` preserves the stored host
 path. To use a different file while updating, pass it to the update helper:
