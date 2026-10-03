@@ -85,9 +85,15 @@ python3 tests/python/run.py integration atlas verify --image hubuum-server:verif
 ```
 
 The monitoring acceptance run imports real data, checks both replicas against SQL,
-compares dashboard queries through Grafana and Prometheus, waits for the real
-five-minute alert hold, and tests update/reinstall/purge. It cleans up its unique
-project and emits non-secret evidence. The transport driver provisions TLS
+compares dashboard queries through Grafana and Prometheus, and drives two webhook
+deliveries of a known API mutation through pending, failed, retryable, dead and
+recovered states. Every state checks exact SQL and health API counts, both raw
+scrape targets, the deduplicated recording and the provisioned Grafana event
+panel. Receiver access logs correlate actual HTTPS attempts with the event UUID.
+The real five-minute scrape alert and ten-minute dead-letter alert must both
+fire and recover, followed by update/reinstall/purge checks. Allow approximately
+25 minutes; CI reserves 35 minutes for the complete acceptance run. It cleans up
+its unique project and emits non-secret evidence. The transport driver provisions TLS
 services and executes Rust assertions. `integration schema-budget` runs the Rust
 resource probe; `integration treetop-server` serves the conformance fixture.
 The corpus commands also support offline `check` and explicit `generate` modes.

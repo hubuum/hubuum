@@ -137,7 +137,8 @@ done
 for probe_path in scripts/single-host-health-probe.py tests/python/unit/deployment/test_health_probe.py \
   scripts/install-single-host.sh scripts/update-single-host.sh tests/python/unit/deployment/test_image_tags.py \
   scripts/single-host-monitoring.sh scripts/observability.py \
-  tests/python/integration/monitoring.py tests/python/unit/monitoring/test_package.py \
+  tests/python/integration/monitoring.py tests/python/integration/monitoring_events.py \
+  tests/python/unit/monitoring/test_package.py tests/python/unit/monitoring/test_events.py \
   scripts/monitoring/generate.py scripts/monitoring/validate.py \
   scripts/monitoring/jobs.py tests/python/integration/monitoring_fixture.py \
   tests/python/unit/deployment/test_monitoring.py scripts/monitoring/__init__.py \

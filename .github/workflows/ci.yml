@@ -1361,7 +1361,7 @@ jobs:
             sleep 1
           done
       - name: Verify installer monitoring with real server data and alerts
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           python3 tests/python/run.py integration monitoring --image hubuum-server:ci \
             --report monitoring-acceptance.json

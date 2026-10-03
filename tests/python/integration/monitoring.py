@@ -156,7 +156,7 @@ os.execv(ENGINE, [ENGINE, *args])
         return dict(line.split('=', 1) for line in (self.directory / '.env').read_text().splitlines()
                     if '=' in line and not line.startswith('#'))
 
-    def request(self, path, auth=None, payload=None):
+    def request(self, path, auth=None, payload=None, method=None):
         headers = {'Content-Type': 'application/json'}
         if auth in ('prometheus', 'grafana'):
             key = 'PROMETHEUS_PASSWORD' if auth == 'prometheus' else 'GRAFANA_ADMIN_PASSWORD'
@@ -165,7 +165,7 @@ os.execv(ENGINE, [ENGINE, *args])
             auth = 'Bearer ' + self.token
         if auth:
             headers['Authorization'] = auth
-        request = urllib.request.Request(self.base + path, headers=headers,
+        request = urllib.request.Request(self.base + path, headers=headers, method=method,
                                          data=json.dumps(payload).encode() if payload is not None else None)
         try:
             with urllib.request.urlopen(request, context=self.context, timeout=10) as response:
@@ -293,6 +293,10 @@ os.execv(ENGINE, [ENGINE, *args])
         require(roles == {'hubuum-api': 'all', 'hubuum-api-standby': 'api'}, 'Scrape targets have incorrect runtime roles')
         self.report['inventory'] = expected
         self.report['tasks'] = 'one successful import and export on both snapshots; three exported objects; primary executes export'
+
+    def events(self):
+        from integration.monitoring_events import EventScenario
+        EventScenario(self).run()
 
     def traffic(self):
         def expression(code):
@@ -493,7 +497,7 @@ def main(argv=None):
         try:
             installation = Installation(directory, args.image, args.mode)
             report = installation.report
-            for stage in ('start', 'authenticate', 'data', 'traffic', 'panels', 'alert', 'lifecycle'):
+            for stage in ('start', 'authenticate', 'data', 'traffic', 'events', 'panels', 'alert', 'lifecycle'):
                 print('Monitoring acceptance: ' + stage, flush=True)
                 installation.report['stage'] = stage
                 getattr(installation, stage)()

@@ -277,8 +277,24 @@ in backend mode with PostgreSQL, both Hubuum processes, the restore executor,
 Caddy, Prometheus and Grafana. Add `--mode all` to include the frontend and Valkey.
 It verifies native Grafana login, all dashboard queries, Atlas import/export,
 SQL versus metric counts, exact HTTP counter deltas, SLI exclusions, recording
-rules, and the real five-minute scrape alert followed by recovery. Database
-snapshots are allowed their documented cache and scrape intervals to converge.
+rules, and the real five-minute scrape alert followed by recovery. It also creates
+two webhook deliveries from one collection update through the API: one succeeds;
+the other receives HTTP 503 responses, becomes retryable, and exhausts its two
+configured attempts. Pending, failed, retryable, dead and recovered snapshots must
+match exact SQL and health API counts on both Prometheus targets and the actual
+Grafana event panel. The shared-database recording must deduplicate the targets.
+Receiver access logs must show the same event UUID on every HTTPS attempt.
+
+The production ten-minute dead-letter alert must become pending, fire once for
+the deployment, and recover after the receiver accepts an administrator-triggered
+retry. Queue rows and alert durations are never rewritten. A temporary worker
+uses the installed image and runtime database credentials, a two-minute retry
+backoff, the existing private-target setting and the installation's disposable
+CA; certificate verification remains enabled. The fixture briefly pauses that
+worker so the due retry remains observable. Database snapshots are allowed their
+documented cache and scrape intervals to converge. The receiver's extra internal
+Caddy host and the worker are removed before lifecycle checks. Allow approximately
+25 minutes for the complete acceptance run (35-minute CI deadline).
 Updates, disable/re-enable, uninstall/restart and purge exercise credentials,
 application data, Grafana state and historical Prometheus samples.
 
