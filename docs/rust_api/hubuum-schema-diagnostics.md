@@ -15,7 +15,7 @@ output representations, errors, and invariants belong to this crate.
 The crate currently follows the coordinated versioning, Rust 1.88 MSRV,
 deprecation, and release rules of the
 [storage SDK policy](../storage_adapter_sdk.md). Its optional `openapi` feature
-adds Utoipa schema implementations. It has no asynchronous runtime requirement.
+adds Utoipa 6 schema implementations. It has no asynchronous runtime requirement.
 Separating its release cadence or selecting a standalone package name requires
 a later publication review; declaring it publishable keeps the SDK's dependency
 graph packageable and does not publish it automatically.

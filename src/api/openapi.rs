@@ -957,8 +957,9 @@ fn is_etagged_operation(path: &str, method: &str) -> bool {
 fn add_conditional_request_docs(operation: &mut Operation) {
     let parameters = operation.parameters.get_or_insert_with(Vec::new);
     if !parameters.iter().any(|parameter| {
-        parameter.name.eq_ignore_ascii_case("If-Match")
-            && matches!(parameter.parameter_in, ParameterIn::Header)
+        matches!(parameter, RefOr::T(parameter)
+            if parameter.name.eq_ignore_ascii_case("If-Match")
+                && matches!(parameter.parameter_in, ParameterIn::Header))
     }) {
         parameters.push(
             ParameterBuilder::new()
@@ -969,7 +970,8 @@ fn add_conditional_request_docs(operation: &mut Operation) {
                     "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
                 ))
                 .schema(Some(Object::with_type(Type::String)))
-                .build(),
+                .build()
+                .into(),
         );
     }
 
@@ -1001,7 +1003,7 @@ fn add_etag_response_docs(operation: &mut Operation) {
                     "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
                         .to_string(),
                 );
-                header
+                header.into()
             });
     }
 }
@@ -1072,7 +1074,8 @@ fn operation_has_cursor_pagination(operation: &Operation) -> bool {
     };
     let has_query_parameter = |name: &str| {
         parameters.iter().any(|parameter| {
-            parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+            matches!(parameter, RefOr::T(parameter)
+                if parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query))
         })
     };
 
@@ -1148,7 +1151,7 @@ fn add_unified_search_pagination_docs(operation: &mut Operation) {
 }
 
 fn upsert_page_limit_parameter(
-    parameters: &mut Vec<Parameter>,
+    parameters: &mut Vec<RefOr<Parameter>>,
     name: &str,
     description: &str,
     default_page_limit: usize,
@@ -1161,8 +1164,9 @@ fn upsert_page_limit_parameter(
         .default(Some(serde_json::json!(default_page_limit)))
         .build();
 
-    if let Some(parameter) = parameters.iter_mut().find(|parameter| {
-        parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+    if let Some(RefOr::T(parameter)) = parameters.iter_mut().find(|parameter| {
+        matches!(parameter, RefOr::T(parameter)
+                if parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query))
     }) {
         parameter.description = Some(description.to_string());
         parameter.required = Required::False;
@@ -1177,18 +1181,20 @@ fn upsert_page_limit_parameter(
             .required(Required::False)
             .description(Some(description))
             .schema(Some(schema))
-            .build(),
+            .build()
+            .into(),
     );
 }
 
 fn ensure_query_parameter(
-    parameters: &mut Vec<Parameter>,
+    parameters: &mut Vec<RefOr<Parameter>>,
     name: &str,
     description: &str,
     schema_type: Type,
 ) {
     if parameters.iter().any(|parameter| {
-        parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+        matches!(parameter, RefOr::T(parameter)
+                if parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query))
     }) {
         return;
     }
@@ -1200,7 +1206,8 @@ fn ensure_query_parameter(
             .required(Required::False)
             .description(Some(description))
             .schema(Some(Object::with_type(schema_type)))
-            .build(),
+            .build()
+            .into(),
     );
 }
 
@@ -1218,7 +1225,7 @@ fn add_next_cursor_header(response: &mut RefOr<utoipa::openapi::response::Respon
                 "Opaque cursor for the next page. This header is omitted when there are no more results."
                     .to_string(),
             );
-            header
+            header.into()
         });
 
     if !response.description.contains(NEXT_CURSOR_HEADER) {
@@ -1242,7 +1249,7 @@ fn add_total_count_header(response: &mut RefOr<utoipa::openapi::response::Respon
             "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
                     .to_string(),
             );
-            header
+            header.into()
         });
 }
 
@@ -1260,7 +1267,7 @@ fn add_page_limit_header(response: &mut RefOr<utoipa::openapi::response::Respons
                 "Effective page size used by the server after applying the configured default and maximum."
                     .to_string(),
             );
-            header
+            header.into()
         });
 }
 

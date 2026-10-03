@@ -36,6 +36,8 @@ When you switch to Treetop mode:
 
 ## Configuration
 
+Use Treetop REST 0.1 with this version of Hubuum.
+
 Set the following environment variables to enable Treetop mode:
 
 - `HUBUUM_PERMISSION_BACKEND=treetop` — required; selects the Treetop backend.
@@ -77,9 +79,24 @@ Follow these steps to switch an existing Hubuum deployment to Treetop mode (or t
 
    This generates a Cedar policy bundle that mirrors the current SQL `permissions` table. Upload `policies.cedar` to Treetop alongside `bootstrap.cedar`. (If you're setting up a fresh deployment, skip this step — you'll write your policies from scratch.)
 
-5. **Configure Hubuum and restart.** Set `HUBUUM_PERMISSION_BACKEND=treetop` and `HUBUUM_TREETOP_URL=https://your-treetop-instance` in your environment, then restart Hubuum. Hubuum's startup health check runs `client.health()` against the Treetop server. If the health check fails, Hubuum exits with status code 6 (`EXIT_CODE_PERMISSION_BACKEND_ERROR`).
+5. **Configure Hubuum and restart.** Set `HUBUUM_PERMISSION_BACKEND=treetop` and `HUBUUM_TREETOP_URL=https://your-treetop-instance` in your environment, then restart Hubuum. Hubuum checks the Treetop server's `/readyz` endpoint at startup. If the server is unavailable or not ready, Hubuum exits with status code 6 (`EXIT_CODE_PERMISSION_BACKEND_ERROR`).
 
 6. **Verify the integration.** Run the parity test suite (see "Verifying the integration" below) to confirm Treetop is wired correctly.
+
+## Upgrading to Treetop 0.1
+
+Upgrade Treetop REST and its policy configuration before restarting Hubuum with
+the updated client. Treetop 0.1 removes `/api/v1/health`; Hubuum now requires a
+successful `/readyz` response and rejects an unready policy service at startup.
+Authorization responses must include the policy version's `hash`, `loaded_at`,
+nullable `label_set`, and unsigned `generation` fields.
+
+If you use labels, replace each rule's `kind` and `output` with
+`target.resource_type` and `target.attribute`. Set bundle and module manifests
+to `format_version = 2`, rebuild the archives, and re-sign them. Follow the
+[upstream migration guide](https://github.com/treetop-policy-engine/treetop-rest/blob/v0.1.0/MIGRATION.md)
+for the complete configuration changes. The local permission backend does not
+require a Treetop upgrade.
 
 ## What `501` errors mean
 

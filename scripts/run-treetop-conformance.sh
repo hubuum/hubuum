@@ -75,6 +75,7 @@ python3 "$repo_root/scripts/serve-treetop-fixture.py" \
   --port "$HUBUUM_TREETOP_FIXTURE_PORT" \
   --bind 127.0.0.1 \
   --directory "$fixture_dir" \
+  --treetop-url "http://127.0.0.1:$HUBUUM_TREETOP_TEST_PORT" \
   > "$report_dir/fixture-http.log" 2>&1 &
 fixture_pid=$!
 
@@ -169,7 +170,7 @@ tls_ready=false
 for attempt in $(seq 1 30); do
   if curl --fail --silent --show-error \
       --cacert "$ca_cert" \
-      "$tls_url/api/v1/health" >/dev/null; then
+      "$tls_url/readyz" >/dev/null; then
     tls_ready=true
     break
   fi

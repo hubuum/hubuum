@@ -37,10 +37,10 @@ jobs:
     outputs:
       documentation: ${{ steps.paths.outputs.documentation }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: .python-version
       - name: Classify documentation inputs
@@ -68,9 +68,9 @@ jobs:
     name: Build documentation
     needs: changes
     if: needs.changes.outputs.documentation == 'true'
-    uses: hubuum/.github/.github/workflows/docs-build.yml@67b6ad74bf82fe4745db6ca0225b6af2a25eda7f # shared documentation platform
+    uses: hubuum/.github/.github/workflows/docs-build.yml@c803fa34c35f70c92cca317ef61950d9b8684f08 # shared documentation platform
     with:
-      tooling_revision: '67b6ad74bf82fe4745db6ca0225b6af2a25eda7f'
+      tooling_revision: 'c803fa34c35f70c92cca317ef61950d9b8684f08'
       source_ref: ${{ (github.event_name == 'release' || github.event_name == 'workflow_run') && 'main' || github.sha }}
       versioned: true
       version: ${{ inputs.version || github.event.workflow_run.head_branch || (github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name) || '' }}
@@ -105,7 +105,7 @@ jobs:
       contents: write
       pages: write
       id-token: write
-    uses: hubuum/.github/.github/workflows/docs-publish.yml@67b6ad74bf82fe4745db6ca0225b6af2a25eda7f # shared documentation platform
+    uses: hubuum/.github/.github/workflows/docs-publish.yml@c803fa34c35f70c92cca317ef61950d9b8684f08 # shared documentation platform
     with:
-      tooling_revision: '67b6ad74bf82fe4745db6ca0225b6af2a25eda7f'
+      tooling_revision: 'c803fa34c35f70c92cca317ef61950d9b8684f08'
       source_sha: ${{ needs.build.outputs.source_sha }}

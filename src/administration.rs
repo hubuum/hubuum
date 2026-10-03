@@ -1396,6 +1396,8 @@ fn init_logging(log_level: &str) {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    #[cfg(feature = "embedded-migrations")]
+    use clap::{CommandFactory, FromArgMatches};
 
     #[cfg(feature = "embedded-migrations")]
     use super::effective_database_role_mode;
@@ -1463,10 +1465,26 @@ mod tests {
     }
 
     #[cfg(feature = "embedded-migrations")]
+    fn parse_legacy_migration_cli(arguments: &[&str]) -> Result<AdminCli, clap::Error> {
+        // These cases exercise explicit CLI arguments independently of the
+        // split-role environment configured by the database test runner.
+        let mut command = AdminCli::command();
+        for argument in [
+            "database_owner_role",
+            "database_migrator_role",
+            "database_runtime_role",
+        ] {
+            command = command.mut_arg(argument, |argument| argument.env(None::<&str>));
+        }
+        let matches = command.try_get_matches_from(arguments)?;
+        AdminCli::from_arg_matches(&matches)
+    }
+
+    #[cfg(feature = "embedded-migrations")]
     #[test]
     fn legacy_single_role_migration_requires_migrate() {
         let error =
-            match AdminCli::try_parse_from(["hubuum-admin", "--legacy-single-role-migration"]) {
+            match parse_legacy_migration_cli(&["hubuum-admin", "--legacy-single-role-migration"]) {
                 Ok(_) => panic!("the compatibility bridge must require --migrate"),
                 Err(error) => error,
             };
@@ -1480,7 +1498,7 @@ mod tests {
     #[cfg(feature = "embedded-migrations")]
     #[test]
     fn legacy_single_role_migration_rejects_split_role_names() {
-        let error = match AdminCli::try_parse_from([
+        let error = match parse_legacy_migration_cli(&[
             "hubuum-admin",
             "--migrate",
             "--legacy-single-role-migration",
@@ -1497,7 +1515,7 @@ mod tests {
     #[cfg(feature = "embedded-migrations")]
     #[test]
     fn legacy_single_role_migration_rejects_split_mode() {
-        let cli = AdminCli::try_parse_from([
+        let cli = parse_legacy_migration_cli(&[
             "hubuum-admin",
             "--migrate",
             "--legacy-single-role-migration",

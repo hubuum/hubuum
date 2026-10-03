@@ -18,7 +18,7 @@ release-train MSRV is Rust 1.88.
 
 Its values are in-memory contracts; it makes no wire-format guarantee unless a
 type's documentation explicitly says otherwise. The optional `openapi` feature
-implements Utoipa schema traits for values also used by Hubuum's HTTP API.
+implements Utoipa 6 schema traits for values also used by Hubuum's HTTP API.
 
 ## Errors, Runtime, and Security
 

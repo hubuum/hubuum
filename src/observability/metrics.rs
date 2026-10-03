@@ -329,7 +329,7 @@ mod contract_tests {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()
             .with_registry(registry.clone())
-            .without_scope_info()
+            .scope_info_enabled(false)
             .without_target_info()
             .build()
             .unwrap();

@@ -30,12 +30,12 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 RABBITMQ = (
-    "docker.io/library/rabbitmq:4.2-management@sha256:"
-    "b05cfa8ce8177ee3a27654ae3c4c855e57ed727bda931a45ea220af2f3f43386"
+    "docker.io/library/rabbitmq:4.3.6-management@sha256:"
+    "a4bf913c794083231f24720d6d3180d6dfc74fa9d94a3bd5562b0e6c58d9ec9d"
 )
 VALKEY = (
-    "docker.io/valkey/valkey:9-alpine@sha256:"
-    "ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328"
+    "docker.io/valkey/valkey:9.1.2-alpine@sha256:"
+    "48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
 )
 CARGO_TEST = (
     "cargo", "test", "--locked", "--features", "production-all",

@@ -13,7 +13,7 @@ rust-api = "workspace-internal"
 
 [dependencies]
 hubuum-task-core = { version = "=0.3.0", path = "../hubuum-task-core" }
-argon2 = "0.6.0-rc.8"
+argon2 = "0.6.0"
 async-trait = "0.1"
 chrono = "0.4"
 diesel = { version = "2", features = [
@@ -46,7 +46,7 @@ tokio-postgres-rustls = "0.14"
 tracing = "0.1"
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
-pq-sys = { version = "0.7.5", optional = true }
+pq-sys = { version = "0.7.6", optional = true }
 
 [features]
 query-capture = []
@@ -56,4 +56,4 @@ scale-benchmark-support = ["benchmark-support", "dep:hubuum-scale-core", "dep:sy
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]
-rstest = "0.26"
+rstest = "0.27"

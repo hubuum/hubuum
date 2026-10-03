@@ -34,7 +34,7 @@ CORPORA = ROOT / "test-corpora"
 BACKUP = "comprehensive.json"
 MANIFEST = "comprehensive.manifest.json"
 MAX_BYTES = 25 * 1024 * 1024
-POSTGRES_IMAGE = "postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4"
+POSTGRES_IMAGE = "postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722"
 READ_PERMISSIONS = [
     "ReadCollection", "ReadClass", "ReadObject", "ReadClassRelation",
     "ReadObjectRelation", "ReadAudit",

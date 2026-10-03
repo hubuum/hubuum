@@ -16,7 +16,7 @@ release-train = "storage-sdk"
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = "0.4"
 hubuum-computed-fields = { version = "=0.3.0", path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "=0.3.0", path = "../hubuum-domain" }
@@ -29,4 +29,4 @@ sha2 = "0.11"
 uuid = "1"
 
 [dev-dependencies]
-rstest = "0.26"
+rstest = "0.27"

@@ -9,6 +9,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Refresh runtime and development dependencies, pinned GitHub Actions, CI tools,
+  and container images, including Rust 1.99, Alpine 3.24.2, and PostgreSQL 18.6.
+- **Breaking Treetop integration change:** the optional Treetop backend now uses
+  the 0.1 protocol and checks `/readyz` at startup. Upgrade Treetop REST and its
+  policy bundles to 0.1 before restarting Hubuum; migrate label targets and
+  rebuild and re-sign format 2 bundles as described in the
+  [Treetop upgrade guide](docs/treetop/README.md#upgrading-to-treetop-01).
+- **Breaking Rust SDK integration change:** the public domain and schema-diagnostics
+  crates' `openapi` features and events-core's `schema` feature now implement
+  Utoipa 6 traits. Consumers composing these schemas must upgrade their Utoipa
+  dependency to version 6.
+
 - Documentation uses the shared warm Hubuum theme from the ecosystem site's
   unversioned stylesheet, including retained release editions. Future styling
   updates no longer require changes or rebuilds in this repository.
@@ -28,6 +40,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Reduce buffer reallocations when rendering templates by reserving a small
+  initial buffer capped by the configured output limit.
 - Documentation tables keep long environment-variable names readable, use wider
   reference layouts, and scroll within the table on small screens. Shared style
   fixes also reach retained release documentation.

@@ -367,7 +367,7 @@ Gungraun requires `valgrind` and the matching benchmark runner to be installed
 locally:
 
 ```bash
-cargo install --locked --version 0.19.4 gungraun-runner
+cargo install --locked --version 0.20.0 gungraun-runner
 ```
 
 The PostgreSQL storage benchmark is opt-in and requires Docker. It provisions,
