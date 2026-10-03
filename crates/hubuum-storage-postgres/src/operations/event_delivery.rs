@@ -291,6 +291,9 @@ async fn select_due_delivery_ids(
         #[diesel(sql_type = BigInt)]
         id: i64,
     }
+    // The materialized candidates use the statement snapshot. Recheck delivery
+    // eligibility on the row being locked so PostgreSQL can exclude a claim or
+    // deferral committed by another worker after that snapshot was taken.
     diesel::sql_query("WITH candidates AS MATERIALIZED (
         SELECT d.id, s.delivery_policy->>'min_interval_ms' IS NOT NULL AS spaced,
                row_number() OVER (PARTITION BY s.id ORDER BY d.next_attempt_at, d.id) AS position
@@ -299,7 +302,9 @@ async fn select_due_delivery_ids(
         WHERE ((d.status IN ('pending','failed') AND d.next_attempt_at <= $1) OR (d.status='in_flight' AND d.locked_until < $1))
           AND greatest(schedule.blocked_until, CASE WHEN s.delivery_policy->>'min_interval_ms' IS NOT NULL THEN schedule.next_allowed_at END, $1) <= $1
     ) SELECT d.id FROM candidates c JOIN event_deliveries d ON d.id=c.id
-      WHERE NOT c.spaced OR c.position=1 ORDER BY d.next_attempt_at, d.id
+      WHERE (NOT c.spaced OR c.position=1)
+        AND ((d.status IN ('pending','failed') AND d.next_attempt_at <= $1) OR (d.status='in_flight' AND d.locked_until < $1))
+      ORDER BY d.next_attempt_at, d.id
       LIMIT $2 FOR UPDATE OF d SKIP LOCKED")
         .bind::<Timestamp,_>(now).bind::<BigInt,_>(settings.query_batch_size())
         .load::<Candidate>(connection).await.map(|rows| rows.into_iter().map(|row| row.id).collect()).map_err(PostgresStorageError::from)
@@ -1152,10 +1157,159 @@ mod tests {
 #[cfg(all(test, feature = "integration-test-support"))]
 mod scheduling_tests {
     use super::*;
-    use crate::test_support::integration_test_pool;
+    use crate::test_support::{
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool, integration_test_pool,
+    };
     use chrono::NaiveDate;
+    use diesel::sql_types::{Bool, Integer, Text};
     use diesel_async::SimpleAsyncConnection;
     use rstest::rstest;
+    use tokio::time::{sleep, timeout};
+
+    #[derive(QueryableByName)]
+    struct BackendPid {
+        #[diesel(sql_type = Integer)]
+        pid: i32,
+    }
+
+    #[derive(QueryableByName)]
+    struct SelectionBarrier {
+        #[diesel(sql_type = Bool)]
+        blocked: bool,
+    }
+
+    #[rstest]
+    #[case::claimed("pending", "in_flight")]
+    #[case::completed("pending", "succeeded")]
+    #[case::retry_backoff("failed", "failed")]
+    #[case::deferred("pending", "pending")]
+    #[case::renewed_lease("in_flight", "in_flight")]
+    #[tokio::test]
+    async fn selection_rechecks_deliveries_changed_after_its_snapshot(
+        #[case] initial_status: &str,
+        #[case] concurrent_status: &str,
+    ) {
+        let pool = if database_role_tests_enabled() {
+            integration_test_migration_pool(2)
+        } else {
+            integration_test_pool(2)
+        };
+        let mut writer = pool.get().await.unwrap();
+        let mut selector = pool.get().await.unwrap();
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            let role = format!("SET ROLE \"{}\"", roles.owner().as_str());
+            writer.batch_execute(&role).await.unwrap();
+            selector.batch_execute(&role).await.unwrap();
+        }
+        let writer_pid = diesel::sql_query("SELECT pg_backend_pid() AS pid")
+            .get_result::<BackendPid>(&mut writer)
+            .await
+            .unwrap()
+            .pid;
+        let selector_pid = diesel::sql_query("SELECT pg_backend_pid() AS pid")
+            .get_result::<BackendPid>(&mut selector)
+            .await
+            .unwrap()
+            .pid;
+        let schema = format!("delivery_selection_{}", Uuid::new_v4().simple());
+        writer
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.event_subscriptions (id integer, sink_id integer);
+             CREATE TABLE {schema}.event_deliveries (id bigint PRIMARY KEY, subscription_id integer,
+                 status text, next_attempt_at timestamp, locked_until timestamp);
+             CREATE TABLE {schema}.event_sink_delivery_state (sink_id integer,
+                 next_allowed_at timestamp, blocked_until timestamp);
+             CREATE FUNCTION {schema}.selection_barrier() RETURNS jsonb LANGUAGE sql VOLATILE AS
+                 'SELECT ''{{}}''::jsonb FROM pg_advisory_xact_lock({writer_pid}::bigint)';
+             CREATE VIEW {schema}.event_sinks AS
+                 SELECT 1 AS id, {schema}.selection_barrier() AS delivery_policy
+                 UNION ALL SELECT 2, '{{}}'::jsonb;
+             INSERT INTO {schema}.event_subscriptions VALUES (1,1),(2,2);"
+            ))
+            .await
+            .unwrap();
+        let now = NaiveDate::from_ymd_opt(2026, 10, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let result = timeout(Duration::from_secs(10), async {
+            diesel::sql_query(format!(
+                "INSERT INTO {schema}.event_deliveries VALUES
+                 (1,1,$1,$2,$2 - interval '1 second'),(2,2,'pending',$2,NULL)"
+            ))
+            .bind::<Text, _>(initial_status)
+            .bind::<Timestamp, _>(now)
+            .execute(&mut writer)
+            .await?;
+            writer
+                .batch_execute(&format!(
+                    "BEGIN; SELECT pg_advisory_xact_lock({writer_pid}::bigint);"
+                ))
+                .await?;
+            selector
+                .batch_execute(&format!("BEGIN; SET LOCAL search_path TO {schema};"))
+                .await?;
+            let settings = EventDeliverySettings::builder()
+                .batch_size(10)
+                .lock_timeout_ms(30_000)
+                .transport_timeout_ms(15_000)
+                .retry_backoff_base_ms(1_000)
+                .retry_backoff_max_ms(60_000)
+                .max_attempts(10)
+                .build()
+                .unwrap();
+            // The view pauses the actual production query after it acquires
+            // its snapshot, before it can lock deliveries. Wait for that
+            // database barrier rather than relying on a timing delay.
+            let (selected, changed) = tokio::join!(
+                select_due_delivery_ids(&mut selector, now, settings),
+                async {
+                    loop {
+                        let barrier =
+                            diesel::sql_query("SELECT $1 = ANY(pg_blocking_pids($2)) AS blocked")
+                                .bind::<Integer, _>(writer_pid)
+                                .bind::<Integer, _>(selector_pid)
+                                .get_result::<SelectionBarrier>(&mut writer)
+                                .await?;
+                        if barrier.blocked {
+                            break;
+                        }
+                        sleep(Duration::from_millis(5)).await;
+                    }
+                    diesel::sql_query(format!(
+                        "UPDATE {schema}.event_deliveries SET status=$1,
+                         next_attempt_at=$2, locked_until=$2 WHERE id=1"
+                    ))
+                    .bind::<Text, _>(concurrent_status)
+                    .bind::<Timestamp, _>(now + chrono::Duration::seconds(60))
+                    .execute(&mut writer)
+                    .await?;
+                    writer.batch_execute("COMMIT").await?;
+                    Ok::<_, PostgresStorageError>(())
+                },
+            );
+            changed?;
+            selected
+        })
+        .await;
+        // Clean up both transactions and the isolated fixture before asserting.
+        writer.batch_execute("ROLLBACK").await.unwrap();
+        selector.batch_execute("ROLLBACK").await.unwrap();
+        writer
+            .batch_execute(&format!("DROP SCHEMA {schema} CASCADE; RESET ROLE"))
+            .await
+            .unwrap();
+        selector.batch_execute("RESET ROLE").await.unwrap();
+        let selected = result.expect("selection barrier must be released").unwrap();
+        assert_eq!(
+            selected,
+            vec![2],
+            "only the unchanged delivery remains eligible"
+        );
+    }
 
     #[rstest]
     #[case::configured(true, false, "pending", true)]

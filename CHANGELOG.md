@@ -78,6 +78,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Email payload limits apply to the original event envelope before its template
   alias is added. Delivery workers skip sinks during cooldowns, and rate-policy
   changes reschedule deferred notifications while preserving provider cooldowns.
+- Concurrent delivery workers recheck eligibility while locking rows, preventing
+  live claims from being overwritten and completed or deferred deliveries from
+  being sent again.
 - Webhook-notification migration rollback rejects retained notification-test audit records
   with instructions to archive and remove them before downgrading.
 - Documentation tables keep long environment-variable names readable, use wider
