@@ -1,10 +1,13 @@
 """Regression checks for safe live-monitoring failure evidence."""
 
 import json
-from unittest.mock import Mock
+import os
+from pathlib import Path
+import subprocess
+from unittest.mock import Mock, patch
 import unittest
 
-from integration.monitoring import Installation
+from integration.monitoring import Installation, fixture_environment
 
 
 class FailureEvidenceTests(unittest.TestCase):
@@ -45,3 +48,35 @@ class FailureEvidenceTests(unittest.TestCase):
         installation.compose.assert_called_once_with('ps', '-aq')
         installation.values.assert_not_called()
         self.assertNotIn('startup_logs', installation.report)
+
+
+class EnvironmentIsolationTests(unittest.TestCase):
+    def test_fixture_rejects_inherited_deployment_overrides_but_keeps_engine_access(self):
+        overrides = {
+            'DATABASE_URL': 'host-database',
+            'HUBUUM_DATABASE_URL': 'host-database',
+            'HUBUUM_MIGRATION_DATABASE_URL': 'host-migrator',
+            'POSTGRES_PASSWORD': 'host-password',
+            'COMPOSE_FILE': 'another-project.yml',
+            'MONITORING_HOST': 'another-host',
+            'PROMETHEUS_PASSWORD': 'another-password',
+            'GRAFANA_ADMIN_PASSWORD': 'another-password',
+        }
+        engine = {'PATH': '/tools', 'DOCKER_HOST': 'unix:///fixture-docker.sock'}
+        with patch.dict(os.environ, overrides | engine, clear=True):
+            environment = fixture_environment('isolated-project')
+        self.assertFalse(overrides.keys() & environment.keys())
+        for key, value in engine.items():
+            self.assertEqual(environment[key], value)
+        self.assertEqual(environment['COMPOSE_PROJECT_NAME'], 'isolated-project')
+
+    def test_direct_compose_commands_use_the_isolated_environment(self):
+        installation = Installation.__new__(Installation)
+        installation.environment = fixture_environment('isolated-project')
+        installation.engine = 'docker'
+        installation.project = 'isolated-project'
+        installation.directory = Path('/fixture')
+        with patch('integration.monitoring.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 0, stdout='')) as command:
+            installation.compose('up', '-d', 'hubuum-api-standby')
+        self.assertEqual(command.call_args.kwargs['env'], installation.environment)

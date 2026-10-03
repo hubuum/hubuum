@@ -32,6 +32,16 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def fixture_environment(project):
+    # CI's host database and unrelated deployments must not override Compose's
+    # private .env. Keep tool/engine settings such as PATH and DOCKER_HOST.
+    environment = {key: value for key, value in os.environ.items()
+                   if key != 'DATABASE_URL'
+                   and not key.startswith(('HUBUUM_', 'POSTGRES_', 'COMPOSE_', 'MONITORING_', 'PROMETHEUS_', 'GRAFANA_'))}
+    return environment | {'COMPOSE_PROJECT_NAME': project,
+                          'HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS': '120'}
+
+
 def canonical(rows):
     """Prometheus vector order is unspecified, including through Grafana."""
     return sorted(rows, key=lambda row: sorted(row['metric'].items()))
@@ -67,6 +77,7 @@ class Installation:
             listener.bind(('127.0.0.1', 0))
             self.port = listener.getsockname()[1]
         self.base = f'https://localhost:{self.port}'
+        self.environment = fixture_environment(self.project)
         self.engine = shutil.which('docker')
         require(self.engine is not None, 'Docker Compose is required')
         self.run(self.engine, 'image', 'inspect', image)
@@ -83,12 +94,10 @@ class Installation:
                      'single-host-monitoring.sh', 'stop-single-host.sh', 'uninstall-single-host.sh'):
             source = (ROOT / 'scripts' / name).read_text()
             (self.scripts / name).write_text(source.replace('if [[ "$EUID" -ne 0 ]]; then', 'if false; then'))
-        self.environment = os.environ | {'COMPOSE_PROJECT_NAME': self.project,
-                                        'HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS': '120'}
         self.prepare_adapters()
 
     def run(self, *arguments, env=None):
-        result = subprocess.run(arguments, text=True, capture_output=True, env=env, timeout=600)
+        result = subprocess.run(arguments, text=True, capture_output=True, env=self.environment if env is None else env, timeout=600)
         # Do not include captured output: admin commands may return credentials.
         require(result.returncode == 0, f"Command failed ({result.returncode}): {arguments[:2]}")
         return result.stdout
