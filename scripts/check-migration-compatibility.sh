@@ -93,7 +93,13 @@ while IFS= read -r file; do
 
     if [[ "$upper_statement" =~ DROP[[:space:]]+(TABLE|COLUMN|CONSTRAINT|INDEX) ]]; then
       reviewed_enum_drop='^ALTER TABLE (PUBLIC\.)?([A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: WIDEN-ENUM-CHECK[[:space:]]*$'
-      if [[ "$upper_statement" =~ $reviewed_enum_drop ]] \
+      reviewed_offline_drop='^ALTER TABLE (PUBLIC\.)?([A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: REVIEWED-OFFLINE-DROP[[:space:]]*$'
+      if [[ "$upper_statement" =~ $reviewed_offline_drop ]] \
+        && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
+          && "$statement_timeout_is_bounded" == true ]] \
+        && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"OFFLINE:${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"$'\n'* ]]; then
+        echo "OFFLINE UPGRADE REVIEW: $file requires stopped writers; see .github/migration-offline-reviews.json" >&2
+      elif [[ "$upper_statement" =~ $reviewed_enum_drop ]] \
         && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
           && "$statement_timeout_is_bounded" == true ]] \
         && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"$'\n'* ]]; then

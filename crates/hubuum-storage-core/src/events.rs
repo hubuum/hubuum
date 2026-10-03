@@ -311,9 +311,18 @@ pub struct StorageEventDeliverySubscription {
     id: EventSubscriptionId,
     name: String,
     routing: Value,
+    test: bool,
 }
 
 impl StorageEventDeliverySubscription {
+    pub fn for_test(mut self, value: bool) -> Self {
+        self.test = value;
+        self
+    }
+    pub const fn is_test(&self) -> bool {
+        self.test
+    }
+
     pub fn try_new(
         id: EventSubscriptionId,
         name: impl Into<String>,
@@ -330,7 +339,12 @@ impl StorageEventDeliverySubscription {
                 "Event delivery subscription routing must be a JSON object",
             ));
         }
-        Ok(Self { id, name, routing })
+        Ok(Self {
+            id,
+            name,
+            routing,
+            test: false,
+        })
     }
 
     #[must_use]
@@ -438,11 +452,23 @@ pub trait EventDeliveryWorkerStorage: Send + Sync {
     ) -> Result<StorageEventDeliveryBatch, StorageError>;
 
     /// Check ownership and expiry immediately before an external send. Return
-    /// no lease for a stale/expired claim; never revive an expired claim here.
+    /// no lease for a stale/expired claim or a deferred rate admission. Reserve
+    /// per-sink spacing atomically across workers. A deferral clears ownership,
+    /// sets the next attempt timestamp, and consumes no failure attempts.
+    /// Never revive an expired claim here.
     async fn begin_event_delivery(
         &self,
         claim: &StorageEventDeliveryClaim,
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError>;
+
+    /// End an owned, unexpired attempt with a permanent error or provider
+    /// cooldown. Cooldowns are shared by all subscriptions for the sink and
+    /// must not consume retry attempts. Fence stale claims without mutation.
+    async fn finish_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+        disposition: StorageEventDeliveryDisposition,
+    ) -> Result<(), StorageError>;
 
     async fn mark_event_delivery_succeeded(
         &self,
@@ -729,4 +755,11 @@ mod tests {
         assert!(StorageEventRetentionSummary::new(1, 0).did_work());
         assert!(StorageEventRetentionSummary::new(0, 1).did_work());
     }
+}
+
+/// Explicit terminal failure or provider cooldown for an owned delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageEventDeliveryDisposition {
+    Permanent(String),
+    RateLimited(Duration),
 }

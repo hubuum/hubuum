@@ -163,6 +163,8 @@ for an exception.
   `EventDeliveryAdministrationStorage::mark_event_delivery_dead` are explicit
   administrator interventions on derived delivery state. Worker protocols use
   `EventDeliveryWorkerStorage::claim_event_delivery_batch`,
+  `EventDeliveryWorkerStorage::begin_event_delivery`,
+  `EventDeliveryWorkerStorage::finish_event_delivery`,
   `EventDeliveryWorkerStorage::mark_event_delivery_succeeded`,
   `EventDeliveryWorkerStorage::mark_event_delivery_failed`,
   `EventFanoutStorage::process_event_fanout_batch`,

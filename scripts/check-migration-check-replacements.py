@@ -11,6 +11,8 @@ if sys.version_info < (3, 11):
     )
 
 import re
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -71,6 +73,30 @@ def approved_replacements(baseline_documents, candidate):
     return approved
 
 
+def approved_offline_drops(reviews, candidate_path, candidate):
+    """Permit only exact, declared constraint drops in a reviewed offline upgrade.
+
+    These are explicitly NOT rolling-compatible migrations. The hash pins the
+    review to its SQL; any later edit needs a fresh review in the same PR.
+    """
+    if reviews.get("schema_version") != 1:
+        raise ValueError("Unsupported offline migration review schema")
+    approved = set()
+    for review in reviews.get("reviews", []):
+        if review.get("migration") != candidate_path:
+            continue
+        if not review.get("reason") or not review.get("upgrade_action"):
+            raise ValueError("Offline migration review requires rationale and operator action")
+        if review.get("sha256") != hashlib.sha256(candidate.encode()).hexdigest():
+            raise ValueError("Offline migration SQL changed; review its new content and hash")
+        for table, names in review["drop_constraints"].items():
+            for name in names:
+                if not re.fullmatch(IDENTIFIER, table) or not re.fullmatch(IDENTIFIER, name):
+                    raise ValueError("Offline review contains an invalid constraint identifier")
+                approved.add(f"OFFLINE:{table}:{name}".upper())
+    return approved
+
+
 def main():
     repository, baseline, candidate = sys.argv[1:]
 
@@ -82,7 +108,12 @@ def main():
     paths = sorted((path for path in paths if path.endswith("/up.sql")),
                    key=lambda path: (Path(path).parent.name, path))
     documents = [git("show", f"{baseline}:{path}") for path in paths]
-    for name in sorted(approved_replacements(documents, Path(candidate).read_text())):
+    content = Path(candidate).read_text()
+    approved = approved_replacements(documents, content)
+    review_path = Path(repository) / ".github/migration-offline-reviews.json"
+    if review_path.exists():
+        approved |= approved_offline_drops(json.loads(review_path.read_text()), Path(candidate).relative_to(repository).as_posix(), content)
+    for name in sorted(approved):
         print(name)
 
 

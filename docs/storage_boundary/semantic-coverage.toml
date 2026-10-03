@@ -48,6 +48,8 @@ event_coordination = [
     "EventDeliveryAdministrationStorage::release_event_delivery_for_retry",
     "EventDeliveryAdministrationStorage::mark_event_delivery_dead",
     "EventDeliveryWorkerStorage::claim_event_delivery_batch",
+    "EventDeliveryWorkerStorage::begin_event_delivery",
+    "EventDeliveryWorkerStorage::finish_event_delivery",
     "EventDeliveryWorkerStorage::mark_event_delivery_succeeded",
     "EventDeliveryWorkerStorage::mark_event_delivery_failed",
     "EventFanoutStorage::process_event_fanout_batch",
@@ -203,15 +205,15 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.EventDeliveryAdministrationStorage]
 source = "crates/hubuum-storage-core/src/event_administration.rs"
-methods = ["list_event_deliveries", "get_event_delivery", "release_event_delivery_for_retry", "mark_event_delivery_dead"]
-effects = { point_read = ["get_event_delivery"], page_read = ["list_event_deliveries"], workflow_mutation = ["release_event_delivery_for_retry", "mark_event_delivery_dead"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
+methods = ["list_event_deliveries", "get_event_delivery", "release_event_delivery_for_retry", "mark_event_delivery_dead", "load_event_notification", "enqueue_event_notification_test"]
+effects = { point_read = ["get_event_delivery", "load_event_notification"], page_read = ["list_event_deliveries"], workflow_mutation = ["release_event_delivery_for_retry", "mark_event_delivery_dead"], audited_mutation = ["enqueue_event_notification_test"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration", "src/tests/storage_contract/webhook_notifications.rs::system_test_delivery_uses_real_event_but_bypasses_filters_and_enabled_flags", "src/tests/storage_contract/webhook_notifications.rs::notification_selection_rejects_another_sink"]
 
 [traits.EventDeliveryWorkerStorage]
 source = "crates/hubuum-storage-core/src/events.rs"
-methods = ["claim_event_delivery_batch", "begin_event_delivery", "mark_event_delivery_succeeded", "mark_event_delivery_failed"]
-effects = { point_read = ["begin_event_delivery"], workflow_mutation = ["claim_event_delivery_batch", "mark_event_delivery_succeeded", "mark_event_delivery_failed"] }
-shared_scenarios = ["src/events/delivery.rs::process_event_delivery_batch_with_schedule", "src/events/delivery.rs::process_event_delivery_work_item", "src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http", "src/tests/storage_contract/event_delivery.rs::stale_delivery_claim_never_starts_transport", "src/tests/storage_contract/event_delivery.rs::slow_multiworker_delivery_spans_default_lease_without_duplicate_sends"]
+methods = ["claim_event_delivery_batch", "begin_event_delivery", "mark_event_delivery_succeeded", "mark_event_delivery_failed", "finish_event_delivery"]
+effects = { workflow_mutation = ["claim_event_delivery_batch", "begin_event_delivery", "mark_event_delivery_succeeded", "mark_event_delivery_failed", "finish_event_delivery"] }
+shared_scenarios = ["src/events/delivery.rs::process_event_delivery_batch_with_schedule", "src/events/delivery.rs::process_event_delivery_work_item", "src/tests/storage_contract.rs::every_available_storage_backend_composes_through_services_and_http", "src/tests/storage_contract/event_delivery.rs::stale_delivery_claim_never_starts_transport", "src/tests/storage_contract/event_delivery.rs::slow_multiworker_delivery_spans_default_lease_without_duplicate_sends", "src/tests/storage_contract/webhook_notifications.rs::shared_sink_deferral_preserves_attempts_and_fences_old_claims"]
 native_scenarios = ["src/tests/storage_contract.rs::postgres_delivery_faults_preserve_claim_acknowledgement_and_retry_recovery", "src/tests/storage_contract/event_delivery.rs::postgres_delayed_ownership_response_cannot_start_a_reclaimed_delivery", "src/tests/storage_contract/event_delivery.rs::postgres_delivery_acknowledgement_is_bounded_by_the_lease"]
 
 [traits.EventFanoutStorage]
@@ -415,8 +417,8 @@ source = "crates/hubuum-storage-core/src/worker_notifications.rs"
 variants = ["EventFanout", "EventDelivery", "TaskQueue"]
 scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "crates/hubuum-storage-postgres/tests/notifications.rs::fanout_trigger_notifies_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
 
-[enums.StorageTaskKind]
-source = "crates/hubuum-storage-core/src/task_queue.rs"
+[enums.TaskKind]
+source = "crates/hubuum-domain/src/task_kind.rs"
 variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall", "SchemaValidation"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 

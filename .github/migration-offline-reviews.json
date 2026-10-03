@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "reviews": [
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-01-000001_webhook_notifications/up.sql",
+      "sha256": "a79e6edce3b476fb46c7e131da375a85672320c3533a15e885dd579c201dddfb",
+      "reason": "Repeated test sends require a separate delivery purpose and normal-only uniqueness; older fanout workers use the old conflict target.",
+      "upgrade_action": "Stop all older API and worker processes, apply the migration and role grants, and start only matching binaries. See docs/events.md#upgrade-and-rollback.",
+      "drop_constraints": {
+        "event_deliveries": [
+          "event_deliveries_event_id_subscription_id_key"
+        ]
+      }
+    }
+  ]
+}

@@ -35,6 +35,7 @@ mod tests {
         let sink_id = save_event_sink(
             &context.pool,
             NewEventSink {
+                delivery_policy: None,
                 name: sink_name.clone(),
                 kind: EventSinkKind::Webhook,
                 config: json!({}),
@@ -256,7 +257,7 @@ mod tests {
             .find(|row| row.subscription_id == fixture.subscription_id)
             .unwrap();
         assert_eq!(subscription.subscription_name, fixture.subscription_name);
-        assert_eq!(subscription.collection_id, fixture.collection_id);
+        assert_eq!(subscription.collection_id, Some(fixture.collection_id));
         assert_eq!(subscription.sink_id, fixture.sink_id);
         assert_eq!(subscription.counts.pending, 1);
     }

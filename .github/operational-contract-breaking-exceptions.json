@@ -1,4 +1,14 @@
 {
   "schema_version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "webhook-notification-backup-format-7",
+      "baseline": "v0.0.16",
+      "expires": "2027-01-31",
+      "reason": "Format 7 preserves scoped subscriptions, sink delivery policies and test delivery purpose while continuing to accept format 6.",
+      "migration": "Upgrade all API and worker processes together before producing format 7 backups. Older servers cannot restore format 7; existing format 6 backups remain accepted with legacy defaults.",
+      "changelog_entry": "**Breaking:** backups now use format 7; format 6 remains accepted with legacy",
+      "fingerprints": ["5f8a9a42a853"]
+    }
+  ]
 }

@@ -688,3 +688,14 @@ assert "tests/python/run.py integration monitoring --image hubuum-server:ci" in 
 assert workflow.count("      - monitoring-integration\n") == 2, "CI and release gates must require both monitoring engines"
 assert "needs.monitoring-integration.result == 'success'" in workflow
 PY
+
+for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubuum-event-rendering/Cargo.toml crates/hubuum-event-sink-webhook/src/response.rs; do
+  notification_output="$(bash "$classifier" "$notification_path")"
+  assert_flag "$notification_output" code true
+  assert_flag "$notification_output" container true
+done
+notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
+assert_flag "$notification_output" code true
+
+notification_output="$(bash "$classifier" .github/migration-offline-reviews.json)"
+assert_flag "$notification_output" code true

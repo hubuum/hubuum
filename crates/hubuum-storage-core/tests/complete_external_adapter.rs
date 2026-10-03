@@ -1023,7 +1023,7 @@ impl EventConfigurationStorage for CompleteExternalAdapter {
 
     async fn get_event_subscription(
         &self,
-        collection_id: CollectionId,
+        scope: hubuum_events_core::EventSubscriptionScope,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
         fixture_result()
@@ -1053,6 +1053,20 @@ impl EventConfigurationStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl EventDeliveryAdministrationStorage for CompleteExternalAdapter {
+    async fn load_event_notification(
+        &self,
+        selection: StorageEventNotificationSelection,
+    ) -> Result<StorageEventNotificationInput, StorageError> {
+        fixture_result()
+    }
+    async fn enqueue_event_notification_test(
+        &self,
+        selection: StorageEventNotificationSelection,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
+        fixture_result()
+    }
+
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
@@ -1084,6 +1098,14 @@ impl EventDeliveryAdministrationStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl EventDeliveryWorkerStorage for CompleteExternalAdapter {
+    async fn finish_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+        disposition: StorageEventDeliveryDisposition,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+
     async fn claim_event_delivery_batch(
         &self,
         settings: hubuum_domain::EventDeliverySettings,

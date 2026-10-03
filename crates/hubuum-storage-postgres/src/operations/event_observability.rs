@@ -2,6 +2,7 @@ use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{CollectionId, EventSinkId, EventSubscriptionId};
+use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::{
     StorageEventDeliveryHealthSnapshot, StorageEventDeliveryStatusSnapshot,
     StorageEventFanoutSnapshot, StorageEventMetricsSnapshot, StorageEventQueueSnapshot,
@@ -83,8 +84,8 @@ struct SubscriptionHealthRow {
     subscription_id: i32,
     #[diesel(sql_type = Text)]
     subscription_name: String,
-    #[diesel(sql_type = Integer)]
-    collection_id: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    collection_id: Option<i32>,
     #[diesel(sql_type = Integer)]
     sink_id: i32,
     #[diesel(sql_type = Text)]
@@ -209,14 +210,14 @@ async fn load_delivery_queue_health(
             ) AS stale_claims,
             CASE
                 WHEN MIN(created_at) FILTER (
-                    WHERE status = 'pending'
+                    WHERE (status = 'pending' AND next_attempt_at <= NOW())
                        OR (status = 'failed' AND next_attempt_at <= NOW())
                        OR (status = 'in_flight' AND locked_until <= NOW())
                 ) IS NULL THEN NULL
                 ELSE GREATEST(
                     0,
                     EXTRACT(EPOCH FROM (NOW() - MIN(created_at) FILTER (
-                        WHERE status = 'pending'
+                        WHERE (status = 'pending' AND next_attempt_at <= NOW())
                            OR (status = 'failed' AND next_attempt_at <= NOW())
                            OR (status = 'in_flight' AND locked_until <= NOW())
                     )))::bigint
@@ -262,14 +263,14 @@ async fn load_sink_health(
             ) AS stale_claims,
             CASE
                 WHEN MIN(d.created_at) FILTER (
-                    WHERE d.status = 'pending'
+                    WHERE (d.status = 'pending' AND d.next_attempt_at <= NOW())
                        OR (d.status = 'failed' AND d.next_attempt_at <= NOW())
                        OR (d.status = 'in_flight' AND d.locked_until <= NOW())
                 ) IS NULL THEN NULL
                 ELSE GREATEST(
                     0,
                     EXTRACT(EPOCH FROM (NOW() - MIN(d.created_at) FILTER (
-                        WHERE d.status = 'pending'
+                        WHERE (d.status = 'pending' AND d.next_attempt_at <= NOW())
                            OR (d.status = 'failed' AND d.next_attempt_at <= NOW())
                            OR (d.status = 'in_flight' AND d.locked_until <= NOW())
                     )))::bigint
@@ -343,14 +344,14 @@ async fn load_subscription_health(
             ) AS stale_claims,
             CASE
                 WHEN MIN(d.created_at) FILTER (
-                    WHERE d.status = 'pending'
+                    WHERE (d.status = 'pending' AND d.next_attempt_at <= NOW())
                        OR (d.status = 'failed' AND d.next_attempt_at <= NOW())
                        OR (d.status = 'in_flight' AND d.locked_until <= NOW())
                 ) IS NULL THEN NULL
                 ELSE GREATEST(
                     0,
                     EXTRACT(EPOCH FROM (NOW() - MIN(d.created_at) FILTER (
-                        WHERE d.status = 'pending'
+                        WHERE (d.status = 'pending' AND d.next_attempt_at <= NOW())
                            OR (d.status = 'failed' AND d.next_attempt_at <= NOW())
                            OR (d.status = 'in_flight' AND d.locked_until <= NOW())
                     )))::bigint
@@ -380,7 +381,13 @@ async fn load_subscription_health(
             Ok(StorageEventSubscriptionHealthSnapshot::new(
                 EventSubscriptionId::new(row.subscription_id)?,
                 row.subscription_name,
-                CollectionId::new(row.collection_id)?,
+                row.collection_id
+                    .map(CollectionId::new)
+                    .transpose()?
+                    .map_or(
+                        EventSubscriptionScope::System,
+                        EventSubscriptionScope::Collection,
+                    ),
                 row.subscription_enabled,
                 StorageEventSinkSnapshot::new(
                     EventSinkId::new(row.sink_id)?,

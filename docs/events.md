@@ -141,6 +141,9 @@ External delivery is configured in two layers:
 - Event subscriptions are collection-scoped routing rules. Callers need
   `ManageEventSubscription` on the collection and manage them through
   `/api/v1/collections/{collection_id}/event-subscriptions`.
+- Administrators manage collection-less events through
+  `/api/v1/system-event-subscriptions`. System subscriptions match only events
+  with neither a direct collection nor related collections.
 
 A sink describes how to deliver. A subscription describes which events should
 be delivered to a sink. The primary subscription filters are `entity_types` and
@@ -162,6 +165,7 @@ Supported `filter` fields are:
 | `initiator_user_ids` | Match root task initiator principal ids |
 | `request_ids` | Match request UUIDs |
 | `correlation_ids` | Match correlation ids exactly |
+| `task_kinds` | Match recognized task kinds in task-event metadata; missing metadata does not match |
 
 Each field is optional. Empty and omitted fields match all events for that
 dimension. Multiple populated fields are combined with AND; values inside one
@@ -206,13 +210,14 @@ Example collection subscription:
 
 For email sinks, create narrow subscriptions rather than sending every audit
 event to human recipients. For example, this subscription sends only failed
-task lifecycle events from a collection to the configured mailbox:
+task lifecycle events to the configured mailbox. Create it through
+`POST /api/v1/system-event-subscriptions`:
 
 ```json
 {
   "sink_id": 2,
   "name": "task-failures-to-ops",
-  "description": "Email ops when collection tasks fail",
+  "description": "Email ops when tasks fail",
   "entity_types": ["task"],
   "actions": ["failed"],
   "filter": {
@@ -231,8 +236,9 @@ without deleting historical events or existing delivery rows.
 
 ## Webhook Sinks
 
-Webhook delivery is the reference concrete sink. A webhook subscription posts
-the event envelope as JSON to the URL in the subscription `routing` object:
+Webhook delivery is the reference concrete sink. For a setup walkthrough, see
+[chat and notification webhooks](webhook_notifications.md). By default, a webhook
+subscription posts the event envelope as JSON to the URL in its `routing` object:
 
 ```json
 {
@@ -418,8 +424,9 @@ render to non-empty text. Webhook `max_request_bytes` and the transport
 Delivery is at least once. A successful transport-specific acknowledgement
 marks the delivery `succeeded`; transport errors or failed acknowledgements are
 retried with backoff until the configured attempt limit, then marked `dead`.
-For webhooks, any `2xx` response is successful and non-`2xx` responses are
-retried.
+By default, webhooks treat any `2xx` response as successful and retry non-`2xx`
+responses. Optional [response policies](#response-and-delivery-policies) can
+require an acknowledgement, classify permanent errors, or defer HTTP 429.
 
 Hubuum does not guarantee ordering across events. Consumers that need ordering
 should reconcile with `occurred_at` and the internal monotonic `id`, while still
@@ -607,3 +614,131 @@ Prometheus recording and alerting rules, SLO definitions and response runbooks.
 The same assets work with the optional single-host stack, independently managed
 Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
 your server release and scrape every process directly with deployment labels.
+
+## Configurable Webhook Notifications
+
+The `webhook` sink can send the original event envelope or render a custom JSON
+payload. Slack, Mattermost, and notification bridges use this same transport;
+there are no provider-specific sink kinds or bot API clients. Events remain raw
+facts: no threshold evaluator, aggregation, or alert-state machine is added.
+System subscriptions and `task_kinds` filters can select existing failed-backup
+events. Metrics alerting systems remain appropriate for queue delay and database
+pressure unless a component emits a corresponding raw event.
+
+### Payload Templates And Secrets
+
+Set `config.body_template` to a MiniJinja template that renders valid JSON.
+Omitting it preserves the original event envelope. Templates expose the same
+bounded event context as email: envelope fields at the top level and the full
+original envelope as `event`. Use `tojson` for inserted values so quotes,
+newlines, and Unicode remain valid JSON. Templates share the isolated execution
+engine with fuel, recursion, context, and output limits. The rendered request
+also respects `max_request_bytes` and the global outbound request limit.
+
+The additional context fields `test` and `test_marker` identify test deliveries.
+`test_marker` is `[TEST]` followed by a space for tests and an empty string for normal delivery.
+Templates choose where to display it; Hubuum does not inject fields into the
+receiver's payload. Test sends also carry `X-Hubuum-Delivery-Purpose: test`.
+
+For a destination containing credentials, set `config.url_secret_ref` to an
+alias in the configured [secret source](secret_sources.md). Its value must be
+the **complete HTTPS URL**. This is independent of the sink's existing
+`secret_ref`, which continues to supply a bearer token. Neither credential is
+available to templates or previews. A secret-backed destination requires
+omitting `routing.url`; subscriptions cannot override that destination.
+Without `url_secret_ref`, the subscription's `routing.url` works as before.
+
+HTTPS validation, DNS screening, private-target policy, timeouts, response caps,
+and redirect refusal apply equally to literal and secret-backed URLs. Requests
+remain JSON `POST`s; templates cannot change transport, headers, or credentials.
+
+### Slack And Mattermost Incoming Webhook Example
+
+Follow [Set Up Chat And Notification Webhooks](webhook_notifications.md) for
+provider setup, secret storage, complete sink and subscription requests, and
+preview/test delivery. It includes separate Slack and Mattermost instructions,
+plus Discord and Apprise bridge recipes.
+
+All examples use `kind: "webhook"`. Keep provider credentials in the secret
+source, use `tojson` for dynamic payload values, and select an acknowledgement
+policy matching the destination. No provider-specific sink or bot client is
+required.
+
+### Response And Delivery Policies
+
+Without `config.response`, webhooks retain their existing behavior: every 2xx
+is successful and every other HTTP status retries with backoff. Response rules
+are optional and declarative:
+
+| Field | Meaning |
+| ----- | ------- |
+| `success_statuses` | Explicit successful 2xx statuses; omitted or empty accepts all 2xx |
+| `retry_statuses` | Non-success 3xx/4xx/5xx statuses to retry; omitted retries all failures, while an empty list makes all HTTP failures permanent |
+| `rate_limit` | When true, HTTP 429 defers without consuming failure attempts, taking precedence over `retry_statuses`; defaults to false |
+| `body` | Optional acknowledgement check, applied only after a successful status |
+
+For `body`, use `{"kind":"text_equals","value":"ok"}` to compare trimmed
+response text, or `{"kind":"json_equals","pointer":"/ok","value":true}`
+to compare a JSON value using an RFC 6901 pointer. A missing value, invalid JSON,
+or failed comparison is a permanent failure. Response bodies that reach the
+configured capture limit cannot be safely checked for truncation and retry
+instead. Status errors and failed acknowledgements never include response
+contents or destination URLs. These rules do not interpret provider error names.
+
+When `rate_limit` is enabled, valid `Retry-After` delta seconds or HTTP dates
+control the cooldown; invalid or absent values use 60 seconds. Transport failures
+remain retryable. Permanent failures dead-letter immediately. All sinks remain
+unlimited unless `delivery_policy.min_interval_ms` is configured. Values range
+from 1 to 86,400,000 milliseconds; `null` disables configured spacing.
+
+The persisted schedule is shared across workers and subscriptions using a sink.
+It spaces sends without dropping or aggregating events. Deferred deliveries stay
+pending with `deferred_reason` (`configured_rate` or `provider_rate`) and
+`next_attempt_at`, without consuming failure attempts. Separate sinks do not
+share their schedules, even if they target the same external channel.
+
+Delivery remains at least once: a received request followed by a lost
+acknowledgement can produce a duplicate. Custom payloads may include `event_id`
+for receiver deduplication; `X-Hubuum-Event-Id` always identifies the source event.
+Normal deliveries keep the event UUID as `Idempotency-Key`. Queued tests use
+`{event_uuid}-test-{delivery_id}`, stable across retries and distinct for each
+test, so tests cannot suppress normal sends at receivers using that header.
+
+### Preview And Test
+
+Administrators can preview or enqueue a webhook test using an existing event
+UUID and saved subscription. Preview resolves no secrets and performs no HTTP
+request; it returns only the JSON payload and sink kind:
+
+```http
+POST /api/v1/event-sinks/3/preview
+Content-Type: application/json
+
+{"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}
+```
+
+Use `/api/v1/event-sinks/3/test` with the same body to enqueue a delivery.
+Replace the example identifiers with real saved records. Both verify sink and
+event scope. Tests bypass filters and enabled flags for setup but respect
+throttling. Preview renders the same test context as delivery. Include
+`test_marker` in templates when a visible message label is wanted.
+
+The test route returns `202` with an inspectable delivery and Location header.
+The request is audited as `event_sink.invoked`. Repeated tests create separate
+`purpose: "test"` records without suppressing normal event delivery. Workers
+render using the saved configuration at execution time.
+
+### Upgrade And Rollback
+
+Stop older API and worker processes, apply
+`2026-10-01-000001_webhook_notifications`, reconcile database role grants, and
+start matching binaries. Mixed old/new workers are unsupported because normal
+and test deliveries now use purpose-aware uniqueness.
+
+Rollback rejects enhanced webhook configuration, system subscriptions, rate
+policies, and test/deferred deliveries. Archive and remove retained
+`event_sink.invoked` audit records and their dependent deliveries with processes
+stopped before rollback. Format 7 backups preserve these settings and terminal
+delivery history, while transient scheduling resets on restore. Format 6
+backups restore legacy defaults. Remove enhanced webhook settings before using
+older binaries, which cannot interpret their request or response rules.

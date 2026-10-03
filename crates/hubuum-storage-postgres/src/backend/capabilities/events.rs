@@ -1,4 +1,7 @@
 use super::super::*;
+use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 
 #[async_trait]
 impl EventHealthStorage for PostgresStorage {
@@ -84,12 +87,12 @@ impl EventConfigurationStorage for PostgresStorage {
 
     async fn get_event_subscription(
         &self,
-        collection_id: CollectionId,
+        scope: EventSubscriptionScope,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
         crate::operations::event_subscription::get_event_subscription(
             self.runtime(),
-            collection_id.id(),
+            scope.collection_id().map(CollectionId::id),
             subscription_id.id(),
         )
         .await
@@ -126,6 +129,29 @@ impl EventConfigurationStorage for PostgresStorage {
 
 #[async_trait]
 impl EventDeliveryAdministrationStorage for PostgresStorage {
+    async fn load_event_notification(
+        &self,
+        selection: StorageEventNotificationSelection,
+    ) -> Result<StorageEventNotificationInput, StorageError> {
+        crate::operations::event_subscription::load_event_notification(self.runtime(), selection)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn enqueue_event_notification_test(
+        &self,
+        selection: StorageEventNotificationSelection,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
+        crate::operations::event_subscription::enqueue_event_notification_test(
+            self.runtime(),
+            selection,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
+    }
+
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
@@ -185,6 +211,16 @@ impl EventDeliveryWorkerStorage for PostgresStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         crate::operations::event_delivery::begin_event_delivery(self.runtime(), claim)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn finish_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+        disposition: StorageEventDeliveryDisposition,
+    ) -> Result<(), StorageError> {
+        crate::operations::event_delivery::finish_event_delivery(self.runtime(), claim, disposition)
             .await
             .map_err(StorageError::from)
     }

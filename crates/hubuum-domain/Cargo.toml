@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-domain"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Backend-neutral domain types and validation for Hubuum."
@@ -15,7 +15,7 @@ policy-document = "docs/rust_api/hubuum-domain.md"
 release-train = "storage-sdk"
 
 [dependencies]
-hubuum-schema-diagnostics = { path = "../hubuum-schema-diagnostics", version = "=0.3.0" }
+hubuum-schema-diagnostics = { path = "../hubuum-schema-diagnostics", version = "=0.4.0" }
 bigdecimal = "0.4"
 chrono = "0.4"
 json-patch = { version = "4.2", default-features = false }

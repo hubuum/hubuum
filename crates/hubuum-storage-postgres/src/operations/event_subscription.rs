@@ -1,3 +1,11 @@
+use super::event_rows::{StoredEventProjection, enrich_stored_events};
+use diesel::PgExpressionMethods;
+use diesel::SelectableHelper;
+use hubuum_domain::EventDeliveryPolicy;
+use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::{
+    StorageEventDelivery, StorageEventNotificationInput, StorageEventNotificationSelection,
+};
 use std::fmt;
 
 use chrono::NaiveDateTime;
@@ -61,6 +69,7 @@ struct EventSinkRow {
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
     revision: PostgresRevision,
+    delivery_policy: Value,
 }
 
 impl_redacted_sink_debug!(
@@ -87,6 +96,10 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
             row.revision.into_domain(),
         )
         .configuration(row.config)
+        .delivery_policy(decode_json::<EventDeliveryPolicy>(
+            row.delivery_policy,
+            "event delivery policy",
+        )?)
         .secret_ref(row.secret_ref)
         .enabled(row.enabled)
         .try_build()
@@ -102,6 +115,7 @@ struct NewEventSinkRow {
     name: String,
     kind: String,
     config: Value,
+    delivery_policy: Value,
     secret_ref: Option<String>,
     enabled: bool,
 }
@@ -114,6 +128,7 @@ struct UpdateEventSinkRow {
     name: Option<String>,
     kind: Option<String>,
     config: Option<Value>,
+    delivery_policy: Option<Value>,
     secret_ref: Option<Option<String>>,
     enabled: Option<bool>,
 }
@@ -137,6 +152,10 @@ impl UpdateEventSinkRow {
                 .secret_ref
                 .as_ref()
                 .is_some_and(|value| value != &current.secret_ref)
+            || self
+                .delivery_policy
+                .as_ref()
+                .is_some_and(|value| value != &current.delivery_policy)
             || self.enabled.is_some_and(|value| value != current.enabled)
     }
 }
@@ -145,7 +164,7 @@ impl UpdateEventSinkRow {
 #[diesel(table_name = crate::schema::event_subscriptions)]
 struct EventSubscriptionRow {
     id: i32,
-    collection_id: i32,
+    collection_id: Option<i32>,
     sink_id: i32,
     name: String,
     description: String,
@@ -181,7 +200,13 @@ impl TryFrom<EventSubscriptionRow> for StorageEventSubscription {
     fn try_from(row: EventSubscriptionRow) -> Result<Self, Self::Error> {
         Self::builder(
             EventSubscriptionId::new(row.id)?,
-            CollectionId::new(row.collection_id)?,
+            row.collection_id
+                .map(CollectionId::new)
+                .transpose()?
+                .map_or(
+                    EventSubscriptionScope::System,
+                    EventSubscriptionScope::Collection,
+                ),
             EventSinkId::new(row.sink_id)?,
             row.name,
             row.created_at.and_utc(),
@@ -207,7 +232,7 @@ impl TryFrom<EventSubscriptionRow> for StorageEventSubscription {
 #[derive(Insertable)]
 #[diesel(table_name = crate::schema::event_subscriptions)]
 struct NewEventSubscriptionRow {
-    collection_id: i32,
+    collection_id: Option<i32>,
     sink_id: i32,
     name: String,
     description: String,
@@ -365,6 +390,7 @@ pub async fn create_event_sink(
         name: request.name().to_string(),
         kind: request.kind().to_string(),
         config: request.configuration().clone(),
+        delivery_policy: encode_json(&request.delivery_policy(), "event delivery policy")?,
         secret_ref: request.secret_ref().map(str::to_string),
         enabled: request.enabled(),
     };
@@ -403,6 +429,10 @@ pub async fn update_event_sink(
         name: request.name_value().map(str::to_string),
         kind: request.kind_value().map(str::to_string),
         config: request.configuration_value().cloned(),
+        delivery_policy: request
+            .delivery_policy()
+            .map(|value| encode_json(&value, "event delivery policy"))
+            .transpose()?,
         secret_ref: request
             .secret_ref_value()
             .map(|value| value.map(str::to_string)),
@@ -415,7 +445,7 @@ pub async fn update_event_sink(
 
                 let before = event_sinks
                     .filter(id.eq(sink_id))
-                    .for_update()
+                    .for_no_key_update()
                     .first::<EventSinkRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -433,6 +463,15 @@ pub async fn update_event_sink(
                     .set(changes)
                     .get_result::<EventSinkRow>(connection)
                     .await?;
+                if before.delivery_policy != updated.delivery_policy {
+                    super::event_delivery::reconcile_sink_delivery_policy(
+                        connection,
+                        request.id(),
+                        decode_json(before.delivery_policy.clone(), "event delivery policy")?,
+                        decode_json(updated.delivery_policy.clone(), "event delivery policy")?,
+                    )
+                    .await?;
+                }
                 let audit = append_sink_audit(
                     connection,
                     Action::Updated,
@@ -497,16 +536,21 @@ pub async fn list_event_subscriptions(
         .with_read_only_snapshot(async |connection| {
             let total = if include_total {
                 Some(
-                    build_event_subscription_query(query.collection_id().id(), query.options())?
-                        .count()
-                        .get_result::<i64>(connection)
-                        .await?,
+                    build_event_subscription_query(
+                        query.scope().collection_id().map(CollectionId::id),
+                        query.options(),
+                    )?
+                    .count()
+                    .get_result::<i64>(connection)
+                    .await?,
                 )
             } else {
                 None
             };
-            let mut records =
-                build_event_subscription_query(query.collection_id().id(), query.options())?;
+            let mut records = build_event_subscription_query(
+                query.scope().collection_id().map(CollectionId::id),
+                query.options(),
+            )?;
             let fields = query
                 .options()
                 .sort()
@@ -536,7 +580,7 @@ pub async fn list_event_subscriptions(
 
 pub async fn get_event_subscription(
     runtime: &PostgresRuntime,
-    collection_id: i32,
+    collection_id: Option<i32>,
     subscription_id: i32,
 ) -> Result<StorageEventSubscription, PostgresStorageError> {
     runtime
@@ -553,7 +597,7 @@ pub async fn create_event_subscription(
     request: StorageEventSubscriptionCreate,
 ) -> Result<StorageMutationOutcome<StorageEventSubscription>, PostgresStorageError> {
     let row = NewEventSubscriptionRow {
-        collection_id: request.collection_id().id(),
+        collection_id: request.scope().collection_id().map(CollectionId::id),
         sink_id: request.sink_id().id(),
         name: request.name().to_string(),
         description: request.description().to_string(),
@@ -597,7 +641,7 @@ pub async fn update_event_subscription(
     request: StorageEventSubscriptionUpdate,
 ) -> Result<StorageMutationOutcome<StorageEventSubscription>, PostgresStorageError> {
     let subscription_id = request.id().id();
-    let collection_id_value = request.collection_id().id();
+    let collection_id_value = request.scope().collection_id().map(CollectionId::id);
     let changes = UpdateEventSubscriptionRow {
         sink_id: request.sink_id_value().map(hubuum_domain::EventSinkId::id),
         name: request.name_value().map(str::to_string),
@@ -629,7 +673,7 @@ pub async fn update_event_subscription(
 
                 let before = event_subscriptions
                     .filter(id.eq(subscription_id))
-                    .filter(collection_id.eq(collection_id_value))
+                    .filter(collection_id.is_not_distinct_from(collection_id_value))
                     .for_update()
                     .first::<EventSubscriptionRow>(connection)
                     .await?;
@@ -668,7 +712,7 @@ pub async fn delete_event_subscription(
     request: StorageEventSubscriptionDelete,
 ) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let subscription_id = request.id().id();
-    let collection_id_value = request.collection_id().id();
+    let collection_id_value = request.scope().collection_id().map(CollectionId::id);
     runtime
         .with_transaction(
             async |connection| -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
@@ -678,7 +722,7 @@ pub async fn delete_event_subscription(
 
                 let before = event_subscriptions
                     .filter(id.eq(subscription_id))
-                    .filter(collection_id.eq(collection_id_value))
+                    .filter(collection_id.is_not_distinct_from(collection_id_value))
                     .for_update()
                     .first::<EventSubscriptionRow>(connection)
                     .await?;
@@ -720,14 +764,14 @@ async fn load_event_sink_row(
 
 async fn load_scoped_subscription_row(
     connection: &mut PostgresConnection,
-    collection: i32,
+    collection: Option<i32>,
     subscription_id: i32,
 ) -> Result<EventSubscriptionRow, PostgresStorageError> {
     use crate::schema::event_subscriptions::dsl::{collection_id, event_subscriptions, id};
 
     event_subscriptions
         .filter(id.eq(subscription_id))
-        .filter(collection_id.eq(collection))
+        .filter(collection_id.is_not_distinct_from(collection))
         .first::<EventSubscriptionRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -790,8 +834,12 @@ async fn append_subscription_audit(
     .map_err(|error| PostgresStorageError::database(error.to_string()))?
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
-    .with_entity_name(&after.name)
-    .with_collection_id(hubuum_domain::CollectionId::new(after.collection_id)?);
+    .with_entity_name(&after.name);
+    let event = if let Some(id) = after.collection_id {
+        event.with_collection_id(CollectionId::new(id)?)
+    } else {
+        event
+    };
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 
@@ -801,6 +849,7 @@ fn event_sink_snapshot(row: &EventSinkRow) -> Value {
         "name": row.name,
         "kind": row.kind,
         "config": redact_event_sink_config(&row.config),
+        "delivery_policy": row.delivery_policy,
         "secret_ref": row.secret_ref,
         "enabled": row.enabled,
         "revision": row.revision,
@@ -852,7 +901,7 @@ fn build_event_sink_query(
 }
 
 fn build_event_subscription_query(
-    collection: i32,
+    collection: Option<i32>,
     options: &QueryOptions,
 ) -> Result<
     crate::schema::event_subscriptions::BoxedQuery<'static, diesel::pg::Pg>,
@@ -863,7 +912,7 @@ fn build_event_subscription_query(
     };
 
     let mut query = event_subscriptions
-        .filter(collection_id.eq(collection))
+        .filter(collection_id.is_not_distinct_from(collection))
         .into_boxed();
     for parameter in options.filters() {
         match parameter.field {
@@ -947,6 +996,68 @@ where
     })
 }
 
+async fn notification_on_connection(
+    connection: &mut PostgresConnection,
+    selection: StorageEventNotificationSelection,
+) -> Result<StorageEventNotificationInput, PostgresStorageError> {
+    use crate::schema::{event_sinks, event_subscriptions, events};
+    let sink: StorageEventSink = event_sinks::table
+        .find(selection.sink_id().id())
+        .for_share()
+        .select(EventSinkRow::as_select())
+        .first::<EventSinkRow>(connection)
+        .await?
+        .try_into()?;
+    let subscription: StorageEventSubscription = event_subscriptions::table
+        .find(selection.subscription_id().id())
+        .for_share()
+        .select(EventSubscriptionRow::as_select())
+        .first::<EventSubscriptionRow>(connection)
+        .await?
+        .try_into()?;
+    let event = events::table
+        .filter(events::event_id.eq(selection.event_id()))
+        .select(StoredEventProjection::as_select())
+        .first::<StoredEventProjection>(connection)
+        .await?;
+    let mut events = vec![event];
+    let names = enrich_stored_events(connection, &mut events).await?;
+    let event = events.remove(0).into_envelope(&names)?;
+    StorageEventNotificationInput::try_new(sink, subscription, event).map_err(|_| {
+        PostgresStorageError::invalid_input("Event scope or sink does not match the subscription")
+    })
+}
+
+pub(crate) async fn load_event_notification(
+    runtime: &PostgresRuntime,
+    selection: StorageEventNotificationSelection,
+) -> Result<StorageEventNotificationInput, PostgresStorageError> {
+    runtime
+        .with_transaction(async |connection| {
+            notification_on_connection(connection, selection).await
+        })
+        .await
+}
+
+pub(crate) async fn enqueue_event_notification_test(
+    runtime: &PostgresRuntime,
+    selection: StorageEventNotificationSelection,
+    context: EventContext,
+) -> Result<StorageMutationOutcome<StorageEventDelivery>, PostgresStorageError> {
+    runtime.with_transaction(async |connection| -> Result<StorageMutationOutcome<StorageEventDelivery>, PostgresStorageError> {
+        use crate::schema::event_deliveries;
+        let input = notification_on_connection(connection, selection).await?;
+        let row = diesel::insert_into(event_deliveries::table).values((event_deliveries::event_id.eq(input.event().id().get()), event_deliveries::subscription_id.eq(selection.subscription_id().id()), event_deliveries::purpose.eq("test")))
+            .get_result::<super::event_delivery::AdministrationDeliveryRow>(connection).await?;
+        let delivery: StorageEventDelivery = row.try_into()?;
+        let document = AuditDocument::try_new("Event sink test requested", None, None, json!({"delivery_id":delivery.id().id(), "subscription_id":selection.subscription_id().id(), "source_event_id":selection.event_id(), "purpose":"test"}))?;
+        let event = NewEvent::from_document(EntityType::EventSink, Action::Invoked, context.actor_kind(), document).map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?.with_context(&context).with_entity_id(hubuum_events_core::EventEntityId::new(selection.sink_id().id())?);
+        let receipt = append_event(connection, &event).await?.into_audit_receipt();
+        diesel::sql_query("SELECT pg_notify('hubuum_event_delivery', '')").execute(connection).await?;
+        Ok(StorageMutationOutcome::committed(delivery, receipt))
+    }).await
+}
+
 #[cfg(test)]
 mod tests {
     use hubuum_storage_core::StorageErrorKind;
@@ -960,7 +1071,7 @@ mod tests {
             .naive_utc();
         let row = EventSubscriptionRow {
             id: 1,
-            collection_id: 2,
+            collection_id: Some(2),
             sink_id: 3,
             name: "webhook".to_string(),
             description: String::new(),
@@ -993,7 +1104,7 @@ mod tests {
         let timestamp = chrono::Utc::now().naive_utc();
         let row = EventSubscriptionRow {
             id: 1,
-            collection_id: 2,
+            collection_id: Some(2),
             sink_id: 3,
             name: "subscription".to_string(),
             description: String::new(),

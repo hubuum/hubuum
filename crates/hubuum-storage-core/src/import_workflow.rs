@@ -512,6 +512,7 @@ import_dto!(
         reference: Option<String>,
         name: String,
         kind: String,
+        delivery_policy: hubuum_domain::EventDeliveryPolicy,
         config: Value,
         secret_ref: Option<String>,
         enabled: bool,

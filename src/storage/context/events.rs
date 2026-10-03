@@ -1,4 +1,7 @@
 use super::*;
+use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 
 #[async_trait]
 impl EventHealthStorage for StorageHandle {
@@ -138,7 +141,7 @@ impl EventConfigurationStorage for StorageHandle {
 
     async fn get_event_subscription(
         &self,
-        collection_id: CollectionId,
+        scope: EventSubscriptionScope,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError> {
         self.observe_storage_call(
@@ -147,9 +150,7 @@ impl EventConfigurationStorage for StorageHandle {
             "get_event_subscription",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend
-                        .get_event_subscription(collection_id, subscription_id)
-                        .await
+                    backend.get_event_subscription(scope, subscription_id).await
                 })
             },
         )
@@ -210,6 +211,43 @@ impl EventConfigurationStorage for StorageHandle {
 
 #[async_trait]
 impl EventDeliveryAdministrationStorage for StorageHandle {
+    async fn load_event_notification(
+        &self,
+        selection: StorageEventNotificationSelection,
+    ) -> Result<StorageEventNotificationInput, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryAdministration,
+            "load_event_notification",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.load_event_notification(selection).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn enqueue_event_notification_test(
+        &self,
+        selection: StorageEventNotificationSelection,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryAdministration,
+            "enqueue_event_notification_test",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend
+                        .enqueue_event_notification_test(selection, context)
+                        .await
+                })
+            },
+        )
+        .await
+    }
+
     async fn list_event_deliveries(
         &self,
         query: StorageEventDeliveryListQuery,
@@ -309,6 +347,24 @@ impl EventDeliveryWorkerStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend.begin_event_delivery(claim).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn finish_event_delivery(
+        &self,
+        claim: &StorageEventDeliveryClaim,
+        disposition: StorageEventDeliveryDisposition,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventDeliveryWorker,
+            "finish_event_delivery",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.finish_event_delivery(claim, disposition).await
                 })
             },
         )

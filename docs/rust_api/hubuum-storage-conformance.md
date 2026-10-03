@@ -1,6 +1,6 @@
 # `hubuum-storage-conformance` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.3` release train.
+Status: experimental public API in the storage SDK `0.4` release train.
 
 ## Purpose and Callers
 

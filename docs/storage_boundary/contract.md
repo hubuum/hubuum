@@ -161,7 +161,8 @@ matches subscriptions, creates durable delivery rows, and releases the claim.
 Delivery workers then use opaque claims and acknowledgements. Before transport,
 `EventDeliveryWorkerStorage::begin_event_delivery` must verify the token,
 in-flight status, and unexpired lease using the adapter's authoritative clock.
-It returns `None` for lost ownership and a `StorageEventDeliveryLease` otherwise;
+It returns `None` for lost ownership or a scheduled rate deferral, and a
+`StorageEventDeliveryLease` for an admitted send;
 it must never renew an expired claim. Construct that lease with a monotonic timer
 started before acquiring storage resources and the remaining duration observed
 in storage, so query and dispatch delays cannot extend permission to send.
@@ -170,6 +171,14 @@ acknowledgment and fence all result writes with the original claim. Delivery is 
 least once, may be unordered across events, and consumers deduplicate by event
 UUID. Worker notification is a latency optimization; durable polling remains
 the correctness path.
+
+Sink admission is atomic across workers and subscriptions. Configured spacing
+and provider cooldowns defer work by clearing its claim and setting its next
+attempt time; they consume no failure attempts. A hot sink must not monopolize
+a claim batch. Permanent failures terminate the current delivery. System
+subscriptions require an event with no direct or related collection. Test
+requests validate sink and scope, append a real request audit, and queue a
+separate delivery purpose; tests never replace normal fan-out uniqueness.
 
 ### 4. Observation Is Application-Owned and Mandatory
 

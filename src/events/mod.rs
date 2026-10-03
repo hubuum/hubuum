@@ -35,8 +35,10 @@ pub use model::{Event, EventResponse};
 pub(crate) use model::{PrincipalNames, StoredProvenance};
 pub use retention::ensure_event_retention_worker_running;
 pub(crate) use settings::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
+pub(crate) use sink::webhook_sink;
 pub use sink::{
-    DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
+    DefaultSinkResolver, EventEnvelope, NoopSinkResolver, PreparedNotification, Sink, SinkError,
+    SinkResolver,
 };
 
 pub use hubuum_events_core::{

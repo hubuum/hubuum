@@ -1,18 +1,17 @@
 use std::fmt;
 
+use hubuum_event_rendering::{EventTemplate, render};
 use hubuum_event_sinks_common::{
     DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
-    ensure_payload_within_limit, parse_sink_config, parse_sink_routing,
-    reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme, resolve_secret_uri,
-};
-use hubuum_templates::{
-    MissingDataPolicy, RenderedTemplate, TemplateBatch, TemplateError, TemplateExecution,
-    TemplateLimits,
+    parse_sink_config, parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
+    require_tls_uri_scheme, resolve_secret_uri,
 };
 use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
-use serde_json::{Map, Value};
+#[cfg(test)]
+use serde_json::Value;
+
 use tokio::task::spawn_blocking;
 use tracing::warn;
 
@@ -153,34 +152,20 @@ async fn render_email(
     envelope: &EventEnvelope,
     config: &EmailConfig,
 ) -> Result<RenderedEmail, SinkError> {
-    let context = template_context(
+    let outputs = render(
         envelope,
+        &[
+            EventTemplate::new("subject_template", &config.subject_template, 4096)?,
+            EventTemplate::new("body_template", &config.body_template, 1024 * 1024)?,
+        ],
         config
             .max_payload_bytes
             .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
-    )?;
-    let mut batch = TemplateBatch::new(4096 + 1024 * 1024);
-    for (name, source, max_bytes) in [
-        ("subject_template", config.subject_template.as_str(), 4096),
-        ("body_template", config.body_template.as_str(), 1024 * 1024),
-    ] {
-        batch
-            .push(
-                TemplateExecution::new("template", source, template_limits())
-                    .keep_trailing_newline(false)
-                    .missing_data(MissingDataPolicy::Lenient)
-                    .max_output_bytes(max_bytes),
-            )
-            .map_err(|error| SinkError::new(format!("Invalid email config: {name}: {error}")))?;
-    }
-    // Rendering compiles each source inside this one worker. Separate syntax
-    // workers would only duplicate that compilation for every delivery.
-    let outputs = batch.render(&context).await.map_err(email_template_error)?;
-    let [subject, body]: [RenderedTemplate; 2] = outputs
+    )
+    .await?;
+    let [subject, body]: [String; 2] = outputs
         .try_into()
         .map_err(|_| SinkError::new("Invalid email template result count"))?;
-    let subject = subject.into_parts().0;
-    let body = body.into_parts().0;
     if subject.trim().is_empty() {
         return Err(SinkError::new(
             "Invalid email config: rendered subject is empty",
@@ -223,44 +208,6 @@ fn build_message(
     builder
         .body(rendered.body)
         .map_err(|error| SinkError::new(format!("Invalid email message: {error}")))
-}
-
-fn template_context(
-    envelope: &EventEnvelope,
-    max_payload_bytes: usize,
-) -> Result<Value, SinkError> {
-    let event = serde_json::to_value(envelope).map_err(|error| {
-        SinkError::new(format!(
-            "Failed to serialize email template context: {error}"
-        ))
-    })?;
-    ensure_payload_within_limit("email", event.to_string().len(), max_payload_bytes)?;
-    let mut root = match event.clone() {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    };
-    root.insert("event".to_string(), event);
-    root.insert(
-        "event_id".to_string(),
-        Value::String(envelope.event_id().to_string()),
-    );
-    root.insert(
-        "occurred_at".to_string(),
-        Value::String(envelope.occurred_at().naive_utc().to_string()),
-    );
-    Ok(Value::Object(root))
-}
-
-fn email_template_error(error: TemplateError) -> SinkError {
-    let name = error
-        .template_index()
-        .and_then(|index| ["subject_template", "body_template"].get(index).copied())
-        .unwrap_or("template batch");
-    SinkError::new(format!("Invalid email config: {name}: {error}"))
-}
-
-fn template_limits() -> TemplateLimits {
-    TemplateLimits::new(16, 50_000)
 }
 
 fn parse_mailboxes(label: &str, values: &[String]) -> Result<Vec<Mailbox>, SinkError> {
@@ -441,6 +388,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn envelope_limit_does_not_count_the_event_alias() {
+        let mut value = serde_json::to_value(envelope()).unwrap();
+        value["after"] = serde_json::json!({"data": "x".repeat(600_000)});
+        let envelope = serde_json::from_value(value).unwrap();
+        let mut config = config();
+        config.body_template = "{{ summary }} / {{ event.summary }}".into();
+
+        let rendered = render_email(&envelope, &config).await.unwrap();
+
+        assert_eq!(rendered.body, "collection created / collection created");
+    }
+
+    #[tokio::test]
+    async fn rejects_envelope_above_payload_limit() {
+        let envelope = envelope();
+        let mut config = config();
+        config.max_payload_bytes = Some(serde_json::to_vec(&envelope).unwrap().len() - 1);
+
+        let error = render_email(&envelope, &config).await.unwrap_err();
+
+        assert_eq!(error.to_string(), "Event envelope exceeds its size limit");
+    }
+
+    #[tokio::test]
     async fn template_context_exposes_provenance() {
         let mut config = config();
         config.body_template =
@@ -475,7 +446,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .starts_with("Invalid email config: body_template:")
+                .starts_with("Could not render body_template:")
         );
     }
 
@@ -489,7 +460,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("subject_template: invalid operation: template output limit exceeded"),
+                .contains("Could not render subject_template:"),
             "{error}"
         );
     }

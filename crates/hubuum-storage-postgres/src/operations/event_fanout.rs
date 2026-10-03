@@ -1,3 +1,4 @@
+use hubuum_events_core::EventSubscriptionScope;
 use std::collections::HashSet;
 
 use chrono::{NaiveDateTime, Utc};
@@ -136,7 +137,7 @@ impl TryFrom<FanoutEventRow> for EventEnvelope {
 #[derive(Queryable)]
 struct FanoutSubscriptionRow {
     id: i32,
-    collection_id: i32,
+    collection_id: Option<i32>,
     entity_types: Value,
     actions: Value,
     filter: Value,
@@ -144,7 +145,7 @@ struct FanoutSubscriptionRow {
 
 struct CompiledEventSubscription {
     id: i32,
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     entity_types: HashSet<EntityType>,
     actions: HashSet<Action>,
     filter: EventSubscriptionFilter,
@@ -188,8 +189,15 @@ impl TryFrom<FanoutSubscriptionRow> for CompiledEventSubscription {
         filter.validate().map_err(invalid_fanout_subscription)?;
         Ok(Self {
             id: subscription.id,
-            collection_id: CollectionId::new(subscription.collection_id)
-                .map_err(invalid_fanout_subscription)?,
+            scope: subscription
+                .collection_id
+                .map(CollectionId::new)
+                .transpose()
+                .map_err(invalid_fanout_subscription)?
+                .map_or(
+                    EventSubscriptionScope::System,
+                    EventSubscriptionScope::Collection,
+                ),
             entity_types,
             actions,
             filter,
@@ -201,8 +209,7 @@ impl CompiledEventSubscription {
     fn matches(&self, event: &EventEnvelope) -> bool {
         self.entity_types.contains(&event.entity_type())
             && self.actions.contains(&event.action())
-            && (event.collection_id() == Some(self.collection_id)
-                || event.related_collection_ids().contains(&self.collection_id))
+            && self.scope.matches(event)
             && self.filter.matches(event)
     }
 }
@@ -420,15 +427,15 @@ async fn load_enabled_subscriptions(
 ) -> Result<Vec<FanoutSubscriptionRow>, PostgresStorageError> {
     use crate::schema::{event_sinks, event_subscriptions};
 
-    if collection_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
     event_subscriptions::table
         .inner_join(event_sinks::table.on(event_sinks::id.eq(event_subscriptions::sink_id)))
         .filter(event_subscriptions::enabled.eq(true))
         .filter(event_sinks::enabled.eq(true))
-        .filter(event_subscriptions::collection_id.eq_any(collection_ids))
+        .filter(
+            event_subscriptions::collection_id
+                .eq_any(collection_ids)
+                .or(event_subscriptions::collection_id.is_null()),
+        )
         .select((
             event_subscriptions::id,
             event_subscriptions::collection_id,
@@ -467,8 +474,7 @@ async fn insert_delivery_rows(
 
     diesel::insert_into(event_deliveries)
         .values(rows)
-        .on_conflict((event_id, subscription_id))
-        .do_nothing()
+        .on_conflict_do_nothing()
         .execute(connection)
         .await
         .map_err(PostgresStorageError::from)
