@@ -10,7 +10,7 @@ static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 fn reserve(size: usize) -> bool {
     ALLOCATED
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             current
                 .checked_add(size)
                 .filter(|next| *next <= MAX_WORKER_HEAP_BYTES)

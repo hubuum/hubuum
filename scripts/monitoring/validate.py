@@ -10,7 +10,7 @@ import tempfile
 
 from . import ROOT
 
-PROMETHEUS = "docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
+PROMETHEUS = "docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
 
 
 def query_expression(expression):

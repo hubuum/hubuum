@@ -18,8 +18,8 @@ LDAP_IMAGE = (
     "3470e15c60119a1c0392cc162cdce71edfb42b55affdc69da574012f956317cd"
 )
 SMTP_IMAGE = (
-    "docker.io/axllent/mailpit:v1.29.2@sha256:"
-    "e09b9e78336e0e8c2174790ea5ce7587de986884c5640a6ae1deb1ef23c70f5f"
+    "docker.io/axllent/mailpit:v1.31.3@sha256:"
+    "ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d"
 )
 
 

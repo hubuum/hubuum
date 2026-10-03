@@ -15,7 +15,7 @@ futures = "0.3"
 hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
 hubuum-events-core = { path = "../hubuum-events-core" }
 hubuum-templates = { path = "../hubuum-templates" }
-lettre = { version = "0.11.22", default-features = false, features = [
+lettre = { version = "0.11.23", default-features = false, features = [
     "builder",
     "hostname",
     "pool",

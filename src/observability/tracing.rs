@@ -136,7 +136,7 @@ where
         let received = batch.len();
         if let Some(pending) = &self.pending {
             let previous = pending
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                     Some(current.saturating_sub(received))
                 })
                 .expect("saturating queue-depth update always succeeds");
@@ -218,11 +218,11 @@ impl SpanProcessor for MeteredBatchSpanProcessor {
             return;
         };
         crate::observability::metrics::trace_span_lifecycle(category, "ended", 1);
-        let reservation =
-            self.pending
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                    (current < self.capacity).then_some(current + 1)
-                });
+        let reservation = self
+            .pending
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < self.capacity).then_some(current + 1)
+            });
         let Ok(previous) = reservation else {
             crate::observability::metrics::trace_spans_dropped("queue_saturation", 1);
             return;
