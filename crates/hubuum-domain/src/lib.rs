@@ -66,3 +66,9 @@ pub use token::{
     TokenRetentionCutoffs, TokenRetentionPeriod, TokenRetentionSettings,
     TokenRetentionSettingsBuilder,
 };
+
+mod task_kind;
+pub use task_kind::TaskKind;
+
+mod event_delivery_policy;
+pub use event_delivery_policy::{EventDeliveryPolicy, EventDeliveryPurpose};

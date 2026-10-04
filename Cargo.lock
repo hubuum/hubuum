@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2179,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2192,6 +2192,15 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "utoipa",
+]
+
+[[package]]
+name = "hubuum-event-rendering"
+version = "0.0.1"
+dependencies = [
+ "hubuum-event-sinks-common",
+ "hubuum-templates",
+ "serde_json",
 ]
 
 [[package]]
@@ -2215,9 +2224,9 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "futures",
+ "hubuum-event-rendering",
  "hubuum-event-sinks-common",
  "hubuum-events-core",
- "hubuum-templates",
  "lettre",
  "serde",
  "serde_json",
@@ -2248,16 +2257,17 @@ version = "0.0.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
- "futures",
+ "hubuum-domain",
+ "hubuum-event-rendering",
  "hubuum-event-sinks-common",
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-secrets",
+ "rstest",
  "serde",
  "serde_json",
  "tokio",
  "tokio-rustls",
- "tracing",
  "uuid",
 ]
 
@@ -2275,10 +2285,11 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
+ "rstest",
  "serde",
  "serde_json",
  "utoipa",
@@ -2301,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2342,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-schema-diagnostics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "jsonschema",
  "rstest",
@@ -2363,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
@@ -2373,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2446,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "hubuum-templates"

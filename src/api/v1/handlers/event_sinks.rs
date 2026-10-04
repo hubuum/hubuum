@@ -171,9 +171,49 @@ pub async fn delete_event_sink(
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(create_event_sink)
+    cfg.service(preview_event_sink)
+        .service(test_event_sink)
+        .service(create_event_sink)
         .service(get_event_sinks)
         .service(get_event_sink)
         .service(patch_event_sink)
         .service(delete_event_sink);
+}
+
+#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/preview", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 200, description = "Rendered webhook test payload; no secret resolution or delivery", body = crate::models::EventNotificationPreview), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
+#[actix_web::post("/{sink_id}/preview")]
+pub async fn preview_event_sink(
+    context: AppContext,
+    _requestor: AdminAccess,
+    sink_id: web::Path<EventSinkID>,
+    request: web::Json<crate::models::EventNotificationRequest>,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(
+        crate::services::event_administration::preview_event_notification(
+            &context,
+            sink_id.into_inner(),
+            &request,
+        )
+        .await?,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/event-sinks/{sink_id}/test", tag = "event-sinks", security(("bearer_auth" = [])), params(("sink_id" = i32, Path)), request_body = crate::models::EventNotificationRequest, responses((status = 202, description = "Webhook test delivery queued", body = crate::models::EventDeliveryResponse), (status = 400, description = "Invalid source or configuration", body = ApiErrorResponse), (status = 403, description = "Administrator required", body = ApiErrorResponse), (status = 404, description = "Source not found", body = ApiErrorResponse)))]
+#[actix_web::post("/{sink_id}/test")]
+pub async fn test_event_sink(
+    context: AppContext,
+    requestor: AdminAccess,
+    req: HttpRequest,
+    sink_id: web::Path<EventSinkID>,
+    request: web::Json<crate::models::EventNotificationRequest>,
+) -> Result<impl Responder, ApiError> {
+    let delivery = crate::services::event_administration::test_event_notification(
+        &context,
+        sink_id.into_inner(),
+        &request,
+        requestor.event_context(&req),
+    )
+    .await?;
+    let location = ResponseLocation::new(format!("/api/v1/event-deliveries/{}", delivery.id))?;
+    Ok(ApiResponse::accepted_at(delivery, location))
 }

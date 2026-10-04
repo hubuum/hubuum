@@ -80,6 +80,7 @@ manifest.
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-computed-fields` | Experimental public |
 | `hubuum-domain` | Experimental public |
+| `hubuum-event-rendering` | Workspace-internal |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |

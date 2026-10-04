@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-events-core"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Backend-agnostic event catalog and provenance types for Hubuum's unified event & audit stream."
@@ -16,7 +16,7 @@ release-train = "storage-sdk"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-hubuum-domain = { version = "=0.3.0", path = "../hubuum-domain" }
+hubuum-domain = { version = "=0.4.0", path = "../hubuum-domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 utoipa = { version = "6", features = ["chrono", "uuid"], optional = true }
@@ -25,3 +25,6 @@ uuid = { version = "1", features = ["serde", "v4"] }
 [features]
 default = []
 schema = ["dep:utoipa", "hubuum-domain/openapi"]
+
+[dev-dependencies]
+rstest = "0.27"

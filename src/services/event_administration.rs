@@ -1,4 +1,7 @@
+use crate::models::SystemEventSubscription;
+use crate::models::event_subscription::validate_webhook_templates;
 use hubuum_domain::{CollectionId, PrincipalId};
+use hubuum_events_core::EventSubscriptionScope;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -202,6 +205,7 @@ fn event_sink_from_storage(sink: StorageEventSink) -> Result<EventSink, ApiError
         )
     })?;
     Ok(EventSink {
+        delivery_policy: Some(sink.delivery_policy()),
         id: sink.id().id(),
         name: sink.name().to_string(),
         kind,
@@ -263,7 +267,9 @@ pub(crate) async fn create_event_sink(
     event_context: EventContext,
 ) -> Result<EventSink, ApiError> {
     validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
+    validate_webhook_templates(sink.kind, &sink.config).await?;
     let request = StorageEventSinkCreate::builder(sink.name, sink.kind.as_str(), event_context)
+        .delivery_policy(sink.delivery_policy.unwrap_or_default())
         .configuration(sink.config)
         .secret_ref(normalize_optional_string(sink.secret_ref))
         .enabled(sink.enabled)
@@ -290,6 +296,11 @@ pub(crate) async fn update_event_sink(
         None => existing.secret_ref.as_deref(),
     };
     validate_sink_parts(kind, config, secret_ref)?;
+    validate_webhook_templates(
+        update.kind.unwrap_or(existing.kind),
+        update.config.as_ref().unwrap_or(&existing.config),
+    )
+    .await?;
     let request = StorageEventSinkUpdate::builder(
         hubuum_domain::EventSinkId::new(sink_id).expect("validated event sink id must be positive"),
         event_context,
@@ -297,6 +308,7 @@ pub(crate) async fn update_event_sink(
     .name(update.name)
     .kind(update.kind.map(|value| value.as_str().to_string()))
     .configuration(update.config)
+    .delivery_policy(update.delivery_policy)
     .secret_ref(update.secret_ref.map(normalize_optional_string))
     .enabled(update.enabled)
     .try_build()?;
@@ -329,7 +341,13 @@ fn event_subscription_from_storage(
 ) -> Result<EventSubscription, ApiError> {
     Ok(EventSubscription {
         id: subscription.id().id(),
-        collection_id: subscription.collection_id().id(),
+        collection_id: subscription
+            .scope()
+            .collection_id()
+            .ok_or_else(|| {
+                ApiError::InternalServerError("Expected a collection subscription".to_string())
+            })?
+            .id(),
         sink_id: subscription.sink_id().id(),
         name: subscription.name().to_string(),
         description: subscription.description().to_string(),
@@ -381,7 +399,7 @@ pub(crate) async fn get_event_subscription(
     event_subscription_from_storage(
         storage_handle(backend)
             .get_event_subscription(
-                CollectionId::new(collection_id)?,
+                CollectionId::new(collection_id)?.into(),
                 hubuum_domain::EventSubscriptionId::new(subscription_id)
                     .expect("validated event subscription id must be positive"),
             )
@@ -395,9 +413,10 @@ pub(crate) async fn create_event_subscription(
     subscription: NewEventSubscription,
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
-    storage_handle(backend)
+    let sink = storage_handle(backend)
         .get_event_sink(subscription.sink_id)
         .await?;
+    validate_webhook_routing(&sink, &subscription.routing)?;
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,
@@ -446,6 +465,13 @@ pub(crate) async fn update_event_subscription(
     let filter = update.filter.as_ref().unwrap_or(&existing.filter);
     let routing = update.routing.as_ref().unwrap_or(&existing.routing);
     validate_subscription_parts(entity_types, actions, filter, routing)?;
+    let sink_id = update
+        .sink_id
+        .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
+    validate_webhook_routing(
+        &storage_handle(backend).get_event_sink(sink_id).await?,
+        routing,
+    )?;
     let storage_entity_types = update
         .entity_types
         .as_deref()
@@ -493,12 +519,185 @@ pub(crate) async fn delete_event_subscription(
     Ok(())
 }
 
+fn system_event_subscription_from_storage(
+    subscription: StorageEventSubscription,
+) -> Result<SystemEventSubscription, ApiError> {
+    Ok(SystemEventSubscription {
+        id: subscription.id().id(),
+        sink_id: subscription.sink_id().id(),
+        name: subscription.name().to_string(),
+        description: subscription.description().to_string(),
+        entity_types: subscription
+            .entity_types()
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        actions: subscription
+            .actions()
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        filter: subscription.filter().clone(),
+        routing: subscription.routing().clone(),
+        enabled: subscription.enabled(),
+        created_at: subscription.created_at().naive_utc(),
+        updated_at: subscription.updated_at().naive_utc(),
+        revision: subscription.revision(),
+    })
+}
+
+pub(crate) async fn list_system_event_subscriptions(
+    backend: &impl StorageContext,
+    options: QueryOptions,
+) -> Result<(Vec<SystemEventSubscription>, i64), ApiError> {
+    let page = storage_handle(backend)
+        .list_event_subscriptions(StorageEventSubscriptionListQuery::new(
+            EventSubscriptionScope::System,
+            options,
+        ))
+        .await?;
+    let (subscriptions, total) = page.into_parts();
+    Ok((
+        subscriptions
+            .into_iter()
+            .map(system_event_subscription_from_storage)
+            .collect::<Result<Vec<_>, _>>()?,
+        total.unwrap_or(SKIPPED_TOTAL_COUNT),
+    ))
+}
+
+pub(crate) async fn get_system_event_subscription(
+    backend: &impl StorageContext,
+    subscription_id: i32,
+) -> Result<SystemEventSubscription, ApiError> {
+    system_event_subscription_from_storage(
+        storage_handle(backend)
+            .get_event_subscription(
+                EventSubscriptionScope::System,
+                hubuum_domain::EventSubscriptionId::new(subscription_id)
+                    .expect("validated event subscription id must be positive"),
+            )
+            .await?,
+    )
+}
+
+pub(crate) async fn create_system_event_subscription(
+    backend: &impl StorageContext,
+    subscription: NewEventSubscription,
+    event_context: EventContext,
+) -> Result<SystemEventSubscription, ApiError> {
+    let sink = storage_handle(backend)
+        .get_event_sink(subscription.sink_id)
+        .await?;
+    validate_webhook_routing(&sink, &subscription.routing)?;
+    validate_subscription_parts(
+        &subscription.entity_types,
+        &subscription.actions,
+        &subscription.filter,
+        &subscription.routing,
+    )?;
+    let entity_types = storage_entity_types(&subscription.entity_types)?;
+    let actions = storage_actions(&subscription.actions)?;
+    let request = StorageEventSubscriptionCreate::builder(
+        EventSubscriptionScope::System,
+        subscription.sink_id,
+        subscription.name,
+        event_context,
+    )
+    .description(subscription.description)
+    .entity_types(entity_types)
+    .actions(actions)
+    .filter(subscription.filter)
+    .routing(subscription.routing)
+    .enabled(subscription.enabled)
+    .try_build()?;
+    system_event_subscription_from_storage(
+        storage_handle(backend)
+            .create_event_subscription(request)
+            .await?
+            .into_value(),
+    )
+}
+
+pub(crate) async fn update_system_event_subscription(
+    backend: &impl StorageContext,
+    subscription_id: i32,
+    update: UpdateEventSubscription,
+    existing: &SystemEventSubscription,
+    event_context: EventContext,
+) -> Result<SystemEventSubscription, ApiError> {
+    if let Some(sink_id) = update.sink_id {
+        storage_handle(backend).get_event_sink(sink_id).await?;
+    }
+    let entity_types = update
+        .entity_types
+        .as_deref()
+        .unwrap_or(&existing.entity_types);
+    let actions = update.actions.as_deref().unwrap_or(&existing.actions);
+    let filter = update.filter.as_ref().unwrap_or(&existing.filter);
+    let routing = update.routing.as_ref().unwrap_or(&existing.routing);
+    validate_subscription_parts(entity_types, actions, filter, routing)?;
+    let sink_id = update
+        .sink_id
+        .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
+    validate_webhook_routing(
+        &storage_handle(backend).get_event_sink(sink_id).await?,
+        routing,
+    )?;
+    let storage_entity_types = update
+        .entity_types
+        .as_deref()
+        .map(storage_entity_types)
+        .transpose()?;
+    let storage_actions = update.actions.as_deref().map(storage_actions).transpose()?;
+    let request = StorageEventSubscriptionUpdate::builder(
+        EventSubscriptionScope::System,
+        hubuum_domain::EventSubscriptionId::new(subscription_id)
+            .expect("validated event subscription id must be positive"),
+        event_context,
+    )
+    .sink_id(update.sink_id)
+    .name(update.name)
+    .description(update.description)
+    .entity_types(storage_entity_types)
+    .actions(storage_actions)
+    .filter(update.filter)
+    .routing(update.routing)
+    .enabled(update.enabled)
+    .try_build()?;
+    system_event_subscription_from_storage(
+        storage_handle(backend)
+            .update_event_subscription(request)
+            .await?
+            .into_value(),
+    )
+}
+
+pub(crate) async fn delete_system_event_subscription(
+    backend: &impl StorageContext,
+    subscription_id: i32,
+    event_context: EventContext,
+) -> Result<(), ApiError> {
+    storage_handle(backend)
+        .delete_event_subscription(StorageEventSubscriptionDelete::new(
+            EventSubscriptionScope::System,
+            hubuum_domain::EventSubscriptionId::new(subscription_id)
+                .expect("validated event subscription id must be positive"),
+            event_context,
+        ))
+        .await?
+        .into_value();
+    Ok(())
+}
+
 fn event_delivery_from_storage(delivery: StorageEventDelivery) -> EventDeliveryResponse {
     EventDeliveryResponse {
         id: delivery.id().id(),
         event_id: delivery.event_id().get(),
         subscription_id: delivery.subscription_id().id(),
         status: delivery.status().as_str().to_string(),
+        purpose: delivery.purpose(),
+        deferred_reason: delivery.deferred_reason().map(str::to_owned),
         attempts: delivery.attempts(),
         next_attempt_at: delivery.next_attempt_at().naive_utc(),
         last_error: delivery.last_error().map(str::to_string),
@@ -567,4 +766,72 @@ pub(crate) async fn mark_event_delivery_dead(
             )
             .await?,
     ))
+}
+
+fn validate_webhook_routing(
+    sink: &StorageEventSink,
+    routing: &serde_json::Value,
+) -> Result<(), ApiError> {
+    let result = match sink.kind() {
+        "webhook" => hubuum_event_sink_webhook::Configuration::parse(sink.configuration())
+            .and_then(|c| c.validate_routing(routing)),
+        _ => Ok(()),
+    };
+    result.map_err(|e| ApiError::BadRequest(e.to_string()))
+}
+
+pub(crate) async fn preview_event_notification(
+    backend: &impl StorageContext,
+    sink_id: hubuum_domain::EventSinkId,
+    request: &crate::models::EventNotificationRequest,
+) -> Result<crate::models::EventNotificationPreview, ApiError> {
+    let input = storage_handle(backend)
+        .load_event_notification(hubuum_storage_core::StorageEventNotificationSelection::new(
+            sink_id,
+            request.subscription_id,
+            request.event_id,
+        ))
+        .await?;
+    let kind = EventSinkKind::from_str(input.sink().kind())?;
+    if kind != EventSinkKind::Webhook {
+        return Err(ApiError::BadRequest(
+            "Preview and test are supported for webhook sinks".to_string(),
+        ));
+    }
+    let prepared = crate::events::webhook_sink()
+        .prepare(
+            input.event(),
+            hubuum_event_sinks_common::SinkDelivery::new(
+                input.sink().configuration(),
+                input.subscription().routing(),
+                None,
+            )
+            .for_test(true),
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(crate::models::EventNotificationPreview {
+        sink_kind: kind,
+        payload: prepared.payload().clone(),
+    })
+}
+
+pub(crate) async fn test_event_notification(
+    backend: &impl StorageContext,
+    sink_id: hubuum_domain::EventSinkId,
+    request: &crate::models::EventNotificationRequest,
+    context: EventContext,
+) -> Result<EventDeliveryResponse, ApiError> {
+    preview_event_notification(backend, sink_id, request).await?;
+    let result = storage_handle(backend)
+        .enqueue_event_notification_test(
+            hubuum_storage_core::StorageEventNotificationSelection::new(
+                sink_id,
+                request.subscription_id,
+                request.event_id,
+            ),
+            context,
+        )
+        .await?;
+    Ok(event_delivery_from_storage(result.into_value()))
 }

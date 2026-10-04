@@ -7,7 +7,6 @@ pub mod asserts;
 #[cfg(test)]
 pub mod client_allowlist;
 pub mod constants;
-#[cfg(test)]
 pub mod docs_examples;
 #[cfg(test)]
 pub mod id_newtypes;

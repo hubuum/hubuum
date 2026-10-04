@@ -343,6 +343,8 @@ fn event_delivery_response(
     delivery: hubuum_storage_core::StorageEventDelivery,
 ) -> EventDeliveryResponse {
     EventDeliveryResponse {
+        purpose: delivery.purpose(),
+        deferred_reason: delivery.deferred_reason().map(str::to_owned),
         id: delivery.id().id(),
         event_id: delivery.event_id().get(),
         subscription_id: delivery.subscription_id().id(),

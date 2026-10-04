@@ -1,4 +1,5 @@
 use chrono::NaiveDateTime;
+use hubuum_domain::EventDeliveryPurpose;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -20,6 +21,8 @@ pub struct EventDeliveryResponse {
     pub locked_until: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub purpose: EventDeliveryPurpose,
+    pub deferred_reason: Option<String>,
 }
 
 impl CursorPaginated for EventDeliveryResponse {
@@ -128,7 +131,7 @@ pub struct EventSinkDeliveryHealth {
 pub struct EventSubscriptionDeliveryHealth {
     pub subscription_id: i32,
     pub subscription_name: String,
-    pub collection_id: i32,
+    pub collection_id: Option<i32>,
     pub sink_id: i32,
     pub sink_name: String,
     pub sink_kind: String,
@@ -212,7 +215,7 @@ impl EventDeliveryHealthResponse {
                     EventSubscriptionDeliveryHealth {
                         subscription_id: snapshot.id().id(),
                         subscription_name: snapshot.name().to_string(),
-                        collection_id: snapshot.collection_id().id(),
+                        collection_id: snapshot.scope().collection_id().map(|id| id.id()),
                         sink_id: sink.id().id(),
                         sink_name: sink.name().to_string(),
                         sink_kind: sink.kind().to_string(),
@@ -268,7 +271,9 @@ mod tests {
             vec![StorageEventSubscriptionHealthSnapshot::new(
                 hubuum_domain::EventSubscriptionId::new(47).unwrap(),
                 "changes".to_string(),
-                hubuum_domain::CollectionId::new(53).unwrap(),
+                hubuum_events_core::EventSubscriptionScope::Collection(
+                    hubuum_domain::CollectionId::new(53).unwrap(),
+                ),
                 false,
                 sink,
                 queue,
@@ -323,7 +328,7 @@ mod tests {
                 subscriptions: vec![EventSubscriptionDeliveryHealth {
                     subscription_id: 47,
                     subscription_name: "changes".to_string(),
-                    collection_id: 53,
+                    collection_id: Some(53),
                     sink_id: 23,
                     sink_name: "primary".to_string(),
                     sink_kind: "webhook".to_string(),

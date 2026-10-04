@@ -606,3 +606,8 @@ mod tests {
         assert!(IfMatchCondition::from_request(&request).is_err());
     }
 }
+
+impl_id_etag!(
+    crate::models::SystemEventSubscription,
+    EtagResourceKind::EventSubscription
+);

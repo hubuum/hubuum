@@ -688,3 +688,25 @@ assert "tests/python/run.py integration monitoring --image hubuum-server:ci" in 
 assert workflow.count("      - monitoring-integration\n") == 2, "CI and release gates must require both monitoring engines"
 assert "needs.monitoring-integration.result == 'success'" in workflow
 PY
+
+for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubuum-event-rendering/Cargo.toml crates/hubuum-event-sink-webhook/src/response.rs; do
+  notification_output="$(bash "$classifier" "$notification_path")"
+  assert_flag "$notification_output" code true
+  assert_flag "$notification_output" container true
+done
+notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
+assert_flag "$notification_output" code true
+
+notification_output="$(bash "$classifier" .github/migration-offline-reviews.json)"
+assert_flag "$notification_output" code true
+
+# The guide is embedded by API and verified-TLS transport example tests.
+for webhook_input in docs/webhook_notifications.md src/tests/docs_examples.rs \
+  tests/api_platform_suite/event_subscriptions.rs tests/event_transport_contract.rs \
+  tests/python/integration/event_transports.py; do
+  webhook_output="$(bash "$classifier" "$webhook_input")"
+  assert_flag "$webhook_output" code true
+done
+webhook_output="$(bash "$classifier" docs/webhook_notifications.md)"
+assert_flag "$webhook_output" markdown true
+assert_flag "$webhook_output" documentation true

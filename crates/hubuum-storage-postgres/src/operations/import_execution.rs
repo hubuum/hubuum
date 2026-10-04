@@ -2923,6 +2923,9 @@ async fn execute_event_sink(
                 .set((
                     crate::schema::event_sinks::kind.eq(parts.kind),
                     crate::schema::event_sinks::config.eq(parts.config),
+                    crate::schema::event_sinks::delivery_policy
+                        .eq(serde_json::to_value(parts.delivery_policy)
+                            .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?),
                     crate::schema::event_sinks::secret_ref.eq(parts.secret_ref),
                     crate::schema::event_sinks::enabled.eq(parts.enabled),
                     crate::schema::event_sinks::created_at.eq(created_at),
@@ -2941,6 +2944,9 @@ async fn execute_event_sink(
                     crate::schema::event_sinks::name.eq(parts.name),
                     crate::schema::event_sinks::kind.eq(parts.kind),
                     crate::schema::event_sinks::config.eq(parts.config),
+                    crate::schema::event_sinks::delivery_policy
+                        .eq(serde_json::to_value(parts.delivery_policy)
+                            .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?),
                     crate::schema::event_sinks::secret_ref.eq(parts.secret_ref),
                     crate::schema::event_sinks::enabled.eq(parts.enabled),
                     crate::schema::event_sinks::created_at.eq(created_at),

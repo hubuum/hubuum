@@ -1877,12 +1877,14 @@
             "delete_shared_computed_field",
             "delete_user",
             "disable_service_account",
+            "enqueue_event_notification_test",
             "enrich_objects_with_computed",
             "ensure_identity_scope",
             "execute_computed_field_rebuild",
             "expire_restore_stage",
             "fail_restore_and_resume",
             "fail_task",
+            "finish_event_delivery",
             "get_authentication_identity",
             "get_authentication_token_scope",
             "get_authorization_policy_snapshot",
@@ -2012,6 +2014,7 @@
             "load_authorization_collection_candidates",
             "load_authorization_group_candidates",
             "load_authorization_resources",
+            "load_event_notification",
             "load_export_template_health",
             "load_export_templates_for_audit",
             "load_group_member_principals",
@@ -2268,12 +2271,14 @@
             "delete_shared_computed_field",
             "delete_user",
             "disable_service_account",
+            "enqueue_event_notification_test",
             "enrich_objects_with_computed",
             "ensure_identity_scope",
             "execute_computed_field_rebuild",
             "expire_restore_stage",
             "fail_restore_and_resume",
             "fail_task",
+            "finish_event_delivery",
             "get_authentication_identity",
             "get_authentication_token_scope",
             "get_authorization_policy_snapshot",
@@ -2403,6 +2408,7 @@
             "load_authorization_collection_candidates",
             "load_authorization_group_candidates",
             "load_authorization_resources",
+            "load_event_notification",
             "load_export_template_health",
             "load_export_templates_for_audit",
             "load_group_member_principals",
@@ -7093,7 +7099,8 @@
         "actions": [
           "created",
           "updated",
-          "deleted"
+          "deleted",
+          "invoked"
         ]
       },
       {
@@ -7138,7 +7145,7 @@
   },
   "documents": {
     "backup": {
-      "version": 6,
+      "version": 7,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -7188,7 +7195,7 @@
         "audit_events",
         "terminal_event_deliveries"
       ],
-      "rejection_policy": "reject any backup_version other than the current version"
+      "rejection_policy": "accept backup versions 6 and 7; normalize version 6 event configuration and delivery defaults"
     },
     "import": {
       "version": 2,

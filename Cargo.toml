@@ -24,6 +24,7 @@ members = [
     "crates/hubuum-auth-ldap",
     "crates/hubuum-computed-fields",
     "crates/hubuum-domain",
+    "crates/hubuum-event-rendering",
     "crates/hubuum-event-sink-amqp",
     "crates/hubuum-event-sink-email",
     "crates/hubuum-event-sink-valkey",

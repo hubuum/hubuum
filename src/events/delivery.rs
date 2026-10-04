@@ -1,3 +1,5 @@
+use hubuum_event_sinks_common::SinkFailure;
+use hubuum_storage_core::StorageEventDeliveryDisposition;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
@@ -151,8 +153,23 @@ pub(crate) async fn process_event_delivery_work_item(
     );
     telemetry::add_link(&span, envelope.trace_link());
     async move {
+        let transport = resolver.resolve(sink.kind());
+        let prepared = match transport {
+            Some(transport) => match tokio::time::timeout(settings.transport_timeout(), transport.prepare(&envelope, &subscription, &sink)).await {
+                Ok(Ok(prepared)) => prepared.map(|prepared| prepared.for_delivery(claim.delivery_id())),
+                result => {
+                    let error = match result { Ok(Err(error)) => error, _ => SinkError::new("Notification preparation exceeded its time budget") };
+                    match error.failure() {
+                        SinkFailure::Permanent => storage.finish_event_delivery(&claim, StorageEventDeliveryDisposition::Permanent(error.to_string())).await?,
+                        _ => storage.mark_event_delivery_failed(&claim, settings, &error.to_string()).await?,
+                    }
+                    return Ok(());
+                }
+            },
+            None => None,
+        };
         let Some(lease) = storage.begin_event_delivery(&claim).await? else {
-            tracing::Span::current().record("delivery.outcome", "stale");
+            tracing::Span::current().record("delivery.outcome", "not_admitted");
             return Ok(());
         };
         let acknowledgement_deadline = Instant::from_std(lease.deadline());
@@ -178,7 +195,7 @@ pub(crate) async fn process_event_delivery_work_item(
                 "Event delivery transport exceeded its lease budget (maximum {} ms)",
                 settings.transport_timeout_ms(),
             ))),
-            result = deliver_one(resolver, &envelope, &subscription, &sink) => result,
+            result = deliver_one(resolver, prepared.as_ref(), &envelope, &subscription, &sink) => result,
         };
 
         let acknowledge = async {
@@ -186,6 +203,11 @@ pub(crate) async fn process_event_delivery_work_item(
                 Ok(()) => {
                     tracing::Span::current().record("delivery.outcome", "succeeded");
                     storage.mark_event_delivery_succeeded(lease.claim()).await?;
+                }
+                Err(error) if matches!(error.failure(), SinkFailure::RateLimited(_)) => {
+                    let SinkFailure::RateLimited(delay) = error.failure() else { unreachable!() };
+                    tracing::Span::current().record("delivery.outcome", "deferred");
+                    storage.finish_event_delivery(lease.claim(), StorageEventDeliveryDisposition::RateLimited(delay)).await?;
                 }
                 Err(error) => {
                     tracing::Span::current().record("delivery.outcome", "failed");
@@ -198,9 +220,11 @@ pub(crate) async fn process_event_delivery_work_item(
                         sink_kind = sink.kind(),
                         error = %error,
                     );
-                    storage
-                        .mark_event_delivery_failed(lease.claim(), settings, &error.to_string())
-                        .await?;
+                    match error.failure() {
+                        SinkFailure::Retryable => storage.mark_event_delivery_failed(lease.claim(), settings, &error.to_string()).await?,
+                        SinkFailure::Permanent => storage.finish_event_delivery(lease.claim(), StorageEventDeliveryDisposition::Permanent(error.to_string())).await?,
+                        SinkFailure::RateLimited(delay) => storage.finish_event_delivery(lease.claim(), StorageEventDeliveryDisposition::RateLimited(delay)).await?,
+                    }
                 }
             }
 
@@ -220,6 +244,7 @@ pub(crate) async fn process_event_delivery_work_item(
 
 async fn deliver_one(
     resolver: &dyn SinkResolver,
+    prepared: Option<&crate::events::sink::PreparedNotification>,
     envelope: &EventEnvelope,
     subscription: &StorageEventDeliverySubscription,
     sink: &StorageEventDeliverySink,
@@ -231,7 +256,9 @@ async fn deliver_one(
         )));
     };
 
-    transport.deliver(envelope, subscription, sink).await
+    transport
+        .deliver_prepared(prepared, envelope, subscription, sink)
+        .await
 }
 
 fn delivery_worker_should_continue(result: &Result<EventDeliveryBatchOutcome, ApiError>) -> bool {
@@ -523,7 +550,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = deliver_one(&NoopSinkResolver, &envelope, &subscription, &sink)
+        let error = deliver_one(&NoopSinkResolver, None, &envelope, &subscription, &sink)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("webhook"));
@@ -552,7 +579,7 @@ mod tests {
             sink: &failing,
         };
 
-        let error = deliver_one(&resolver, &envelope, &subscription, &sink)
+        let error = deliver_one(&resolver, None, &envelope, &subscription, &sink)
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), "boom");

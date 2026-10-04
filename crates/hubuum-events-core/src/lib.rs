@@ -712,9 +712,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::ClassSchema => &[A::Created, A::Updated, A::Deleted],
         E::ObjectValidation => &[A::Updated, A::Succeeded, A::Failed],
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
-        E::EventSink | E::EventSubscription | E::ComputedFieldDefinition => {
-            &[A::Created, A::Updated, A::Deleted]
-        }
+        E::EventSubscription | E::ComputedFieldDefinition => &[A::Created, A::Updated, A::Deleted],
+        E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore => &[A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
@@ -1313,6 +1312,8 @@ impl EventEnvelope {
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventSubscriptionFilter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_kinds: Vec<hubuum_domain::TaskKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collection_ids: Vec<CollectionId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_collection_ids: Vec<CollectionId>,
@@ -1334,7 +1335,15 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        matches_optional(&self.collection_ids, event.collection_id())
+        (self.task_kinds.is_empty()
+            || (event.entity_type() == EntityType::Task
+                && event
+                    .metadata()
+                    .get("task_kind")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(hubuum_domain::TaskKind::from_persisted)
+                    .is_some_and(|kind| self.task_kinds.contains(&kind))))
+            && matches_optional(&self.collection_ids, event.collection_id())
             && matches_any(
                 &self.related_collection_ids,
                 &event.related_collection_ids(),
@@ -1366,6 +1375,7 @@ impl EventSubscriptionFilter {
         ensure_unique_str("actor_kinds", &self.actor_kinds)?;
         ensure_unique("actor_user_ids", &self.actor_user_ids)?;
         ensure_unique("initiator_user_ids", &self.initiator_user_ids)?;
+        ensure_unique("task_kinds", &self.task_kinds)?;
         ensure_unique_uuid("request_ids", &self.request_ids)?;
         ensure_unique_str("correlation_ids", &self.correlation_ids)?;
 
@@ -1987,7 +1997,9 @@ pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.iter()
                 .map(|(key, value)| {
-                    let redacted = if is_sensitive_config_key(key) {
+                    let redacted = if key == "url_secret_ref" {
+                        value.clone()
+                    } else if is_sensitive_config_key(key) {
                         serde_json::Value::String("[redacted]".to_string())
                     } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
                         redact_uri_value(value)
@@ -2240,6 +2252,45 @@ mod tests {
         assert!(ActorKind::parse("anonymous").is_err());
     }
 
+    #[rstest::rstest]
+    #[case(serde_json::json!({"task_kind":"backup"}), true)]
+    #[case(serde_json::json!({"task_kind":"import"}), false)]
+    #[case(serde_json::json!({}), false)]
+    #[case(serde_json::json!({"task_kind":"unknown"}), false)]
+    fn task_kind_filter_requires_recognized_metadata(
+        #[case] metadata: serde_json::Value,
+        #[case] expected: bool,
+    ) {
+        let event = envelope_builder()
+            .entity_type(EntityType::Task)
+            .action(Action::Failed)
+            .metadata(metadata)
+            .try_build()
+            .unwrap();
+        let filter = EventSubscriptionFilter {
+            task_kinds: vec![hubuum_domain::TaskKind::Backup],
+            ..Default::default()
+        };
+        assert_eq!(filter.matches(&event), expected);
+    }
+
+    #[test]
+    fn system_scope_excludes_direct_and_related_collections() {
+        assert!(!EventSubscriptionScope::System.matches(&envelope()));
+        let event = envelope_builder()
+            .collection_id(None)
+            .metadata(serde_json::json!({"related_collection_ids":[20]}))
+            .try_build()
+            .unwrap();
+        assert!(!EventSubscriptionScope::System.matches(&event));
+        let event = envelope_builder()
+            .collection_id(None)
+            .metadata(serde_json::json!({}))
+            .try_build()
+            .unwrap();
+        assert!(EventSubscriptionScope::System.matches(&event));
+    }
+
     #[test]
     fn empty_subscription_filter_matches_any_event() {
         assert!(EventSubscriptionFilter::default().matches(&envelope()));
@@ -2253,6 +2304,7 @@ mod tests {
             .try_build()
             .unwrap();
         let filter = EventSubscriptionFilter {
+            task_kinds: vec![],
             collection_ids: vec![CollectionId::new(10).unwrap()],
             related_collection_ids: vec![CollectionId::new(20).unwrap()],
             entity_ids: vec![EventEntityId::new(30).unwrap()],
@@ -2298,6 +2350,21 @@ mod tests {
     }
 
     #[test]
+    fn subscription_filter_rejects_duplicate_task_kinds() {
+        let filter = EventSubscriptionFilter {
+            task_kinds: vec![hubuum_domain::TaskKind::Backup; 2],
+            ..Default::default()
+        };
+        assert!(matches!(
+            filter.validate(),
+            Err(EventFilterError::DuplicateValue {
+                field: "task_kinds",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn subscription_filter_validates_values() {
         let filter = EventSubscriptionFilter {
             actor_kinds: vec!["anonymous".to_string()],
@@ -2310,6 +2377,7 @@ mod tests {
         ));
 
         let filter = EventSubscriptionFilter {
+            task_kinds: vec![],
             collection_ids: vec![
                 CollectionId::new(10).unwrap(),
                 CollectionId::new(10).unwrap(),
@@ -2649,6 +2717,13 @@ mod tests {
     }
 
     #[test]
+    fn sink_redaction_preserves_the_url_secret_alias() {
+        let redacted =
+            redact_event_sink_config(&serde_json::json!({"url_secret_ref":"ops_webhook"}));
+        assert_eq!(redacted["url_secret_ref"], "ops_webhook");
+    }
+
+    #[test]
     fn sink_redaction_covers_nested_keys_and_uri_userinfo() {
         let redacted = redact_event_sink_config(&serde_json::json!({
             "url": "https://user:password@example.invalid/events",
@@ -2658,5 +2733,35 @@ mod tests {
         assert_eq!(redacted["url"], "https://[redacted]@example.invalid/events");
         assert_eq!(redacted["headers"]["X-API-Key"], "[redacted]");
         assert_eq!(redacted["headers"]["routing_key"], "visible");
+    }
+}
+
+/// Authorization and routing boundary of one event subscription.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventSubscriptionScope {
+    System,
+    Collection(CollectionId),
+}
+impl From<CollectionId> for EventSubscriptionScope {
+    fn from(id: CollectionId) -> Self {
+        Self::Collection(id)
+    }
+}
+impl EventSubscriptionScope {
+    pub fn collection_id(self) -> Option<CollectionId> {
+        match self {
+            Self::System => None,
+            Self::Collection(id) => Some(id),
+        }
+    }
+    pub fn matches(self, event: &EventEnvelope) -> bool {
+        match self {
+            Self::System => {
+                event.collection_id().is_none() && event.related_collection_ids().is_empty()
+            }
+            Self::Collection(id) => {
+                event.collection_id() == Some(id) || event.related_collection_ids().contains(&id)
+            }
+        }
     }
 }

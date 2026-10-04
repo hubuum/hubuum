@@ -1,5 +1,6 @@
 use crate::api::v1::handlers::{
     client_config, event_deliveries, event_sinks, event_subscriptions, events, me,
+    system_event_subscriptions,
 };
 use actix_web::web;
 
@@ -54,6 +55,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     .service(web::scope("/exports").configure(exports::config))
     .service(web::scope("/event-deliveries").configure(event_deliveries::config))
     .service(web::scope("/event-sinks").configure(event_sinks::config))
+    .service(
+        web::scope("/system-event-subscriptions").configure(system_event_subscriptions::config),
+    )
     .service(web::scope("/tasks").configure(tasks::config))
     .service(web::scope("/events").configure(events::config))
     .service(web::scope("/admin").configure(crate::api::v1::handlers::runtime_config::config))

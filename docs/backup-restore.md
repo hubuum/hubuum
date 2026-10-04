@@ -58,7 +58,10 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `6` preserves authoritative resource revisions, collection
+Backup version `7` also preserves sink delivery policy, system subscriptions
+and terminal test deliveries. Version `6` remains accepted with legacy defaults.
+Transient sink admission schedules reset on restore. Older servers cannot read
+version `7`. The format preserves authoritative resource revisions, collection
 authorization-set revisions, temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
 tables. State sections include identity scopes, groups, principals, users,

@@ -30,7 +30,7 @@ VALKEY = (
     "48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
 )
 CARGO_TEST = (
-    "cargo", "test", "--locked", "--features", "production-all",
+    "cargo", "test", "--locked", "--features", "production-all,integration-test-support",
     "--test", "event_transport_contract",
 )
 
@@ -98,13 +98,15 @@ class HttpsHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def reply(self, status, body, location=None):
+    def reply(self, status, body, location=None, retry_after=None):
         with contextlib.suppress(BrokenPipeError, ConnectionResetError, ssl.SSLError):
             self.send_response(status)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Type", "application/json")
             if location:
                 self.send_header("Location", location)
+            if retry_after is not None:
+                self.send_header("Retry-After", str(retry_after))
             self.end_headers()
             self.wfile.write(body)
 
@@ -124,10 +126,26 @@ class HttpsHandler(http.server.BaseHTTPRequestHandler):
         if length > 1_000_000:
             self.reply(413, b"{}")
             return
-        self.rfile.read(length)
+        payload = self.rfile.read(length)
         with self.server.observed_lock:
             self.server.observed.setdefault(identity, []).append(behavior)
-        if behavior == "redirect":
+        if behavior.startswith("recipe-"):
+            self.recipe_reply(behavior.removeprefix("recipe-"), payload)
+        elif behavior == "ack":
+            self.reply(200, b"ok")
+        elif behavior == "limited":
+            self.reply(429, b"private-provider-detail")
+        elif behavior == "denied":
+            self.reply(403, b"private-provider-detail")
+        elif behavior == "templated":
+            body = json.loads(payload)
+            if (self.headers.get("Authorization") == "Bearer fixture-bot-token"
+                    and body.get("channel_id") == "channel123"
+                    and body.get("message", "").startswith("[TEST]")):
+                self.reply(201, b'{"id":"post123"}')
+            else:
+                self.reply(400, b'{"error":"bad-payload"}')
+        elif behavior == "redirect":
             self.reply(307, b"{}", f"/destination/{identity}")
         elif behavior == "retry":
             self.reply(503, b"{}")
@@ -138,6 +156,48 @@ class HttpsHandler(http.server.BaseHTTPRequestHandler):
             self.reply(200, b"{}")
         else:
             self.reply(200, b"{}")
+
+    def recipe_reply(self, provider, payload):
+        # Model only the documented incoming-webhook/gateway contracts. These
+        # are deterministic stand-ins, not live provider compatibility tests.
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        try:
+            body = json.loads(payload)
+        except (ValueError, UnicodeDecodeError):
+            self.reply(400, b"invalid_payload")
+            return
+        valid = isinstance(body, dict) and self.headers.get("Content-Type") == "application/json"
+        if valid and provider in ("slack", "mattermost"):
+            valid = isinstance(body.get("text"), str) and bool(body["text"])
+        elif valid and provider == "discord":
+            valid = (isinstance(body.get("content"), str)
+                     and 0 < len(body["content"]) <= 2000
+                     and body.get("allowed_mentions") == {"parse": []}
+                     and query.get("wait") == ["true"])
+        elif valid and provider == "apprise":
+            valid = (body.get("title") == "Hubuum"
+                     and isinstance(body.get("body"), str) and bool(body["body"])
+                     and self.headers.get("Authorization") == "Bearer fixture-gateway-token")
+        else:
+            valid = False
+        if provider != "apprise" and self.headers.get("Authorization") is not None:
+            valid = False
+        if not valid:
+            self.reply(400, b"invalid_payload")
+        elif query.get("outcome") == ["rate-limit"]:
+            self.reply(429, b"rate_limited", retry_after=2)
+        elif query.get("outcome") == ["unavailable"]:
+            self.reply(503, b"unavailable")
+        elif query.get("outcome") == ["invalid-payload"]:
+            self.reply(400, b"invalid_payload")
+        elif query.get("outcome") == ["bad-ack"]:
+            self.reply(200, b"unexpected acknowledgement")
+        elif provider in ("slack", "mattermost"):
+            self.reply(200, b"ok")
+        elif provider == "discord":
+            self.reply(200, b'{"id":"123","content":"accepted"}')
+        else:
+            self.reply(200, b'{"status":"success"}')
 
 
 def mapped_port(container, port):

@@ -50,6 +50,7 @@ nav = [
       { "Background tasks" = "task_api.md" },
       { "Remote actions" = "remote_targets.md" },
       { "Events & audit" = "events.md" },
+      { "Chat & notification webhooks" = "webhook_notifications.md" },
     ] },
   ] },
   { "Administration" = [

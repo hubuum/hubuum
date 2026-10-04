@@ -11,51 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{StorageError, StoragePage, StorageTaskControl, StorageValidationError};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StorageTaskKind {
-    Import,
-    Export,
-    Backup,
-    Reindex,
-    RemoteCall,
-    SchemaValidation,
-}
-
-impl StorageTaskKind {
-    pub const ALL: [Self; 6] = [
-        Self::Import,
-        Self::Export,
-        Self::Backup,
-        Self::Reindex,
-        Self::RemoteCall,
-        Self::SchemaValidation,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Import => "import",
-            Self::Export => "export",
-            Self::Backup => "backup",
-            Self::Reindex => "reindex",
-            Self::SchemaValidation => "schema_validation",
-            Self::RemoteCall => "remote_call",
-        }
-    }
-
-    #[must_use]
-    pub fn from_persisted(value: &str) -> Option<Self> {
-        match value {
-            "import" => Some(Self::Import),
-            "export" => Some(Self::Export),
-            "backup" => Some(Self::Backup),
-            "reindex" => Some(Self::Reindex),
-            "schema_validation" => Some(Self::SchemaValidation),
-            "remote_call" => Some(Self::RemoteCall),
-            _ => None,
-        }
-    }
-}
+pub use hubuum_domain::TaskKind as StorageTaskKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageTaskStatus {

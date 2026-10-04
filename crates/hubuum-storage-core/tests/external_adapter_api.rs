@@ -161,7 +161,10 @@ fn event_administration_requests_are_validated_and_readable_outside_the_crate() 
     .enabled(true)
     .try_build()
     .unwrap();
-    assert_eq!(subscription_create.collection_id(), collection_id);
+    assert_eq!(
+        subscription_create.scope().collection_id(),
+        Some(collection_id)
+    );
     assert_eq!(subscription_create.sink_id(), sink_id);
     assert_eq!(subscription_create.name(), "subscription");
     assert_eq!(subscription_create.description(), "description");
@@ -184,7 +187,10 @@ fn event_administration_requests_are_validated_and_readable_outside_the_crate() 
             .enabled(Some(false))
             .try_build()
             .unwrap();
-    assert_eq!(subscription_update.collection_id(), collection_id);
+    assert_eq!(
+        subscription_update.scope().collection_id(),
+        Some(collection_id)
+    );
     assert_eq!(subscription_update.id(), subscription_id);
     assert_eq!(subscription_update.sink_id_value(), Some(sink_id));
     assert_eq!(subscription_update.name_value(), Some("renamed"));
@@ -207,7 +213,10 @@ fn event_administration_requests_are_validated_and_readable_outside_the_crate() 
     let _ = sink_delete.event_context();
     let subscription_delete =
         StorageEventSubscriptionDelete::new(collection_id, subscription_id, context);
-    assert_eq!(subscription_delete.collection_id(), collection_id);
+    assert_eq!(
+        subscription_delete.scope().collection_id(),
+        Some(collection_id)
+    );
     assert_eq!(subscription_delete.id(), subscription_id);
     let _ = subscription_delete.event_context();
 }

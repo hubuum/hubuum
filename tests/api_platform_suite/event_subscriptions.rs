@@ -15,6 +15,7 @@ mod tests {
 
     fn new_webhook_sink(name: String) -> NewEventSink {
         NewEventSink {
+            delivery_policy: None,
             name,
             kind: EventSinkKind::Webhook,
             config: json!({}),
@@ -118,6 +119,7 @@ mod tests {
 
         if let Some(kind) = disabled_sink_kind_for_feature_set() {
             let disabled_kind = NewEventSink {
+                delivery_policy: None,
                 name: context.scoped_name("sink_disabled"),
                 kind,
                 config: json!({}),
@@ -250,5 +252,194 @@ mod tests {
         )
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+    #[actix_web::test]
+    async fn webhook_preview_and_test_require_admin_and_preserve_real_source_event() {
+        let context = TestContext::new().await;
+        let resp = post_request(&context.pool, &context.admin_token, SINKS_ENDPOINT, &json!({
+            "name":context.scoped_name("preview_webhook"), "kind":"webhook", "config":{"url_secret_ref":"unresolved_url", "body_template":r#"{"text":{{ (test_marker ~ summary) | tojson }}}"#},
+            "secret_ref":"unresolved_preview_only", "enabled":false
+        })).await;
+        let sink: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        let sink_id = sink["id"].as_i64().unwrap();
+        let system = "/api/v1/system-event-subscriptions";
+        let subscription = json!({"sink_id":sink_id,"name":context.scoped_name("system_sub"),"entity_types":["task"],"actions":["failed"],"filter":{"task_kinds":["backup"]},"enabled":false});
+        let resp = post_request(&context.pool, &context.normal_token, system, &subscription).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+        let resp = post_request(&context.pool, &context.admin_token, system, &subscription).await;
+        let sub: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        assert!(sub.get("collection_id").is_none());
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/events?entity_type=event_sink&entity_id={sink_id}&action=created"),
+        )
+        .await;
+        let events: Vec<serde_json::Value> =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        let input = json!({"subscription_id":sub["id"],"event_id":events[0]["event_id"]});
+        let preview = format!("{SINKS_ENDPOINT}/{sink_id}/preview");
+        let resp = post_request(&context.pool, &context.normal_token, &preview, &input).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+        let resp = post_request(&context.pool, &context.admin_token, &preview, &input).await;
+        let rendered: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        assert!(
+            rendered["payload"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("[TEST]")
+        );
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}/test"),
+            &input,
+        )
+        .await;
+        let delivery: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::ACCEPTED).await).await;
+        assert_eq!(delivery["purpose"], "test");
+        assert_eq!(delivery["event_id"], events[0]["id"]);
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{system}/{}", sub["id"]),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}"),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+    }
+
+    #[rstest::rstest]
+    #[actix_web::test]
+    async fn documented_webhook_recipes_support_preview_and_test_delivery(
+        #[values("chat-sink", "discord-sink", "apprise-sink")] recipe: &str,
+        #[values("collection-subscription", "system-subscription")] scope: &str,
+    ) {
+        use hubuum::tests::docs_examples::webhook_example;
+
+        let context = TestContext::new().await;
+        let collection = context.with_collection().await;
+        let mut sink_input = webhook_example(recipe);
+        sink_input["name"] = json!(context.scoped_name(recipe));
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            SINKS_ENDPOINT,
+            &sink_input,
+        )
+        .await;
+        let sink: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        let sink_id = sink["id"].as_i64().unwrap();
+        let subscriptions = if scope == "collection-subscription" {
+            format!(
+                "/api/v1/collections/{}/event-subscriptions",
+                collection.collection_id()
+            )
+        } else {
+            "/api/v1/system-event-subscriptions".to_string()
+        };
+        let mut subscription_input = webhook_example(scope);
+        subscription_input["sink_id"] = json!(sink_id);
+        subscription_input["name"] = json!(context.scoped_name(scope));
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &subscriptions,
+            &subscription_input,
+        )
+        .await;
+        let subscription: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
+        let subscription_id = subscription["id"].as_i64().unwrap();
+
+        // Tests deliberately bypass the recipe's filters, but must use a saved
+        // event in its scope. Both creation calls above emit such audit events.
+        let event_query = if scope == "collection-subscription" {
+            format!(
+                "entity_type=event_subscription&entity_id={subscription_id}&collection_id={}",
+                collection.collection_id()
+            )
+        } else {
+            format!("entity_type=event_sink&entity_id={sink_id}")
+        };
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/events?{event_query}&action=created&sort=-occurred_at&limit=1"),
+        )
+        .await;
+        let events: Vec<serde_json::Value> =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        let mut test_input = webhook_example("test-request");
+        test_input["subscription_id"] = json!(subscription_id);
+        test_input["event_id"] = events[0]["event_id"].clone();
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}/preview"),
+            &test_input,
+        )
+        .await;
+        let preview: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        let field = match recipe {
+            "chat-sink" => "text",
+            "discord-sink" => "content",
+            "apprise-sink" => "body",
+            _ => unreachable!(),
+        };
+        assert!(
+            preview["payload"][field]
+                .as_str()
+                .unwrap()
+                .starts_with("[TEST] ")
+        );
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}/test"),
+            &test_input,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let location = resp
+            .headers()
+            .get("Location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let resp = get_request(&context.pool, &context.admin_token, &location).await;
+        let delivery: serde_json::Value =
+            test::read_body_json(assert_response_status(resp, StatusCode::OK).await).await;
+        assert_eq!(delivery["event_id"], events[0]["id"]);
+        assert_eq!(delivery["purpose"], "test");
+
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{subscriptions}/{subscription_id}"),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{sink_id}"),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        collection.cleanup().await.unwrap();
     }
 }

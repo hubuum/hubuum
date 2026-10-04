@@ -1,3 +1,4 @@
+use crate::models::task::task_kind_from_db;
 use hubuum_storage_core::StorageBackupBudget;
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
@@ -357,10 +358,10 @@ async fn process_one_task_with_settings(
                         _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                             "Task interrupted by graceful server shutdown".to_string(),
                         )),
-                        result = super::control::execute(context, &task, settings.execution_limit(TaskKind::from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
+                        result = super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
                     }
                 }
-                None => super::control::execute(context, &task, settings.execution_limit(TaskKind::from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
+                None => super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
             }
         };
         let mut ownership_lost = false;
@@ -724,7 +725,7 @@ async fn process_claimed_task(
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
-    let task_kind = TaskKind::from_db(&task.kind)?;
+    let task_kind = task_kind_from_db(&task.kind)?;
     if task_kind == TaskKind::SchemaValidation {
         return crate::services::tasks::execute_schema_validation(context, task).await;
     }

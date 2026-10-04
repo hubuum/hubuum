@@ -11,7 +11,28 @@ use crate::storage::{StorageEventDeliverySink, StorageEventDeliverySubscription}
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
+pub use hubuum_event_sink_webhook::PreparedWebhook as PreparedNotification;
+
 pub trait Sink: Send + Sync {
+    fn prepare<'a>(
+        &'a self,
+        _envelope: &'a EventEnvelope,
+        _subscription: &'a StorageEventDeliverySubscription,
+        _sink: &'a StorageEventDeliverySink,
+    ) -> BoxFuture<'a, Result<Option<PreparedNotification>, SinkError>> {
+        async { Ok(None) }.boxed()
+    }
+
+    fn deliver_prepared<'a>(
+        &'a self,
+        _prepared: Option<&'a PreparedNotification>,
+        envelope: &'a EventEnvelope,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        self.deliver(envelope, subscription, sink)
+    }
+
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
@@ -91,6 +112,7 @@ fn sink_delivery<'a>(
     secret: Option<&'a hubuum_secrets::SecretValue>,
 ) -> SinkDelivery<'a> {
     SinkDelivery::new(sink.configuration(), subscription.routing(), secret)
+        .for_test(subscription.is_test())
 }
 
 fn webhook_settings() -> WebhookSinkSettings {
@@ -114,7 +136,50 @@ fn webhook_settings() -> WebhookSinkSettings {
         .dangerous_allow_localhost(cfg!(test))
 }
 
+pub(crate) fn webhook_sink() -> hubuum_event_sink_webhook::WebhookSink {
+    hubuum_event_sink_webhook::WebhookSink::new(webhook_settings())
+}
+
 impl Sink for hubuum_event_sink_webhook::WebhookSink {
+    fn prepare<'a>(
+        &'a self,
+        envelope: &'a EventEnvelope,
+        subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
+    ) -> BoxFuture<'a, Result<Option<PreparedNotification>, SinkError>> {
+        async move {
+            self.prepare(envelope, sink_delivery(subscription, sink, None))
+                .await
+                .map(Some)
+        }
+        .boxed()
+    }
+
+    fn deliver_prepared<'a>(
+        &'a self,
+        prepared: Option<&'a PreparedNotification>,
+        _envelope: &'a EventEnvelope,
+        _subscription: &'a StorageEventDeliverySubscription,
+        sink: &'a StorageEventDeliverySink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            let prepared =
+                prepared.ok_or_else(|| SinkError::permanent("Missing prepared webhook"))?;
+            let bearer = sink_secret(sink).await?;
+            let destination = match prepared.url_secret_ref() {
+                Some(alias) => Some(crate::secrets::resolve_event_sink_secret(alias).await?),
+                None => None,
+            };
+            self.send(
+                prepared,
+                bearer.as_ref().map(|secret| secret.value()),
+                destination.as_ref().map(|secret| secret.value()),
+            )
+            .await
+        }
+        .boxed()
+    }
+
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
@@ -122,16 +187,11 @@ impl Sink for hubuum_event_sink_webhook::WebhookSink {
         sink: &'a StorageEventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
-            let secret = sink_secret(sink).await?;
-            self.deliver(
-                envelope,
-                sink_delivery(
-                    subscription,
-                    sink,
-                    secret.as_ref().map(|value| value.value()),
-                ),
-            )
-            .await
+            let prepared = self
+                .prepare(envelope, sink_delivery(subscription, sink, None))
+                .await?;
+            self.deliver_prepared(Some(&prepared), envelope, subscription, sink)
+                .await
         }
         .boxed()
     }

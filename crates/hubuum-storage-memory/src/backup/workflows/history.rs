@@ -102,7 +102,7 @@ pub(in crate::backup) fn capture_history(
             continue;
         }
         deliveries.push(retain_row(progress, row(json!({
-            "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "attempts": d.attempts(),
+            "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "purpose": d.purpose(), "deferred_reason": d.deferred_reason(), "attempts": d.attempts(),
             "next_attempt_at": d.next_attempt_at(), "last_error": d.last_error(), "created_at": d.created_at(), "updated_at": d.updated_at()
         })))?);
     }
@@ -366,6 +366,10 @@ pub(in crate::backup) fn restore_history(
             r.time("created_at")?,
             r.time("updated_at")?,
         )
+        .purpose(
+            serde_json::from_value(r.value("purpose")?.clone()).map_err(|_| invalid("purpose"))?,
+        )
+        .deferred_reason(r.optional_text("deferred_reason")?)
         .attempts(r.integer("attempts")?)
         .last_error(r.optional_text("last_error")?)
         .try_build()

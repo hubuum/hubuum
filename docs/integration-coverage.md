@@ -13,6 +13,7 @@ scripts can print fixture credentials.
 | Mailpit SMTP | Authenticated implicit TLS, stored recipient/body, 451/550 recipient rejection, invalid password, untrusted CA, cached transport restart | Errors currently share the sink failure surface; permanent SMTP failures do not imply a new delivery retry policy |
 | RabbitMQ | Publisher confirms, mandatory unroutable rejection, event identity/payload, cached sink restart over TLS | Delivery leases, fencing and dead-letter behavior remain storage/application contracts |
 | Valkey Streams | Verified TLS, identity/payload, exact trimming, cached sink restart | Shared login-limiter tests run in their separate required CI job |
+| [Chat webhook recipes](webhook_notifications.md) | Local HTTPS fixtures check the published Slack, Mattermost, Discord, and Apprise gateway examples with the production renderer and transport | Payload escaping, test markers, Discord length/mentions and `wait=true`, bearer authentication, acknowledgements, rate limits, and retry classification; these are contract fixtures, not live provider deployments |
 | HTTPS | Private CA trust/rejection, redirect refusal without following, 503, deadlines, bounded response preview | Destination screening and header policy also have deterministic adapter tests |
 
 Full CI and tag validation run these contracts. Release publication requires

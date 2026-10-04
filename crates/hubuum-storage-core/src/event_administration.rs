@@ -1,3 +1,5 @@
+use hubuum_domain::{EventDeliveryPolicy, EventDeliveryPurpose};
+use hubuum_events_core::EventSubscriptionScope;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -336,6 +338,7 @@ pub struct StorageEventSink {
     name: String,
     kind: String,
     configuration: Value,
+    delivery_policy: EventDeliveryPolicy,
     secret_ref: Option<String>,
     enabled: bool,
     created_at: DateTime<Utc>,
@@ -344,6 +347,10 @@ pub struct StorageEventSink {
 }
 
 impl StorageEventSink {
+    pub const fn delivery_policy(&self) -> EventDeliveryPolicy {
+        self.delivery_policy
+    }
+
     #[must_use]
     pub fn builder(
         id: EventSinkId,
@@ -358,6 +365,7 @@ impl StorageEventSink {
             name: name.into(),
             kind: kind.into(),
             configuration: serde_json::json!({}),
+            delivery_policy: EventDeliveryPolicy::default(),
             secret_ref: None,
             enabled: false,
             created_at,
@@ -418,6 +426,7 @@ pub struct StorageEventSinkBuilder {
     name: String,
     kind: String,
     configuration: Value,
+    delivery_policy: EventDeliveryPolicy,
     secret_ref: Option<String>,
     enabled: bool,
     created_at: DateTime<Utc>,
@@ -426,6 +435,11 @@ pub struct StorageEventSinkBuilder {
 }
 
 impl StorageEventSinkBuilder {
+    pub fn delivery_policy(mut self, value: EventDeliveryPolicy) -> Self {
+        self.delivery_policy = value;
+        self
+    }
+
     #[must_use]
     pub fn configuration(mut self, value: Value) -> Self {
         self.configuration = value;
@@ -455,6 +469,7 @@ impl StorageEventSinkBuilder {
             name: self.name,
             kind: self.kind,
             configuration: self.configuration,
+            delivery_policy: self.delivery_policy,
             secret_ref: self.secret_ref,
             enabled: self.enabled,
             created_at: self.created_at,
@@ -501,12 +516,17 @@ pub struct StorageEventSinkCreate {
     name: String,
     kind: String,
     configuration: Value,
+    delivery_policy: EventDeliveryPolicy,
     secret_ref: Option<String>,
     enabled: bool,
     event_context: EventContext,
 }
 
 impl StorageEventSinkCreate {
+    pub const fn delivery_policy(&self) -> EventDeliveryPolicy {
+        self.delivery_policy
+    }
+
     #[must_use]
     pub fn builder(
         name: impl Into<String>,
@@ -517,6 +537,7 @@ impl StorageEventSinkCreate {
             name: name.into(),
             kind: kind.into(),
             configuration: serde_json::json!({}),
+            delivery_policy: EventDeliveryPolicy::default(),
             secret_ref: None,
             enabled: false,
             event_context,
@@ -559,12 +580,18 @@ pub struct StorageEventSinkCreateBuilder {
     name: String,
     kind: String,
     configuration: Value,
+    delivery_policy: EventDeliveryPolicy,
     secret_ref: Option<String>,
     enabled: bool,
     event_context: EventContext,
 }
 
 impl StorageEventSinkCreateBuilder {
+    pub fn delivery_policy(mut self, value: EventDeliveryPolicy) -> Self {
+        self.delivery_policy = value;
+        self
+    }
+
     #[must_use]
     pub fn configuration(mut self, value: Value) -> Self {
         self.configuration = value;
@@ -596,6 +623,7 @@ impl StorageEventSinkCreateBuilder {
             name: self.name,
             kind: self.kind,
             configuration: self.configuration,
+            delivery_policy: self.delivery_policy,
             secret_ref: self.secret_ref,
             enabled: self.enabled,
             event_context: self.event_context,
@@ -623,12 +651,17 @@ pub struct StorageEventSinkUpdate {
     name: Option<String>,
     kind: Option<String>,
     configuration: Option<Value>,
+    delivery_policy: Option<EventDeliveryPolicy>,
     secret_ref: Option<Option<String>>,
     enabled: Option<bool>,
     event_context: EventContext,
 }
 
 impl StorageEventSinkUpdate {
+    pub const fn delivery_policy(&self) -> Option<EventDeliveryPolicy> {
+        self.delivery_policy
+    }
+
     #[must_use]
     pub fn builder(id: EventSinkId, event_context: EventContext) -> StorageEventSinkUpdateBuilder {
         StorageEventSinkUpdateBuilder {
@@ -636,6 +669,7 @@ impl StorageEventSinkUpdate {
             name: None,
             kind: None,
             configuration: None,
+            delivery_policy: None,
             secret_ref: None,
             enabled: None,
             event_context,
@@ -684,12 +718,18 @@ pub struct StorageEventSinkUpdateBuilder {
     name: Option<String>,
     kind: Option<String>,
     configuration: Option<Value>,
+    delivery_policy: Option<EventDeliveryPolicy>,
     secret_ref: Option<Option<String>>,
     enabled: Option<bool>,
     event_context: EventContext,
 }
 
 impl StorageEventSinkUpdateBuilder {
+    pub fn delivery_policy(mut self, value: Option<EventDeliveryPolicy>) -> Self {
+        self.delivery_policy = value;
+        self
+    }
+
     #[must_use]
     pub fn name(mut self, value: Option<String>) -> Self {
         self.name = value;
@@ -738,6 +778,7 @@ impl StorageEventSinkUpdateBuilder {
             name: self.name,
             kind: self.kind,
             configuration: self.configuration,
+            delivery_policy: self.delivery_policy,
             secret_ref: self.secret_ref,
             enabled: self.enabled,
             event_context: self.event_context,
@@ -796,7 +837,7 @@ impl fmt::Debug for StorageEventSinkDelete {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSubscription {
     id: EventSubscriptionId,
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     sink_id: EventSinkId,
     name: String,
     description: String,
@@ -814,7 +855,7 @@ impl StorageEventSubscription {
     #[must_use]
     pub fn builder(
         id: EventSubscriptionId,
-        collection_id: CollectionId,
+        scope: impl Into<EventSubscriptionScope>,
         sink_id: EventSinkId,
         name: impl Into<String>,
         created_at: DateTime<Utc>,
@@ -823,7 +864,7 @@ impl StorageEventSubscription {
     ) -> StorageEventSubscriptionBuilder {
         StorageEventSubscriptionBuilder {
             id,
-            collection_id,
+            scope: scope.into(),
             sink_id,
             name: name.into(),
             description: String::new(),
@@ -844,8 +885,8 @@ impl StorageEventSubscription {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]
@@ -907,7 +948,7 @@ impl StorageEventSubscription {
 /// Builder for persisted event subscription projections.
 pub struct StorageEventSubscriptionBuilder {
     id: EventSubscriptionId,
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     sink_id: EventSinkId,
     name: String,
     description: String,
@@ -969,7 +1010,7 @@ impl StorageEventSubscriptionBuilder {
         validate_timestamps(self.created_at, self.updated_at)?;
         Ok(StorageEventSubscription {
             id: self.id,
-            collection_id: self.collection_id,
+            scope: self.scope,
             sink_id: self.sink_id,
             name: self.name,
             description: self.description,
@@ -988,22 +1029,22 @@ impl StorageEventSubscriptionBuilder {
 /// Collection-scoped event subscription list query.
 #[derive(Clone, PartialEq)]
 pub struct StorageEventSubscriptionListQuery {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     options: QueryOptions,
 }
 
 impl StorageEventSubscriptionListQuery {
     #[must_use]
-    pub const fn new(collection_id: CollectionId, options: QueryOptions) -> Self {
+    pub fn new(scope: impl Into<EventSubscriptionScope>, options: QueryOptions) -> Self {
         Self {
-            collection_id,
+            scope: scope.into(),
             options,
         }
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]
@@ -1029,7 +1070,7 @@ impl fmt::Debug for StorageEventSubscriptionListQuery {
 /// Validated event subscription creation request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSubscriptionCreate {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     sink_id: EventSinkId,
     name: String,
     description: String,
@@ -1044,13 +1085,13 @@ pub struct StorageEventSubscriptionCreate {
 impl StorageEventSubscriptionCreate {
     #[must_use]
     pub fn builder(
-        collection_id: CollectionId,
+        scope: impl Into<EventSubscriptionScope>,
         sink_id: EventSinkId,
         name: impl Into<String>,
         event_context: EventContext,
     ) -> StorageEventSubscriptionCreateBuilder {
         StorageEventSubscriptionCreateBuilder {
-            collection_id,
+            scope: scope.into(),
             sink_id,
             name: name.into(),
             description: String::new(),
@@ -1064,8 +1105,8 @@ impl StorageEventSubscriptionCreate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]
@@ -1133,7 +1174,7 @@ impl fmt::Debug for StorageEventSubscriptionCreate {
 
 /// Builder for event subscription creation requests.
 pub struct StorageEventSubscriptionCreateBuilder {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     sink_id: EventSinkId,
     name: String,
     description: String,
@@ -1192,7 +1233,7 @@ impl StorageEventSubscriptionCreateBuilder {
         )
         .map_err(StorageValidationError::into_request_error)?;
         Ok(StorageEventSubscriptionCreate {
-            collection_id: self.collection_id,
+            scope: self.scope,
             sink_id: self.sink_id,
             name: self.name,
             description: self.description,
@@ -1209,7 +1250,7 @@ impl StorageEventSubscriptionCreateBuilder {
 /// Validated collection-scoped event subscription patch.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSubscriptionUpdate {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     id: EventSubscriptionId,
     sink_id: Option<EventSinkId>,
     name: Option<String>,
@@ -1225,12 +1266,12 @@ pub struct StorageEventSubscriptionUpdate {
 impl StorageEventSubscriptionUpdate {
     #[must_use]
     pub fn builder(
-        collection_id: CollectionId,
+        scope: impl Into<EventSubscriptionScope>,
         id: EventSubscriptionId,
         event_context: EventContext,
     ) -> StorageEventSubscriptionUpdateBuilder {
         StorageEventSubscriptionUpdateBuilder {
-            collection_id,
+            scope: scope.into(),
             id,
             sink_id: None,
             name: None,
@@ -1245,8 +1286,8 @@ impl StorageEventSubscriptionUpdate {
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]
@@ -1302,7 +1343,7 @@ impl StorageEventSubscriptionUpdate {
 
 /// Builder for validated collection-scoped event-subscription patches.
 pub struct StorageEventSubscriptionUpdateBuilder {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     id: EventSubscriptionId,
     sink_id: Option<EventSinkId>,
     name: Option<String>,
@@ -1398,7 +1439,7 @@ impl StorageEventSubscriptionUpdateBuilder {
                 .map_err(StorageValidationError::into_request_error)?;
         }
         Ok(StorageEventSubscriptionUpdate {
-            collection_id: self.collection_id,
+            scope: self.scope,
             id: self.id,
             sink_id: self.sink_id,
             name: self.name,
@@ -1434,28 +1475,28 @@ impl fmt::Debug for StorageEventSubscriptionUpdate {
 /// Collection-scoped event subscription deletion request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSubscriptionDelete {
-    collection_id: CollectionId,
+    scope: EventSubscriptionScope,
     id: EventSubscriptionId,
     event_context: EventContext,
 }
 
 impl StorageEventSubscriptionDelete {
     #[must_use]
-    pub const fn new(
-        collection_id: CollectionId,
+    pub fn new(
+        scope: impl Into<EventSubscriptionScope>,
         id: EventSubscriptionId,
         event_context: EventContext,
     ) -> Self {
         Self {
-            collection_id,
+            scope: scope.into(),
             id,
             event_context,
         }
     }
 
     #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
+    pub const fn scope(&self) -> EventSubscriptionScope {
+        self.scope
     }
 
     #[must_use]
@@ -1530,7 +1571,7 @@ pub trait EventConfigurationStorage: Send + Sync {
     /// Load a subscription only when it belongs to the named collection.
     async fn get_event_subscription(
         &self,
-        collection_id: CollectionId,
+        scope: EventSubscriptionScope,
         subscription_id: EventSubscriptionId,
     ) -> Result<StorageEventSubscription, StorageError>;
 
@@ -1563,6 +1604,8 @@ pub struct StorageEventDelivery {
     event_id: EventSequence,
     subscription_id: EventSubscriptionId,
     status: EventDeliveryStatus,
+    purpose: EventDeliveryPurpose,
+    deferred_reason: Option<String>,
     attempts: i32,
     next_attempt_at: DateTime<Utc>,
     last_error: Option<String>,
@@ -1572,6 +1615,13 @@ pub struct StorageEventDelivery {
 }
 
 impl StorageEventDelivery {
+    pub const fn purpose(&self) -> EventDeliveryPurpose {
+        self.purpose
+    }
+    pub fn deferred_reason(&self) -> Option<&str> {
+        self.deferred_reason.as_deref()
+    }
+
     #[must_use]
     pub fn builder(
         id: EventDeliveryId,
@@ -1587,6 +1637,8 @@ impl StorageEventDelivery {
             event_id,
             subscription_id,
             status,
+            purpose: EventDeliveryPurpose::Event,
+            deferred_reason: None,
             attempts: 0,
             next_attempt_at,
             last_error: None,
@@ -1653,6 +1705,8 @@ pub struct StorageEventDeliveryBuilder {
     event_id: EventSequence,
     subscription_id: EventSubscriptionId,
     status: EventDeliveryStatus,
+    purpose: EventDeliveryPurpose,
+    deferred_reason: Option<String>,
     attempts: i32,
     next_attempt_at: DateTime<Utc>,
     last_error: Option<String>,
@@ -1662,6 +1716,15 @@ pub struct StorageEventDeliveryBuilder {
 }
 
 impl StorageEventDeliveryBuilder {
+    pub fn purpose(mut self, value: EventDeliveryPurpose) -> Self {
+        self.purpose = value;
+        self
+    }
+    pub fn deferred_reason(mut self, value: Option<String>) -> Self {
+        self.deferred_reason = value;
+        self
+    }
+
     #[must_use]
     pub const fn attempts(mut self, value: i32) -> Self {
         self.attempts = value;
@@ -1681,6 +1744,16 @@ impl StorageEventDeliveryBuilder {
     }
 
     pub fn try_build(self) -> Result<StorageEventDelivery, StorageValidationError> {
+        if self
+            .deferred_reason
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "configured_rate" | "provider_rate"))
+        {
+            return Err(StorageValidationError::invalid(
+                "Unknown event delivery deferral reason",
+            ));
+        }
+
         if self.attempts < 0 {
             return Err(StorageValidationError::invalid(
                 "Event delivery attempts must not be negative",
@@ -1710,6 +1783,8 @@ impl StorageEventDeliveryBuilder {
             event_id: self.event_id,
             subscription_id: self.subscription_id,
             status: self.status,
+            purpose: self.purpose,
+            deferred_reason: self.deferred_reason,
             attempts: self.attempts,
             next_attempt_at: self.next_attempt_at,
             last_error: self.last_error,
@@ -1767,9 +1842,88 @@ impl fmt::Debug for StorageEventDeliveryListQuery {
     }
 }
 
+/// Administrator-selected source event and saved subscription.
+#[derive(Clone, Copy, Debug)]
+pub struct StorageEventNotificationSelection {
+    sink_id: EventSinkId,
+    subscription_id: EventSubscriptionId,
+    event_id: uuid::Uuid,
+}
+impl StorageEventNotificationSelection {
+    pub const fn new(
+        sink_id: EventSinkId,
+        subscription_id: EventSubscriptionId,
+        event_id: uuid::Uuid,
+    ) -> Self {
+        Self {
+            sink_id,
+            subscription_id,
+            event_id,
+        }
+    }
+    pub const fn sink_id(self) -> EventSinkId {
+        self.sink_id
+    }
+    pub const fn subscription_id(self) -> EventSubscriptionId {
+        self.subscription_id
+    }
+    pub const fn event_id(self) -> uuid::Uuid {
+        self.event_id
+    }
+}
+
+/// A resolved source event whose collection scope agrees with its subscription.
+#[derive(Clone)]
+pub struct StorageEventNotificationInput {
+    sink: StorageEventSink,
+    subscription: StorageEventSubscription,
+    event: hubuum_events_core::EventEnvelope,
+}
+impl StorageEventNotificationInput {
+    pub fn try_new(
+        sink: StorageEventSink,
+        subscription: StorageEventSubscription,
+        event: hubuum_events_core::EventEnvelope,
+    ) -> Result<Self, StorageError> {
+        if sink.id() != subscription.sink_id() || !subscription.scope().matches(&event) {
+            return Err(StorageError::invalid_input(
+                "Event scope or sink does not match the subscription",
+            ));
+        }
+        Ok(Self {
+            sink,
+            subscription,
+            event,
+        })
+    }
+    pub const fn sink(&self) -> &StorageEventSink {
+        &self.sink
+    }
+    pub const fn subscription(&self) -> &StorageEventSubscription {
+        &self.subscription
+    }
+    pub const fn event(&self) -> &hubuum_events_core::EventEnvelope {
+        &self.event
+    }
+}
+
 /// Administrator delivery inspection and intervention behavior.
 #[async_trait]
 pub trait EventDeliveryAdministrationStorage: Send + Sync {
+    /// Resolve a source event and saved subscription, checking sink and scope.
+    async fn load_event_notification(
+        &self,
+        selection: StorageEventNotificationSelection,
+    ) -> Result<StorageEventNotificationInput, StorageError>;
+
+    /// Queue a separately marked test of a real event and audit the request.
+    /// Ignores enabled flags and subscription filters, but preserves scope.
+    async fn enqueue_event_notification_test(
+        &self,
+        selection: StorageEventNotificationSelection,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError>;
+
     /// List claim-free delivery projections with backend filtering, stable
     /// cursor paging, and optional exact count.
     async fn list_event_deliveries(

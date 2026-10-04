@@ -4,6 +4,7 @@ use std::future::Future;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use hubuum_secrets::SecretError;
 pub use hubuum_secrets::SecretValue;
@@ -17,13 +18,39 @@ pub use hubuum_events_core::EventEnvelope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SinkError {
     message: String,
+    failure: SinkFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SinkFailure {
+    Retryable,
+    RateLimited(Duration),
+    Permanent,
 }
 
 impl SinkError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            failure: SinkFailure::Retryable,
         }
+    }
+    pub fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            failure: SinkFailure::Permanent,
+        }
+    }
+
+    pub fn rate_limited(delay: Duration) -> Self {
+        Self {
+            message: "Provider rate limit reached".to_string(),
+            failure: SinkFailure::RateLimited(delay.max(Duration::from_secs(1))),
+        }
+    }
+
+    pub fn failure(&self) -> SinkFailure {
+        self.failure
     }
 }
 
@@ -86,6 +113,7 @@ pub struct SinkDelivery<'a> {
     config: &'a Value,
     routing: &'a Value,
     secret: Option<&'a SecretValue>,
+    test: bool,
 }
 
 impl fmt::Debug for SinkDelivery<'_> {
@@ -100,6 +128,7 @@ impl<'a> SinkDelivery<'a> {
             config,
             routing,
             secret,
+            test: false,
         }
     }
 
@@ -109,6 +138,15 @@ impl<'a> SinkDelivery<'a> {
 
     pub fn routing(&self) -> &'a Value {
         self.routing
+    }
+
+    pub fn for_test(mut self, test: bool) -> Self {
+        self.test = test;
+        self
+    }
+
+    pub fn is_test(&self) -> bool {
+        self.test
     }
 
     pub fn secret(&self) -> Option<&'a SecretValue> {

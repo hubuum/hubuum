@@ -1,3 +1,4 @@
+use hubuum_domain::EventDeliveryPolicy;
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
@@ -96,7 +97,10 @@ pub struct EventSink {
     pub name: String,
     pub kind: EventSinkKind,
     #[serde(serialize_with = "serialize_redacted_event_sink_value")]
+    /// Transport settings. Webhooks support body_template, url_secret_ref, and response rules.
     pub config: serde_json::Value,
+    #[serde(default)]
+    pub delivery_policy: Option<EventDeliveryPolicy>,
     pub secret_ref: Option<String>,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -111,7 +115,10 @@ pub struct NewEventSink {
     pub name: String,
     pub kind: EventSinkKind,
     #[serde(default = "empty_json_object")]
+    /// Transport settings. Webhooks support body_template, url_secret_ref, and response rules.
     pub config: serde_json::Value,
+    #[serde(default)]
+    pub delivery_policy: Option<EventDeliveryPolicy>,
     pub secret_ref: Option<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -123,7 +130,9 @@ impl_redacted_event_sink_debug!(NewEventSink, name, kind, enabled);
 pub struct UpdateEventSink {
     pub name: Option<String>,
     pub kind: Option<EventSinkKind>,
+    /// Replacement transport settings, including optional webhook payload and response policies.
     pub config: Option<serde_json::Value>,
+    pub delivery_policy: Option<EventDeliveryPolicy>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -135,6 +144,24 @@ pub struct UpdateEventSink {
 }
 
 impl_redacted_event_sink_debug!(UpdateEventSink, name, kind, enabled);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct SystemEventSubscription {
+    pub id: i32,
+    pub sink_id: i32,
+    pub name: String,
+    pub description: String,
+    pub entity_types: Vec<String>,
+    pub actions: Vec<String>,
+    #[serde(default)]
+    pub filter: EventSubscriptionFilter,
+    #[serde(serialize_with = "serialize_redacted_event_sink_value")]
+    pub routing: serde_json::Value,
+    pub enabled: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSubscription {
@@ -225,6 +252,7 @@ impl UpdateEventSink {
         self.name.is_none()
             && self.kind.is_none()
             && self.config.is_none()
+            && self.delivery_policy.is_none()
             && self.secret_ref.is_none()
             && self.enabled.is_none()
     }
@@ -260,6 +288,10 @@ pub(crate) fn validate_sink_parts(
         return Err(ApiError::BadRequest(
             "secret_ref must not be empty".to_string(),
         ));
+    }
+    if kind == EventSinkKind::Webhook {
+        hubuum_event_sink_webhook::Configuration::parse(config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
     Ok(())
 }
@@ -434,6 +466,41 @@ impl CursorPaginated for EventSubscription {
         }]
     }
 }
+impl CursorPaginated for SystemEventSubscription {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id | FilterField::Name | FilterField::CreatedAt | FilterField::Revision
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(i64::from(self.id))),
+            FilterField::Name => Ok(CursorValue::String(self.name.clone())),
+            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::Revision => Ok(CursorValue::Integer(self.revision.get())),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for event subscriptions",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -523,6 +590,7 @@ mod tests {
     #[test]
     fn event_sink_debug_redacts_request_and_persisted_configuration() {
         let request = NewEventSink {
+            delivery_policy: None,
             name: "webhook".to_string(),
             kind: EventSinkKind::Webhook,
             config: serde_json::json!({
@@ -532,6 +600,7 @@ mod tests {
             enabled: true,
         };
         let persisted = EventSink {
+            delivery_policy: None,
             id: 1,
             name: "webhook".to_string(),
             kind: EventSinkKind::Webhook,
@@ -590,4 +659,41 @@ mod tests {
         assert_omits(&format!("{request:?}"), &["request-routing-secret"]);
         assert_omits(&format!("{persisted:?}"), &["stored-routing-secret"]);
     }
+}
+
+impl_redacted_event_subscription_debug!(
+    SystemEventSubscription,
+    id,
+    sink_id,
+    name,
+    enabled,
+    revision
+);
+
+/// Source for administrator preview and test requests.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EventNotificationRequest {
+    pub subscription_id: EventSubscriptionID,
+    pub event_id: uuid::Uuid,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
+pub struct EventNotificationPreview {
+    pub sink_kind: EventSinkKind,
+    pub payload: serde_json::Value,
+}
+
+pub(crate) async fn validate_webhook_templates(
+    kind: EventSinkKind,
+    config: &serde_json::Value,
+) -> Result<(), ApiError> {
+    if kind == EventSinkKind::Webhook {
+        hubuum_event_sink_webhook::Configuration::parse(config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?
+            .validate()
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    }
+    Ok(())
 }

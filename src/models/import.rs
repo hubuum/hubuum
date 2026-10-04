@@ -557,6 +557,8 @@ pub struct ImportEventSinkInput {
     pub ref_: Option<String>,
     pub name: String,
     pub kind: EventSinkKind,
+    #[serde(default)]
+    pub delivery_policy: Option<hubuum_domain::EventDeliveryPolicy>,
     #[serde(default = "empty_json_object")]
     pub config: serde_json::Value,
     pub secret_ref: Option<String>,
@@ -915,6 +917,8 @@ impl ImportRequest {
         }
         for sink in &self.graph.event_sinks {
             validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
+            crate::models::event_subscription::validate_webhook_templates(sink.kind, &sink.config)
+                .await?;
         }
         for subscription in &self.graph.event_subscriptions {
             let filter =
@@ -1318,6 +1322,7 @@ mod tests {
     async fn import_rejects_invalid_event_sink_configuration() {
         let request = request_with_graph(ImportGraph {
             event_sinks: vec![ImportEventSinkInput {
+                delivery_policy: None,
                 ref_: None,
                 name: "invalid-sink".to_string(),
                 kind: EventSinkKind::Webhook,
@@ -1361,6 +1366,7 @@ mod tests {
                 timestamps: None,
             }],
             event_sinks: vec![ImportEventSinkInput {
+                delivery_policy: None,
                 ref_: Some("sink:1".to_string()),
                 name: "webhook".to_string(),
                 kind: EventSinkKind::Webhook,

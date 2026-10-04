@@ -20,6 +20,7 @@ to every interface.
 | Synchronize an inventory graph | [Import API](../import_api.md), including idempotency and per-item results |
 | Extract data or render a report | [Export API](../export_api.md) and [template guide](../export_template_guide.md) |
 | Discover and traverse related resources | [Search](../search_api.md) and [relationships](../relationship_endpoints.md) |
+| Send chat or notification messages | [Slack, Mattermost, Discord, and notification bridges](../webhook_notifications.md) |
 | React to changes | [Events, sinks, and subscriptions](../events.md) |
 | Invoke an external system for an object | [Remote targets](../remote_targets.md) |
 | Update selected JSON fields | [Atomic JSON Patch](../object_data_json_patch.md) |
