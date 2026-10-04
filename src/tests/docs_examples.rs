@@ -82,6 +82,17 @@ pub fn required_labeled_block(markdown: &str, label: &str) -> Result<DocExampleB
         .ok_or_else(|| format!("missing doc-example block {label:?}"))
 }
 
+/// Read the published recipes rather than maintaining a second test-only copy.
+pub fn webhook_example(label: &str) -> serde_json::Value {
+    let block = required_labeled_block(
+        include_str!("../../docs/webhook_notifications.md"),
+        &format!("webhooks/{label}"),
+    )
+    .expect("webhook guide must retain its labeled example");
+    assert_eq!(block.language, "json");
+    serde_json::from_str(&block.body).expect("webhook example must be valid JSON")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{extract_labeled_blocks, required_labeled_block};

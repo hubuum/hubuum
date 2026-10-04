@@ -26,7 +26,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retry rules, administrator preview/test delivery, and durable per-sink pacing
   and HTTP cooldowns. A setup guide covers Slack, Mattermost, Discord, and
   Apprise bridge configurations of the same transport, including secrets and
-  preview/test delivery; legacy webhook defaults are preserved.
+  preview/test delivery. The guide is linked from the public documentation
+  navigation, with executable examples checked against the API and local HTTPS
+  provider-contract fixtures; legacy webhook defaults are preserved.
 - Administrator system event subscriptions and task-kind filtering, including
   failed-backup notifications from existing task lifecycle events.
 - A searchable Zensical documentation website, automatically published to GitHub

@@ -36,5 +36,7 @@ produce text, HTML, or CSV from the export context.
 Track [background tasks](../task_api.md) through completion, including individual
 results and output expiry. [Remote targets](../remote_targets.md) run configured
 outbound actions; [events](../events.md) support audit and subscribed delivery.
+Set up [chat and notification webhooks](../webhook_notifications.md) to send
+selected events to Slack, Mattermost, Discord, or a notification bridge.
 An import/export workflow is distinct from a full-system
 [backup and restore](../backup-restore.md).

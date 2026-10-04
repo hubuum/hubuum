@@ -434,3 +434,165 @@ async fn templated_webhook_sends_marked_payload_with_independent_url_and_bearer_
         .await
         .unwrap();
 }
+
+#[cfg(feature = "integration-test-support")]
+mod documented_webhooks {
+    use super::*;
+    use hubuum::models::NewEventSink;
+    use hubuum::tests::docs_examples::webhook_example;
+    use hubuum_event_sink_webhook::Configuration;
+    use hubuum_event_sinks_common::SinkFailure;
+
+    fn recipe(provider: &str) -> NewEventSink {
+        let label = match provider {
+            "slack" | "mattermost" => "chat-sink",
+            "discord" => "discord-sink",
+            "apprise" => "apprise-sink",
+            _ => panic!("unknown fixture provider"),
+        };
+        serde_json::from_value(webhook_example(label)).unwrap()
+    }
+
+    fn sink() -> WebhookSink {
+        WebhookSink::new(
+            WebhookSinkSettings::new(2000, 4096)
+                .unwrap()
+                .allow_private_targets(true)
+                .dangerous_allow_localhost(true),
+        )
+    }
+
+    fn destination(provider: &str, outcome: &str) -> SecretValue {
+        SecretValue::new(
+            format!(
+                "{}/recipe-{provider}/{}?wait=true&outcome={outcome}",
+                fixture("HTTPS_URL"),
+                Uuid::new_v4()
+            )
+            .into_bytes(),
+        )
+        .unwrap()
+    }
+
+    fn bearer(recipe: &NewEventSink) -> Option<SecretValue> {
+        recipe.secret_ref.as_ref().map(|alias| {
+            assert_eq!(alias, "apprise_gateway_token");
+            SecretValue::new(b"fixture-gateway-token".to_vec()).unwrap()
+        })
+    }
+
+    #[rstest]
+    #[tokio::test]
+    #[ignore = "requires the private-CA HTTPS provider fixtures"]
+    async fn documented_payload_reaches_provider(
+        #[values("slack", "mattermost", "discord", "apprise")] provider: &str,
+        #[values(false, true)] is_test: bool,
+        #[values(false, true)] long_message: bool,
+    ) {
+        let recipe = recipe(provider);
+        Configuration::parse(&recipe.config)
+            .unwrap()
+            .validate()
+            .await
+            .unwrap();
+        let summary = "Updated \"Atlas\"\nC:\\inventory — blåbær 🦀 @everyone"
+            .repeat(if long_message { 60 } else { 1 });
+        let mut value = serde_json::to_value(envelope()).unwrap();
+        value["summary"] = json!(summary);
+        let event = serde_json::from_value(value).unwrap();
+        let routing = json!({});
+        let sink = sink();
+        let prepared = sink
+            .prepare(
+                &event,
+                SinkDelivery::new(&recipe.config, &routing, None).for_test(is_test),
+            )
+            .await
+            .unwrap();
+        let marker = if is_test { "[TEST] " } else { "" };
+        let expected = match provider {
+            "slack" | "mattermost" => json!({"text":format!("{marker}Hubuum: {summary}")}),
+            "discord" => {
+                json!({"content":format!("{marker}Hubuum: {summary}").chars().take(1900).collect::<String>(),"allowed_mentions":{"parse":[]}})
+            }
+            "apprise" => json!({"title":"Hubuum", "body":format!("{marker}{summary}")}),
+            _ => unreachable!(),
+        };
+        assert_eq!(prepared.payload(), &expected);
+        let alias = match provider {
+            "slack" | "mattermost" => "ops_chat_webhook",
+            "discord" => "ops_discord_webhook",
+            "apprise" => "ops_apprise_url",
+            _ => unreachable!(),
+        };
+        assert_eq!(prepared.url_secret_ref(), Some(alias));
+        sink.send(
+            &prepared,
+            bearer(&recipe).as_ref(),
+            Some(&destination(provider, "success")),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case("rate-limit", "limited")]
+    #[case("unavailable", "retryable")]
+    #[case("invalid-payload", "permanent")]
+    #[tokio::test]
+    #[ignore = "requires the private-CA HTTPS provider fixtures"]
+    async fn documented_response_policy_classifies_provider_errors(
+        #[values("slack", "mattermost", "discord", "apprise")] provider: &str,
+        #[case] outcome: &str,
+        #[case] expected: &str,
+    ) {
+        let recipe = recipe(provider);
+        let sink = sink();
+        let prepared = sink
+            .prepare(
+                &envelope(),
+                SinkDelivery::new(&recipe.config, &json!({}), None),
+            )
+            .await
+            .unwrap();
+        let error = sink
+            .send(
+                &prepared,
+                bearer(&recipe).as_ref(),
+                Some(&destination(provider, outcome)),
+            )
+            .await
+            .unwrap_err();
+        let actual = match error.failure() {
+            SinkFailure::RateLimited(delay) => {
+                assert_eq!(delay, Duration::from_secs(2));
+                "limited"
+            }
+            SinkFailure::Retryable => "retryable",
+            SinkFailure::Permanent => "permanent",
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    #[ignore = "requires the private-CA HTTPS provider fixtures"]
+    async fn documented_chat_policy_rejects_an_unexpected_acknowledgement(
+        #[values("slack", "mattermost")] provider: &str,
+    ) {
+        let recipe = recipe(provider);
+        let sink = sink();
+        let prepared = sink
+            .prepare(
+                &envelope(),
+                SinkDelivery::new(&recipe.config, &json!({}), None),
+            )
+            .await
+            .unwrap();
+        let error = sink
+            .send(&prepared, None, Some(&destination(provider, "bad-ack")))
+            .await
+            .unwrap_err();
+        assert!(matches!(error.failure(), SinkFailure::Permanent));
+    }
+}

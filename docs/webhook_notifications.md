@@ -111,6 +111,7 @@ Mattermost, and Discord incoming webhooks.
 
 Save the following as `chat-sink.json`. It works for Slack and Mattermost:
 
+<!-- doc-example: webhooks/chat-sink -->
 ```json
 {
   "name": "ops-chat",
@@ -159,6 +160,7 @@ invalid payload or using a revoked webhook URL. Transport errors still retry.
 
 For object changes, save this as `chat-subscription.json`:
 
+<!-- doc-example: webhooks/collection-subscription -->
 ```json
 {
   "sink_id": 3,
@@ -189,6 +191,7 @@ are enabled; creating a subscription does not replay the audit history.
 For failed backups, create a separate **system** subscription by posting this
 body to `POST /api/v1/system-event-subscriptions`:
 
+<!-- doc-example: webhooks/system-subscription -->
 ```json
 {
   "sink_id": 3,
@@ -222,6 +225,7 @@ select a collection-less event instead, such as an existing backup task event.
 
 Save `chat-test.json`, replacing both example values with saved records:
 
+<!-- doc-example: webhooks/test-request -->
 ```json
 {
   "subscription_id": 7,
@@ -279,6 +283,7 @@ Store the complete URL under `ops_discord_webhook`, appending `?wait=true`
 (`&wait=true` if it already has a query). Waiting makes Discord confirm message
 creation before responding. Use this sink with the subscription/test steps above:
 
+<!-- doc-example: webhooks/discord-sink -->
 ```json
 {
   "name": "ops-discord",
@@ -312,6 +317,7 @@ gateway accepting a bearer token; the gateway handles the backend's required
 authentication. Store that full URL as `ops_apprise_url` and the gateway token
 as `apprise_gateway_token` in Hubuum's secret source.
 
+<!-- doc-example: webhooks/apprise-sink -->
 ```json
 {
   "name": "ops-notification-bridge",
@@ -334,12 +340,38 @@ Apprise's own authentication is deployment-dependent; Hubuum's `secret_ref`
 always sends **Bearer**, not Basic authentication. Do not embed credentials in
 the URL. Match the response policy to your deployed bridge's synchronous or
 queued acknowledgement contract; acceptance by a bridge may not prove delivery
-to every downstream service. See the [Apprise API configuration and notification reference](https://github.com/caronc/apprise-api#stateful-solution).
+to every downstream service. See the [Apprise API configuration and notification reference](https://github.com/caronc/apprise-api#persistent-stateful-storage-solution).
 
 Other services fit directly when they accept HTTPS JSON `POST`, can authenticate
 using a secret URL or bearer token, and have an acknowledgement expressible with
 Hubuum's [response rules](events.md#response-and-delivery-policies). Use a bridge
 for token refresh, signing, form uploads, or provider-specific stateful workflows.
+
+## How These Examples Are Tested
+
+The test suite reads the JSON examples directly from this page. API tests create
+the sinks and both subscription scopes, preview a saved event, and queue a test
+delivery. Transport tests render normal and test messages with the production
+template worker, then send them to disposable HTTPS fixtures with a verified
+local certificate authority. The fixtures check Slack/Mattermost `text`, Discord
+`content`, `wait=true` and disabled mentions, and the Apprise gateway's bearer
+authentication. They exercise successful acknowledgements, rejected payloads,
+rate limits, and transient errors using these response policies.
+
+Run the checks from a repository checkout with the prerequisites in the
+[development guide](development.md):
+
+```bash
+source .env && ./run_tests.sh
+python3 tests/python/run.py integration event-transports
+```
+
+These are provider-contract fixtures, not running Slack, Mattermost, Discord,
+or Apprise deployments. They do not verify workspace permissions, a real
+webhook's credentials, or downstream bridge delivery. Before relying on a new
+destination, use [preview and test delivery](#preview-test-and-check-delivery)
+with a dedicated channel, confirm `succeeded`, and check that the `[TEST]`
+message appears there. For a bridge, check each intended downstream service.
 
 ## Troubleshooting
 
