@@ -4370,7 +4370,13 @@ password and issue a new token before exercising authenticated endpoints.</p>
 <h2 id="existing-deployment-upgrade-path">Existing deployment upgrade path<a class="headerlink" href="#existing-deployment-upgrade-path" title="Permanent link">&para;</a></h2>
 <p>Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-<a href="../database_roles/">PostgreSQL Database Roles</a>. Use this sequence:</p>
+<a href="../database_roles/">PostgreSQL Database Roles</a>. For the 0.0.16 to 0.0.17 transition, format 6 logical backups are accepted
+by the candidate, which emits format 7. Stop all APIs, workers, and restore
+executors and take a PostgreSQL snapshot before migration. Binary-only rollback
+is unsupported: restore that snapshot and matching old binaries to recover,
+losing writes made after the snapshot. Retain credentials and old binaries too.
+See <a href="../events/#upgrade-and-rollback">the offline upgrade requirements</a>.</p>
+<p>For older installations crossing the format 6 boundary, use this sequence:</p>
 <ol>
 <li>While the existing release is healthy, stop new backup, restore, and import
    operations and create a backup with history. Retain the old binaries,
@@ -4393,8 +4399,8 @@ the split database roles described in
    the new executor cannot restore the older artifact directly.</li>
 </ol>
 <p>This is an application migration path, not an automatic database downgrade.
-Older application releases are only certified against the adjacent migrated
-schema as documented in <a href="../releasing/">Releasing Hubuum</a>.</p>
+The adjacent release is certified only for its declared recovery procedure,
+which may require restoring a pre-upgrade database snapshot, as documented in <a href="../releasing/">Releasing Hubuum</a>.</p>
 <p>Restore always requires the explicit destructive phrase. Split mode also uses
 the separate migration credential:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>hubuum-admin \

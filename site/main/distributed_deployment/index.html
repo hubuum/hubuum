@@ -4376,7 +4376,15 @@ than a complete manifest:</p>
 <a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a><span class="w">              </span><span class="nt">exec</span><span class="p">:</span>
 <a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a><span class="w">                </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"/bin/sh"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"-c"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"sleep</span><span class="nv"> </span><span class="s">5"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
-<p>For Helm, make the one-shot migration Job a blocking <code>pre-install</code> and
+<p>Before selecting a rollout strategy, run the candidate's
+<code>hubuum-admin --migration-mode</code> with its migrator credentials. <code>offline</code> requires
+stopping every old API, worker, and restore executor and taking a PostgreSQL
+snapshot before migration. This applies to 0.0.16 to 0.0.17. Start only matching
+candidate processes afterward. Recovery requires restoring that snapshot before
+starting old processes; binary-only rollback is unsupported. Writes after the
+snapshot are lost. Keep old binaries, credentials, and the snapshot until the
+upgrade is accepted. A failed preflight must block deployment.</p>
+<p>For a <code>rolling</code> migration plan, make the one-shot migration Job a blocking <code>pre-install</code> and
 <code>pre-upgrade</code> hook, or run and await an equivalent uniquely named Job in the
 release pipeline before <code>helm upgrade</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">metadata</span><span class="p">:</span>

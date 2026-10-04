@@ -4442,7 +4442,7 @@ connection.</p>
 uses the same readiness-aware backend pool as direct API traffic. All-mode
 installs also use the bundled Valkey service for shared backend login throttling
 across the two API replicas.</p>
-<p>This removes planned HTTP interruption during ordinary application updates. It
+<p>This removes planned HTTP interruption during rolling-compatible updates. It
 does not provide host, Caddy, PostgreSQL, or Valkey high availability because
 those components still have one instance on the same machine. Background work
 also pauses while the primary is replaced. Database migrations must remain
@@ -4710,7 +4710,7 @@ future updates:</p>
 <a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--tag<span class="w"> </span>latest
 <a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
 <a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Pin only the server; keep the saved frontend choice.</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.14
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.17
 <a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
 <a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Follow server development builds while keeping the frontend on stable releases.</span>
 <a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--tag<span class="w"> </span>main<span class="w"> </span>--frontend-tag<span class="w"> </span>latest
@@ -4720,7 +4720,19 @@ images. For source-build installs, it fetches the source checkouts and rebuilds
 the local app images. Existing <code>.env</code> values, including operator-added
 settings, are preserved except for explicit overrides; defaults introduced by a newer installer are appended
 only when their keys are missing. On an established rolling installation, it
-then performs a rolling application update:</p>
+then queries the candidate's <code>hubuum-admin --migration-mode</code>. A failed or
+unrecognized preflight stops the update before application processes are stopped.
+The candidate must support this command (0.0.17 or newer).</p>
+<p><strong>For the 0.0.16 to 0.0.17 transition, schedule downtime.</strong> Quiesce backup,
+restore, and import operations, stop both APIs and the restore executor, and
+capture a PostgreSQL snapshot before invoking the updater. Retain matching old
+binaries and credentials. Pending offline migrations cause the updater to stop
+both APIs (including primary workers) and the restore executor before migration,
+then start only candidate processes. If migration fails, old binaries remain
+stopped. Fix forward or restore the pre-upgrade snapshot; binary-only rollback
+is unsupported and snapshot recovery loses subsequent writes. See
+<a href="../events/#upgrade-and-rollback">the event migration guide</a>.</p>
+<p>With no pending offline migration, it performs the rolling sequence:</p>
 <ol>
 <li>Stop the all-role primary gracefully while the API-only standby continues
    serving HTTP. This drains old-version workers before schema migration.</li>
