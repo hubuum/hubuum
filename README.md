@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.16`](https://github.com/hubuum/hubuum/releases/tag/v0.0.16),
-published on September 22, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.17`](https://github.com/hubuum/hubuum/releases/tag/v0.0.17),
+published on October 4, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.16
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.17
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -301,6 +301,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.17](https://github.com/hubuum/hubuum/releases/tag/v0.0.17) | 2026-10-04 | Adds configurable webhooks, system notifications, operator monitoring, and versioned documentation. Requires an offline migration; introduces backup format 7, storage SDK 0.4, and Treetop 0.1. |
 | [0.0.16](https://github.com/hubuum/hubuum/releases/tag/v0.0.16) | 2026-09-22 | Requires fresh password approval for credential management. Adds resource-aware task discovery, an operations dashboard, tested alerts and runbooks, and system CA trust for SMTP. Includes two migrations and breaking API and storage SDK changes. |
 | [0.0.15](https://github.com/hubuum/hubuum/releases/tag/v0.0.15) | 2026-09-15 | Adds staged schema evolution, detailed impact and HTML repair reports, task cancellation, and execution limits. Hardens external authorization, schema validation, and event delivery. Introduces backup format 6 and new migrations. |
 | [0.0.14](https://github.com/hubuum/hubuum/releases/tag/v0.0.14) | 2026-09-10 | Keeps subsequent backups restorable after restoring without history. Makes memory backup and restore preserve resource state, retained history, and task artifacts. Retains backup format 5. |
@@ -311,30 +312,30 @@ Recent published releases:
 Before upgrading:
 
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
-  CI certifies upgrades and application rollbacks only between adjacent stable
-  releases; application rollback retains the migrated database.
-- For `0.0.16`, update frontend, CLI, and SDK credential-management flows to
-  request a single-use password approval and send
-  `X-Hubuum-Credential-Approval`. Bearer-only token creation/renewal, local user
-  creation, password changes, credential-bearing imports, and restore confirmation
-  return `403 reauthentication_required`. See the
-  [client and rollout guide](docs/credential_approvals.md).
-- Keep a verified `0.0.15` backup, quiesce protected mutations, and drain workers.
-  Run `hubuum-admin --migrate` to apply `2026-09-18-000001_task_discovery` and
-  `2026-09-19-000001_credential_approvals` before starting upgraded processes.
-  Install matching `0.0.16` server, administrator, and template worker binaries,
-  including the separately supervised restore executor. Upgrade every API and
-  worker replica before resuming protected operations.
-- Update strict event decoders for `credential_approval.created` and
-  `credential_approval.succeeded`, and exhaustive task-detail decoders for
-  schema-validation, rebuild, and remote-call variants. External storage
-  adapters must implement the new approval and task-discovery contracts.
-- Backup format 6 is unchanged from `0.0.15`; older backups without task-discovery
-  metadata remain accepted. When crossing the `0.0.15` format boundary, restore
-  older artifacts with their matching release, migrate the restored database,
-  then create and verify a new format 6 backup. There is no artifact converter.
-  See the
-  [existing deployment upgrade path](docs/backup-restore.md#existing-deployment-upgrade-path).
+  CI certifies the adjacent stable upgrade and its declared recovery procedure.
+- **Upgrading from 0.0.16 requires downtime.** Stop every API, worker, and restore
+  executor, take a PostgreSQL snapshot with all writers stopped, then apply
+  `2026-10-01-000001_webhook_notifications` and reconcile role grants. Start
+  matching `0.0.17` server, administrator, and template worker binaries.
+  The single-host updater uses `hubuum-admin --migration-mode` to select this
+  offline sequence; take the snapshot before invoking it.
+- **Binary-only rollback to 0.0.16 is unsupported.** Restore the pre-upgrade
+  database snapshot before starting matching old binaries. Recovery loses writes
+  made after the snapshot. Keep the old binaries, credentials, and snapshot
+  until the upgrade is accepted. See [upgrade and recovery](docs/events.md#upgrade-and-rollback).
+- Backups now emit format 7; format 6 remains accepted with legacy defaults.
+  Older servers cannot restore format 7. Clients reading event-delivery health
+  must accept null collection IDs for system subscriptions.
+- Upgrade all eight storage adapter SDK crates together to `0.4.0`, implement
+  the new adapter capabilities, and use Utoipa 6 for schema composition. Treetop
+  installations must upgrade REST and policy bundles to 0.1 and rebuild/re-sign
+  format 2 bundles. See [SDK migration](docs/storage_adapter_sdk.md#upgrading-from-03-to-04)
+  and [Treetop migration](docs/treetop/README.md#upgrading-to-treetop-01).
+- Deployments upgrading from before `0.0.16` must first adopt its credential
+  approval and task-discovery requirements. Update credential-management clients
+  to obtain a single-use approval and send `X-Hubuum-Credential-Approval`.
+  Follow the [client guide](docs/credential_approvals.md) and each intervening
+  release's migration and backup requirements.
 - When upgrading from before `0.0.15`, update clients that change schema policy
   on nonempty classes to stage a revision, request impact analysis, and explicitly
   activate it. Review the

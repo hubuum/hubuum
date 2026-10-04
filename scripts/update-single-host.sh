@@ -36,6 +36,9 @@ Options:
 Without tag options, updates reuse the image choices saved in .env.
 Tag options keep the configured image repository and replace any tag or digest.
 Tag options apply only to published images, not source builds.
+Pending offline migrations cause downtime. Before upgrading, stop all writers
+and take a PostgreSQL snapshot; retain matching old binaries and credentials.
+Binary-only rollback across an offline migration is unsupported.
 EOF
 }
 
@@ -284,7 +287,7 @@ fi
 
 # shellcheck source=scripts/single-host-rollout.sh
 source "$INSTALL_DIR/single-host-rollout.sh"
-hubuum_rollout
+HUBUUM_ROLLOUT_REQUIRE_PREFLIGHT=true hubuum_rollout
 
 if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]] && systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
   echo "Hubuum rolled via ${ENGINE_BIN} compose; ${SERVICE_NAME}.service remained active"

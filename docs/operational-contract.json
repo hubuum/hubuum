@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "0.0.16",
+  "release": "0.0.17",
   "metrics": [
     {
       "name": "hubuum_api_errors_total",
@@ -10203,6 +10203,27 @@
           "allowed_values": [],
           "required": false,
           "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "migration_mode",
+          "long": "migration-mode",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "migrate"
+          ],
           "requires": []
         },
         {

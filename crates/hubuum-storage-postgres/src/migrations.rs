@@ -1,6 +1,8 @@
 use diesel::RunQueryDsl;
 use diesel::connection::SimpleConnection;
 use diesel::deserialize::QueryableByName;
+use diesel::migration::MigrationSource;
+use diesel::pg::Pg;
 use diesel::sql_types::{BigInt, Text};
 use diesel::{Connection, PgConnection};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
@@ -9,6 +11,80 @@ use hubuum_storage_core::StorageError;
 use crate::{DatabaseRoleNames, PostgresStorageError, database_role_reconciliation_sql};
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+
+// Keep this set aligned with the hash-pinned offline migration reviews.
+const OFFLINE_MIGRATIONS: &[&str] = &["20261001000001"];
+
+/// Whether pending migrations permit the previous API to remain online.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MigrationMode {
+    Rolling,
+    Offline,
+}
+
+#[derive(QueryableByName)]
+struct AppliedMigration {
+    #[diesel(sql_type = Text)]
+    version: String,
+}
+
+/// Inspect migration history without modifying the database. Unknown applied
+/// migrations reject a downgrade rather than treating it as a rolling update.
+pub fn inspect_migration_mode(
+    connection_url: &str,
+    roles: Option<&DatabaseRoleNames>,
+) -> Result<MigrationMode, StorageError> {
+    let mut connection = PgConnection::establish(connection_url)
+        .map_err(|error| PostgresStorageError::database(error.to_string()))?;
+    if let Some(roles) = roles {
+        connection
+            .batch_execute(&format!("SET ROLE {};", roles.owner().quoted()))
+            .map_err(PostgresStorageError::from)?;
+    }
+    let markers = diesel::sql_query(
+        "SELECT to_regclass('public.__diesel_schema_migrations') IS NOT NULL AS has_migrations, \
+         to_regclass('public.collections') IS NOT NULL AS has_collections",
+    )
+    .get_result::<DisposableRestoreMarkers>(&mut connection)
+    .map_err(PostgresStorageError::from)?;
+    let applied = if markers.has_migrations {
+        diesel::sql_query("SELECT version::text FROM public.__diesel_schema_migrations")
+            .load::<AppliedMigration>(&mut connection)
+            .map_err(PostgresStorageError::from)?
+            .into_iter()
+            .map(|row| row.version)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let known = <EmbeddedMigrations as MigrationSource<Pg>>::migrations(&MIGRATIONS)
+        .map_err(|error| PostgresStorageError::database(error.to_string()))?
+        .into_iter()
+        .map(|migration| migration.name().version().to_string())
+        .collect::<Vec<_>>();
+    migration_mode_for_versions(&applied, &known).map_err(StorageError::from)
+}
+
+fn migration_mode_for_versions(
+    applied: &[String],
+    known: &[String],
+) -> Result<MigrationMode, PostgresStorageError> {
+    if applied.iter().any(|version| !known.contains(version)) {
+        return Err(PostgresStorageError::database(
+            "Database contains migrations unknown to this binary; restore a pre-upgrade database snapshot before downgrading",
+        ));
+    }
+    Ok(
+        if OFFLINE_MIGRATIONS
+            .iter()
+            .any(|version| !applied.iter().any(|applied| applied == version))
+        {
+            MigrationMode::Offline
+        } else {
+            MigrationMode::Rolling
+        },
+    )
+}
 
 #[derive(QueryableByName)]
 struct DisposableDatabaseState {
@@ -179,4 +255,52 @@ fn run_embedded_migrations_with_roles(
             })?;
     }
     Ok(applied_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MigrationMode, OFFLINE_MIGRATIONS, migration_mode_for_versions};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::fresh(vec![], MigrationMode::Offline)]
+    #[case::previous(vec!["20260919000001"], MigrationMode::Offline)]
+    #[case::current(vec!["20260919000001", "20261001000001"], MigrationMode::Rolling)]
+    fn pending_offline_migrations_determine_mode(
+        #[case] applied: Vec<&str>,
+        #[case] expected: MigrationMode,
+    ) {
+        let applied = applied.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let known = ["20260919000001".to_string(), "20261001000001".to_string()];
+        assert_eq!(
+            migration_mode_for_versions(&applied, &known).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn unknown_applied_migrations_reject_downgrades() {
+        let error = migration_mode_for_versions(&["20990101000001".to_string()], &[])
+            .expect_err("unknown database history must fail closed");
+        assert!(error.to_string().contains("pre-upgrade database snapshot"));
+    }
+
+    #[test]
+    fn offline_migrations_match_reviewed_policy() {
+        let reviews: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../.github/migration-offline-reviews.json"
+        ))
+        .unwrap();
+        let versions = reviews["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|review| {
+                let path = review["migration"].as_str().unwrap();
+                let directory = path.split('/').nth_back(1).unwrap();
+                directory.split('_').next().unwrap().replace('-', "")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(versions, OFFLINE_MIGRATIONS);
+    }
 }

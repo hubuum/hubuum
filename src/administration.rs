@@ -47,7 +47,9 @@ use crate::storage::{
     storage_database_role_setup_sql,
 };
 #[cfg(feature = "embedded-migrations")]
-use crate::storage::{prepare_disposable_restore_database, run_storage_migrations};
+use crate::storage::{
+    inspect_storage_migration_mode, prepare_disposable_restore_database, run_storage_migrations,
+};
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_sources_with_limits;
 use crate::utilities::is_valid_log_level;
@@ -145,6 +147,11 @@ struct AdminCli {
     #[cfg(feature = "embedded-migrations")]
     #[arg(long, default_value_t = false)]
     migrate: bool,
+
+    /// Print rolling or offline for pending migrations without changing the database
+    #[cfg(feature = "embedded-migrations")]
+    #[arg(long, default_value_t = false, conflicts_with = "migrate")]
+    migration_mode: bool,
 
     /// Compatibility alias for --database-role-mode single during migration
     #[cfg(feature = "embedded-migrations")]
@@ -332,7 +339,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     #[cfg(feature = "embedded-migrations")]
-    let migration_requested = admin_cli.migrate;
+    let migration_requested = admin_cli.migrate || admin_cli.migration_mode;
     #[cfg(not(feature = "embedded-migrations"))]
     let migration_requested = false;
     #[cfg(feature = "embedded-migrations")]
@@ -401,6 +408,19 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         }
         StorageBackendKind::Memory => StorageSettings::memory(),
     }.with_schema_limits(schema_limits);
+
+    #[cfg(feature = "embedded-migrations")]
+    if admin_cli.migration_mode {
+        let database_roles = database_role_mode
+            .uses_split_roles()
+            .then(|| configured_database_roles(&admin_cli))
+            .transpose()?;
+        println!(
+            "{}",
+            inspect_storage_migration_mode(&storage_settings, database_roles.as_ref())?.as_str()
+        );
+        return Ok(());
+    }
 
     #[cfg(feature = "embedded-migrations")]
     if admin_cli.migrate {

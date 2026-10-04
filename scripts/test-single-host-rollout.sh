@@ -14,6 +14,11 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
+if [[ "$*" == *" hubuum-migrate --migration-mode" ]]; then
+  printf '%s\n' "${FAKE_MIGRATION_MODE:-rolling}"
+  exit "${FAKE_PREFLIGHT_STATUS:-0}"
+fi
+
 if [[ "$*" == *" run "* && "$*" == *" hubuum-migrate --migrate" &&
   "${FAKE_MIGRATION_FAIL:-false}" == "true" ]]; then
   exit 1
@@ -83,7 +88,7 @@ if [[ "$*" == *" ps "* ]]; then
     exit 2
   }
 
-  for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby prometheus grafana; do
+  for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-restore-executor hubuum-web hubuum-web-standby prometheus grafana; do
     if [[ -e "$TEST_ROOT/removed-$service" ]]; then
       continue
     fi
@@ -152,7 +157,7 @@ assert_commands() {
   local expected="$1"
   local actual="$TEST_ROOT/actual.log"
 
-  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" > "$actual"
+  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" | grep -v -- '--migration-mode' > "$actual"
   diff -u "$expected" "$actual"
 }
 
@@ -162,7 +167,7 @@ assert_commands_with_unordered_prefix() {
   local actual="$TEST_ROOT/actual.log"
   local ordered_start=$((unordered_count + 1))
 
-  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" > "$actual"
+  grep -E '(^| )(run|up|exec|start|stop|rm) ' "$COMMAND_LOG" | grep -v -- '--migration-mode' > "$actual"
   diff -u \
     <(head -n "$unordered_count" "$expected" | sort) \
     <(head -n "$unordered_count" "$actual" | sort)
@@ -299,7 +304,7 @@ if unhealthy_standby_output="$(hubuum_rollout 2>&1)"; then
   exit 1
 fi
 [[ "$unhealthy_standby_output" == *"refusing to migrate while old-version workers remain online"* ]]
-if grep -Eq '(^| )(run|start|stop) ' "$COMMAND_LOG"; then
+if grep -v -- '--migration-mode' "$COMMAND_LOG" | grep -Eq '(^| )(run|start|stop) '; then
   echo "rollout changed application state with an unhealthy API standby" >&2
   exit 1
 fi
@@ -359,7 +364,7 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
-compose --env-file .env -f compose.yml up -d hubuum-api
+compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
@@ -470,4 +475,62 @@ assert_commands "$TEST_ROOT/expected-monitoring.log"
 grep -q 'inspect .*container-prometheus' "$COMMAND_LOG"
 grep -q 'inspect .*container-grafana' "$COMMAND_LOG"
 
-echo "Single-host rolling update test passed"
+MONITORING_ENABLED="false"
+FAKE_MONITORING_PRESENT="false"
+DATABASE_MANAGED="false"
+FAKE_CADDY_RELOAD_FAIL="false"
+FAKE_CADDY_RUNNING="true"
+INSTALL_MODE="backend"
+export FAKE_MIGRATION_MODE="offline"
+: > "$COMMAND_LOG"
+hubuum_rollout
+cat > "$TEST_ROOT/expected-offline.log" <<EOF
+compose --env-file .env -f compose.yml stop --timeout 75 hubuum-api hubuum-api-standby hubuum-restore-executor
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
+compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
+compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
+compose --env-file .env -f compose.yml up -d --no-deps caddy
+EOF
+cat >> "$TEST_ROOT/expected-offline.log" <<EOF
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
+EOF
+assert_commands "$TEST_ROOT/expected-offline.log"
+
+# An interrupted offline upgrade may have completed migration but left both
+# API replicas stopped. A rolling preflight must still recover the stack.
+export FAKE_MIGRATION_MODE="rolling"
+FAKE_UNHEALTHY_SERVICES="hubuum-api hubuum-api-standby"
+rm -f "$TEST_ROOT/started-hubuum-api" "$TEST_ROOT/started-hubuum-api-standby"
+: > "$COMMAND_LOG"
+hubuum_rollout
+assert_commands "$TEST_ROOT/expected-offline.log"
+FAKE_UNHEALTHY_SERVICES=""
+export FAKE_MIGRATION_MODE="offline"
+
+FAKE_MIGRATION_FAIL="true"
+: > "$COMMAND_LOG"
+if hubuum_rollout; then
+  echo "failed offline migration unexpectedly succeeded" >&2
+  exit 1
+fi
+cat > "$TEST_ROOT/expected-offline-failure.log" <<EOF
+compose --env-file .env -f compose.yml stop --timeout 75 hubuum-api hubuum-api-standby hubuum-restore-executor
+compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+EOF
+assert_commands "$TEST_ROOT/expected-offline-failure.log"
+FAKE_MIGRATION_FAIL="false"
+
+for FAKE_MIGRATION_MODE in invalid offline; do
+  export FAKE_PREFLIGHT_STATUS=0
+  [[ "$FAKE_MIGRATION_MODE" != "offline" ]] || FAKE_PREFLIGHT_STATUS=1
+  : > "$COMMAND_LOG"
+  if hubuum_rollout; then
+    echo "invalid or failed preflight unexpectedly succeeded" >&2
+    exit 1
+  fi
+  ! grep -v -- '--migration-mode' "$COMMAND_LOG" | grep -Eq '(^| )(run|up|exec|start|stop|rm) '
+done
+
+echo "Single-host rolling and offline update tests passed"

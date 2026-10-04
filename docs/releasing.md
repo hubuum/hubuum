@@ -13,8 +13,8 @@ This repository uses the CI workflow in
   operational-contract updates.
 - The candidate OpenAPI contract must have no unaccepted breaks from the
   immediately preceding stable release.
-- The candidate must pass the adjacent stable release upgrade and application
-  rollback harness against an immutable release-image digest.
+- The candidate must pass the adjacent stable release upgrade and declared
+  recovery harness against an immutable release-image digest.
 - The candidate must restore current, adjacent-release, and history-free backup
   artifacts into isolated databases and pass restored API and worker smoke
   checks.
@@ -59,8 +59,8 @@ Once the tag is pushed, the CI workflow will:
 - verify the tagged commit already passed CI on `main`
 - regenerate OpenAPI and compare it with the immediately preceding stable tag
 - resolve the latest stable release, migrate its representative data under live
-  API probes, exercise a mixed-version interval, restore its application image
-  against the migrated database, and prove the candidate can recover both
+  API probes for rolling upgrades or an offline snapshot for incompatible
+  migrations, exercise the declared recovery procedure, and prove the candidate can recover both
   adjacent-release and current backup artifacts before publishing
 - verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
 - validate Rust API classifications and any supported crate compatibility
@@ -153,12 +153,26 @@ with the candidate against one PostgreSQL database. The report records the
 candidate SHA, migration set and duration, maximum observed API latency and
 outage, the terminal test phase, and failure logs.
 
-The certified sequence drains old workers, keeps the old API under ordinary
-read probes while candidate migrations run, starts both API versions for
-cross-version reads and writes, completes the candidate rollout, and then
-restarts the `N-1` API against the migrated schema. That last step is an
-application rollback only. Hubuum does not automatically downgrade the
-database, and releases older than `N-1` are outside this compatibility promise.
+The candidate's `hubuum-admin --migration-mode` inspects applied migration
+history and reports `rolling` or `offline`. Unknown applied migrations fail
+preflight rather than approving a downgrade. The compatibility report records
+this mode and the recovery procedure actually tested.
+
+For rolling-compatible transitions, CI drains old workers, probes the old API
+while migrating, and exercises cross-version reads and writes. It then restarts
+both the old API and worker against the migrated database, verifies event
+fanout and a completed export task, and resumes the candidate.
+
+For offline transitions, CI stops the old API and worker before taking a
+PostgreSQL snapshot and applying migrations. It restores that snapshot before
+restarting and exercising both old processes. No zero-outage or binary-only
+rollback guarantee applies; latency/outage probe fields are null. In particular,
+0.0.16 to 0.0.17 requires this offline sequence. The webhook migration removes a
+constraint used by old event workers, so restarting old binaries alone is unsafe.
+Recovery loses writes made after the snapshot. Operators must retain old
+binaries, credentials, and a verified database snapshot until accepting the
+upgrade. Hubuum does not automatically downgrade the schema, and releases
+older than the adjacent stable release are outside this certification.
 
 The harness also creates an `N-1` backup with history, an `N-1` history-free
 backup, and an `N` backup. The candidate restores each into a separately

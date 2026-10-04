@@ -410,9 +410,7 @@ expected_migration_version="$(find "$REPOSITORY_ROOT/crates/hubuum-storage-postg
   exit 1
 }
 
-start_probes
-
-echo "Migrating the v0.0.1 database and rolling to the candidate image..."
+echo "Migrating the v0.0.1 database through the required offline upgrade..."
 "${BASE_COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate \
   --database-role-setup-sql | \
   "${BASE_COMPOSE_CMD[@]}" exec -T postgres \
@@ -425,6 +423,7 @@ write_candidate_caddyfile
 hubuum_rollout
 touch "$READY_PROBES_FILE"
 wait_for_public_endpoint readyz
+start_probes
 
 candidate_migration_count="$(migration_count)"
 (( candidate_migration_count > old_migration_count )) || {

@@ -92,8 +92,8 @@ pub(crate) use filters::{
 };
 #[cfg(feature = "embedded-migrations")]
 pub use migrations::{
-    prepare_disposable_restore_database, reset_disposable_restore_database,
-    run_embedded_migrations, run_embedded_migrations_as,
+    MigrationMode, inspect_migration_mode, prepare_disposable_restore_database,
+    reset_disposable_restore_database, run_embedded_migrations, run_embedded_migrations_as,
 };
 #[cfg(any(feature = "integration-test-support", feature = "benchmark-support"))]
 #[doc(hidden)]

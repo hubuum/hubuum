@@ -250,7 +250,14 @@ password and issue a new token before exercising authenticated endpoints.
 
 Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-[PostgreSQL Database Roles](database_roles.md). Use this sequence:
+[PostgreSQL Database Roles](database_roles.md). For the 0.0.16 to 0.0.17 transition, format 6 logical backups are accepted
+by the candidate, which emits format 7. Stop all APIs, workers, and restore
+executors and take a PostgreSQL snapshot before migration. Binary-only rollback
+is unsupported: restore that snapshot and matching old binaries to recover,
+losing writes made after the snapshot. Retain credentials and old binaries too.
+See [the offline upgrade requirements](events.md#upgrade-and-rollback).
+
+For older installations crossing the format 6 boundary, use this sequence:
 
 1. While the existing release is healthy, stop new backup, restore, and import
    operations and create a backup with history. Retain the old binaries,
@@ -273,8 +280,8 @@ the split database roles described in
    the new executor cannot restore the older artifact directly.
 
 This is an application migration path, not an automatic database downgrade.
-Older application releases are only certified against the adjacent migrated
-schema as documented in [Releasing Hubuum](releasing.md).
+The adjacent release is certified only for its declared recovery procedure,
+which may require restoring a pre-upgrade database snapshot, as documented in [Releasing Hubuum](releasing.md).
 
 Restore always requires the explicit destructive phrase. Split mode also uses
 the separate migration credential:

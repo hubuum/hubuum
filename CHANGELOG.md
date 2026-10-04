@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-10-04
+
 ### Added
 
 - Optional single-host Prometheus and Grafana installation with authenticated
@@ -64,6 +66,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `collection_id` for system subscriptions. Update clients to accept null.
 
 ### Fixed
+
+- Migration preflight remains mandatory when updating stopped single-host
+  deployments, including after application containers have been removed.
+  Monitoring startup and readiness failures now fail the rollout instead of
+  reporting a successful update.
+- The single-host updater checks pending migrations before stopping processes.
+  The webhook-notification upgrade stops both APIs, workers, and the restore
+  executor; failed offline upgrades do not restart older binaries. Later updates
+  without pending offline migrations retain rolling behavior.
+- **Breaking upgrade and recovery requirement:** the transition from 0.0.16
+  requires a maintenance window and a PostgreSQL snapshot taken after stopping
+  all writers. Binary-only rollback is unsupported after the notification
+  migration. Restore that snapshot with matching 0.0.16 binaries to recover;
+  writes after the snapshot are lost. CI verifies recovered API reads, event
+  fanout, and worker task execution.
 
 - Managed single-host PostgreSQL explicitly uses its existing mounted data
   directory, allowing fresh PostgreSQL 18 installs without changing the layout
