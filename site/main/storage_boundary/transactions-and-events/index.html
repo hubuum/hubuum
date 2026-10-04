@@ -1447,6 +1447,33 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../webhook_notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Chat & notification webhooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -4257,6 +4284,8 @@ for an exception.</p>
   <code>EventDeliveryAdministrationStorage::mark_event_delivery_dead</code> are explicit
   administrator interventions on derived delivery state. Worker protocols use
   <code>EventDeliveryWorkerStorage::claim_event_delivery_batch</code>,
+  <code>EventDeliveryWorkerStorage::begin_event_delivery</code>,
+  <code>EventDeliveryWorkerStorage::finish_event_delivery</code>,
   <code>EventDeliveryWorkerStorage::mark_event_delivery_succeeded</code>,
   <code>EventDeliveryWorkerStorage::mark_event_delivery_failed</code>,
   <code>EventFanoutStorage::process_event_fanout_batch</code>,

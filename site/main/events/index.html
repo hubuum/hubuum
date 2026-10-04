@@ -16,7 +16,7 @@
         <link rel="prev" href="../remote_targets/">
       
       
-        <link rel="next" href="../administration/">
+        <link rel="next" href="../webhook_notifications/">
       
       
         
@@ -1622,10 +1622,109 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#configurable-webhook-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configurable Webhook Notifications
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configurable Webhook Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#payload-templates-and-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Payload Templates And Secrets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slack-and-mattermost-incoming-webhook-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Slack And Mattermost Incoming Webhook Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-and-delivery-policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Response And Delivery Policies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-and-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Preview And Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade And Rollback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../webhook_notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Chat & notification webhooks
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4053,6 +4152,78 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#configurable-webhook-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configurable Webhook Notifications
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configurable Webhook Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#payload-templates-and-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Payload Templates And Secrets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slack-and-mattermost-incoming-webhook-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Slack And Mattermost Incoming Webhook Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-and-delivery-policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Response And Delivery Policies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-and-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Preview And Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade And Rollback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4292,6 +4463,9 @@ than a single resource path.</p>
 <li>Event subscriptions are collection-scoped routing rules. Callers need
   <code>ManageEventSubscription</code> on the collection and manage them through
   <code>/api/v1/collections/{collection_id}/event-subscriptions</code>.</li>
+<li>Administrators manage collection-less events through
+  <code>/api/v1/system-event-subscriptions</code>. System subscriptions match only events
+  with neither a direct collection nor related collections.</li>
 </ul>
 <p>A sink describes how to deliver. A subscription describes which events should
 be delivered to a sink. The primary subscription filters are <code>entity_types</code> and
@@ -4344,6 +4518,10 @@ delivery rows are created.</p>
 <td><code>correlation_ids</code></td>
 <td>Match correlation ids exactly</td>
 </tr>
+<tr>
+<td><code>task_kinds</code></td>
+<td>Match recognized task kinds in task-event metadata; missing metadata does not match</td>
+</tr>
 </tbody>
 </table>
 <p>Each field is optional. Empty and omitted fields match all events for that
@@ -4382,11 +4560,12 @@ subscription.</p>
 </code></pre></div>
 <p>For email sinks, create narrow subscriptions rather than sending every audit
 event to human recipients. For example, this subscription sends only failed
-task lifecycle events from a collection to the configured mailbox:</p>
+task lifecycle events to the configured mailbox. Create it through
+<code>POST /api/v1/system-event-subscriptions</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"task-failures-to-ops"</span><span class="p">,</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Email ops when collection tasks fail"</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Email ops when tasks fail"</span><span class="p">,</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"task"</span><span class="p">],</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"failed"</span><span class="p">],</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -4402,8 +4581,9 @@ task lifecycle events from a collection to the configured mailbox:</p>
 out to delivery rows. Disabling either one stops new matching deliveries
 without deleting historical events or existing delivery rows.</p>
 <h2 id="webhook-sinks">Webhook Sinks<a class="headerlink" href="#webhook-sinks" title="Permanent link">&para;</a></h2>
-<p>Webhook delivery is the reference concrete sink. A webhook subscription posts
-the event envelope as JSON to the URL in the subscription <code>routing</code> object:</p>
+<p>Webhook delivery is the reference concrete sink. For a setup walkthrough, see
+<a href="../webhook_notifications/">chat and notification webhooks</a>. By default, a webhook
+subscription posts the event envelope as JSON to the URL in its <code>routing</code> object:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://example.com/hubuum/events"</span>
@@ -4551,8 +4731,9 @@ render to non-empty text. Webhook <code>max_request_bytes</code> and the transpo
 <p>Delivery is at least once. A successful transport-specific acknowledgement
 marks the delivery <code>succeeded</code>; transport errors or failed acknowledgements are
 retried with backoff until the configured attempt limit, then marked <code>dead</code>.
-For webhooks, any <code>2xx</code> response is successful and non-<code>2xx</code> responses are
-retried.</p>
+By default, webhooks treat any <code>2xx</code> response as successful and retry non-<code>2xx</code>
+responses. Optional <a href="#response-and-delivery-policies">response policies</a> can
+require an acknowledgement, classify permanent errors, or defer HTTP 429.</p>
 <p>Hubuum does not guarantee ordering across events. Consumers that need ordering
 should reconcile with <code>occurred_at</code> and the internal monotonic <code>id</code>, while still
 deduplicating by <code>event_id</code>.</p>
@@ -4711,6 +4892,128 @@ Prometheus recording and alerting rules, SLO definitions and response runbooks.
 The same assets work with the optional single-host stack, independently managed
 Prometheus/Grafana installations, and Prometheus Operator. Pin the package to
 your server release and scrape every process directly with deployment labels.</p>
+<h2 id="configurable-webhook-notifications">Configurable Webhook Notifications<a class="headerlink" href="#configurable-webhook-notifications" title="Permanent link">&para;</a></h2>
+<p>The <code>webhook</code> sink can send the original event envelope or render a custom JSON
+payload. Slack, Mattermost, and notification bridges use this same transport;
+there are no provider-specific sink kinds or bot API clients. Events remain raw
+facts: no threshold evaluator, aggregation, or alert-state machine is added.
+System subscriptions and <code>task_kinds</code> filters can select existing failed-backup
+events. Metrics alerting systems remain appropriate for queue delay and database
+pressure unless a component emits a corresponding raw event.</p>
+<h3 id="payload-templates-and-secrets">Payload Templates And Secrets<a class="headerlink" href="#payload-templates-and-secrets" title="Permanent link">&para;</a></h3>
+<p>Set <code>config.body_template</code> to a MiniJinja template that renders valid JSON.
+Omitting it preserves the original event envelope. Templates expose the same
+bounded event context as email: envelope fields at the top level and the full
+original envelope as <code>event</code>. Use <code>tojson</code> for inserted values so quotes,
+newlines, and Unicode remain valid JSON. Templates share the isolated execution
+engine with fuel, recursion, context, and output limits. The rendered request
+also respects <code>max_request_bytes</code> and the global outbound request limit.</p>
+<p>The additional context fields <code>test</code> and <code>test_marker</code> identify test deliveries.
+<code>test_marker</code> is <code>[TEST]</code> followed by a space for tests and an empty string for normal delivery.
+Templates choose where to display it; Hubuum does not inject fields into the
+receiver's payload. Test sends also carry <code>X-Hubuum-Delivery-Purpose: test</code>.</p>
+<p>For a destination containing credentials, set <code>config.url_secret_ref</code> to an
+alias in the configured <a href="../secret_sources/">secret source</a>. Its value must be
+the <strong>complete HTTPS URL</strong>. This is independent of the sink's existing
+<code>secret_ref</code>, which continues to supply a bearer token. Neither credential is
+available to templates or previews. A secret-backed destination requires
+omitting <code>routing.url</code>; subscriptions cannot override that destination.
+Without <code>url_secret_ref</code>, the subscription's <code>routing.url</code> works as before.</p>
+<p>HTTPS validation, DNS screening, private-target policy, timeouts, response caps,
+and redirect refusal apply equally to literal and secret-backed URLs. Requests
+remain JSON <code>POST</code>s; templates cannot change transport, headers, or credentials.</p>
+<h3 id="slack-and-mattermost-incoming-webhook-example">Slack And Mattermost Incoming Webhook Example<a class="headerlink" href="#slack-and-mattermost-incoming-webhook-example" title="Permanent link">&para;</a></h3>
+<p>Follow <a href="../webhook_notifications/">Set Up Chat And Notification Webhooks</a> for
+provider setup, secret storage, complete sink and subscription requests, and
+preview/test delivery. It includes separate Slack and Mattermost instructions,
+plus Discord and Apprise bridge recipes.</p>
+<p>All examples use <code>kind: "webhook"</code>. Keep provider credentials in the secret
+source, use <code>tojson</code> for dynamic payload values, and select an acknowledgement
+policy matching the destination. No provider-specific sink or bot client is
+required.</p>
+<h3 id="response-and-delivery-policies">Response And Delivery Policies<a class="headerlink" href="#response-and-delivery-policies" title="Permanent link">&para;</a></h3>
+<p>Without <code>config.response</code>, webhooks retain their existing behavior: every 2xx
+is successful and every other HTTP status retries with backoff. Response rules
+are optional and declarative:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>success_statuses</code></td>
+<td>Explicit successful 2xx statuses; omitted or empty accepts all 2xx</td>
+</tr>
+<tr>
+<td><code>retry_statuses</code></td>
+<td>Non-success 3xx/4xx/5xx statuses to retry; omitted retries all failures, while an empty list makes all HTTP failures permanent</td>
+</tr>
+<tr>
+<td><code>rate_limit</code></td>
+<td>When true, HTTP 429 defers without consuming failure attempts, taking precedence over <code>retry_statuses</code>; defaults to false</td>
+</tr>
+<tr>
+<td><code>body</code></td>
+<td>Optional acknowledgement check, applied only after a successful status</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>body</code>, use <code>{"kind":"text_equals","value":"ok"}</code> to compare trimmed
+response text, or <code>{"kind":"json_equals","pointer":"/ok","value":true}</code>
+to compare a JSON value using an RFC 6901 pointer. A missing value, invalid JSON,
+or failed comparison is a permanent failure. Response bodies that reach the
+configured capture limit cannot be safely checked for truncation and retry
+instead. Status errors and failed acknowledgements never include response
+contents or destination URLs. These rules do not interpret provider error names.</p>
+<p>When <code>rate_limit</code> is enabled, valid <code>Retry-After</code> delta seconds or HTTP dates
+control the cooldown; invalid or absent values use 60 seconds. Transport failures
+remain retryable. Permanent failures dead-letter immediately. All sinks remain
+unlimited unless <code>delivery_policy.min_interval_ms</code> is configured. Values range
+from 1 to 86,400,000 milliseconds; <code>null</code> disables configured spacing.</p>
+<p>The persisted schedule is shared across workers and subscriptions using a sink.
+It spaces sends without dropping or aggregating events. Deferred deliveries stay
+pending with <code>deferred_reason</code> (<code>configured_rate</code> or <code>provider_rate</code>) and
+<code>next_attempt_at</code>, without consuming failure attempts. Separate sinks do not
+share their schedules, even if they target the same external channel.</p>
+<p>Delivery remains at least once: a received request followed by a lost
+acknowledgement can produce a duplicate. Custom payloads may include <code>event_id</code>
+for receiver deduplication; <code>X-Hubuum-Event-Id</code> always identifies the source event.
+Normal deliveries keep the event UUID as <code>Idempotency-Key</code>. Queued tests use
+<code>{event_uuid}-test-{delivery_id}</code>, stable across retries and distinct for each
+test, so tests cannot suppress normal sends at receivers using that header.</p>
+<h3 id="preview-and-test">Preview And Test<a class="headerlink" href="#preview-and-test" title="Permanent link">&para;</a></h3>
+<p>Administrators can preview or enqueue a webhook test using an existing event
+UUID and saved subscription. Preview resolves no secrets and performs no HTTP
+request; it returns only the JSON payload and sink kind:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="err">POST /api/v1/event-sinks/3/preview</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="err">{"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}</span>
+</code></pre></div>
+<p>Use <code>/api/v1/event-sinks/3/test</code> with the same body to enqueue a delivery.
+Replace the example identifiers with real saved records. Both verify sink and
+event scope. Tests bypass filters and enabled flags for setup but respect
+throttling. Preview renders the same test context as delivery. Include
+<code>test_marker</code> in templates when a visible message label is wanted.</p>
+<p>The test route returns <code>202</code> with an inspectable delivery and Location header.
+The request is audited as <code>event_sink.invoked</code>. Repeated tests create separate
+<code>purpose: "test"</code> records without suppressing normal event delivery. Workers
+render using the saved configuration at execution time.</p>
+<h3 id="upgrade-and-rollback">Upgrade And Rollback<a class="headerlink" href="#upgrade-and-rollback" title="Permanent link">&para;</a></h3>
+<p>Stop older API and worker processes, apply
+<code>2026-10-01-000001_webhook_notifications</code>, reconcile database role grants, and
+start matching binaries. Mixed old/new workers are unsupported because normal
+and test deliveries now use purpose-aware uniqueness.</p>
+<p>Rollback rejects enhanced webhook configuration, system subscriptions, rate
+policies, and test/deferred deliveries. Archive and remove retained
+<code>event_sink.invoked</code> audit records and their dependent deliveries with processes
+stopped before rollback. Format 7 backups preserve these settings and terminal
+delivery history, while transient scheduling resets on restore. Format 6
+backups restore legacy defaults. Remove enhanced webhook settings before using
+older binaries, which cannot interpret their request or response rules.</p>
 
 
 
@@ -4765,13 +5068,13 @@ your server release and scrape every process directly with deployment labels.</p
         
         
           
-          <a href="../administration/" class="md-footer__link md-footer__link--next" aria-label="Next: Operate Hubuum">
+          <a href="../webhook_notifications/" class="md-footer__link md-footer__link--next" aria-label="Next: Chat &amp; notification webhooks">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Operate Hubuum
+                Chat & notification webhooks
               </div>
             </div>
             <div class="md-footer__button md-icon">

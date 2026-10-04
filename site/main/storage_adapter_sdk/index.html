@@ -1447,6 +1447,33 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../webhook_notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Chat & notification webhooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -3160,6 +3187,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-03-to-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.3 to 0.4
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4078,6 +4116,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-03-to-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.3 to 0.4
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4159,7 +4208,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.3</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.4</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -4461,6 +4510,24 @@ unused approvals, and attach consumed restore approval evidence to completion
 provenance. PostgreSQL and memory conformance tests cover single use, concurrency,
 rollback, expiry, origin revocation, and request binding. See the
 <a href="../credential_approvals/">wire protocol and deployment guide</a>.</p>
+<h2 id="upgrading-from-03-to-04">Upgrading from 0.3 to 0.4<a class="headerlink" href="#upgrading-from-03-to-04" title="Permanent link">&para;</a></h2>
+<p>Update all eight SDK dependencies to exactly 0.4.0 together. Subscription
+requests, projections and lookups now carry <code>EventSubscriptionScope</code>, which
+preserves either a collection ID or system scope. Use <code>scope().collection_id()</code>
+when an optional collection is required. <code>TaskKind</code> is shared through
+<code>hubuum-domain</code>; subscription filters add <code>task_kinds</code>.</p>
+<p>Implement <code>load_event_notification</code>, <code>enqueue_event_notification_test</code> and
+<code>finish_event_delivery</code> on complete adapters. Preserve test purpose and deferral
+reason, validate event scope and sink identity before preview/test, and audit
+actual test requests. Atomically fence sink admission by the current unexpired
+claim. Persist per-sink spacing and provider cooldown across workers. Deferrals
+must leave attempts unchanged, clear claims, and honor their next attempt time;
+permanent errors terminate delivery. Claim batches must allow other sinks to
+make progress. Logical backups preserve delivery policy, system subscriptions
+and terminal test deliveries; transient admission state resets on restore.</p>
+<p>The built-in PostgreSQL and memory backends share application contract tests in
+<code>src/tests/storage_contract/webhook_notifications.rs</code>; retain adapter-specific
+locking and lease-loss tests when implementing these guarantees.</p>
 
 
 
