@@ -319,14 +319,14 @@ hubuum_start_stack() {
 
   "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate hubuum-restore-executor || return 1
 
-  "${COMPOSE_CMD[@]}" up -d hubuum-api || return 1
+  "${COMPOSE_CMD[@]}" up -d --no-deps hubuum-api || return 1
   hubuum_wait_for_rollout_health hubuum-api || return 1
 
   "${COMPOSE_CMD[@]}" up -d --no-deps hubuum-api-standby || return 1
   hubuum_wait_for_rollout_health hubuum-api-standby || return 1
 
   if [[ "$INSTALL_MODE" == "all" ]]; then
-    "${COMPOSE_CMD[@]}" up -d hubuum-web hubuum-web-standby || return 1
+    "${COMPOSE_CMD[@]}" up -d --no-deps hubuum-web hubuum-web-standby || return 1
     hubuum_wait_for_rollout_health hubuum-web || return 1
     hubuum_wait_for_rollout_health hubuum-web-standby || return 1
   fi

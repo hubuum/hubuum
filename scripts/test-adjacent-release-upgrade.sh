@@ -371,6 +371,10 @@ json_id() {
   jq --exit-status --raw-output '.id' <<< "$api_body"
 }
 
+monotonic_ms() {
+  python3 -I -S -c 'import time; print(time.monotonic_ns() // 1_000_000)'
+}
+
 create_backup_artifact() {
   local service="$1"
   local include_history="$2"
@@ -384,7 +388,7 @@ create_backup_artifact() {
   local started_ms
   local finished_ms
 
-  started_ms="$(date +%s%3N)"
+  started_ms="$(monotonic_ms)"
   api_request "$service" POST /api/v1/backups \
     "{\"include_history\":$include_history}"
   task_id="$(json_id)"
@@ -420,7 +424,7 @@ create_backup_artifact() {
     return 1
   }
   expected_digest="$(
-    awk 'BEGIN {IGNORECASE=1} /^x-hubuum-backup-sha256:/ {sub(/\r$/, "", $2); print $2}' \
+    awk 'tolower($1) == "x-hubuum-backup-sha256:" {sub(/\r$/, "", $2); print $2}' \
       "$headers_path"
   )"
   actual_digest="$(sha256sum "$output_path" | awk '{print $1}')"
@@ -428,7 +432,7 @@ create_backup_artifact() {
     echo "ERROR: downloaded backup digest does not match its response header" >&2
     return 1
   }
-  finished_ms="$(date +%s%3N)"
+  finished_ms="$(monotonic_ms)"
   printf -v "$duration_variable" '%d' "$((finished_ms - started_ms))"
   rm -f "$headers_path"
 }
@@ -779,7 +783,7 @@ if [[ "$upgrade_mode" == "rolling" ]]; then
     '{"description":"written by previous release after migration"}'
   api_request candidate-api GET "/api/v1/collections/$collection_id"
   [[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by previous release after migration" ]]
-  etag="$(awk 'BEGIN {IGNORECASE=1} /^etag:/ {sub(/\r$/, "", $2); print $2}' <<< "$api_headers")"
+  etag="$(awk 'tolower($1) == "etag:" {sub(/\r$/, "", $2); print $2}' <<< "$api_headers")"
   [[ -n "$etag" ]]
   api_request candidate-api PATCH "/api/v1/collections/$collection_id" \
     '{"description":"written by candidate during overlap"}' "$etag"
@@ -893,7 +897,7 @@ api_request restored-api GET "/api/v1/collections/$collection_id/events?limit=50
 restored_history_read=true
 
 computed_ready=false
-rebuild_started_ms="$(date +%s%3N)"
+rebuild_started_ms="$(monotonic_ms)"
 for _ in $(seq 1 100); do
   api_request restored-api GET "/api/v1/classes/$class_id/$object_id?include=computed"
   if jq --exit-status \
@@ -904,7 +908,7 @@ for _ in $(seq 1 100); do
   fi
   sleep 0.1
 done
-rebuild_finished_ms="$(date +%s%3N)"
+rebuild_finished_ms="$(monotonic_ms)"
 rebuild_duration_ms="$((rebuild_finished_ms - rebuild_started_ms))"
 [[ "$computed_ready" == "true" ]] || {
   echo "ERROR: restored computed-field materialization did not become current" >&2

@@ -364,7 +364,7 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
-compose --env-file .env -f compose.yml up -d hubuum-api
+compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
@@ -488,7 +488,7 @@ cat > "$TEST_ROOT/expected-offline.log" <<EOF
 compose --env-file .env -f compose.yml stop --timeout 75 hubuum-api hubuum-api-standby hubuum-restore-executor
 compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
-compose --env-file .env -f compose.yml up -d hubuum-api
+compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
