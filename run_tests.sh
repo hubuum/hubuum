@@ -151,7 +151,7 @@ cargo test -p hubuum-storage-postgres \
     --features integration-test-support,scale-benchmark-support,embedded-migrations "$@"
 
 # Run the application and request-level suites.
-if cargo test --features integration-test-support "$@"; then
+if cargo test --features integration-test-support,embedded-migrations "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else
     exit 1

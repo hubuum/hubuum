@@ -633,7 +633,7 @@ verify_worker() {
   api_request "$service" GET /api/v1/event-deliveries
   baseline_count="$(jq 'length' <<< "$api_body")"
   api_request "$service" POST "/api/v1/classes/$class_id/" \
-    "{\"name\":\"worker-$phase\",\"collection_id\":$collection_id,\"hubuum_class_id\":$class_id,\"data\":{\"owner\":\"previous\"}}"
+    "{\"name\":\"worker-$phase\",\"description\":\"worker recovery fixture\",\"collection_id\":$collection_id,\"hubuum_class_id\":$class_id,\"data\":{\"owner\":\"previous\"}}"
   for _ in $(seq 1 100); do
     api_request "$service" GET /api/v1/event-deliveries
     if (( $(jq 'length' <<< "$api_body") > baseline_count )); then
