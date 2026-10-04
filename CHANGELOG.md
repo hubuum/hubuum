@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Migration preflight remains mandatory when updating stopped single-host
+  deployments, including after application containers have been removed.
+  Monitoring startup and readiness failures now fail the rollout instead of
+  reporting a successful update.
+
 ## [0.0.17] - 2026-10-04
 
 ### Added

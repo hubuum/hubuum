@@ -7,6 +7,34 @@
 
 API_PORT="${API_PORT:-8080}"
 
+hubuum_all_container_ids() {
+  local ps_help
+  local -a ps_options=(-q)
+
+  # Older podman-compose includes stopped containers without accepting -a.
+  # Detect the provider's option, including when docker is a Podman alias.
+  ps_help="$("${COMPOSE_CMD[@]}" ps --help)" || return 1
+  [[ "$ps_help" != *"--all"* ]] || ps_options=(-a -q)
+  "${COMPOSE_CMD[@]}" ps "${ps_options[@]}"
+}
+
+hubuum_application_container_ids() {
+  local container_ids container_id service
+
+  container_ids="$(hubuum_all_container_ids)" || return 1
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    service="$("$ENGINE_PATH" inspect \
+      --format '{{ index .Config.Labels "com.docker.compose.service" }}' \
+      "$container_id")" || return 1
+    case "$service" in
+      caddy|hubuum-api|hubuum-api-standby|hubuum-restore-executor)
+        printf '%s\n' "$container_id"
+        ;;
+    esac
+  done <<< "$container_ids"
+}
+
 hubuum_require_positive_seconds() {
   local setting_name="$1"
   local value="$2"
@@ -339,20 +367,14 @@ hubuum_roll_monitoring() {
   if [[ "${MONITORING_ENABLED:-false}" == "true" ]]; then
     # Recreate to load refreshed rules/provisioning and resolve current backend
     # container addresses. Named volumes retain time series and Grafana accounts.
-    "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate prometheus grafana
-    hubuum_wait_for_rollout_health prometheus
-    hubuum_wait_for_rollout_health grafana
+    "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate prometheus grafana || return 1
+    hubuum_wait_for_rollout_health prometheus || return 1
+    hubuum_wait_for_rollout_health grafana || return 1
   else
-    local container_ids container_id service ps_help
-    local -a ps_options=(-q)
+    local container_ids container_id service
     local -a monitoring_containers=()
 
-    # podman-compose already includes stopped containers and older versions
-    # do not accept -a. Detect the provider's option, since `docker` may be a
-    # Podman compatibility command. Both providers include project orphans.
-    ps_help="$("${COMPOSE_CMD[@]}" ps --help)" || return 1
-    [[ "$ps_help" != *"--all"* ]] || ps_options=(-a -q)
-    container_ids="$("${COMPOSE_CMD[@]}" ps "${ps_options[@]}")" || return 1
+    container_ids="$(hubuum_all_container_ids)" || return 1
     while IFS= read -r container_id; do
       [[ -n "$container_id" ]] || continue
       service="$("$ENGINE_PATH" inspect \
@@ -372,6 +394,7 @@ hubuum_roll_monitoring() {
 
 hubuum_rollout() {
   local migration_mode
+  local application_containers
   local api_primary_recovered="false"
   local drain_status
   local primary_workers_drained="false"
@@ -384,7 +407,10 @@ hubuum_rollout() {
 
   hubuum_validate_rollout_timeouts || return 1
 
-  if hubuum_caddy_is_running || [[ -n "$(hubuum_service_container_id hubuum-api)$(hubuum_service_container_id hubuum-api-standby)$(hubuum_service_container_id hubuum-restore-executor)" ]]; then
+  application_containers="$(hubuum_application_container_ids)" || return 1
+  # The updater requires preflight even after compose down removed containers
+  # but retained the database. Fresh installs may still need to create roles.
+  if [[ -n "$application_containers" || "${HUBUUM_ROLLOUT_REQUIRE_PREFLIGHT:-false}" == "true" ]]; then
     if ! migration_mode="$("${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate --migration-mode)"; then
       echo "ERROR: migration preflight failed; no application processes were stopped. Use a candidate with --migration-mode support and review its upgrade requirements." >&2
       return 1

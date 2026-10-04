@@ -138,6 +138,7 @@ for probe_path in scripts/single-host-rollout.sh scripts/test-single-host-rollou
   scripts/test-single-host-zero-downtime.sh scripts/test-adjacent-release-upgrade.sh \
   crates/hubuum-storage-postgres/src/migrations.rs scripts/single-host-health-probe.py tests/python/unit/deployment/test_health_probe.py \
   scripts/install-single-host.sh scripts/update-single-host.sh tests/python/unit/deployment/test_image_tags.py \
+  tests/python/unit/deployment/test_rollout.py \
   scripts/single-host-monitoring.sh scripts/observability.py \
   tests/python/integration/monitoring.py tests/python/integration/monitoring_events.py \
   tests/python/unit/monitoring/test_package.py tests/python/unit/monitoring/test_events.py \
