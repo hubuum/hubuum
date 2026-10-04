@@ -36,6 +36,9 @@ Options:
 Without tag options, updates reuse the image choices saved in .env.
 Tag options keep the configured image repository and replace any tag or digest.
 Tag options apply only to published images, not source builds.
+Pending offline migrations cause downtime. Before upgrading, stop all writers
+and take a PostgreSQL snapshot; retain matching old binaries and credentials.
+Binary-only rollback across an offline migration is unsupported.
 EOF
 }
 

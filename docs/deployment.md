@@ -72,7 +72,7 @@ uses the same readiness-aware backend pool as direct API traffic. All-mode
 installs also use the bundled Valkey service for shared backend login throttling
 across the two API replicas.
 
-This removes planned HTTP interruption during ordinary application updates. It
+This removes planned HTTP interruption during rolling-compatible updates. It
 does not provide host, Caddy, PostgreSQL, or Valkey high availability because
 those components still have one instance on the same machine. Background work
 also pauses while the primary is replaced. Database migrations must remain
@@ -421,7 +421,7 @@ future updates:
 sudo ./update-single-host.sh --tag latest
 
 # Pin only the server; keep the saved frontend choice.
-sudo ./update-single-host.sh --server-tag v0.0.14
+sudo ./update-single-host.sh --server-tag v0.0.17
 
 # Follow server development builds while keeping the frontend on stable releases.
 sudo ./update-single-host.sh --tag main --frontend-tag latest
@@ -432,7 +432,21 @@ images. For source-build installs, it fetches the source checkouts and rebuilds
 the local app images. Existing `.env` values, including operator-added
 settings, are preserved except for explicit overrides; defaults introduced by a newer installer are appended
 only when their keys are missing. On an established rolling installation, it
-then performs a rolling application update:
+then queries the candidate's `hubuum-admin --migration-mode`. A failed or
+unrecognized preflight stops the update before application processes are stopped.
+The candidate must support this command (0.0.17 or newer).
+
+**For the 0.0.16 to 0.0.17 transition, schedule downtime.** Quiesce backup,
+restore, and import operations, stop both APIs and the restore executor, and
+capture a PostgreSQL snapshot before invoking the updater. Retain matching old
+binaries and credentials. Pending offline migrations cause the updater to stop
+both APIs (including primary workers) and the restore executor before migration,
+then start only candidate processes. If migration fails, old binaries remain
+stopped. Fix forward or restore the pre-upgrade snapshot; binary-only rollback
+is unsupported and snapshot recovery loses subsequent writes. See
+[the event migration guide](events.md#upgrade-and-rollback).
+
+With no pending offline migration, it performs the rolling sequence:
 
 1. Stop the all-role primary gracefully while the API-only standby continues
    serving HTTP. This drains old-version workers before schema migration.

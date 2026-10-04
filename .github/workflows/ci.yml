@@ -807,7 +807,7 @@ jobs:
         if: matrix.feature.name == 'default'
         run: >-
           cargo test -p hubuum-storage-postgres
-          -F integration-test-support,scale-benchmark-support --locked --release
+          -F integration-test-support,scale-benchmark-support,embedded-migrations --locked --release
       - name: Test workspace package contracts
         if: matrix.feature.name == 'default'
         run: cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres --all-features --locked --release
@@ -1394,7 +1394,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HUBUUM_COMPATIBILITY_REPORT: compatibility-report/release-metadata.json
         run: bash scripts/resolve-adjacent-release.sh
-      - name: Test adjacent-release upgrade and application rollback
+      - name: Test adjacent-release upgrade and recovery
         env:
           HUBUUM_TEST_IMAGE: hubuum-server:ci
           HUBUUM_PREVIOUS_IMAGE: ${{ steps.adjacent_release.outputs.previous_image }}
@@ -1413,6 +1413,9 @@ jobs:
             echo "| Previous release | $(jq --raw-output '.previous_release.tag' compatibility-report/report.json) |"
             echo "| Previous digest | $(jq --raw-output '.previous_release.digest' compatibility-report/report.json) |"
             echo "| Candidate SHA | $(jq --raw-output '.candidate.sha' compatibility-report/report.json) |"
+            echo "| Upgrade mode | $(jq --raw-output '.upgrade_mode' compatibility-report/report.json) |"
+            echo "| Recovery mode | $(jq --raw-output '.rollback.mode' compatibility-report/report.json) |"
+            echo "| Recovered worker verified | $(jq --raw-output '.rollback.worker_verified' compatibility-report/report.json) |"
             echo "| Migration seconds | $(jq --raw-output '.migration.seconds' compatibility-report/report.json) |"
             echo "| Maximum API latency | $(jq --raw-output '.migration.max_api_latency_seconds' compatibility-report/report.json) s |"
             echo "| Maximum observed outage | $(jq --raw-output '.migration.max_observed_api_outage_seconds' compatibility-report/report.json) s |"

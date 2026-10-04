@@ -38,6 +38,10 @@ related_object_id=""
 class_relation_id=""
 template_id=""
 migration_seconds=0
+upgrade_mode="unknown"
+rollback_mode="not-run"
+rollback_worker_verified=false
+snapshot_file="$test_root/pre-upgrade.dump"
 max_probe_latency_seconds=0
 max_probe_outage_seconds=0
 adjacent_backup_generation_ms=0
@@ -133,6 +137,9 @@ write_report() {
   jq --null-input \
     --arg result "$result" \
     --arg phase "$phase" \
+    --arg upgrade_mode "$upgrade_mode" \
+    --arg rollback_mode "$rollback_mode" \
+    --argjson rollback_worker_verified "$rollback_worker_verified" \
     --arg previous_tag "$previous_tag" \
     --arg previous_image "$previous_image" \
     --arg previous_digest "$previous_digest" \
@@ -160,12 +167,14 @@ write_report() {
     '{
       result: $result,
       phase: $phase,
+      upgrade_mode: $upgrade_mode,
+      rollback: {mode: $rollback_mode, worker_verified: $rollback_worker_verified},
       previous_release: {tag: $previous_tag, image: $previous_image, digest: $previous_digest},
       candidate: {sha: $candidate_sha, image: $candidate_image, image_id: $candidate_image_id},
       migration: {
         seconds: $migration_seconds,
-        max_api_latency_seconds: $max_probe_latency_seconds,
-        max_observed_api_outage_seconds: $max_probe_outage_seconds,
+        max_api_latency_seconds: (if $upgrade_mode == "rolling" then $max_probe_latency_seconds else null end),
+        max_observed_api_outage_seconds: (if $upgrade_mode == "rolling" then $max_probe_outage_seconds else null end),
         applied_versions: $migrations
       },
       backup_recovery: {
@@ -577,10 +586,10 @@ seed_previous_release() {
     '{"key":"owner_copy","label":"Owner copy","description":"compatibility fixture","operation":{"type":"first_non_null","paths":["/owner"]},"result_type":"string","enabled":true}'
 
   api_request previous-api POST /api/v1/event-sinks \
-    '{"name":"compat-sink","kind":"webhook","config":{},"enabled":false}'
+    '{"name":"compat-sink","kind":"webhook","config":{},"enabled":true}'
   sink_id="$(json_id)"
   api_request previous-api POST "/api/v1/collections/$collection_id/event-subscriptions" \
-    "{\"sink_id\":$sink_id,\"name\":\"compat-events\",\"description\":\"adjacent release fixture\",\"entity_types\":[\"object\"],\"actions\":[\"created\",\"updated\"],\"filter\":{},\"routing\":{},\"enabled\":false}"
+    "{\"sink_id\":$sink_id,\"name\":\"compat-events\",\"description\":\"adjacent release fixture\",\"entity_types\":[\"object\"],\"actions\":[\"created\",\"updated\"],\"filter\":{},\"routing\":{\"url\":\"https://example.invalid/compat\"},\"enabled\":true}"
 
   api_request previous-api POST /api/v1/remote-targets \
     "{\"collection_id\":$collection_id,\"class_id\":$class_id,\"name\":\"compat-target\",\"description\":\"adjacent release fixture\",\"method\":\"post\",\"url_template\":\"https://example.invalid/{{ object.id }}\",\"headers_template\":{},\"body_template\":null,\"auth_config\":{\"type\":\"none\"},\"timeout_ms\":1000,\"allowed_subject_types\":[\"object\"],\"enabled\":false}"
@@ -614,6 +623,37 @@ seed_previous_release() {
     echo "ERROR: representative fixture did not create audit events" >&2
     return 1
   }
+}
+
+# Verify useful worker work, including the event fanout insert that is
+# incompatible with old binaries after the offline notification migration.
+verify_worker() {
+  local service="$1"
+  local task_id baseline_count
+  api_request "$service" GET /api/v1/event-deliveries
+  baseline_count="$(jq 'length' <<< "$api_body")"
+  api_request "$service" POST "/api/v1/classes/$class_id/" \
+    "{\"name\":\"worker-$phase\",\"collection_id\":$collection_id,\"hubuum_class_id\":$class_id,\"data\":{\"owner\":\"previous\"}}"
+  for _ in $(seq 1 100); do
+    api_request "$service" GET /api/v1/event-deliveries
+    if (( $(jq 'length' <<< "$api_body") > baseline_count )); then
+      break
+    fi
+    sleep 0.2
+  done
+  (( $(jq 'length' <<< "$api_body") > baseline_count ))
+  api_request "$service" POST "/api/v1/export-templates/$template_id/exports" '{}'
+  task_id="$(json_id)"
+  for _ in $(seq 1 100); do
+    api_request "$service" GET "/api/v1/tasks/$task_id"
+    case "$(jq --raw-output '.status' <<< "$api_body")" in
+      succeeded) return 0 ;;
+      failed|cancelled) echo "ERROR: $service worker task failed" >&2; return 1 ;;
+    esac
+    sleep 0.2
+  done
+  echo "ERROR: $service worker did not finish its export task" >&2
+  return 1
 }
 
 probe_previous_api() {
@@ -706,50 +746,89 @@ if "${compose[@]}" exec -T previous-worker true >/dev/null 2>&1; then
   exit 1
 fi
 
+phase="migration-preflight"
+upgrade_mode="$("${compose[@]}" run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin candidate-api --migration-mode)"
+case "$upgrade_mode" in
+  offline)
+    "${compose[@]}" stop --timeout 75 previous-api
+    "${compose[@]}" exec -T postgres pg_dump --username hubuum --dbname hubuum --format=custom > "$snapshot_file"
+    ;;
+  rolling)
+    rm -f "$probe_stop_file"
+    probe_previous_api &
+    probe_pid=$!
+    ;;
+  *) echo "ERROR: invalid migration mode: $upgrade_mode" >&2; exit 1 ;;
+esac
 phase="candidate-migration"
-rm -f "$probe_stop_file"
-probe_previous_api &
-probe_pid=$!
 migration_started=$SECONDS
 "${compose[@]}" run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin \
   candidate-api --migrate --legacy-single-role-migration > "$migration_log" 2>&1
 migration_seconds=$((SECONDS - migration_started))
-stop_probe
-analyze_probes
+if [[ "$upgrade_mode" == "rolling" ]]; then
+  stop_probe
+  analyze_probes
+fi
+[[ "$("${compose[@]}" run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin candidate-api --migration-mode)" == "rolling" ]]
 
 phase="mixed-version"
 "${compose[@]}" up -d candidate-api
 wait_for_ready candidate-api
-api_request previous-api PATCH "/api/v1/collections/$collection_id" \
-  '{"description":"written by previous release after migration"}'
-api_request candidate-api GET "/api/v1/collections/$collection_id"
-[[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by previous release after migration" ]]
-etag="$(awk 'BEGIN {IGNORECASE=1} /^etag:/ {sub(/\r$/, "", $2); print $2}' <<< "$api_headers")"
-[[ -n "$etag" ]]
-api_request candidate-api PATCH "/api/v1/collections/$collection_id" \
-  '{"description":"written by candidate during overlap"}' "$etag"
-api_request previous-api GET "/api/v1/collections/$collection_id"
-[[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by candidate during overlap" ]]
-api_request candidate-api GET "/api/v1/classes/$class_id/$object_id"
-[[ "$(jq --raw-output '.data.owner' <<< "$api_body")" == "previous" ]]
+if [[ "$upgrade_mode" == "rolling" ]]; then
+  api_request previous-api PATCH "/api/v1/collections/$collection_id" \
+    '{"description":"written by previous release after migration"}'
+  api_request candidate-api GET "/api/v1/collections/$collection_id"
+  [[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by previous release after migration" ]]
+  etag="$(awk 'BEGIN {IGNORECASE=1} /^etag:/ {sub(/\r$/, "", $2); print $2}' <<< "$api_headers")"
+  [[ -n "$etag" ]]
+  api_request candidate-api PATCH "/api/v1/collections/$collection_id" \
+    '{"description":"written by candidate during overlap"}' "$etag"
+  api_request previous-api GET "/api/v1/collections/$collection_id"
+  [[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by candidate during overlap" ]]
+  api_request candidate-api GET "/api/v1/classes/$class_id/$object_id"
+  [[ "$(jq --raw-output '.data.owner' <<< "$api_body")" == "previous" ]]
+
+else
+  api_request candidate-api GET "/api/v1/classes/$class_id/$object_id"
+  [[ "$(jq --raw-output '.data.owner' <<< "$api_body")" == "previous" ]]
+fi
 
 phase="candidate-rollout"
 "${compose[@]}" stop --timeout 75 previous-api
 "${compose[@]}" up -d candidate-worker
 sleep 2
 "${compose[@]}" exec -T candidate-worker true
+verify_worker candidate-api
 
 phase="application-rollback"
 "${compose[@]}" stop --timeout 75 candidate-api candidate-worker
-"${compose[@]}" up -d previous-api
+if [[ "$upgrade_mode" == "offline" ]]; then
+  rollback_mode="pre-upgrade-database-snapshot"
+  # This database belongs exclusively to this disposable Compose project.
+  "${compose[@]}" exec -T postgres dropdb --username hubuum --force hubuum
+  "${compose[@]}" exec -T postgres createdb --username hubuum hubuum
+  "${compose[@]}" exec -T postgres pg_restore --username hubuum --dbname hubuum --exit-on-error < "$snapshot_file"
+else
+  rollback_mode="application"
+fi
+"${compose[@]}" up -d previous-api previous-worker
 wait_for_ready previous-api
 api_request previous-api GET "/api/v1/collections/$collection_id"
-[[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by candidate during overlap" ]]
+if [[ "$upgrade_mode" == "offline" ]]; then
+  [[ "$(jq --raw-output '.description' <<< "$api_body")" == "adjacent release root" ]]
+else
+  [[ "$(jq --raw-output '.description' <<< "$api_body")" == "written by candidate during overlap" ]]
+fi
+verify_worker previous-api
+rollback_worker_verified=true
 api_request previous-api PATCH "/api/v1/collections/$collection_id" \
   '{"description":"verified by previous release rollback"}'
 
 phase="restore-candidate"
-"${compose[@]}" stop --timeout 75 previous-api
+"${compose[@]}" stop --timeout 75 previous-api previous-worker
+if [[ "$upgrade_mode" == "offline" ]]; then
+  "${compose[@]}" run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin candidate-api --migrate
+fi
 "${compose[@]}" up -d candidate-api candidate-worker
 wait_for_ready candidate-api
 api_request candidate-api GET "/api/v1/collections/$collection_id"

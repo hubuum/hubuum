@@ -799,3 +799,18 @@ async fn export_template_health_reports_persisted_output_statistics() {
         "template={template_name} avg_total_duration_ms=125.00 max_total_duration_ms=125"
     )));
 }
+
+#[cfg(feature = "embedded-migrations")]
+#[rstest::rstest]
+#[case::postgres(false)]
+#[case::memory(true)]
+fn migration_preflight_prints_only_the_mode(#[case] memory: bool) {
+    let mut command = admin_command(&database_url());
+    command.arg("--migration-mode");
+    if memory {
+        command.args(["--storage-backend", "memory"]);
+    }
+    let output = command.output().expect("migration preflight should run");
+    assert_command_succeeded(&output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "rolling");
+}

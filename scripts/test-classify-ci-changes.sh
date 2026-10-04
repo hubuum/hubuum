@@ -134,7 +134,9 @@ for python_tool in scripts/check-python-version.py tests/python/unit/tooling/tes
   assert_flag "$python_tool_output" code true
 done
 
-for probe_path in scripts/single-host-health-probe.py tests/python/unit/deployment/test_health_probe.py \
+for probe_path in scripts/single-host-rollout.sh scripts/test-single-host-rollout.sh \
+  scripts/test-single-host-zero-downtime.sh scripts/test-adjacent-release-upgrade.sh \
+  crates/hubuum-storage-postgres/src/migrations.rs scripts/single-host-health-probe.py tests/python/unit/deployment/test_health_probe.py \
   scripts/install-single-host.sh scripts/update-single-host.sh tests/python/unit/deployment/test_image_tags.py \
   scripts/single-host-monitoring.sh scripts/observability.py \
   tests/python/integration/monitoring.py tests/python/integration/monitoring_events.py \

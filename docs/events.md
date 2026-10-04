@@ -735,7 +735,17 @@ Stop older API and worker processes, apply
 start matching binaries. Mixed old/new workers are unsupported because normal
 and test deliveries now use purpose-aware uniqueness.
 
-Rollback rejects enhanced webhook configuration, system subscriptions, rate
+Binary-only rollback to 0.0.16 is unsupported: its event worker's insert conflict
+constraint no longer exists after this migration. Before upgrading, stop all
+writers and take a PostgreSQL snapshot, retaining the old binaries and
+credentials. For recovery, stop the candidate, restore that snapshot, and start
+matching old APIs, workers, and restore executors. Writes after the snapshot
+are lost. The single-host updater selects downtime using the candidate's
+`hubuum-admin --migration-mode` preflight and leaves old binaries stopped if
+migration fails. The updater does not create the required snapshot for you.
+
+Manual schema rollback is a separate, destructive operation. Its guard rejects
+enhanced webhook configuration, system subscriptions, rate
 policies, and test/deferred deliveries. Archive and remove retained
 `event_sink.invoked` audit records and their dependent deliveries with processes
 stopped before rollback. Format 7 backups preserve these settings and terminal

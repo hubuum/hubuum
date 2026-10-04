@@ -148,7 +148,7 @@ if [ "$#" -eq 0 ]; then
         -- --exact --ignored
 fi
 cargo test -p hubuum-storage-postgres \
-    --features integration-test-support,scale-benchmark-support "$@"
+    --features integration-test-support,scale-benchmark-support,embedded-migrations "$@"
 
 # Run the application and request-level suites.
 if cargo test --features integration-test-support "$@"; then

@@ -18,6 +18,8 @@ use hubuum_storage_postgres::{
     PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, build_postgres_pool,
     inspect_database_privileges,
 };
+#[cfg(feature = "embedded-migrations")]
+use hubuum_storage_postgres::{MigrationMode as PostgresMigrationMode, inspect_migration_mode};
 use serde::Serialize;
 use tracing::{error, info};
 
@@ -563,6 +565,42 @@ pub(crate) fn initialize_storage(
         StorageAdapterSettings::Memory => Ok(StorageHandle::memory_with_schema_limits(
             settings.schema_limits,
         )),
+    }
+}
+
+#[cfg(feature = "embedded-migrations")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StorageMigrationMode {
+    Rolling,
+    Offline,
+}
+
+#[cfg(feature = "embedded-migrations")]
+impl StorageMigrationMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Rolling => "rolling",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+#[cfg(feature = "embedded-migrations")]
+pub(crate) fn inspect_storage_migration_mode(
+    settings: &StorageSettings,
+    roles: Option<&StorageDatabaseRoleNames>,
+) -> Result<StorageMigrationMode, StorageError> {
+    match &settings.adapter {
+        StorageAdapterSettings::Postgres(settings) => {
+            let roles = roles
+                .map(StorageDatabaseRoleNames::postgres_names)
+                .transpose()?;
+            match inspect_migration_mode(settings.connection_url(), roles.as_ref())? {
+                PostgresMigrationMode::Rolling => Ok(StorageMigrationMode::Rolling),
+                PostgresMigrationMode::Offline => Ok(StorageMigrationMode::Offline),
+            }
+        }
+        StorageAdapterSettings::Memory => Ok(StorageMigrationMode::Rolling),
     }
 }
 

@@ -32,7 +32,8 @@ pub(crate) use factory::{
 };
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::{
-    prepare_disposable_restore_database, reset_disposable_restore_database, run_storage_migrations,
+    inspect_storage_migration_mode, prepare_disposable_restore_database,
+    reset_disposable_restore_database, run_storage_migrations,
 };
 pub(crate) use hubuum_storage_core::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, CatalogStorage,

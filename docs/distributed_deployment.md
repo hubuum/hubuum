@@ -239,7 +239,16 @@ spec:
                 command: ["/bin/sh", "-c", "sleep 5"]
 ```
 
-For Helm, make the one-shot migration Job a blocking `pre-install` and
+Before selecting a rollout strategy, run the candidate's
+`hubuum-admin --migration-mode` with its migrator credentials. `offline` requires
+stopping every old API, worker, and restore executor and taking a PostgreSQL
+snapshot before migration. This applies to 0.0.16 to 0.0.17. Start only matching
+candidate processes afterward. Recovery requires restoring that snapshot before
+starting old processes; binary-only rollback is unsupported. Writes after the
+snapshot are lost. Keep old binaries, credentials, and the snapshot until the
+upgrade is accepted. A failed preflight must block deployment.
+
+For a `rolling` migration plan, make the one-shot migration Job a blocking `pre-install` and
 `pre-upgrade` hook, or run and await an equivalent uniquely named Job in the
 release pipeline before `helm upgrade`:
 
