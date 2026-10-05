@@ -188,6 +188,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    event_sink_collection_grants (sink_id, collection_id) {
+        sink_id -> Int4,
+        collection_id -> Int4,
+    }
+}
+
+diesel::table! {
     event_sink_delivery_state (sink_id) {
         sink_id -> Int4,
         next_allowed_at -> Timestamp,
@@ -207,6 +214,7 @@ diesel::table! {
         updated_at -> Timestamp,
         revision -> Int8,
         delivery_policy -> Jsonb,
+        collection_id -> Nullable<Int4>,
     }
 }
 
@@ -930,7 +938,10 @@ diesel::joinable!(computed_field_definitions -> users (owner_user_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_related_collections -> events (event_id));
+diesel::joinable!(event_sink_collection_grants -> collections (collection_id));
+diesel::joinable!(event_sink_collection_grants -> event_sinks (sink_id));
 diesel::joinable!(event_sink_delivery_state -> event_sinks (sink_id));
+diesel::joinable!(event_sinks -> collections (collection_id));
 diesel::joinable!(event_subscriptions -> collections (collection_id));
 diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
 diesel::joinable!(export_task_outputs -> tasks (task_id));
@@ -988,6 +999,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     event_deliveries,
     event_related_collections,
     event_retention_batches,
+    event_sink_collection_grants,
     event_sink_delivery_state,
     event_sinks,
     event_subscriptions,

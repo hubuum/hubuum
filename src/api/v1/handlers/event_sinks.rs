@@ -1,4 +1,8 @@
+use crate::models::CollectionID;
+use actix_web::put;
 use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
+use hubuum_domain::CollectionId;
+use hubuum_storage_core::EventSinkGrantAction;
 
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
@@ -171,7 +175,10 @@ pub async fn delete_event_sink(
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(preview_event_sink)
+    cfg.service(get_sink_collections)
+        .service(grant_sink_collection)
+        .service(revoke_sink_collection)
+        .service(preview_event_sink)
         .service(test_event_sink)
         .service(create_event_sink)
         .service(get_event_sinks)
@@ -216,4 +223,66 @@ pub async fn test_event_sink(
     .await?;
     let location = ResponseLocation::new(format!("/api/v1/event-deliveries/{}", delivery.id))?;
     Ok(ApiResponse::accepted_at(delivery, location))
+}
+
+#[utoipa::path(get, path = "/api/v1/event-sinks/{sink_id}/collections", tag = "event-sinks", security(("bearer_auth" = [])),
+    params(("sink_id" = i32, Path, description = "Sink ID")),
+    responses((status = 200, body = [i32], description = "Direct collection grants"), (status = 403, body = ApiErrorResponse, description = "Administrator required")))]
+#[get("/{sink_id}/collections")]
+pub async fn get_sink_collections(
+    context: AppContext,
+    _admin: AdminAccess,
+    sink_id: web::Path<EventSinkID>,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(
+        crate::services::event_administration::list_event_sink_collections(
+            &context,
+            sink_id.into_inner(),
+        )
+        .await?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/event-sinks/{sink_id}/collections/{collection_id}", tag = "event-sinks", security(("bearer_auth" = [])),
+    params(("sink_id" = i32, Path, description = "Global sink ID"), ("collection_id" = i32, Path, description = "Collection ID")),
+    responses((status = 204, description = "Sink use granted"), (status = 403, body = ApiErrorResponse, description = "Administrator required")))]
+#[put("/{sink_id}/collections/{collection_id}")]
+pub async fn grant_sink_collection(
+    context: AppContext,
+    admin: AdminAccess,
+    req: HttpRequest,
+    path: web::Path<(EventSinkID, CollectionID)>,
+) -> Result<impl Responder, ApiError> {
+    let (sink_id, collection_id) = path.into_inner();
+    crate::services::event_administration::change_event_sink_grant(
+        &context,
+        sink_id,
+        CollectionId::new(collection_id.id())?,
+        EventSinkGrantAction::Grant,
+        admin.event_context(&req),
+    )
+    .await?;
+    Ok(ApiResponse::no_content())
+}
+
+#[utoipa::path(delete, path = "/api/v1/event-sinks/{sink_id}/collections/{collection_id}", tag = "event-sinks", security(("bearer_auth" = [])),
+    params(("sink_id" = i32, Path, description = "Global sink ID"), ("collection_id" = i32, Path, description = "Collection ID")),
+    responses((status = 204, description = "Sink use revoked"), (status = 403, body = ApiErrorResponse, description = "Administrator required")))]
+#[delete("/{sink_id}/collections/{collection_id}")]
+pub async fn revoke_sink_collection(
+    context: AppContext,
+    admin: AdminAccess,
+    req: HttpRequest,
+    path: web::Path<(EventSinkID, CollectionID)>,
+) -> Result<impl Responder, ApiError> {
+    let (sink_id, collection_id) = path.into_inner();
+    crate::services::event_administration::change_event_sink_grant(
+        &context,
+        sink_id,
+        CollectionId::new(collection_id.id())?,
+        EventSinkGrantAction::Revoke,
+        admin.event_context(&req),
+    )
+    .await?;
+    Ok(ApiResponse::no_content())
 }

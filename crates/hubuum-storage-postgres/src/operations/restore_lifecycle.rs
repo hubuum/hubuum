@@ -48,6 +48,7 @@ const TRUNCATE_TABLES: &[&str] = &[
     "tasks",
     "token_scopes",
     "tokens",
+    "event_sink_collection_grants",
     "event_subscriptions",
     "event_sinks",
     "remote_targets_history",

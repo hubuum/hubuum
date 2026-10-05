@@ -1,3 +1,4 @@
+use hubuum_storage_core::{EventSinkGrantAction, StorageEventSinkGrantChange};
 mod authorization_resources;
 mod credential_approvals;
 mod event_delivery;
@@ -789,6 +790,16 @@ impl PostgresAuditContractFixture {
             )
             .await?
             .into_value();
+        backend
+            .change_event_sink_grant(StorageEventSinkGrantChange::new(
+                sink.id(),
+                collection.id(),
+                EventSinkGrantAction::Grant,
+                EventContext::system(),
+            ))
+            .await
+            .expect("fixture grant")
+            .into_value();
         let subscription = backend
             .create_event_subscription(
                 StorageEventSubscriptionCreate::builder(
@@ -1375,6 +1386,16 @@ impl MemoryAuditContractFixture {
                 &context,
             )
             .await?
+            .into_value();
+        backend
+            .change_event_sink_grant(StorageEventSinkGrantChange::new(
+                sink.id(),
+                collection.id(),
+                EventSinkGrantAction::Grant,
+                context.clone(),
+            ))
+            .await
+            .expect("fixture grant")
             .into_value();
         let subscription = backend
             .create_event_subscription(
@@ -6980,6 +7001,26 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
             .into_value();
         assert!(updated_sink.revision() > sink.revision());
 
+        backend
+            .change_event_sink_grant(StorageEventSinkGrantChange::new(
+                sink_id,
+                event_admin_collection_id,
+                EventSinkGrantAction::Grant,
+                event_context.clone(),
+            ))
+            .await
+            .expect("fixture grant")
+            .into_value();
+        assert_eq!(
+            backend.list_event_sink_collections(sink_id).await.unwrap(),
+            vec![event_admin_collection_id]
+        );
+        let authorized = backend
+            .resolve_event_sink_use(event_admin_collection_id, sink_id)
+            .await
+            .unwrap();
+        assert_eq!(authorized.collection_id(), event_admin_collection_id);
+        assert_eq!(authorized.sink().id(), sink_id);
         let subscription = backend
             .create_event_subscription(
                 StorageEventSubscriptionCreate::builder(

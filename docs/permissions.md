@@ -380,3 +380,10 @@ collection so those permissions inherit to the department collections. There is
 still no implicit access granted to magic groups except for the `admin` group,
 which is a special case. The `admin` group has full access to everything and is
 intended for Hubuum system administrators only.
+
+### Event integrations
+
+`ManageEventSubscription` permits collection subscription and destination discovery
+and deletion. Creating or updating collection subscriptions and owned webhooks also
+requires `ReadAudit`. Shared sinks require an explicit administrator grant to the
+collection; those grants do not inherit. See [event integrations](events.md#sinks-and-subscriptions).

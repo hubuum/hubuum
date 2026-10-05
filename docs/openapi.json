@@ -8624,6 +8624,397 @@
         ]
       }
     },
+    "/api/v1/collections/{collection_id}/event-sinks": {
+      "get": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Event Sinks",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/event-sinks.",
+        "operationId": "getApiV1CollectionsByCollectionIdEventSinks",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permitted destinations without credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionEventSink"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Post Api V1 Collections By Collection Id Event Sinks",
+        "description": "Auto-generated documentation for POST /api/v1/collections/{collection_id}/event-sinks.",
+        "operationId": "postApiV1CollectionsByCollectionIdEventSinks",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewEventSink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Collection webhook created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionEventSink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/event-sinks/{sink_id}": {
+      "get": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/event-sinks/{sink_id}.",
+        "operationId": "getApiV1CollectionsByCollectionIdEventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Owned sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection destination without credentials",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionEventSink"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Owned sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Delete Api V1 Collections By Collection Id Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/collections/{collection_id}/event-sinks/{sink_id}.",
+        "operationId": "deleteApiV1CollectionsByCollectionIdEventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Owned sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Collection webhook deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Owned sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Patch Api V1 Collections By Collection Id Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/collections/{collection_id}/event-sinks/{sink_id}.",
+        "operationId": "patchApiV1CollectionsByCollectionIdEventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Owned sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEventSink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Collection webhook updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionEventSink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Owned sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/collections/{collection_id}/event-subscriptions": {
       "get": {
         "tags": [
@@ -11731,6 +12122,161 @@
           },
           "412": {
             "description": "Precondition failed because If-Match does not match the current resource revision."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-sinks/{sink_id}/collections": {
+      "get": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Get Api V1 Event Sinks By Sink Id Collections",
+        "description": "Auto-generated documentation for GET /api/v1/event-sinks/{sink_id}/collections.",
+        "operationId": "getApiV1EventSinksBySinkIdCollections",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct collection grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-sinks/{sink_id}/collections/{collection_id}": {
+      "put": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Put Api V1 Event Sinks By Sink Id Collections By Collection Id",
+        "description": "Auto-generated documentation for PUT /api/v1/event-sinks/{sink_id}/collections/{collection_id}.",
+        "operationId": "putApiV1EventSinksBySinkIdCollectionsByCollectionId",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Global sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sink use granted"
+          },
+          "403": {
+            "description": "Administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Delete Api V1 Event Sinks By Sink Id Collections By Collection Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/event-sinks/{sink_id}/collections/{collection_id}.",
+        "operationId": "deleteApiV1EventSinksBySinkIdCollectionsByCollectionId",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Global sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sink use revoked"
+          },
+          "403": {
+            "description": "Administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -22268,6 +22814,46 @@
           }
         }
       },
+      "CollectionEventSink": {
+        "type": "object",
+        "description": "Safe destination discovery. Configuration, URLs and secret aliases are not\npart of the collection discovery contract.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "enabled",
+          "revision",
+          "routing"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventSinkKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "routing": {
+            "$ref": "#/components/schemas/EventSinkRouting"
+          }
+        }
+      },
       "CollectionHistory": {
         "type": "object",
         "required": [
@@ -23853,6 +24439,13 @@
           "revision"
         ],
         "properties": {
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "config": {
             "description": "Transport settings. Webhooks support body_template, url_secret_ref, and response rules."
           },
@@ -23967,6 +24560,16 @@
           "amqp",
           "valkey_stream",
           "email"
+        ]
+      },
+      "EventSinkRouting": {
+        "type": "string",
+        "enum": [
+          "fixed",
+          "webhook_url",
+          "email_recipients",
+          "valkey_stream",
+          "amqp"
         ]
       },
       "EventSubscription": {

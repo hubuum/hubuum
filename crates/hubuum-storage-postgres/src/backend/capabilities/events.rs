@@ -1,6 +1,7 @@
 use super::super::*;
 use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{StorageAuthorizedEventSink, StorageEventSinkGrantChange};
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 
 #[async_trait]
@@ -28,6 +29,35 @@ impl AuditEventStorage for PostgresStorage {
 
 #[async_trait]
 impl EventConfigurationStorage for PostgresStorage {
+    async fn resolve_event_sink_use(
+        &self,
+        collection_id: CollectionId,
+        sink_id: EventSinkId,
+    ) -> Result<StorageAuthorizedEventSink, StorageError> {
+        let sink = self.get_event_sink(sink_id).await?;
+        let granted = self
+            .list_event_sink_collections(sink_id)
+            .await?
+            .contains(&collection_id);
+        StorageAuthorizedEventSink::try_new(collection_id, sink, granted)
+    }
+    async fn list_event_sink_collections(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<Vec<CollectionId>, StorageError> {
+        crate::operations::event_sink_access::list_event_sink_collections(self.runtime(), sink_id)
+            .await
+            .map_err(Into::into)
+    }
+    async fn change_event_sink_grant(
+        &self,
+        request: StorageEventSinkGrantChange,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        crate::operations::event_sink_access::change_event_sink_grant(self.runtime(), request)
+            .await
+            .map_err(Into::into)
+    }
+
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         crate::operations::event_subscription::count_enabled_event_sinks(self.runtime())
             .await

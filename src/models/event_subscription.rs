@@ -93,6 +93,7 @@ macro_rules! impl_redacted_event_subscription_debug {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSink {
+    pub collection_id: Option<i32>,
     pub id: i32,
     pub name: String,
     pub kind: EventSinkKind,
@@ -290,6 +291,21 @@ pub(crate) fn validate_sink_parts(
         ));
     }
     if kind == EventSinkKind::Webhook {
+        if secret_ref.is_some()
+            && config
+                .get("destination_url")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            && config
+                .get("url_secret_ref")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+        {
+            return Err(ApiError::BadRequest(
+                "Webhook bearer credentials require a fixed destination_url or url_secret_ref"
+                    .to_string(),
+            ));
+        }
         hubuum_event_sink_webhook::Configuration::parse(config)
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
@@ -600,6 +616,7 @@ mod tests {
             enabled: true,
         };
         let persisted = EventSink {
+            collection_id: None,
             delivery_policy: None,
             id: 1,
             name: "webhook".to_string(),

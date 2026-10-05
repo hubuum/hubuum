@@ -78,6 +78,7 @@ backup_sections! {
         ExportTemplates => "export_templates",
         RemoteTargets => "remote_targets",
         EventSinks => "event_sinks",
+        EventSinkCollectionGrants => "event_sink_collection_grants",
         EventSubscriptions => "event_subscriptions",
     }
 }
@@ -266,11 +267,53 @@ impl StorageBackupSnapshot {
         )
     }
 
+    /// Canonicalize the additive event-sink ownership and grant representation.
+    /// An explicit grant section, even an empty one, is never backfilled.
+    pub fn normalize_legacy_event_sink_access(state_sections: &mut StorageBackupStateSections) {
+        // Older backups predate explicit sink grants. Match the database upgrade:
+        // preserve only relationships already represented by subscriptions.
+        if !state_sections.contains_key(&StorageBackupStateSection::EventSinkCollectionGrants) {
+            let mut grants = std::collections::BTreeSet::new();
+            if let Some(subscriptions) =
+                state_sections.get(&StorageBackupStateSection::EventSubscriptions)
+            {
+                for subscription in subscriptions {
+                    if let (Some(sink), Some(collection)) = (
+                        subscription.get("sink_id").and_then(Value::as_i64),
+                        subscription.get("collection_id").and_then(Value::as_i64),
+                    ) {
+                        grants.insert((sink, collection));
+                    }
+                }
+            }
+            state_sections.insert(
+                StorageBackupStateSection::EventSinkCollectionGrants,
+                grants
+                    .into_iter()
+                    .map(|(sink, collection)| {
+                        StorageBackupRow::try_from_value(
+                            serde_json::json!({"sink_id": sink, "collection_id": collection}),
+                        )
+                        .expect("literal object")
+                    })
+                    .collect(),
+            );
+        }
+        if let Some(sinks) = state_sections.get_mut(&StorageBackupStateSection::EventSinks) {
+            for sink in sinks {
+                sink.0
+                    .entry("collection_id".to_string())
+                    .or_insert(Value::Null);
+            }
+        }
+    }
+
     pub fn try_new_with_limits(
-        state_sections: StorageBackupStateSections,
+        mut state_sections: StorageBackupStateSections,
         mut history_sections: Option<StorageBackupHistorySections>,
         schema_limits: JsonSchemaLimits,
     ) -> Result<Self, StorageValidationError> {
+        Self::normalize_legacy_event_sink_access(&mut state_sections);
         let missing_state = StorageBackupStateSection::ALL
             .iter()
             .find(|section| !state_sections.contains_key(section));
@@ -561,6 +604,43 @@ mod tests {
         assert!(StorageBackupSnapshot::try_new(state, None).is_err());
     }
 
+    #[rstest]
+    #[case::legacy(false, 1)]
+    #[case::explicitly_revoked(true, 0)]
+    fn sink_grants_are_backfilled_only_for_legacy_backups(
+        #[case] has_grant_section: bool,
+        #[case] expected_grants: usize,
+    ) {
+        let mut state = complete_state();
+        if !has_grant_section {
+            state.remove(&StorageBackupStateSection::EventSinkCollectionGrants);
+        }
+        state.insert(
+            StorageBackupStateSection::EventSubscriptions,
+            vec![
+                StorageBackupRow::try_from_value(
+                    json!({"sink_id": 1, "collection_id": 2, "revision": 1}),
+                )
+                .unwrap(),
+                StorageBackupRow::try_from_value(
+                    json!({"sink_id": 1, "collection_id": 2, "revision": 1}),
+                )
+                .unwrap(),
+                StorageBackupRow::try_from_value(
+                    json!({"sink_id": 1, "collection_id": null, "revision": 1}),
+                )
+                .unwrap(),
+            ],
+        );
+        let (state, _) = StorageBackupSnapshot::try_new(state, None)
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            state[&StorageBackupStateSection::EventSinkCollectionGrants].len(),
+            expected_grants
+        );
+    }
+
     #[test]
     fn snapshot_debug_reports_shape_without_row_content() {
         let mut state = complete_state();
@@ -587,7 +667,7 @@ mod tests {
         let debug = format!("{snapshot:?}");
 
         assert!(!debug.contains("secret"));
-        assert!(debug.contains("state_section_count: 23"));
+        assert!(debug.contains("state_section_count: 24"));
         assert!(debug.contains("history_row_count: Some(1)"));
     }
 }

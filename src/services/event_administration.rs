@@ -2,6 +2,7 @@ use crate::models::SystemEventSubscription;
 use crate::models::event_subscription::validate_webhook_templates;
 use hubuum_domain::{CollectionId, PrincipalId};
 use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::{EventSinkGrantAction, StorageEventSinkGrantChange};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -205,6 +206,7 @@ fn event_sink_from_storage(sink: StorageEventSink) -> Result<EventSink, ApiError
         )
     })?;
     Ok(EventSink {
+        collection_id: sink.collection_id().map(CollectionId::id),
         delivery_policy: Some(sink.delivery_policy()),
         id: sink.id().id(),
         name: sink.name().to_string(),
@@ -266,9 +268,52 @@ pub(crate) async fn create_event_sink(
     sink: NewEventSink,
     event_context: EventContext,
 ) -> Result<EventSink, ApiError> {
+    create_event_sink_in_collection(backend, sink, None, event_context).await
+}
+
+pub(crate) async fn create_collection_event_sink(
+    backend: &impl StorageContext,
+    collection_id: CollectionId,
+    sink: NewEventSink,
+    event_context: EventContext,
+) -> Result<EventSink, ApiError> {
+    validate_collection_sink(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
+    create_event_sink_in_collection(backend, sink, Some(collection_id), event_context).await
+}
+
+fn validate_collection_sink(
+    kind: EventSinkKind,
+    config: &serde_json::Value,
+    secret_ref: Option<&str>,
+) -> Result<(), ApiError> {
+    if kind != EventSinkKind::Webhook
+        || secret_ref.is_some()
+        || config.get("url_secret_ref").is_some()
+    {
+        return Err(ApiError::BadRequest("Collection-owned sinks must be webhooks with their own destination_url; server secret aliases and other transports require an administrator".to_string()));
+    }
+    if config
+        .get("destination_url")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+    {
+        return Err(ApiError::BadRequest(
+            "Collection webhooks require config.destination_url".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn create_event_sink_in_collection(
+    backend: &impl StorageContext,
+    sink: NewEventSink,
+    collection_id: Option<CollectionId>,
+    event_context: EventContext,
+) -> Result<EventSink, ApiError> {
     validate_sink_parts(sink.kind, &sink.config, sink.secret_ref.as_deref())?;
     validate_webhook_templates(sink.kind, &sink.config).await?;
     let request = StorageEventSinkCreate::builder(sink.name, sink.kind.as_str(), event_context)
+        .collection_id(collection_id)
         .delivery_policy(sink.delivery_policy.unwrap_or_default())
         .configuration(sink.config)
         .secret_ref(normalize_optional_string(sink.secret_ref))
@@ -295,6 +340,9 @@ pub(crate) async fn update_event_sink(
         Some(value) => value.as_deref(),
         None => existing.secret_ref.as_deref(),
     };
+    if existing.collection_id.is_some() {
+        validate_collection_sink(kind, config, secret_ref)?;
+    }
     validate_sink_parts(kind, config, secret_ref)?;
     validate_webhook_templates(
         update.kind.unwrap_or(existing.kind),
@@ -413,10 +461,10 @@ pub(crate) async fn create_event_subscription(
     subscription: NewEventSubscription,
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
-    let sink = storage_handle(backend)
-        .get_event_sink(subscription.sink_id)
+    let authorized = storage_handle(backend)
+        .resolve_event_sink_use(CollectionId::new(collection_id)?, subscription.sink_id)
         .await?;
-    validate_webhook_routing(&sink, &subscription.routing)?;
+    validate_webhook_routing(authorized.sink(), &subscription.routing)?;
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,
@@ -426,8 +474,8 @@ pub(crate) async fn create_event_subscription(
     let entity_types = storage_entity_types(&subscription.entity_types)?;
     let actions = storage_actions(&subscription.actions)?;
     let request = StorageEventSubscriptionCreate::builder(
-        CollectionId::new(collection_id)?,
-        subscription.sink_id,
+        authorized.collection_id(),
+        authorized.sink().id(),
         subscription.name,
         event_context,
     )
@@ -454,9 +502,6 @@ pub(crate) async fn update_event_subscription(
     existing: &EventSubscription,
     event_context: EventContext,
 ) -> Result<EventSubscription, ApiError> {
-    if let Some(sink_id) = update.sink_id {
-        storage_handle(backend).get_event_sink(sink_id).await?;
-    }
     let entity_types = update
         .entity_types
         .as_deref()
@@ -468,10 +513,10 @@ pub(crate) async fn update_event_subscription(
     let sink_id = update
         .sink_id
         .unwrap_or(hubuum_domain::EventSinkId::new(existing.sink_id)?);
-    validate_webhook_routing(
-        &storage_handle(backend).get_event_sink(sink_id).await?,
-        routing,
-    )?;
+    let authorized = storage_handle(backend)
+        .resolve_event_sink_use(CollectionId::new(collection_id)?, sink_id)
+        .await?;
+    validate_webhook_routing(authorized.sink(), routing)?;
     let storage_entity_types = update
         .entity_types
         .as_deref()
@@ -834,4 +879,66 @@ pub(crate) async fn test_event_notification(
         )
         .await?;
     Ok(event_delivery_from_storage(result.into_value()))
+}
+
+pub(crate) async fn list_collection_event_sinks(
+    backend: &impl StorageContext,
+    collection_id: CollectionId,
+    options: QueryOptions,
+) -> Result<(Vec<EventSink>, i64), ApiError> {
+    let (sinks, total) = storage_handle(backend)
+        .list_event_sinks(StorageEventSinkListQuery::new(options).for_collection(collection_id))
+        .await?
+        .into_parts();
+    Ok((
+        sinks
+            .into_iter()
+            .map(event_sink_from_storage)
+            .collect::<Result<_, _>>()?,
+        total.unwrap_or(SKIPPED_TOTAL_COUNT),
+    ))
+}
+
+pub(crate) async fn get_collection_owned_sink(
+    backend: &impl StorageContext,
+    collection_id: CollectionId,
+    sink_id: hubuum_domain::EventSinkId,
+) -> Result<EventSink, ApiError> {
+    let sink = get_event_sink(backend, sink_id.id()).await?;
+    if sink.collection_id != Some(collection_id.id()) {
+        return Err(ApiError::NotFound(
+            "Collection-owned event sink not found".to_string(),
+        ));
+    }
+    Ok(sink)
+}
+
+pub(crate) async fn list_event_sink_collections(
+    backend: &impl StorageContext,
+    sink_id: hubuum_domain::EventSinkId,
+) -> Result<Vec<i32>, ApiError> {
+    Ok(storage_handle(backend)
+        .list_event_sink_collections(sink_id)
+        .await?
+        .into_iter()
+        .map(CollectionId::id)
+        .collect())
+}
+pub(crate) async fn change_event_sink_grant(
+    backend: &impl StorageContext,
+    sink_id: hubuum_domain::EventSinkId,
+    collection_id: CollectionId,
+    action: EventSinkGrantAction,
+    event_context: EventContext,
+) -> Result<(), ApiError> {
+    storage_handle(backend)
+        .change_event_sink_grant(StorageEventSinkGrantChange::new(
+            sink_id,
+            collection_id,
+            action,
+            event_context,
+        ))
+        .await?
+        .into_value();
+    Ok(())
 }

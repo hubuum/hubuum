@@ -134,16 +134,71 @@ than a single resource path.
 
 ## Sinks And Subscriptions
 
-External delivery is configured in two layers:
+External delivery uses sinks and collection subscriptions:
 
-- Event sinks are global transport definitions. Admins manage them through
-  `/api/v1/event-sinks`.
-- Event subscriptions are collection-scoped routing rules. Callers need
-  `ManageEventSubscription` on the collection and manage them through
-  `/api/v1/collections/{collection_id}/event-subscriptions`.
-- Administrators manage collection-less events through
-  `/api/v1/system-event-subscriptions`. System subscriptions match only events
-  with neither a direct collection nor related collections.
+- Administrators manage global transports through `/api/v1/event-sinks`.
+- Collection managers create webhook destinations through
+  `POST /api/v1/collections/{collection_id}/event-sinks`. Creation and changes
+  require both `ManageEventSubscription` and `ReadAudit`. These destinations
+  belong to the collection and continue operating when their creator leaves.
+- `GET /api/v1/collections/{collection_id}/event-sinks` lists owned and explicitly
+  granted destinations. It requires `ManageEventSubscription`, supports normal
+  pagination, and returns `id`, `name`, `kind`, `enabled`, `collection_id`,
+  `revision`, and `routing`. It never returns configuration, credentials, URLs,
+  or secret aliases. The `routing` values are `fixed`, `webhook_url`,
+  `email_recipients`, `valkey_stream`, and `amqp`.
+- Managers update or delete owned destinations at
+  `/api/v1/collections/{collection_id}/event-sinks/{sink_id}`. Shared destinations
+  remain administrator-managed. Delete a destination's subscriptions first.
+- Administrators use `PUT` or `DELETE` at
+  `/api/v1/event-sinks/{sink_id}/collections/{collection_id}` to grant or revoke
+  use of a global sink. `GET /api/v1/event-sinks/{sink_id}/collections` lists
+  direct grants. Grants do not inherit through the collection hierarchy, and
+  owned sinks cannot be shared with another collection.
+- Subscriptions are managed through
+  `/api/v1/collections/{collection_id}/event-subscriptions`. Listing and deletion
+  require `ManageEventSubscription`; creation and editing also require `ReadAudit`
+  and current authority to use the selected sink. Ordinary resource read/write
+  permissions alone do not authorize exporting audit events.
+
+For example, a delegated manager can create this collection webhook, then use
+its returned ID in a subscription with empty `routing`:
+
+```json
+{
+  "name": "inventory-changes",
+  "kind": "webhook",
+  "config": {
+    "destination_url": "https://inventory.example/hubuum/events"
+  },
+  "enabled": true
+}
+```
+
+Owned webhooks may include their own headers and message templates. They cannot
+reference server secret aliases. Destination URLs are redacted in global sink
+responses and audit snapshots; collection discovery omits the configuration
+entirely. To change a destination, submit a new URL. Global broker and SMTP
+transports still require administrator configuration and explicit collection
+use grants.
+
+Workers check grants and configuration revisions again at delivery admission.
+Revoked or disabled destinations are not dispatched, including queued retries;
+rejected attempts become dead deliveries. Changed configurations are prepared
+again. Dispatch admitted before revocation may already be in flight and cannot
+be recalled. Related-collection matches retain event metadata but omit `before`
+and `after` snapshots, matching audit-read visibility. Subscriptions do not
+inherit their creator's personal permission lifetime.
+
+Upgrades preserve grants for existing collection/subscription relationships.
+Stop older API and worker binaries before applying the migration. Existing
+custom webhooks carrying bearer credentials or static headers must set a fixed
+`destination_url` or `url_secret_ref`; routing cannot redirect their credentials.
+Old backups without a grant section reconstruct only their existing subscription
+relationships; an explicit empty grant section preserves revocations.
+Backups containing the new grant section require a server with this update;
+older servers reject that section. Keep a pre-upgrade PostgreSQL snapshot for
+recovery with older binaries.
 
 A sink describes how to deliver. A subscription describes which events should
 be delivered to a sink. The primary subscription filters are `entity_types` and
@@ -180,6 +235,7 @@ Example sink:
   "name": "inventory-webhook",
   "kind": "webhook",
   "config": {
+    "destination_url": "https://inventory.example/hubuum/events",
     "headers": {
       "X-Integration": "inventory"
     }
@@ -263,6 +319,7 @@ delivery limits:
 ```json
 {
   "config": {
+    "destination_url": "https://inventory.example/hubuum/events",
     "headers": {
       "X-Integration": "inventory-sync"
     },
@@ -729,6 +786,16 @@ The request is audited as `event_sink.invoked`. Repeated tests create separate
 render using the saved configuration at execution time.
 
 ### Upgrade And Rollback
+
+The collection integration update also requires an offline migration:
+`2026-10-05-000001_collection_event_sinks`. Stop older APIs and workers before
+applying it, reconcile role grants, then start matching binaries. Existing
+collection/sink pairs receive direct grants. A binary-only rollback is unsupported
+because older versions do not enforce ownership, grants, or fixed destination
+credentials. The schema rollback refuses to discard collection-owned sinks;
+archive and remove them first. Rolling back removes all explicit grant and
+revocation rules. Prefer restoring the pre-upgrade PostgreSQL snapshot and its
+matching binaries when recovering the old authorization behavior.
 
 Stop older API and worker processes, apply
 `2026-10-01-000001_webhook_notifications`, reconcile database role grants, and

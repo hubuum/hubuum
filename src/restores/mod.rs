@@ -642,6 +642,24 @@ fn validate_backup_state_references(document: &BackupDocument) -> Result<(), Api
         validate_required_reference("remote_targets", row, "collection_id", &collections)?;
         validate_optional_reference("remote_targets", row, "class_id", &classes)?;
     }
+    for row in required_state_section(document, StorageBackupStateSection::EventSinks)? {
+        validate_optional_reference("event_sinks", row, "collection_id", &collections)?;
+    }
+    if let Some(grants) = document
+        .state
+        .sections
+        .get(&StorageBackupStateSection::EventSinkCollectionGrants)
+    {
+        for row in grants {
+            validate_required_reference("event_sink_collection_grants", row, "sink_id", &sinks)?;
+            validate_required_reference(
+                "event_sink_collection_grants",
+                row,
+                "collection_id",
+                &collections,
+            )?;
+        }
+    }
     for row in required_state_section(document, StorageBackupStateSection::EventSubscriptions)? {
         validate_optional_reference("event_subscriptions", row, "collection_id", &collections)?;
         validate_required_reference("event_subscriptions", row, "sink_id", &sinks)?;
@@ -723,6 +741,7 @@ pub(crate) fn verify_restored_backup_matches(
         }
     }
     for document in [&mut source, &mut restored] {
+        StorageBackupSnapshot::normalize_legacy_event_sink_access(&mut document.state.sections);
         if let Some(history) = &mut document.history {
             StorageBackupSnapshot::canonicalize_discovery_history(&mut history.sections)
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?;

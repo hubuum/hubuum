@@ -8,7 +8,20 @@ pub(super) fn capture(
     sections: &mut StorageBackupStateSections,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "config": v.configuration(), "delivery_policy": v.delivery_policy(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "collection_id": v.collection_id().map(CollectionId::id), "config": v.configuration(), "delivery_policy": v.delivery_policy(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(
+        StorageBackupStateSection::EventSinkCollectionGrants,
+        state
+            .event_sink_grants
+            .iter()
+            .map(|(sink, collection)| {
+                capture_row(
+                    progress,
+                    row(json!({"sink_id": sink, "collection_id": collection})),
+                )
+            })
+            .collect::<Result<_, _>>()?,
+    );
     sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.scope().collection_id().map(|id| id.id()), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::ComputedFieldDefinitions, state.computed_fields.values().map(|v| {
         let (visibility, owner) = match v.visibility() { StorageComputedFieldVisibility::Shared => ("shared", None), StorageComputedFieldVisibility::Personal { owner_id } => ("personal", Some(owner_id.id())) };
@@ -26,6 +39,13 @@ pub(super) fn restore(
     state: &mut MemoryState,
 ) -> Result<(), StorageError> {
     state.event_sink_schedule.clear();
+    state.event_sink_grants = sections[&StorageBackupStateSection::EventSinkCollectionGrants]
+        .iter()
+        .map(|row| {
+            let r = Row(row);
+            Ok((r.integer("sink_id")?, r.integer("collection_id")?))
+        })
+        .collect::<Result<_, StorageError>>()?;
     for row in &sections[&StorageBackupStateSection::EventSinks] {
         let r = Row(row);
         let value = StorageEventSink::builder(
@@ -35,6 +55,12 @@ pub(super) fn restore(
             r.time("created_at")?,
             r.time("updated_at")?,
             r.revision()?,
+        )
+        .collection_id(
+            r.optional_integer("collection_id")?
+                .map(CollectionId::new)
+                .transpose()
+                .map_err(|_| invalid("collection_id"))?,
         )
         .configuration(r.value("config")?.clone())
         .delivery_policy(

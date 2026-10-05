@@ -28,3 +28,5 @@ pub mod schema_evolution;
 pub mod credential_approvals;
 
 pub mod system_event_subscriptions;
+
+pub mod collection_event_sinks;

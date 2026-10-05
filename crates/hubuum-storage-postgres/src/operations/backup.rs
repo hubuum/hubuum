@@ -50,6 +50,7 @@ pub(crate) const fn state_table(section: StorageBackupStateSection) -> &'static 
         StorageBackupStateSection::ExportTemplates => "export_templates",
         StorageBackupStateSection::RemoteTargets => "remote_targets",
         StorageBackupStateSection::EventSinks => "event_sinks",
+        StorageBackupStateSection::EventSinkCollectionGrants => "event_sink_collection_grants",
         StorageBackupStateSection::EventSubscriptions => "event_subscriptions",
     }
 }
@@ -588,6 +589,7 @@ fn snapshot_key(table: &str) -> Result<&'static str, PostgresStorageError> {
     validate_snapshot_table(table)?;
     Ok(match table {
         "group_memberships" => "principal_id, group_id",
+        "event_sink_collection_grants" => "sink_id, collection_id",
         "group_membership_sources" => "principal_id, group_id, source, source_scope_id, source_key",
         "collection_authorization_state" => "collection_id",
         "collection_closure" => "ancestor_collection_id, descendant_collection_id",

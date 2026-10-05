@@ -1,6 +1,7 @@
 use super::*;
 use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{StorageAuthorizedEventSink, StorageEventSinkGrantChange};
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 
 #[async_trait]
@@ -40,6 +41,56 @@ impl AuditEventStorage for StorageHandle {
 
 #[async_trait]
 impl EventConfigurationStorage for StorageHandle {
+    async fn resolve_event_sink_use(
+        &self,
+        collection_id: CollectionId,
+        sink_id: EventSinkId,
+    ) -> Result<StorageAuthorizedEventSink, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventConfiguration,
+            "resolve_event_sink_use",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.resolve_event_sink_use(collection_id, sink_id).await
+                })
+            },
+        )
+        .await
+    }
+    async fn list_event_sink_collections(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<Vec<CollectionId>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventConfiguration,
+            "list_event_sink_collections",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_event_sink_collections(sink_id).await
+                })
+            },
+        )
+        .await
+    }
+    async fn change_event_sink_grant(
+        &self,
+        request: StorageEventSinkGrantChange,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::EventConfiguration,
+            "change_event_sink_grant",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.change_event_sink_grant(request).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

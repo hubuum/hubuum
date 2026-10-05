@@ -783,7 +783,9 @@ async fn load_history_and_operations(
          SELECT n, 1 + ((n - 1) % {collections}), 1 + ((n - 1) % {event_sinks}),\n\
            format('scale-subscription-%s', n), 'Disabled scale benchmark subscription',\n\
            '[\"object\"]'::jsonb, '[\"created\",\"updated\"]'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, false, 1\n\
-         FROM generate_series(1, {event_subscriptions}) AS n;",
+         FROM generate_series(1, {event_subscriptions}) AS n;\n\
+         INSERT INTO event_sink_collection_grants(sink_id, collection_id)\n\
+         SELECT DISTINCT sink_id, collection_id FROM event_subscriptions;",
         collections = profile.totals.collections,
         classes = profile.totals.classes,
         templates = overlays.templates,

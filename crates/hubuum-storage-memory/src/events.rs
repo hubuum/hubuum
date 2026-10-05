@@ -1,6 +1,10 @@
 use super::*;
 use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::StorageEventDeliveryConfiguration;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
+use hubuum_storage_core::{
+    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
+};
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 use std::time::Instant;
 
@@ -76,6 +80,97 @@ impl AuditEventStorage for MemoryStorage {
 
 #[async_trait]
 impl EventConfigurationStorage for MemoryStorage {
+    async fn resolve_event_sink_use(
+        &self,
+        collection_id: CollectionId,
+        sink_id: EventSinkId,
+    ) -> Result<StorageAuthorizedEventSink, StorageError> {
+        let state = self.state.read().await;
+        let sink = state
+            .event_sinks
+            .get(&sink_id.id())
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("Event sink was not found"))?;
+        StorageAuthorizedEventSink::try_new(
+            collection_id,
+            sink,
+            state
+                .event_sink_grants
+                .contains(&(sink_id.id(), collection_id.id())),
+        )
+    }
+    async fn list_event_sink_collections(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<Vec<CollectionId>, StorageError> {
+        let state = self.state.read().await;
+        if !state.event_sinks.contains_key(&sink_id.id()) {
+            return Err(StorageError::not_found("Event sink was not found"));
+        }
+        state
+            .event_sink_grants
+            .iter()
+            .filter(|(sink, _)| *sink == sink_id.id())
+            .map(|(_, collection)| {
+                CollectionId::new(*collection)
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))
+            })
+            .collect()
+    }
+    async fn change_event_sink_grant(
+        &self,
+        request: StorageEventSinkGrantChange,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        let mut state = self.state.write().await;
+        let sink = state
+            .event_sinks
+            .get(&request.sink_id().id())
+            .ok_or_else(|| StorageError::not_found("Event sink was not found"))?;
+        if sink.collection_id().is_some() {
+            return Err(StorageError::invalid_input(
+                "Collection-owned sinks cannot be shared with other collections",
+            ));
+        }
+        if !state
+            .collections
+            .contains_key(&request.collection_id().id())
+        {
+            return Err(StorageError::not_found("Collection was not found"));
+        }
+        let key = (request.sink_id().id(), request.collection_id().id());
+        let changed = match request.action() {
+            EventSinkGrantAction::Grant => state.event_sink_grants.insert(key),
+            EventSinkGrantAction::Revoke => state.event_sink_grants.remove(&key),
+        };
+        if !changed {
+            return Ok(StorageMutationOutcome::unchanged(()));
+        }
+        let document = AuditDocument::try_new(
+            "Event sink collection grant changed",
+            None,
+            None,
+            serde_json::json!({
+                "sink_id": request.sink_id().id(),
+                "collection_id": request.collection_id().id(),
+                "granted": request.action() == EventSinkGrantAction::Grant,
+            }),
+        )
+        .map_err(|error| StorageError::internal(error.to_string()))?;
+        let receipt = append_memory_event!(
+            state,
+            EntityType::EventSink,
+            request.sink_id().id(),
+            None,
+            Some(request.collection_id()),
+            Action::Updated,
+            request.event_context(),
+            document,
+            None,
+            None,
+        )?;
+        Ok(StorageMutationOutcome::committed((), receipt))
+    }
+
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         i64::try_from(
             self.state
@@ -93,12 +188,16 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         query: StorageEventSinkListQuery,
     ) -> Result<StoragePage<StorageEventSink>, StorageError> {
+        let state = self.state.read().await;
         page(
-            self.state
-                .read()
-                .await
+            state
                 .event_sinks
                 .values()
+                .filter(|sink| {
+                    query.collection_id().is_none_or(|collection| {
+                        memory_sink_allowed(&state, collection.into(), sink.id())
+                    })
+                })
                 .cloned()
                 .collect(),
             query.options(),
@@ -122,6 +221,13 @@ impl EventConfigurationStorage for MemoryStorage {
         request: StorageEventSinkCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
         let mut state = self.state.write().await;
+        if request
+            .collection_id()
+            .is_some_and(|id| !state.collections.contains_key(&id.id()))
+        {
+            return Err(StorageError::not_found("Collection was not found"));
+        }
+
         if state
             .event_sinks
             .values()
@@ -144,6 +250,7 @@ impl EventConfigurationStorage for MemoryStorage {
             now,
             ResourceRevision::INITIAL,
         )
+        .collection_id(request.collection_id())
         .configuration(request.configuration().clone())
         .delivery_policy(request.delivery_policy())
         .secret_ref(request.secret_ref().map(ToOwned::to_owned))
@@ -216,6 +323,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 .checked_advance()
                 .map_err(|error| StorageError::internal(error.to_string()))?,
         )
+        .collection_id(current.collection_id())
         .configuration(configuration)
         .delivery_policy(
             request
@@ -302,6 +410,9 @@ impl EventConfigurationStorage for MemoryStorage {
             .ok_or_else(|| {
                 StorageError::not_found(format!("Event sink {} was not found", request.id().id()))
             })?;
+        state
+            .event_sink_grants
+            .retain(|(sink, _)| *sink != request.id().id());
         let receipt = state.append_simple_event(
             EntityType::EventSink,
             sink.id().id(),
@@ -366,6 +477,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.sink_id().id()
             )));
         }
+        ensure_memory_sink_allowed(&state, request.scope(), request.sink_id())?;
         if state.event_subscriptions.values().any(|subscription| {
             subscription.scope() == request.scope() && subscription.name() == request.name()
         }) {
@@ -435,6 +547,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 sink_id.id()
             )));
         }
+        ensure_memory_sink_allowed(&state, request.scope(), sink_id)?;
         let name = request.name_value().unwrap_or(current.name());
         let description = request.description_value().unwrap_or(current.description());
         let entity_types = request
@@ -752,7 +865,13 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 .get(&subscription.sink_id().id())
                 .ok_or_else(|| StorageError::internal("event delivery sink is missing"))?;
             let claim = StorageEventDeliveryClaim::try_new(delivery.id(), attempts, token)
-                .map_err(invalid_contract_value)?;
+                .map_err(invalid_contract_value)?
+                .with_configuration(StorageEventDeliveryConfiguration::new(
+                    sink.id(),
+                    sink.revision(),
+                    subscription.revision(),
+                ));
+            let envelope = envelope.for_subscription_scope(subscription.scope());
             let delivery_subscription = StorageEventDeliverySubscription::try_new(
                 subscription.id(),
                 subscription.name(),
@@ -842,6 +961,42 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Subscription was removed"))?
             .sink_id()
             .id();
+        let subscription = state
+            .event_subscriptions
+            .get(&delivery.subscription_id().id())
+            .ok_or_else(|| StorageError::not_found("Subscription was removed"))?;
+        let sink = state
+            .event_sinks
+            .get(&sink_id)
+            .ok_or_else(|| StorageError::not_found("Sink was removed"))?;
+        let allowed = (delivery.purpose() == hubuum_domain::EventDeliveryPurpose::Test
+            || (sink.enabled() && subscription.enabled()))
+            && memory_sink_allowed(&state, subscription.scope(), sink.id());
+        let unchanged = claim.configuration().is_some_and(|configuration| {
+            configuration
+                == StorageEventDeliveryConfiguration::new(
+                    sink.id(),
+                    sink.revision(),
+                    subscription.revision(),
+                )
+        });
+        if !allowed || !unchanged {
+            let rejected = rebuild_event_delivery(
+                &delivery,
+                if allowed {
+                    EventDeliveryStatus::Pending
+                } else {
+                    EventDeliveryStatus::Dead
+                },
+                delivery.attempts(),
+                now,
+                (!allowed).then(|| "Sink use revoked or destination disabled".to_string()),
+                None,
+            )?;
+            state.event_deliveries.insert(delivery.id().id(), rejected);
+            state.event_delivery_claims.remove(&delivery.id().id());
+            return Ok(None);
+        }
         let interval = state
             .event_sinks
             .get(&sink_id)
@@ -1083,6 +1238,7 @@ impl EventFanoutStorage for MemoryStorage {
                     .get(&subscription.sink_id().id())
                     .is_some_and(|sink| sink.enabled());
                 let matches = sink_enabled
+                    && memory_sink_allowed(&state, subscription.scope(), subscription.sink_id())
                     && subscription.scope().matches(event)
                     && subscription.filter().matches(event)
                     && subscription.entity_types().contains(&event.entity_type())
@@ -1599,4 +1755,35 @@ fn memory_notification(
         .find(|event| event.event_id() == selection.event_id())
         .ok_or_else(|| StorageError::not_found("Event not found"))?;
     StorageEventNotificationInput::try_new(sink, subscription, event)
+}
+
+fn memory_sink_allowed(
+    state: &MemoryState,
+    scope: EventSubscriptionScope,
+    sink_id: EventSinkId,
+) -> bool {
+    let Some(sink) = state.event_sinks.get(&sink_id.id()) else {
+        return false;
+    };
+    match (scope.collection_id(), sink.collection_id()) {
+        (None, None) => true,
+        (Some(collection), Some(owner)) => collection == owner,
+        (Some(collection), None) => state
+            .event_sink_grants
+            .contains(&(sink_id.id(), collection.id())),
+        (None, Some(_)) => false,
+    }
+}
+fn ensure_memory_sink_allowed(
+    state: &MemoryState,
+    scope: EventSubscriptionScope,
+    sink_id: EventSinkId,
+) -> Result<(), StorageError> {
+    if memory_sink_allowed(state, scope, sink_id) {
+        Ok(())
+    } else {
+        Err(StorageError::permission_denied(
+            "Sink is not available to this collection",
+        ))
+    }
 }

@@ -53,7 +53,7 @@ pub async fn create_event_subscription(
         &context,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::ManageEventSubscription],
+        [Permissions::ManageEventSubscription, Permissions::ReadAudit],
         collection_id
     );
     let event_context = requestor.event_context(&req);
@@ -175,7 +175,7 @@ pub async fn patch_event_subscription(
         &context,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::ManageEventSubscription],
+        [Permissions::ManageEventSubscription, Permissions::ReadAudit],
         collection_id
     );
     let update = update.into_inner();

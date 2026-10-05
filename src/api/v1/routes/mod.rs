@@ -48,7 +48,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     .service(
         web::scope("/collections")
             .configure(collections::config)
-            .configure(event_subscriptions::config),
+            .configure(event_subscriptions::config)
+            .configure(crate::api::v1::handlers::collection_event_sinks::config),
     )
     .service(web::scope("/classes").configure(classes::config))
     .service(web::scope("/search").configure(search::config))

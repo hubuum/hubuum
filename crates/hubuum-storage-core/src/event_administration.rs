@@ -1,3 +1,4 @@
+use crate::{StorageAuthorizedEventSink, StorageEventSinkGrantChange};
 use hubuum_domain::{EventDeliveryPolicy, EventDeliveryPurpose};
 use hubuum_events_core::EventSubscriptionScope;
 use std::fmt;
@@ -334,6 +335,7 @@ pub trait AuditEventStorage: Send + Sync {
 /// Backend-neutral persisted event sink.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSink {
+    collection_id: Option<CollectionId>,
     id: EventSinkId,
     name: String,
     kind: String,
@@ -347,6 +349,10 @@ pub struct StorageEventSink {
 }
 
 impl StorageEventSink {
+    pub const fn collection_id(&self) -> Option<CollectionId> {
+        self.collection_id
+    }
+
     pub const fn delivery_policy(&self) -> EventDeliveryPolicy {
         self.delivery_policy
     }
@@ -361,6 +367,7 @@ impl StorageEventSink {
         revision: ResourceRevision,
     ) -> StorageEventSinkBuilder {
         StorageEventSinkBuilder {
+            collection_id: None,
             id,
             name: name.into(),
             kind: kind.into(),
@@ -422,6 +429,7 @@ impl StorageEventSink {
 
 /// Builder for persisted event-sink projections.
 pub struct StorageEventSinkBuilder {
+    collection_id: Option<CollectionId>,
     id: EventSinkId,
     name: String,
     kind: String,
@@ -435,6 +443,11 @@ pub struct StorageEventSinkBuilder {
 }
 
 impl StorageEventSinkBuilder {
+    pub fn collection_id(mut self, value: Option<CollectionId>) -> Self {
+        self.collection_id = value;
+        self
+    }
+
     pub fn delivery_policy(mut self, value: EventDeliveryPolicy) -> Self {
         self.delivery_policy = value;
         self
@@ -463,8 +476,15 @@ impl StorageEventSinkBuilder {
         validate_non_empty("kind", &self.kind)?;
         validate_json_object("configuration", &self.configuration)?;
         validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())?;
+        validate_collection_sink(
+            self.collection_id,
+            &self.kind,
+            &self.configuration,
+            self.secret_ref.as_deref(),
+        )?;
         validate_timestamps(self.created_at, self.updated_at)?;
         Ok(StorageEventSink {
+            collection_id: self.collection_id,
             id: self.id,
             name: self.name,
             kind: self.kind,
@@ -482,13 +502,24 @@ impl StorageEventSinkBuilder {
 /// Cursor-paginated event sink query.
 #[derive(Clone, PartialEq)]
 pub struct StorageEventSinkListQuery {
+    collection_id: Option<CollectionId>,
     options: QueryOptions,
 }
 
 impl StorageEventSinkListQuery {
+    pub fn for_collection(mut self, collection_id: CollectionId) -> Self {
+        self.collection_id = Some(collection_id);
+        self
+    }
+    pub const fn collection_id(&self) -> Option<CollectionId> {
+        self.collection_id
+    }
     #[must_use]
     pub const fn new(options: QueryOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            collection_id: None,
+        }
     }
 
     #[must_use]
@@ -513,6 +544,7 @@ impl fmt::Debug for StorageEventSinkListQuery {
 /// Validated event sink creation request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventSinkCreate {
+    collection_id: Option<CollectionId>,
     name: String,
     kind: String,
     configuration: Value,
@@ -523,6 +555,10 @@ pub struct StorageEventSinkCreate {
 }
 
 impl StorageEventSinkCreate {
+    pub const fn collection_id(&self) -> Option<CollectionId> {
+        self.collection_id
+    }
+
     pub const fn delivery_policy(&self) -> EventDeliveryPolicy {
         self.delivery_policy
     }
@@ -534,6 +570,7 @@ impl StorageEventSinkCreate {
         event_context: EventContext,
     ) -> StorageEventSinkCreateBuilder {
         StorageEventSinkCreateBuilder {
+            collection_id: None,
             name: name.into(),
             kind: kind.into(),
             configuration: serde_json::json!({}),
@@ -577,6 +614,7 @@ impl StorageEventSinkCreate {
 
 /// Builder for validated event-sink creation requests.
 pub struct StorageEventSinkCreateBuilder {
+    collection_id: Option<CollectionId>,
     name: String,
     kind: String,
     configuration: Value,
@@ -587,6 +625,11 @@ pub struct StorageEventSinkCreateBuilder {
 }
 
 impl StorageEventSinkCreateBuilder {
+    pub fn collection_id(mut self, value: Option<CollectionId>) -> Self {
+        self.collection_id = value;
+        self
+    }
+
     pub fn delivery_policy(mut self, value: EventDeliveryPolicy) -> Self {
         self.delivery_policy = value;
         self
@@ -619,7 +662,15 @@ impl StorageEventSinkCreateBuilder {
             .map_err(StorageValidationError::into_request_error)?;
         validate_optional_non_empty("secret_ref", self.secret_ref.as_deref())
             .map_err(StorageValidationError::into_request_error)?;
+        validate_collection_sink(
+            self.collection_id,
+            &self.kind,
+            &self.configuration,
+            self.secret_ref.as_deref(),
+        )
+        .map_err(StorageValidationError::into_request_error)?;
         Ok(StorageEventSinkCreate {
+            collection_id: self.collection_id,
             name: self.name,
             kind: self.kind,
             configuration: self.configuration,
@@ -1528,6 +1579,25 @@ impl fmt::Debug for StorageEventSubscriptionDelete {
 /// including when only one half of a subscription catalog pair is changed.
 #[async_trait]
 pub trait EventConfigurationStorage: Send + Sync {
+    /// Resolve the collection's current authority to use a sink. Collection ownership
+    /// and direct grants are checked; grants do not inherit through the hierarchy.
+    async fn resolve_event_sink_use(
+        &self,
+        collection_id: CollectionId,
+        sink_id: EventSinkId,
+    ) -> Result<StorageAuthorizedEventSink, StorageError>;
+
+    async fn list_event_sink_collections(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<Vec<CollectionId>, StorageError>;
+
+    /// Change a global sink's direct collection grant and append an audit event atomically.
+    async fn change_event_sink_grant(
+        &self,
+        request: StorageEventSinkGrantChange,
+    ) -> Result<StorageMutationOutcome<()>, StorageError>;
+
     /// Return the number of enabled sinks used to decide whether fan-out
     /// workers need to run.
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError>;
@@ -2145,4 +2215,26 @@ mod tests {
             .is_err()
         );
     }
+}
+
+fn validate_collection_sink(
+    collection_id: Option<CollectionId>,
+    kind: &str,
+    configuration: &Value,
+    secret_ref: Option<&str>,
+) -> Result<(), StorageValidationError> {
+    if collection_id.is_some()
+        && (kind != "webhook"
+            || secret_ref.is_some()
+            || configuration.get("url_secret_ref").is_some()
+            || configuration
+                .get("destination_url")
+                .and_then(Value::as_str)
+                .is_none_or(|url| url.trim().is_empty()))
+    {
+        return Err(StorageValidationError::invalid(
+            "Collection-owned sinks require a webhook destination_url and cannot reference server secrets",
+        ));
+    }
+    Ok(())
 }

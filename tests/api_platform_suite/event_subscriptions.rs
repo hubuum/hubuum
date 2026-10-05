@@ -8,7 +8,9 @@ mod tests {
         EventSink, EventSinkKind, EventSubscription, NewEventSink, NewEventSubscription,
     };
     use crate::tests::TestContext;
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        delete_request, get_request, patch_request, post_request, put_request,
+    };
     use crate::tests::asserts::assert_response_status;
 
     const SINKS_ENDPOINT: &str = "/api/v1/event-sinks";
@@ -154,6 +156,18 @@ mod tests {
         let context = TestContext::new().await;
         let collection = context.collection_fixture("subscription_catalog").await;
         let sink = create_sink(&context, "subscription_sink").await;
+        let grant = put_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{SINKS_ENDPOINT}/{}/collections/{}",
+                sink.id, collection.collection.id
+            ),
+            json!({}),
+        )
+        .await;
+        assert_response_status(grant, StatusCode::NO_CONTENT).await;
+
         let endpoint = format!(
             "/api/v1/collections/{}/event-subscriptions",
             collection.collection.id
@@ -342,6 +356,17 @@ mod tests {
             test::read_body_json(assert_response_status(resp, StatusCode::CREATED).await).await;
         let sink_id = sink["id"].as_i64().unwrap();
         let subscriptions = if scope == "collection-subscription" {
+            let grant = put_request(
+                &context.pool,
+                &context.admin_token,
+                &format!(
+                    "{SINKS_ENDPOINT}/{sink_id}/collections/{}",
+                    collection.collection_id()
+                ),
+                json!({}),
+            )
+            .await;
+            assert_response_status(grant, StatusCode::NO_CONTENT).await;
             format!(
                 "/api/v1/collections/{}/event-subscriptions",
                 collection.collection_id()

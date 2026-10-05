@@ -1,4 +1,8 @@
+use crate::PostgresRevision;
+use hubuum_domain::CollectionId;
 use hubuum_domain::{EventDeliveryPolicy, EventDeliveryPurpose};
+use hubuum_events_core::EventSubscriptionScope;
+use hubuum_storage_core::StorageEventDeliveryConfiguration;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -44,6 +48,8 @@ struct DeliverySubscriptionRow {
     sink_id: i32,
     name: String,
     routing: Value,
+    collection_id: Option<i32>,
+    revision: PostgresRevision,
 }
 
 #[derive(Queryable)]
@@ -53,6 +59,7 @@ struct DeliverySinkRow {
     kind: String,
     configuration: Value,
     secret_ref: Option<String>,
+    revision: PostgresRevision,
 }
 
 fn invalid_delivery_value(
@@ -378,6 +385,8 @@ async fn load_work_items(
             event_subscriptions::sink_id,
             event_subscriptions::name,
             event_subscriptions::routing,
+            event_subscriptions::collection_id,
+            event_subscriptions::revision,
         ))
         .load::<DeliverySubscriptionRow>(connection)
         .await?
@@ -396,6 +405,7 @@ async fn load_work_items(
             event_sinks::kind,
             event_sinks::config,
             event_sinks::secret_ref,
+            event_sinks::revision,
         ))
         .load::<DeliverySinkRow>(connection)
         .await?
@@ -429,14 +439,27 @@ async fn load_work_items(
                 delivery.attempts,
                 claim_token,
             )
-            .map_err(|error| invalid_delivery_value("event delivery claim", error))?;
+            .map_err(|error| invalid_delivery_value("event delivery claim", error))?
+            .with_configuration(StorageEventDeliveryConfiguration::new(
+                EventSinkId::new(sink.id)?,
+                sink.revision.into_domain(),
+                subscription.revision.into_domain(),
+            ));
+            let scope = subscription
+                .collection_id
+                .map(CollectionId::new)
+                .transpose()?
+                .map_or(EventSubscriptionScope::System, EventSubscriptionScope::from);
+            let envelope = event
+                .into_envelope(&principal_names)?
+                .for_subscription_scope(scope);
             let subscription =
                 delivery_subscription_value(subscription)?.for_test(delivery.purpose == "test");
             let sink = delivery_sink_value(sink)?;
 
             Ok(StorageEventDeliveryWorkItem::new(
                 claim,
-                event.into_envelope(&principal_names)?,
+                envelope,
                 subscription,
                 sink,
             ))
@@ -545,6 +568,42 @@ async fn admit_sink_delivery(
         .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token())
         .get_result::<Admission>(connection).await.optional()?;
     let Some(row) = row else { return Ok(false) };
+    let Some(configuration) = claim.configuration() else {
+        return Ok(false);
+    };
+    #[derive(QueryableByName)]
+    struct Authorization {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        allowed: bool,
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        unchanged: bool,
+    }
+    let authority = diesel::sql_query("SELECT
+        ((d.purpose = 'test' OR (s.enabled AND sub.enabled)) AND (
+            (sub.collection_id IS NULL AND s.collection_id IS NULL) OR
+            s.collection_id = sub.collection_id OR
+            (s.collection_id IS NULL AND EXISTS (SELECT 1 FROM event_sink_collection_grants g WHERE g.sink_id=s.id AND g.collection_id=sub.collection_id))
+        )) IS TRUE AS allowed,
+        (s.id=$3 AND s.revision=$4 AND sub.revision=$5) AS unchanged
+        FROM event_deliveries d JOIN event_subscriptions sub ON sub.id=d.subscription_id
+        JOIN event_sinks s ON s.id=sub.sink_id WHERE d.id=$1 AND d.claim_token=$2
+        FOR SHARE OF sub")
+        .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token())
+        .bind::<diesel::sql_types::Integer,_>(configuration.sink_id().id())
+        .bind::<BigInt,_>(configuration.sink_revision().get())
+        .bind::<BigInt,_>(configuration.subscription_revision().get())
+        .get_result::<Authorization>(connection).await.optional()?;
+    let Some(authority) = authority else {
+        return Ok(false);
+    };
+    if !authority.allowed || !authority.unchanged {
+        diesel::sql_query("UPDATE event_deliveries SET status=$3, claim_token=NULL, locked_until=NULL, last_error=$4, next_attempt_at=clock_timestamp() AT TIME ZONE 'UTC' WHERE id=$1 AND claim_token=$2 AND status='in_flight'")
+            .bind::<BigInt,_>(claim.delivery_id().id()).bind::<diesel::sql_types::Uuid,_>(claim.token())
+            .bind::<diesel::sql_types::Text,_>(if authority.allowed { "pending" } else { "dead" })
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>,_>((!authority.allowed).then_some("Sink use revoked or destination disabled"))
+            .execute(connection).await?;
+        return Ok(false);
+    }
     let policy: EventDeliveryPolicy = serde_json::from_value(row.delivery_policy)
         .map_err(|error| invalid_delivery_value("delivery policy", error))?;
     #[derive(QueryableByName)]
@@ -1108,6 +1167,7 @@ pub async fn claim_event_delivery_by_id(
 
 #[cfg(test)]
 mod tests {
+    use crate::PostgresRevision;
     use hubuum_storage_core::StorageErrorKind;
 
     use super::{
@@ -1128,12 +1188,15 @@ mod tests {
     #[test]
     fn corrupt_delivery_transport_values_are_backend_failures() {
         let subscription = DeliverySubscriptionRow {
+            collection_id: None,
+            revision: PostgresRevision::INITIAL,
             id: 1,
             sink_id: 2,
             name: "subscription".to_string(),
             routing: serde_json::json!([]),
         };
         let sink = DeliverySinkRow {
+            revision: PostgresRevision::INITIAL,
             id: 2,
             name: "sink".to_string(),
             kind: "webhook".to_string(),

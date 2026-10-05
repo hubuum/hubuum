@@ -7,3 +7,5 @@ mod performance;
 mod probes;
 mod request_and_correlation;
 mod runtime_config;
+
+mod collection_event_sinks;
