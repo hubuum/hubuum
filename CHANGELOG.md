@@ -19,6 +19,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** backups now use format 8 to preserve collection sink ownership
+  and grants; formats 6 and 7 remain accepted with legacy grant backfill. Upgrade
+  all API, worker, and restore processes before producing format 8 backups.
+  Older servers cannot restore format 8; retain a pre-upgrade backup for rollback.
 - **Breaking:** new collection subscriptions and edits require a collection-owned
   sink or an explicit administrator sink grant, plus `ReadAudit`. Existing
   collection/sink relationships are granted during migration. Grants do not
@@ -36,6 +40,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   older servers reject that section. Preserve a pre-upgrade snapshot for rollback.
   Storage adapter implementers must add sink authorization and grant operations
   and preserve configuration revisions in delivery claims.
+
+### Fixed
+
+- Delivery health accepts pending deliveries scheduled in the future by pacing,
+  rather than returning an internal error when none are due yet.
+- Collection-owned sink audit events retain their collection scope in the memory
+  storage adapter, matching PostgreSQL visibility and event subscription behavior.
 
 ## [0.0.17] - 2026-10-04
 

@@ -2021,6 +2021,28 @@ pub trait EventDeliveryAdministrationStorage: Send + Sync {
     ) -> Result<StorageEventDelivery, StorageError>;
 }
 
+fn validate_collection_sink(
+    collection_id: Option<CollectionId>,
+    kind: &str,
+    configuration: &Value,
+    secret_ref: Option<&str>,
+) -> Result<(), StorageValidationError> {
+    if collection_id.is_some()
+        && (kind != "webhook"
+            || secret_ref.is_some()
+            || configuration.get("url_secret_ref").is_some()
+            || configuration
+                .get("destination_url")
+                .and_then(Value::as_str)
+                .is_none_or(|url| url.trim().is_empty()))
+    {
+        return Err(StorageValidationError::invalid(
+            "Collection-owned sinks require a webhook destination_url and cannot reference server secrets",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2215,26 +2237,4 @@ mod tests {
             .is_err()
         );
     }
-}
-
-fn validate_collection_sink(
-    collection_id: Option<CollectionId>,
-    kind: &str,
-    configuration: &Value,
-    secret_ref: Option<&str>,
-) -> Result<(), StorageValidationError> {
-    if collection_id.is_some()
-        && (kind != "webhook"
-            || secret_ref.is_some()
-            || configuration.get("url_secret_ref").is_some()
-            || configuration
-                .get("destination_url")
-                .and_then(Value::as_str)
-                .is_none_or(|url| url.trim().is_empty()))
-    {
-        return Err(StorageValidationError::invalid(
-            "Collection-owned sinks require a webhook destination_url and cannot reference server secrets",
-        ));
-    }
-    Ok(())
 }

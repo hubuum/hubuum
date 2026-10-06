@@ -258,10 +258,12 @@ impl EventConfigurationStorage for MemoryStorage {
         .try_build()
         .map_err(invalid_contract_value)?;
         state.event_sinks.insert(id.id(), sink.clone());
-        let receipt = state.append_simple_event(
+        let receipt = append_memory_scoped_simple_event!(
+            state,
             EntityType::EventSink,
             id.id(),
             Some(sink.name()),
+            sink.collection_id(),
             Action::Created,
             request.event_context(),
             format!("Event sink '{}' created", sink.name()),
@@ -381,10 +383,12 @@ impl EventConfigurationStorage for MemoryStorage {
             }
         }
         state.event_sinks.insert(sink.id().id(), sink.clone());
-        let receipt = state.append_simple_event(
+        let receipt = append_memory_scoped_simple_event!(
+            state,
             EntityType::EventSink,
             sink.id().id(),
             Some(sink.name()),
+            sink.collection_id(),
             Action::Updated,
             request.event_context(),
             format!("Event sink '{}' updated", sink.name()),
@@ -413,10 +417,12 @@ impl EventConfigurationStorage for MemoryStorage {
         state
             .event_sink_grants
             .retain(|(sink, _)| *sink != request.id().id());
-        let receipt = state.append_simple_event(
+        let receipt = append_memory_scoped_simple_event!(
+            state,
             EntityType::EventSink,
             sink.id().id(),
             Some(sink.name()),
+            sink.collection_id(),
             Action::Deleted,
             request.event_context(),
             format!("Event sink '{}' deleted", sink.name()),
@@ -1307,8 +1313,51 @@ impl EventHealthStorage for MemoryStorage {
                 .values()
                 .map(StorageEventDelivery::status),
         )?;
-        let due = counts.pending() + counts.retryable();
-        let delivery = StorageEventQueueSnapshot::try_new(counts, 0, (due > 0).then_some(0))
+        let now = Utc::now();
+        let retryable = state
+            .event_deliveries
+            .values()
+            .filter(|delivery| {
+                delivery.status() == EventDeliveryStatus::Failed
+                    && delivery.next_attempt_at() <= now
+            })
+            .count() as i64;
+        let stale_claims = state
+            .event_deliveries
+            .values()
+            .filter(|delivery| {
+                delivery.status() == EventDeliveryStatus::InFlight
+                    && delivery
+                        .locked_until()
+                        .is_some_and(|deadline| deadline <= now)
+            })
+            .count() as i64;
+        let oldest_due_age = state
+            .event_deliveries
+            .values()
+            .filter(|delivery| match delivery.status() {
+                EventDeliveryStatus::Pending | EventDeliveryStatus::Failed => {
+                    delivery.next_attempt_at() <= now
+                }
+                EventDeliveryStatus::InFlight => delivery
+                    .locked_until()
+                    .is_some_and(|deadline| deadline <= now),
+                _ => false,
+            })
+            .map(|delivery| delivery.created_at())
+            .min()
+            .map(|created| (now - created).num_seconds().max(0));
+        let counts = StorageEventDeliveryStatusSnapshot::try_new(
+            counts.total(),
+            counts.pending(),
+            counts.in_flight(),
+            counts.succeeded(),
+            counts.failed(),
+            counts.dead(),
+            retryable,
+        )
+        .map_err(invalid_contract_value)?;
+        let delivery = StorageEventQueueSnapshot::try_new(counts, stale_claims, oldest_due_age)
             .map_err(invalid_contract_value)?;
         Ok(StorageEventDeliveryHealthSnapshot::new(
             fanout,

@@ -7151,7 +7151,7 @@
   },
   "documents": {
     "backup": {
-      "version": 7,
+      "version": 8,
       "required_fields": [
         "backup_version",
         "created_at",

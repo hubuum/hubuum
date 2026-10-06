@@ -2007,6 +2007,24 @@ mod tests {
         assert!(error.to_string().contains("collections"));
     }
 
+    #[rstest::rstest]
+    #[case::six(6)]
+    #[case::seven(7)]
+    #[case::current(CURRENT_BACKUP_VERSION)]
+    fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
+        let mut document = minimally_valid_document();
+        document.backup_version = version;
+        if version < 8 {
+            document
+                .state
+                .sections
+                .remove(&StorageBackupStateSection::EventSinkCollectionGrants);
+        }
+        document.manifest = BackupManifest::from_sections(&document.state, None);
+        let bytes = serde_json::to_vec(&document).unwrap();
+        assert!(verify_backup_document(&bytes, bytes.len()).is_ok());
+    }
+
     #[test]
     fn offline_backup_verification_rejects_future_versions() {
         let mut document = minimally_valid_document();

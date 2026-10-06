@@ -86,6 +86,8 @@ https://caddy {{
         sink = self.api('/api/v1/event-sinks', {
             'name': 'monitoring-acceptance', 'kind': 'webhook', 'config': {},
         }, status=201)
+        self.api(f'/api/v1/event-sinks/{sink["id"]}/collections/{self.collection_id}',
+                 method='PUT', status=204)
         self.subscriptions = {}
         for route in ('accepted', 'retry'):
             subscription = self.api(f'/api/v1/collections/{self.collection_id}/event-subscriptions', {

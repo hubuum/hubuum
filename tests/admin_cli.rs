@@ -372,7 +372,10 @@ fn backup_files_are_owner_only_and_atomically_replaced() {
     let report: serde_json::Value = serde_json::from_slice(&verification.stdout).unwrap();
     assert_eq!(report["result"], "passed");
     assert_eq!(report["mode"], "format_only");
-    assert_eq!(report["backup_version"], 7);
+    assert_eq!(
+        report["backup_version"],
+        hubuum::models::CURRENT_BACKUP_VERSION
+    );
     assert!(report["total_items"].as_i64().unwrap() > 0);
 
     let unsafe_restore_test = admin_command(&database_url)
