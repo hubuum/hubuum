@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-10-06
+
 ### Added
 
 - Collection managers with `ManageEventSubscription` and `ReadAudit` can create
@@ -19,6 +21,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Refresh compatible transitive dependencies, including Hyper 1.12 and
+  JSON Schema validation patch releases.
 - **Breaking:** backups now use format 8 to preserve collection sink ownership
   and grants; formats 6 and 7 remain accepted with legacy grant backfill. Upgrade
   all API, worker, and restore processes before producing format 8 backups.
