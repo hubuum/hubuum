@@ -15,6 +15,7 @@ mod computed_fields;
 mod computed_objects;
 mod credential_approval;
 mod event_administration;
+mod event_sink_access;
 mod events;
 mod execution;
 mod export_query;
@@ -111,6 +112,9 @@ pub use event_administration::{
     StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
     StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
+};
+pub use event_sink_access::{
+    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
@@ -611,3 +615,5 @@ mod task_discovery_search;
 pub use task_discovery_search::{
     TaskDiscoveryPredicate, TaskDiscoverySearch, TaskRemoteSideEffectState,
 };
+
+pub use events::StorageEventDeliveryConfiguration;

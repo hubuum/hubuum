@@ -127,12 +127,50 @@ pub trait EventFanoutStorage: Send + Sync {
 /// claim token is intentionally private and redacted from diagnostics.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageEventDeliveryClaim {
+    configuration: Option<StorageEventDeliveryConfiguration>,
     delivery_id: EventDeliveryId,
     attempts: i32,
     token: Uuid,
 }
 
+/// Configuration captured while claiming, checked again at delivery admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageEventDeliveryConfiguration {
+    sink_id: EventSinkId,
+    sink_revision: ResourceRevision,
+    subscription_revision: ResourceRevision,
+}
+impl StorageEventDeliveryConfiguration {
+    pub const fn new(
+        sink_id: EventSinkId,
+        sink_revision: ResourceRevision,
+        subscription_revision: ResourceRevision,
+    ) -> Self {
+        Self {
+            sink_id,
+            sink_revision,
+            subscription_revision,
+        }
+    }
+    pub const fn sink_id(self) -> EventSinkId {
+        self.sink_id
+    }
+    pub const fn sink_revision(self) -> ResourceRevision {
+        self.sink_revision
+    }
+    pub const fn subscription_revision(self) -> ResourceRevision {
+        self.subscription_revision
+    }
+}
+
 impl StorageEventDeliveryClaim {
+    pub fn with_configuration(mut self, configuration: StorageEventDeliveryConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
+    }
+    pub const fn configuration(&self) -> Option<StorageEventDeliveryConfiguration> {
+        self.configuration
+    }
     pub fn try_new(
         delivery_id: EventDeliveryId,
         attempts: i32,
@@ -144,6 +182,7 @@ impl StorageEventDeliveryClaim {
             ));
         }
         Ok(Self {
+            configuration: None,
             delivery_id,
             attempts,
             token,

@@ -168,6 +168,18 @@ async fn shared_sink_deferral_preserves_attempts_and_fences_old_claims(#[case] p
             .get_event_delivery(claims[1].delivery_id())
             .await
             .unwrap();
+        let health = backend.get_event_delivery_health().await.unwrap();
+        let queue = if backend.descriptor().kind() == StorageBackendKind::Postgres {
+            health
+                .sinks()
+                .iter()
+                .find(|row| row.sink().id() == sink)
+                .unwrap()
+                .queue()
+        } else {
+            health.delivery()
+        };
+        assert_eq!(queue.oldest_due_age_seconds(), None);
         assert_eq!(deferred.status(), EventDeliveryStatus::Pending);
         assert_eq!(deferred.attempts(), 0);
         assert_eq!(
@@ -455,5 +467,84 @@ async fn policy_updates_reconcile_deferred_deadlines(
             .await
             .unwrap()
             .into_value();
+    }
+}
+
+#[rstest]
+#[case::created(Action::Created)]
+#[case::updated(Action::Updated)]
+#[case::deleted(Action::Deleted)]
+#[actix_web::test]
+async fn owned_sink_audit_is_visible_to_its_collection(#[case] action: Action) {
+    let _permit = postgres_permit().await;
+    let scope = crate::tests::test_scope();
+    for backend in available_backends() {
+        let collection = collection_id(1);
+        let sink = backend
+            .create_event_sink(
+                StorageEventSinkCreate::builder(
+                    scope.scoped_name("owned_audit"),
+                    "webhook",
+                    EventContext::system(),
+                )
+                .collection_id(Some(collection))
+                .configuration(serde_json::json!({"destination_url": "https://example.test/hook"}))
+                .try_build()
+                .unwrap(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        if action == Action::Updated {
+            backend
+                .update_event_sink(
+                    StorageEventSinkUpdate::builder(sink.id(), EventContext::system())
+                        .enabled(Some(true))
+                        .try_build()
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+        }
+        if action == Action::Deleted {
+            backend
+                .delete_event_sink(StorageEventSinkDelete::new(
+                    sink.id(),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap()
+                .into_value();
+        }
+        let events = backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![collection],
+                false,
+                StorageAuditEventFilters::new()
+                    .entity_type(Some(EntityType::EventSink))
+                    .entity_id(Some(EventEntityId::new(sink.id().id()).unwrap()))
+                    .action(Some(action)),
+                QueryOptions::new(vec![], vec![], Some(10), None, false).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts()
+            .0;
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].clone().into_parts().0.collection_id(),
+            Some(collection)
+        );
+        if action != Action::Deleted {
+            backend
+                .delete_event_sink(StorageEventSinkDelete::new(
+                    sink.id(),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap()
+                .into_value();
+        }
     }
 }

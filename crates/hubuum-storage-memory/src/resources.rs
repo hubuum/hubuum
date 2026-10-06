@@ -208,6 +208,45 @@ impl CollectionStorage for MemoryStorage {
                 .map_err(invalid_contract_value)?;
             delete_class_in_state(&mut state, &target, context)?.into_value();
         }
+        let owned_sinks = state
+            .event_sinks
+            .values()
+            .filter(|sink| sink.collection_id() == Some(id))
+            .map(|sink| sink.id().id())
+            .collect::<std::collections::BTreeSet<_>>();
+        let subscriptions = state
+            .event_subscriptions
+            .values()
+            .filter(|subscription| {
+                subscription.scope().collection_id() == Some(id)
+                    || owned_sinks.contains(&subscription.sink_id().id())
+            })
+            .map(|subscription| subscription.id().id())
+            .collect::<std::collections::BTreeSet<_>>();
+        let deliveries = state
+            .event_deliveries
+            .values()
+            .filter(|delivery| subscriptions.contains(&delivery.subscription_id().id()))
+            .map(|delivery| delivery.id().id())
+            .collect::<std::collections::BTreeSet<_>>();
+        state
+            .event_sinks
+            .retain(|sink, _| !owned_sinks.contains(sink));
+        state
+            .event_sink_schedule
+            .retain(|sink, _| !owned_sinks.contains(sink));
+        state
+            .event_sink_grants
+            .retain(|(sink, collection)| *collection != id.id() && !owned_sinks.contains(sink));
+        state
+            .event_subscriptions
+            .retain(|subscription, _| !subscriptions.contains(subscription));
+        state
+            .event_deliveries
+            .retain(|delivery, _| !deliveries.contains(delivery));
+        state
+            .event_delivery_claims
+            .retain(|delivery, _| !deliveries.contains(delivery));
         state.collections.remove(&id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }

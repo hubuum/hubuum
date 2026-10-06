@@ -78,3 +78,6 @@ pub use crate::models::user::*;
 pub mod schema_evolution;
 
 pub mod credential_approval;
+
+mod collection_event_sink;
+pub use collection_event_sink::{CollectionEventSink, EventSinkRouting};

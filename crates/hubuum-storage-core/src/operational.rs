@@ -600,7 +600,7 @@ impl StorageEventQueueSnapshot {
         stale_claims: i64,
         oldest_due_age_seconds: Option<i64>,
     ) -> Result<Self, StorageValidationError> {
-        let due_events = counts
+        let possibly_due_events = counts
             .pending
             .checked_add(counts.retryable)
             .and_then(|value| value.checked_add(stale_claims))
@@ -610,7 +610,10 @@ impl StorageEventQueueSnapshot {
         if stale_claims < 0
             || stale_claims > counts.in_flight
             || oldest_due_age_seconds.is_some_and(|value| value < 0)
-            || oldest_due_age_seconds.is_some() != (due_events > 0)
+            // Pending deliveries may be scheduled in the future by sink pacing.
+            // Retryable failures and stale claims, however, are already due.
+            || (oldest_due_age_seconds.is_none() && (counts.retryable > 0 || stale_claims > 0))
+            || (oldest_due_age_seconds.is_some() && possibly_due_events == 0)
         {
             return Err(StorageValidationError::invalid(
                 "event delivery queue counts and ages are inconsistent",
@@ -934,12 +937,17 @@ mod tests {
 
     #[test]
     fn event_queue_snapshot_requires_an_age_for_due_deliveries() {
-        let counts = StorageEventDeliveryStatusSnapshot::try_new(1, 1, 0, 0, 0, 0, 0).unwrap();
+        let counts = StorageEventDeliveryStatusSnapshot::try_new(1, 0, 0, 0, 1, 0, 1).unwrap();
         let error = StorageEventQueueSnapshot::try_new(counts, 0, None).unwrap_err();
 
         assert_eq!(
             error.kind(),
             crate::StorageValidationErrorKind::InvalidValue
         );
+    }
+    #[test]
+    fn event_queue_snapshot_allows_pending_deliveries_scheduled_in_the_future() {
+        let counts = StorageEventDeliveryStatusSnapshot::try_new(1, 1, 0, 0, 0, 0, 0).unwrap();
+        assert!(StorageEventQueueSnapshot::try_new(counts, 0, None).is_ok());
     }
 }

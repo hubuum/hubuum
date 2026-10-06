@@ -642,6 +642,24 @@ fn validate_backup_state_references(document: &BackupDocument) -> Result<(), Api
         validate_required_reference("remote_targets", row, "collection_id", &collections)?;
         validate_optional_reference("remote_targets", row, "class_id", &classes)?;
     }
+    for row in required_state_section(document, StorageBackupStateSection::EventSinks)? {
+        validate_optional_reference("event_sinks", row, "collection_id", &collections)?;
+    }
+    if let Some(grants) = document
+        .state
+        .sections
+        .get(&StorageBackupStateSection::EventSinkCollectionGrants)
+    {
+        for row in grants {
+            validate_required_reference("event_sink_collection_grants", row, "sink_id", &sinks)?;
+            validate_required_reference(
+                "event_sink_collection_grants",
+                row,
+                "collection_id",
+                &collections,
+            )?;
+        }
+    }
     for row in required_state_section(document, StorageBackupStateSection::EventSubscriptions)? {
         validate_optional_reference("event_subscriptions", row, "collection_id", &collections)?;
         validate_required_reference("event_subscriptions", row, "sink_id", &sinks)?;
@@ -723,6 +741,7 @@ pub(crate) fn verify_restored_backup_matches(
         }
     }
     for document in [&mut source, &mut restored] {
+        StorageBackupSnapshot::normalize_legacy_event_sink_access(&mut document.state.sections);
         if let Some(history) = &mut document.history {
             StorageBackupSnapshot::canonicalize_discovery_history(&mut history.sections)
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
@@ -1986,6 +2005,24 @@ mod tests {
 
         assert!(error.to_string().contains("manifest count"));
         assert!(error.to_string().contains("collections"));
+    }
+
+    #[rstest::rstest]
+    #[case::six(6)]
+    #[case::seven(7)]
+    #[case::current(CURRENT_BACKUP_VERSION)]
+    fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
+        let mut document = minimally_valid_document();
+        document.backup_version = version;
+        if version < 8 {
+            document
+                .state
+                .sections
+                .remove(&StorageBackupStateSection::EventSinkCollectionGrants);
+        }
+        document.manifest = BackupManifest::from_sections(&document.state, None);
+        let bytes = serde_json::to_vec(&document).unwrap();
+        assert!(verify_backup_document(&bytes, bytes.len()).is_ok());
     }
 
     #[test]

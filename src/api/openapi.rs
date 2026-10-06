@@ -1,4 +1,5 @@
 use crate::api::handlers::{auth, meta, probes};
+use crate::api::v1::handlers::collection_event_sinks;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
@@ -69,6 +70,7 @@ use crate::models::{
     UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount,
     UpdateUser, UserPointResponse, UserResponse,
 };
+use crate::models::{CollectionEventSink, EventSinkRouting};
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
 };
@@ -212,6 +214,14 @@ use utoipa::{Modify, OpenApi, ToSchema};
         events::get_group_events,
         events::get_export_template_events,
         events::get_remote_target_events,
+        collection_event_sinks::list,
+        collection_event_sinks::get_owned,
+        collection_event_sinks::create,
+        collection_event_sinks::update,
+        collection_event_sinks::remove,
+        event_sinks::get_sink_collections,
+        event_sinks::grant_sink_collection,
+        event_sinks::revoke_sink_collection,
         event_sinks::preview_event_sink,
         event_sinks::test_event_sink,
         event_sinks::create_event_sink,
@@ -478,6 +488,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
             EventSinkDeliveryHealth,
             EventSubscriptionDeliveryHealth,
             EventDeliveryHealthResponse,
+            CollectionEventSink,
+            EventSinkRouting,
             EventSinkKind,
             EventSink,
             NewEventSink,
@@ -819,6 +831,14 @@ const CONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
     ),
     ("patch", "/api/v1/event-sinks/{sink_id}"),
+    (
+        "patch",
+        "/api/v1/collections/{collection_id}/event-sinks/{sink_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/collections/{collection_id}/event-sinks/{sink_id}",
+    ),
     ("delete", "/api/v1/event-sinks/{sink_id}"),
     (
         "patch",
@@ -909,6 +929,11 @@ const ETAGGED_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
     ),
     ("post", "/api/v1/event-sinks"),
+    ("post", "/api/v1/collections/{collection_id}/event-sinks"),
+    (
+        "get",
+        "/api/v1/collections/{collection_id}/event-sinks/{sink_id}",
+    ),
     ("get", "/api/v1/event-sinks/{sink_id}"),
     ("post", "/api/v1/system-event-subscriptions"),
     (
@@ -1623,11 +1648,15 @@ mod tests {
             "/api/v1/event-deliveries/{delivery_id}/dead",
             "/api/v1/event-sinks",
             "/api/v1/event-sinks/{sink_id}",
+            "/api/v1/event-sinks/{sink_id}/collections",
+            "/api/v1/event-sinks/{sink_id}/collections/{collection_id}",
             "/api/v1/event-sinks/{sink_id}/preview",
             "/api/v1/event-sinks/{sink_id}/test",
             "/api/v1/system-event-subscriptions",
             "/api/v1/system-event-subscriptions/{subscription_id}",
             "/api/v1/collections/{collection_id}/event-subscriptions",
+            "/api/v1/collections/{collection_id}/event-sinks",
+            "/api/v1/collections/{collection_id}/event-sinks/{sink_id}",
             "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
             "/api/v1/export-templates",
             "/api/v1/export-templates/{template_id}",

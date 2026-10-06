@@ -58,16 +58,17 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `7` also preserves sink delivery policy, system subscriptions
-and terminal test deliveries. Version `6` remains accepted with legacy defaults.
+Backup version `8` preserves collection sink ownership and explicit use grants,
+along with sink delivery policy, system subscriptions and terminal test deliveries.
+Versions `6` and `7` remain accepted with legacy defaults and grant backfill.
 Transient sink admission schedules reset on restore. Older servers cannot read
-version `7`. The format preserves authoritative resource revisions, collection
+version `8`. The format preserves authoritative resource revisions, collection
 authorization-set revisions, temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
 tables. State sections include identity scopes, groups, principals, users,
 service accounts, memberships, collections, authorization state, hierarchy,
 permission grants, classes, computed-field definitions, relations, objects,
-export templates, remote targets, event sinks, and event subscriptions. History
+export templates, remote targets, event sinks, sink collection grants, and event subscriptions. History
 sections describe resource history, terminal tasks and results, audit events,
 and terminal event deliveries.
 
@@ -250,8 +251,8 @@ password and issue a new token before exercising authenticated endpoints.
 
 Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-[PostgreSQL Database Roles](database_roles.md). For the 0.0.16 to 0.0.17 transition, format 6 logical backups are accepted
-by the candidate, which emits format 7. Stop all APIs, workers, and restore
+[PostgreSQL Database Roles](database_roles.md). The collection integration update accepts format 6 and 7 logical backups and
+emits format 8, preserving collection-owned sinks and direct grants. Stop all APIs, workers, and restore
 executors and take a PostgreSQL snapshot before migration. Binary-only rollback
 is unsupported: restore that snapshot and matching old binaries to recover,
 losing writes made after the snapshot. Retain credentials and old binaries too.
@@ -363,8 +364,8 @@ and excluded operational rows. Configure `HUBUUM_RESTORE_MAX_UPLOAD_BYTES`
 separately when verifying or restoring larger artifacts. Restart API and worker
 processes together after changing deployment settings.
 
-The document stays at format 6 with unchanged sections, fields, exclusions,
-revision validation, and history semantics. PostgreSQL section arrays now use
+Streaming preserves the document's format, sections, fields, exclusions,
+revision validation, and history semantics. PostgreSQL section arrays use
 primary-key order instead of full serialized-row order. Memory membership sources
 also use their stable composite key order. Offline output uses the
 same compact JSON representation as API output. Whitespace and row order can

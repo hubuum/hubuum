@@ -2898,11 +2898,23 @@ async fn execute_event_sink(
             crate::schema::event_sinks::created_at,
             crate::schema::event_sinks::updated_at,
             crate::schema::event_sinks::revision,
+            crate::schema::event_sinks::collection_id,
         ))
         .for_update()
-        .first::<(i32, NaiveDateTime, NaiveDateTime, PostgresRevision)>(connection)
+        .first::<(
+            i32,
+            NaiveDateTime,
+            NaiveDateTime,
+            PostgresRevision,
+            Option<i32>,
+        )>(connection)
         .await
         .optional()?;
+    if existing.is_some_and(|row| row.4.is_some()) {
+        return Err(PostgresStorageError::invalid_input(
+            "Global integration imports cannot replace collection-owned sinks",
+        ));
+    }
     assert_upsert_condition(existing.map(|row| row.3), parts.condition)?;
     if existing.is_some() && !overwrite {
         return Err(PostgresStorageError::conflict(format!(
@@ -2911,7 +2923,7 @@ async fn execute_event_sink(
         )));
     }
     let sink_id = match existing {
-        Some((id, old_created_at, old_updated_at, _)) => {
+        Some((id, old_created_at, old_updated_at, _, _)) => {
             let (created_at, updated_at) = parts
                 .timestamps
                 .map(import_timestamp_pair)
@@ -2983,6 +2995,16 @@ async fn upsert_event_subscription(
         parts.sink_key.as_ref(),
     )
     .await?;
+    // Integration imports are restricted to unscoped administrators. Their
+    // subscription declaration also provisions the direct collection grant.
+    diesel::insert_into(crate::schema::event_sink_collection_grants::table)
+        .values((
+            crate::schema::event_sink_collection_grants::sink_id.eq(sink_id),
+            crate::schema::event_sink_collection_grants::collection_id.eq(collection.id().id()),
+        ))
+        .on_conflict_do_nothing()
+        .execute(connection)
+        .await?;
     validate_event_subscription(
         &parts.entity_types,
         &parts.actions,
@@ -3086,6 +3108,7 @@ async fn resolve_event_sink(
         })?;
     crate::schema::event_sinks::table
         .filter(crate::schema::event_sinks::name.eq(name))
+        .filter(crate::schema::event_sinks::collection_id.is_null())
         .select(crate::schema::event_sinks::id)
         .first::<i32>(connection)
         .await

@@ -150,6 +150,7 @@ impl MemoryState {
             computed_rebuild_tasks: BTreeMap::new(),
             authorization_grants: BTreeMap::new(),
             event_sinks: BTreeMap::new(),
+            event_sink_grants: BTreeSet::new(),
             event_subscriptions: BTreeMap::new(),
             event_deliveries: BTreeMap::new(),
             event_sink_schedule: BTreeMap::new(),

@@ -11,6 +11,13 @@
           "event_deliveries_event_id_subscription_id_key"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-05-000001_collection_event_sinks/up.sql",
+      "sha256": "90421d14d07286adc5a52e0a2c2175654fefe2fc1ec82cc0b3d8bc73502ca103",
+      "reason": "Collection-owned sinks and explicit grants change subscription and dispatch authorization; older writers and workers do not enforce that boundary.",
+      "upgrade_action": "Stop all older API and worker processes, apply the migration and role grants, and restart matching binaries. Bind existing credential-bearing webhooks to their destinations. See docs/events.md#upgrade-and-rollback.",
+      "drop_constraints": {}
     }
   ]
 }

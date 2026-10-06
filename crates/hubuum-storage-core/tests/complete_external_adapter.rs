@@ -978,6 +978,26 @@ impl AuditEventStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl EventConfigurationStorage for CompleteExternalAdapter {
+    async fn resolve_event_sink_use(
+        &self,
+        collection_id: CollectionId,
+        sink_id: EventSinkId,
+    ) -> Result<StorageAuthorizedEventSink, StorageError> {
+        fixture_result()
+    }
+    async fn list_event_sink_collections(
+        &self,
+        sink_id: EventSinkId,
+    ) -> Result<Vec<CollectionId>, StorageError> {
+        fixture_result()
+    }
+    async fn change_event_sink_grant(
+        &self,
+        request: StorageEventSinkGrantChange,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        fixture_result()
+    }
+
     async fn count_enabled_event_sinks(&self) -> Result<i64, StorageError> {
         fixture_result()
     }

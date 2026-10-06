@@ -88,6 +88,9 @@ pub mod events {
         StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
         StorageEventSubscriptionHealthSnapshot,
     };
+    pub use crate::{
+        EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
+    };
 }
 
 /// Execution context, observation, operational state, and process integration.

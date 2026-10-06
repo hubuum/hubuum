@@ -519,6 +519,15 @@ pub async fn save_event_subscription(
     subscription: NewEventSubscription,
     collection_id: CollectionID,
 ) -> Result<i32, ApiError> {
+    PostgresStorage::unobserved(pool.clone())
+        .change_event_sink_grant(hubuum_storage_core::StorageEventSinkGrantChange::new(
+            subscription.sink_id,
+            CollectionId::new(collection_id.id())?,
+            hubuum_storage_core::EventSinkGrantAction::Grant,
+            hubuum_events_core::EventContext::system(),
+        ))
+        .await?
+        .into_value();
     validate_subscription_parts(
         &subscription.entity_types,
         &subscription.actions,

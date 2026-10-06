@@ -7,6 +7,47 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Collection managers with `ManageEventSubscription` and `ReadAudit` can create
+  and manage collection-owned webhooks using a fixed destination URL, including
+  chat-provider message templates, without provisioning a server secret alias.
+  Collection sink discovery returns permitted destinations and routing
+  requirements without exposing configuration, URLs, or credentials.
+- Administrators can grant and revoke a global sink's use by individual
+  collections. Ownership and direct grants are preserved in backups.
+
+### Changed
+
+- **Breaking:** backups now use format 8 to preserve collection sink ownership
+  and grants; formats 6 and 7 remain accepted with legacy grant backfill. Upgrade
+  all API, worker, and restore processes before producing format 8 backups.
+  Older servers cannot restore format 8; retain a pre-upgrade backup for rollback.
+- **Breaking:** new collection subscriptions and edits require a collection-owned
+  sink or an explicit administrator sink grant, plus `ReadAudit`. Existing
+  collection/sink relationships are granted during migration. Grants do not
+  inherit to child collections. Provision grants before creating new subscriptions
+  against shared sinks. Collection-owned integrations persist after their
+  creator loses access. Related-collection deliveries now redact snapshots.
+- **Breaking:** webhook credentials and static headers require a fixed
+  `config.destination_url` or `config.url_secret_ref`. Update existing custom
+  credential-bearing webhooks to bind their destination before enabling delivery.
+  Subscription routing cannot override that destination. Revocation and destination
+  changes are checked again before dispatch, including queued retries.
+- **Breaking upgrade requirement:** stop older API and worker processes before
+  applying the collection-event-sinks migration, and restart matching binaries.
+  Backups containing the new sink-grant section require this server update;
+  older servers reject that section. Preserve a pre-upgrade snapshot for rollback.
+  Storage adapter implementers must add sink authorization and grant operations
+  and preserve configuration revisions in delivery claims.
+
+### Fixed
+
+- Delivery health accepts pending deliveries scheduled in the future by pacing,
+  rather than returning an internal error when none are due yet.
+- Collection-owned sink audit events retain their collection scope in the memory
+  storage adapter, matching PostgreSQL visibility and event subscription behavior.
+
 ## [0.0.17] - 2026-10-04
 
 ### Added

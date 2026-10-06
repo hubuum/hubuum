@@ -1163,6 +1163,20 @@ impl fmt::Debug for EventEnvelope {
 }
 
 impl EventEnvelope {
+    /// Restrict delivery snapshots to the subscription's own collection, matching
+    /// the audit API's related-collection projection. Global admin subscriptions
+    /// retain the complete envelope.
+    #[must_use]
+    pub fn for_subscription_scope(mut self, scope: EventSubscriptionScope) -> Self {
+        if let Some(collection) = scope.collection_id()
+            && self.collection_id != Some(collection)
+        {
+            self.before = None;
+            self.after = None;
+        }
+        self
+    }
+
     #[must_use]
     pub fn builder() -> EventEnvelopeBuilder {
         EventEnvelopeBuilder::default()
@@ -1999,7 +2013,7 @@ pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value
                 .map(|(key, value)| {
                     let redacted = if key == "url_secret_ref" {
                         value.clone()
-                    } else if is_sensitive_config_key(key) {
+                    } else if key == "destination_url" || is_sensitive_config_key(key) {
                         serde_json::Value::String("[redacted]".to_string())
                     } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
                         redact_uri_value(value)
@@ -2417,6 +2431,18 @@ mod tests {
 
     fn envelope() -> EventEnvelope {
         envelope_builder().try_build().unwrap()
+    }
+
+    #[test]
+    fn related_collection_delivery_redacts_snapshots() {
+        let event = envelope_builder()
+            .collection_id(Some(CollectionId::new(1).unwrap()))
+            .before(Some(serde_json::json!({"secret": "old"})))
+            .after(Some(serde_json::json!({"secret": "new"})))
+            .try_build()
+            .unwrap();
+        let projected = event.for_subscription_scope(CollectionId::new(2).unwrap().into());
+        assert!(projected.before().is_none() && projected.after().is_none());
     }
 
     #[test]

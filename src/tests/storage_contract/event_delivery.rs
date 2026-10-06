@@ -371,3 +371,104 @@ async fn postgres_delivery_acknowledgement_is_bounded_by_the_lease() {
         .unwrap();
     fixture.cleanup().await.unwrap();
 }
+
+#[rstest]
+#[case::revoked_memory(StorageBackendKind::Memory, true)]
+#[case::revoked_postgres(StorageBackendKind::Postgres, true)]
+#[case::changed_memory(StorageBackendKind::Memory, false)]
+#[case::changed_postgres(StorageBackendKind::Postgres, false)]
+#[actix_web::test]
+async fn revoked_or_changed_destination_is_not_dispatched(
+    #[case] backend_kind: StorageBackendKind,
+    #[case] revoke: bool,
+) {
+    let _permit = postgres_permit().await;
+    let scope = test_scope();
+    let memory;
+    let postgres;
+    let (backend, item, sink_id, collection_id) = match backend_kind {
+        StorageBackendKind::Memory => {
+            memory = Some(memory_deliveries(1).await);
+            postgres = None;
+            let fixture = memory.as_ref().unwrap();
+            let item = fixture
+                .backend
+                .claim_event_delivery_batch(default_settings())
+                .await
+                .unwrap()
+                .into_parts()
+                .0
+                .remove(0);
+            (
+                fixture.backend.clone(),
+                item,
+                fixture.sink_id,
+                fixture.collection_id,
+            )
+        }
+        StorageBackendKind::Postgres => {
+            memory = None;
+            postgres = Some(
+                PostgresAuditContractFixture::new(scope.pool.get_ref().clone())
+                    .await
+                    .unwrap(),
+            );
+            let fixture = postgres.as_ref().unwrap();
+            fixture.committed_mutation().await.unwrap();
+            let delivery_id = fixture.fanout_deliveries().await.unwrap()[0].id();
+            let item = claim_event_delivery_by_id(&scope.pool, delivery_id, default_settings())
+                .await
+                .unwrap();
+            (
+                fixture.backend.clone(),
+                item,
+                fixture.sink_id,
+                CollectionId::new(fixture.collection_id).unwrap(),
+            )
+        }
+    };
+    let delivery_id = item.clone().into_parts().0.delivery_id();
+    if revoke {
+        backend
+            .change_event_sink_grant(StorageEventSinkGrantChange::new(
+                sink_id,
+                collection_id,
+                EventSinkGrantAction::Revoke,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+    } else {
+        backend
+            .update_event_sink(
+                StorageEventSinkUpdate::builder(sink_id, EventContext::system())
+                    .name(Some(prefix("changed_destination")))
+                    .try_build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+    }
+    let sink = SlowSink::new(Duration::ZERO);
+    process_event_delivery_work_item(&backend, default_settings(), &sink, item)
+        .await
+        .unwrap();
+    let delivery = backend.get_event_delivery(delivery_id).await.unwrap();
+    assert!(sink.sends.lock().unwrap().is_empty());
+    assert_eq!(
+        delivery.status(),
+        if revoke {
+            EventDeliveryStatus::Dead
+        } else {
+            EventDeliveryStatus::Pending
+        }
+    );
+    if let Some(fixture) = memory {
+        fixture.cleanup().await.unwrap();
+    }
+    if let Some(fixture) = postgres {
+        fixture.cleanup().await.unwrap();
+    }
+}

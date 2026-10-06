@@ -44,6 +44,8 @@ struct WebhookConfig {
     #[serde(default)]
     url_secret_ref: Option<String>,
     #[serde(default)]
+    destination_url: Option<String>,
+    #[serde(default)]
     response: ResponsePolicy,
 }
 
@@ -81,6 +83,25 @@ impl Configuration {
         }
         let url_secret_ref = config.url_secret_ref.take().map(SecretName::new).transpose()
             .map_err(|_| SinkError::permanent("url_secret_ref must contain 1-128 ASCII letters, numbers, underscores, or hyphens"))?;
+        if let Some(url) = &config.destination_url {
+            validate_url(url)?;
+            if url_secret_ref.is_some() {
+                return Err(SinkError::permanent(
+                    "Specify destination_url or url_secret_ref, not both",
+                ));
+            }
+        }
+        if config
+            .headers
+            .as_ref()
+            .is_some_and(|headers| !headers.is_empty())
+            && config.destination_url.is_none()
+            && url_secret_ref.is_none()
+        {
+            return Err(SinkError::permanent(
+                "Webhook headers require a fixed destination_url or url_secret_ref",
+            ));
+        }
         if let Some(source) = &config.body_template {
             EventTemplate::new("body_template", source, MAX_MESSAGE_BYTES)?;
         }
@@ -111,6 +132,13 @@ impl Configuration {
         if self.url_secret_ref.is_some() && routing.url.is_some() {
             return Err(SinkError::permanent(
                 "routing.url cannot override url_secret_ref",
+            ));
+        }
+        if let (Some(fixed), Some(url)) = (&self.config.destination_url, &routing.url)
+            && fixed != url
+        {
+            return Err(SinkError::permanent(
+                "routing.url cannot override destination_url",
             ));
         }
         if let Some(url) = &routing.url {
@@ -175,7 +203,18 @@ impl WebhookSink {
         let routing = configuration.routing(delivery.routing())?;
         let destination = match (&configuration.url_secret_ref, routing.url) {
             (Some(alias), None) => Destination::Secret(alias.clone()),
-            (None, Some(url)) => Destination::Url(url),
+            (None, url) => Destination::Url(
+                configuration
+                    .config
+                    .destination_url
+                    .clone()
+                    .or(url)
+                    .ok_or_else(|| {
+                        SinkError::permanent(
+                            "Webhook requires routing.url, destination_url, or url_secret_ref",
+                        )
+                    })?,
+            ),
             _ => {
                 return Err(SinkError::permanent(
                     "Webhook requires routing.url or config.url_secret_ref",
@@ -230,6 +269,15 @@ impl WebhookSink {
         url_secret: Option<&SecretValue>,
     ) -> Result<(), SinkError> {
         let config = &prepared.configuration.config;
+        if bearer.is_some()
+            && config.destination_url.is_none()
+            && prepared.configuration.url_secret_ref.is_none()
+        {
+            return Err(SinkError::permanent(
+                "Webhook bearer credentials require a fixed destination_url or url_secret_ref",
+            ));
+        }
+
         let url = match &prepared.destination {
             Destination::Url(url) => url.clone(),
             Destination::Secret(_) => url_secret
@@ -425,11 +473,12 @@ mod tests {
     fn delivery(url: String) -> (serde_json::Value, serde_json::Value) {
         (
             serde_json::json!({
+                "destination_url": url,
                 "headers": {
                     "x-custom": "custom"
                 }
             }),
-            serde_json::json!({ "url": url }),
+            serde_json::json!({}),
         )
     }
 
@@ -562,3 +611,30 @@ mod tests {
 
 #[cfg(test)]
 mod configuration_tests;
+
+#[cfg(test)]
+mod destination_binding_tests {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case(json!({"destination_url": "https://example.test/original"}), json!({"url": "https://example.test/other"}))]
+    #[case(json!({"url_secret_ref": "fixed"}), json!({"url": "https://example.test/other"}))]
+    fn subscription_cannot_redirect_fixed_destination(
+        #[case] config: Value,
+        #[case] routing: Value,
+    ) {
+        assert!(
+            Configuration::parse(&config)
+                .unwrap()
+                .validate_routing(&routing)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn headers_require_fixed_destination() {
+        assert!(Configuration::parse(&json!({"headers": {"x-custom-key": "private"}})).is_err());
+    }
+}

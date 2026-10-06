@@ -256,7 +256,7 @@ impl MemoryStorage {
             .await
             .event_sinks
             .values()
-            .find(|sink| sink.name() == name)
+            .find(|sink| sink.name() == name && sink.collection_id().is_none())
             .map(StorageEventSink::id)
             .ok_or_else(|| StorageError::not_found("Import event sink was not found"))
     }
@@ -1243,6 +1243,11 @@ impl MemoryStorage {
                     .find(|sink| sink.name() == parts.name)
                     .cloned();
                 if let Some(current) = &existing {
+                    if current.collection_id().is_some() {
+                        return Err(StorageError::invalid_input(
+                            "Global integration imports cannot replace collection-owned sinks",
+                        ));
+                    }
                     assert_import_revision(parts.condition, current.revision())?;
                     if !overwrite {
                         return Err(StorageError::conflict("Import event sink already exists"));
@@ -1324,6 +1329,9 @@ impl MemoryStorage {
                 let filter = serde_json::from_value(parts.filter)
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
                 let mut state = self.state.write().await;
+                state
+                    .event_sink_grants
+                    .insert((sink_id.id(), collection_id.id()));
                 let existing = state
                     .event_subscriptions
                     .values()

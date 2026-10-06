@@ -199,9 +199,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.EventConfigurationStorage]
 source = "crates/hubuum-storage-core/src/event_administration.rs"
-methods = ["count_enabled_event_sinks", "list_event_sinks", "get_event_sink", "create_event_sink", "update_event_sink", "delete_event_sink", "list_event_subscriptions", "get_event_subscription", "create_event_subscription", "update_event_subscription", "delete_event_subscription"]
-effects = { point_read = ["count_enabled_event_sinks", "get_event_sink", "get_event_subscription"], page_read = ["list_event_sinks", "list_event_subscriptions"], audited_mutation = ["create_event_sink", "update_event_sink", "delete_event_sink", "create_event_subscription", "update_event_subscription", "delete_event_subscription"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
+methods = ["resolve_event_sink_use", "list_event_sink_collections", "change_event_sink_grant", "count_enabled_event_sinks", "list_event_sinks", "get_event_sink", "create_event_sink", "update_event_sink", "delete_event_sink", "list_event_subscriptions", "get_event_subscription", "create_event_subscription", "update_event_subscription", "delete_event_subscription"]
+effects = { point_read = ["resolve_event_sink_use", "list_event_sink_collections", "count_enabled_event_sinks", "get_event_sink", "get_event_subscription"], page_read = ["list_event_sinks", "list_event_subscriptions"], audited_mutation = ["change_event_sink_grant", "create_event_sink", "update_event_sink", "delete_event_sink", "create_event_subscription", "update_event_subscription", "delete_event_subscription"] }
+shared_scenarios = ["src/tests/storage_contract/event_delivery.rs::revoked_or_changed_destination_is_not_dispatched", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_event_administration"]
 
 [traits.EventDeliveryAdministrationStorage]
 source = "crates/hubuum-storage-core/src/event_administration.rs"

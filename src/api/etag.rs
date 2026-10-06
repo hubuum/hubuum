@@ -445,6 +445,10 @@ impl_id_etag!(
 impl_id_etag!(crate::models::RemoteTarget, EtagResourceKind::RemoteTarget);
 impl_id_etag!(crate::models::EventSink, EtagResourceKind::EventSink);
 impl_id_etag!(
+    crate::models::CollectionEventSink,
+    EtagResourceKind::EventSink
+);
+impl_id_etag!(
     crate::models::EventSubscription,
     EtagResourceKind::EventSubscription
 );

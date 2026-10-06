@@ -404,6 +404,7 @@ struct MemoryState {
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,
     authorization_grants: BTreeMap<(i32, i32), StorageAuthorizationGrant>,
     event_sinks: BTreeMap<i32, StorageEventSink>,
+    event_sink_grants: BTreeSet<(i32, i32)>,
     event_subscriptions: BTreeMap<i32, StorageEventSubscription>,
     event_deliveries: BTreeMap<i64, StorageEventDelivery>,
     event_delivery_claims: BTreeMap<i64, Uuid>,

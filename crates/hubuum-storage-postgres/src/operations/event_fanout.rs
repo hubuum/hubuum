@@ -431,6 +431,7 @@ async fn load_enabled_subscriptions(
         .inner_join(event_sinks::table.on(event_sinks::id.eq(event_subscriptions::sink_id)))
         .filter(event_subscriptions::enabled.eq(true))
         .filter(event_sinks::enabled.eq(true))
+        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>("((event_subscriptions.collection_id IS NULL AND event_sinks.collection_id IS NULL) OR event_sinks.collection_id = event_subscriptions.collection_id OR (event_sinks.collection_id IS NULL AND EXISTS (SELECT 1 FROM event_sink_collection_grants g WHERE g.sink_id=event_sinks.id AND g.collection_id=event_subscriptions.collection_id))) IS TRUE"))
         .filter(
             event_subscriptions::collection_id
                 .eq_any(collection_ids)

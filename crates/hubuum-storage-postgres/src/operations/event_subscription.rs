@@ -1,4 +1,5 @@
 use super::event_rows::{StoredEventProjection, enrich_stored_events};
+use diesel::BoolExpressionMethods;
 use diesel::PgExpressionMethods;
 use diesel::SelectableHelper;
 use hubuum_domain::EventDeliveryPolicy;
@@ -70,6 +71,7 @@ struct EventSinkRow {
     updated_at: NaiveDateTime,
     revision: PostgresRevision,
     delivery_policy: Value,
+    collection_id: Option<i32>,
 }
 
 impl_redacted_sink_debug!(
@@ -95,6 +97,7 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
             row.updated_at.and_utc(),
             row.revision.into_domain(),
         )
+        .collection_id(row.collection_id.map(CollectionId::new).transpose()?)
         .configuration(row.config)
         .delivery_policy(decode_json::<EventDeliveryPolicy>(
             row.delivery_policy,
@@ -112,6 +115,7 @@ impl TryFrom<EventSinkRow> for StorageEventSink {
 #[derive(Insertable)]
 #[diesel(table_name = crate::schema::event_sinks)]
 struct NewEventSinkRow {
+    collection_id: Option<i32>,
     name: String,
     kind: String,
     config: Value,
@@ -336,7 +340,7 @@ pub async fn list_event_sinks(
         .with_read_only_snapshot(async |connection| {
             let total = if include_total {
                 Some(
-                    build_event_sink_query(query.options())?
+                    scoped_event_sink_query(&query)?
                         .count()
                         .get_result::<i64>(connection)
                         .await?,
@@ -344,7 +348,7 @@ pub async fn list_event_sinks(
             } else {
                 None
             };
-            let mut records = build_event_sink_query(query.options())?;
+            let mut records = scoped_event_sink_query(&query)?;
             let fields = query
                 .options()
                 .sort()
@@ -387,6 +391,7 @@ pub async fn create_event_sink(
     request: StorageEventSinkCreate,
 ) -> Result<StorageMutationOutcome<StorageEventSink>, PostgresStorageError> {
     let row = NewEventSinkRow {
+        collection_id: request.collection_id().map(CollectionId::id),
         name: request.name().to_string(),
         kind: request.kind().to_string(),
         config: request.configuration().clone(),
@@ -615,6 +620,12 @@ pub async fn create_event_subscription(
             > {
                 use crate::schema::event_subscriptions::dsl::event_subscriptions;
 
+                super::event_sink_access::authorize_sink_on_connection(
+                    connection,
+                    request.scope(),
+                    request.sink_id(),
+                )
+                .await?;
                 let created = diesel::insert_into(event_subscriptions)
                     .values(row)
                     .get_result::<EventSubscriptionRow>(connection)
@@ -671,12 +682,29 @@ pub async fn update_event_subscription(
                     collection_id, event_subscriptions, id,
                 };
 
+                let target =
+                    load_scoped_subscription_row(connection, collection_id_value, subscription_id)
+                        .await?;
+                let target_sink = request
+                    .sink_id_value()
+                    .unwrap_or(EventSinkId::new(target.sink_id)?);
+                super::event_sink_access::authorize_sink_on_connection(
+                    connection,
+                    request.scope(),
+                    target_sink,
+                )
+                .await?;
                 let before = event_subscriptions
                     .filter(id.eq(subscription_id))
                     .filter(collection_id.is_not_distinct_from(collection_id_value))
                     .for_update()
                     .first::<EventSubscriptionRow>(connection)
                     .await?;
+                if request.sink_id_value().is_none() && before.sink_id != target_sink.id() {
+                    return Err(PostgresStorageError::conflict(
+                        "Subscription changed concurrently; retry the update",
+                    ));
+                }
                 assert_locked_revision_precondition(
                     connection,
                     &RevisionOwner::EventSubscription.key(before.id),
@@ -804,6 +832,11 @@ async fn append_sink_audit(
     .with_context(context)
     .with_entity_id(hubuum_events_core::EventEntityId::new(after.id)?)
     .with_entity_name(&after.name);
+    let event = if let Some(id) = after.collection_id {
+        event.with_collection_id(CollectionId::new(id)?)
+    } else {
+        event
+    };
     Ok(append_event(connection, &event).await?.into_audit_receipt())
 }
 
@@ -846,6 +879,7 @@ async fn append_subscription_audit(
 fn event_sink_snapshot(row: &EventSinkRow) -> Value {
     json!({
         "id": row.id,
+        "collection_id": row.collection_id,
         "name": row.name,
         "kind": row.kind,
         "config": redact_event_sink_config(&row.config),
@@ -870,6 +904,27 @@ fn event_subscription_snapshot(row: &EventSubscriptionRow) -> Value {
         "enabled": row.enabled,
         "revision": row.revision,
     })
+}
+
+fn scoped_event_sink_query(
+    query: &StorageEventSinkListQuery,
+) -> Result<crate::schema::event_sinks::BoxedQuery<'static, diesel::pg::Pg>, PostgresStorageError> {
+    use crate::schema::{event_sink_collection_grants as grants, event_sinks as sinks};
+    let mut records = build_event_sink_query(query.options())?;
+    if let Some(collection) = query.collection_id() {
+        records = records.filter(
+            sinks::collection_id
+                .eq(collection.id())
+                .or(sinks::collection_id.is_null().and(
+                    sinks::id.eq_any(
+                        grants::table
+                            .filter(grants::collection_id.eq(collection.id()))
+                            .select(grants::sink_id),
+                    ),
+                )),
+        );
+    }
+    Ok(records)
 }
 
 fn build_event_sink_query(
