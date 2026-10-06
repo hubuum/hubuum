@@ -47,6 +47,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   rather than returning an internal error when none are due yet.
 - Collection-owned sink audit events retain their collection scope in the memory
   storage adapter, matching PostgreSQL visibility and event subscription behavior.
+- Explicitly enable the administration Compose profile for migration preflight,
+  database role setup, and migrations. Single-host Podman updates and monitoring
+  enablement no longer fail with `missing services [hubuum-migrate]` on providers
+  that filter profiled services before resolving an explicit command target.
 
 ## [0.0.17] - 2026-10-04
 

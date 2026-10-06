@@ -248,7 +248,7 @@ compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -270,7 +270,7 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -290,7 +290,7 @@ fi
 cat > "$TEST_ROOT/expected-migration-failure.log" <<EOF
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml start hubuum-api
 EOF
 assert_commands "$TEST_ROOT/expected-migration-failure.log"
@@ -316,7 +316,7 @@ rm -f "$TEST_ROOT/started-hubuum-api"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-recovery.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -340,7 +340,7 @@ cat > "$TEST_ROOT/expected-missing-infrastructure.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml stop hubuum-api
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -362,7 +362,7 @@ rm -f "$TEST_ROOT/started-caddy"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
@@ -421,10 +421,10 @@ DATABASE_ROLE_MODE="split"
 : > "$COMMAND_LOG"
 hubuum_run_migrations
 cat > "$TEST_ROOT/expected-managed-migration.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --database-role-setup-sql
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --database-role-setup-sql
 compose --env-file .env -f compose.yml exec -T postgres psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-set-database-role-passwords postgres
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 EOF
 # Bash starts both sides of a pipeline concurrently, so either Compose process
 # may reach the fake engine first. The password update and migration remain
@@ -435,7 +435,7 @@ DATABASE_ROLE_MODE="single"
 : > "$COMMAND_LOG"
 hubuum_run_migrations
 cat > "$TEST_ROOT/expected-managed-single-role-migration.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 EOF
 assert_commands "$TEST_ROOT/expected-managed-single-role-migration.log"
 
@@ -486,7 +486,7 @@ export FAKE_MIGRATION_MODE="offline"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-offline.log" <<EOF
 compose --env-file .env -f compose.yml stop --timeout 75 hubuum-api hubuum-api-standby hubuum-restore-executor
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-restore-executor
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
@@ -517,7 +517,7 @@ if hubuum_rollout; then
 fi
 cat > "$TEST_ROOT/expected-offline-failure.log" <<EOF
 compose --env-file .env -f compose.yml stop --timeout 75 hubuum-api hubuum-api-standby hubuum-restore-executor
-compose --env-file .env -f compose.yml run --rm --no-deps -T hubuum-migrate --migrate
+compose --env-file .env -f compose.yml --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 EOF
 assert_commands "$TEST_ROOT/expected-offline-failure.log"
 FAKE_MIGRATION_FAIL="false"
