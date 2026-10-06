@@ -274,7 +274,7 @@ hubuum_reload_caddy_and_wait_for_upstreams() {
 hubuum_run_migrations() {
   if [[ "${DATABASE_MANAGED:-true}" == "true" && "${DATABASE_ROLE_MODE:-${HUBUUM_DATABASE_ROLE_MODE:-single}}" == "split" ]]; then
     echo "Reconciling managed database roles..."
-    "${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate \
+    "${COMPOSE_CMD[@]}" --profile administration run --rm --no-deps -T hubuum-migrate \
       --database-role-setup-sql | \
       "${COMPOSE_CMD[@]}" exec -T postgres \
         psql --set ON_ERROR_STOP=1 --username hubuum --dbname hubuum || return 1
@@ -282,7 +282,7 @@ hubuum_run_migrations() {
       --entrypoint /usr/local/bin/hubuum-set-database-role-passwords postgres || return 1
   fi
   echo "Running one-shot database migrations..."
-  "${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate --migrate
+  "${COMPOSE_CMD[@]}" --profile administration run --rm --no-deps -T hubuum-migrate --migrate
 }
 
 hubuum_drain_primary_workers_for_migrations() {
@@ -411,7 +411,9 @@ hubuum_rollout() {
   # The updater requires preflight even after compose down removed containers
   # but retained the database. Fresh installs may still need to create roles.
   if [[ -n "$application_containers" || "${HUBUUM_ROLLOUT_REQUIRE_PREFLIGHT:-false}" == "true" ]]; then
-    if ! migration_mode="$("${COMPOSE_CMD[@]}" run --rm --no-deps -T hubuum-migrate --migration-mode)"; then
+    # Podman Compose can filter profiled services before resolving an explicit
+    # run target. Activate the migrator's profile for this one-shot command.
+    if ! migration_mode="$("${COMPOSE_CMD[@]}" --profile administration run --rm --no-deps -T hubuum-migrate --migration-mode)"; then
       echo "ERROR: migration preflight failed; no application processes were stopped. Use a candidate with --migration-mode support and review its upgrade requirements." >&2
       return 1
     fi

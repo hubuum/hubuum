@@ -20,11 +20,16 @@ with open(os.environ["COMMAND_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
 path = Path(os.environ["ROLLOUT_STATE"])
 state = json.loads(path.read_text())
+profiles = []
 if args[0] == "compose":
     args = args[1:]
-    while args[0] in ("--env-file", "-f"):
+    while args[0] in ("--env-file", "-f", "--profile"):
+        if args[0] == "--profile":
+            profiles.append(args[1])
         args = args[2:]
 command = args[0]
+if command == "run" and "hubuum-migrate" in args and state["provider"] == "podman" and "administration" not in profiles:
+    sys.exit("missing services [hubuum-migrate]")
 containers = state["containers"]
 if command == "ps":
     if state.get("discovery_failure") == "ps":
@@ -146,6 +151,13 @@ hubuum_rollout
                 self.assertNotEqual(self.rollout().returncode, 0)
                 self.assertFalse(any(verb in command for command in self.recorded_commands()
                                      for verb in ("run", "up", "stop")))
+
+    def test_podman_rollout_reconciles_split_roles_with_profiled_migrator(self):
+        self.configure(provider="podman", status="running")
+        result = self.rollout(DATABASE_MANAGED="true", DATABASE_ROLE_MODE="split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = self.recorded_commands()
+        self.assertTrue(any(command[-1] == "--database-role-setup-sql" for command in commands))
 
     def test_updater_requires_preflight_after_containers_are_removed(self):
         for provider in ("docker", "podman"):
