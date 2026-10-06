@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.17`](https://github.com/hubuum/hubuum/releases/tag/v0.0.17),
-published on October 4, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.18`](https://github.com/hubuum/hubuum/releases/tag/v0.0.18),
+published on October 6, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.17
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.18
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -301,6 +301,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.18](https://github.com/hubuum/hubuum/releases/tag/v0.0.18) | 2026-10-06 | Adds collection-owned webhook setup, permitted sink discovery, and explicit shared-sink grants. Binds credentials to destinations, introduces backup format 8, and fixes single-host migration profiles and versioned monitoring links. Requires an offline migration. |
 | [0.0.17](https://github.com/hubuum/hubuum/releases/tag/v0.0.17) | 2026-10-04 | Adds configurable webhooks, system notifications, operator monitoring, and versioned documentation. Requires an offline migration; introduces backup format 7, storage SDK 0.4, and Treetop 0.1. |
 | [0.0.16](https://github.com/hubuum/hubuum/releases/tag/v0.0.16) | 2026-09-22 | Requires fresh password approval for credential management. Adds resource-aware task discovery, an operations dashboard, tested alerts and runbooks, and system CA trust for SMTP. Includes two migrations and breaking API and storage SDK changes. |
 | [0.0.15](https://github.com/hubuum/hubuum/releases/tag/v0.0.15) | 2026-09-15 | Adds staged schema evolution, detailed impact and HTML repair reports, task cancellation, and execution limits. Hardens external authorization, schema validation, and event delivery. Introduces backup format 6 and new migrations. |
@@ -313,19 +314,31 @@ Before upgrading:
 
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
   CI certifies the adjacent stable upgrade and its declared recovery procedure.
-- **Upgrading from 0.0.16 requires downtime.** Stop every API, worker, and restore
+- **Upgrading from 0.0.17 requires downtime.** Stop every API, worker, and restore
   executor, take a PostgreSQL snapshot with all writers stopped, then apply
-  `2026-10-01-000001_webhook_notifications` and reconcile role grants. Start
-  matching `0.0.17` server, administrator, and template worker binaries.
+  `2026-10-05-000001_collection_event_sinks` and reconcile role grants. Start
+  matching `0.0.18` server, administrator, and template worker binaries.
   The single-host updater uses `hubuum-admin --migration-mode` to select this
   offline sequence; take the snapshot before invoking it.
-- **Binary-only rollback to 0.0.16 is unsupported.** Restore the pre-upgrade
+- **Binary-only rollback to 0.0.17 is unsupported.** Restore the pre-upgrade
   database snapshot before starting matching old binaries. Recovery loses writes
   made after the snapshot. Keep the old binaries, credentials, and snapshot
   until the upgrade is accepted. See [upgrade and recovery](docs/events.md#upgrade-and-rollback).
-- Backups now emit format 7; format 6 remains accepted with legacy defaults.
-  Older servers cannot restore format 7. Clients reading event-delivery health
-  must accept null collection IDs for system subscriptions.
+- Backups now emit format 8; formats 6 and 7 remain accepted with legacy sink
+  grants restored. Older servers cannot restore format 8. Upgrade all API,
+  worker, and restore-executor processes before producing new backups.
+- Collection integration setup requires `ManageEventSubscription` and `ReadAudit`.
+  Shared global sinks need an explicit grant for each collection; existing
+  collection/sink relationships receive grants during migration. Grants do not
+  inherit. Credential-bearing webhooks and static headers require a fixed
+  `destination_url` or `url_secret_ref`; subscription routing cannot redirect them.
+  Collection-owned integrations survive the creator losing access, and
+  related-collection deliveries omit resource snapshots.
+- Storage adapter implementations must support sink ownership, direct grants,
+  authorization, and configuration revisions in delivery claims.
+- When upgrading from before `0.0.17`, also apply its webhook-notification
+  migration, accept nullable collection IDs in system delivery health, and
+  follow its storage SDK and Treetop migration requirements below.
 - Upgrade all eight storage adapter SDK crates together to `0.4.0`, implement
   the new adapter capabilities, and use Utoipa 6 for schema composition. Treetop
   installations must upgrade REST and policy bundles to 0.1 and rebuild/re-sign
