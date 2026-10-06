@@ -32,7 +32,8 @@ for path in "$@"; do
 
   case "$path" in
     tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py | \
-      docs/* | zensical.toml | .github/docs-tools.env | \
+      docs/* | observability/README.md | observability/runbooks/*.md | \
+      zensical.toml | .github/docs-tools.env | \
       .github/workflows/docs.yml | scripts/docs.sh | scripts/classify-ci-changes.sh | \
       scripts/test-classify-ci-changes.sh | scripts/ci-changed-paths.sh | \
       tests/python/unit/tooling/test_ci_changed_paths.py | scripts/check-python-version.py | \

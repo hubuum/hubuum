@@ -43,6 +43,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Publish the monitoring setup guide and operational runbooks within the versioned
+  documentation, keeping metrics and administration links in the selected edition.
+  Document how to enable monitoring when an older installed updater rejects
+  `--monitoring`.
 - Delivery health accepts pending deliveries scheduled in the future by pacing,
   rather than returning an internal error when none are due yet.
 - Collection-owned sink audit events retain their collection scope in the memory

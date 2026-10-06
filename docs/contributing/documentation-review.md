@@ -40,7 +40,8 @@ second list that can drift.
 | Storage and task internals, SDK contracts, Rust policies, benchmarks, releases | Contributing |
 
 The operator package remains in `observability/`, alongside its executable alert
-fixtures and dashboards, and is linked from administration. `test-corpora/`
+fixtures and dashboards. Its guide and runbooks are imported into each edition's
+Administration navigation from that edition's source. `test-corpora/`
 retains its dataset documentation. Root release notes and security policy remain
 canonical repository documents. Generated JSON specifications, fixture files,
 and measurements remain available as static assets or explicit repository links.
