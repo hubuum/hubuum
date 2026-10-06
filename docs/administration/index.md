@@ -34,7 +34,7 @@ upgrading credential-management integrations. Check
 
 Scrape each process's [metrics](../metrics.md), preserve
 [structured logs](../logging.md), and enable [tracing](../tracing.md) where needed.
-The repository includes [Grafana dashboards, Prometheus alerts, and runbooks](https://github.com/hubuum/hubuum/tree/main/observability).
+Set up [Grafana dashboards, Prometheus alerts, and runbooks](../../observability/README.md).
 
 Establish a [backup and restore](../backup-restore.md) procedure and exercise it
 before relying on it. Watch worker health and task retention, and size database

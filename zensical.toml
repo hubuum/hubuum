@@ -75,7 +75,21 @@ nav = [
       { "Troubleshooting" = "administration/troubleshooting.md" },
       { "Metrics & alerts" = "metrics.md" },
       { "Metric reference" = "metrics-reference.md" },
-      { "Dashboards & runbooks" = "https://github.com/hubuum/hubuum/tree/main/observability" },
+      { "Dashboards & runbooks" = [
+        { "Set up monitoring" = "observability/index.md" },
+        { "API availability" = "observability/runbooks/availability.md" },
+        { "API SLOs" = "observability/runbooks/api-slo.md" },
+        { "Database pool saturation" = "observability/runbooks/database-pool.md" },
+        { "Task queue delays" = "observability/runbooks/task-queue.md" },
+        { "Worker errors" = "observability/runbooks/worker-errors.md" },
+        { "Event backlog" = "observability/runbooks/event-backlog.md" },
+        { "Identity" = "observability/runbooks/identity.md" },
+        { "Integrations" = "observability/runbooks/integrations.md" },
+        { "Backup failures" = "observability/runbooks/backup-failure.md" },
+        { "External operator jobs" = "observability/runbooks/operator-jobs.md" },
+        { "Retention" = "observability/runbooks/retention.md" },
+        { "Stale metrics" = "observability/runbooks/metrics-stale.md" },
+      ] },
       { "Structured logs" = "logging.md" },
       { "Distributed tracing" = "tracing.md" },
       { "Pool tuning & load testing" = "performance.md" },
@@ -138,6 +152,23 @@ nav = [
 
 [tool.hubuum_docs]
 versioned = true
+
+# Render the operator package from the selected edition's source, without
+# duplicating the guide or moving runbooks used by alerts and package checks.
+[tool.hubuum_docs.source_files]
+"observability/README.md" = "observability/index.md"
+"observability/runbooks/availability.md" = "observability/runbooks/availability.md"
+"observability/runbooks/api-slo.md" = "observability/runbooks/api-slo.md"
+"observability/runbooks/database-pool.md" = "observability/runbooks/database-pool.md"
+"observability/runbooks/task-queue.md" = "observability/runbooks/task-queue.md"
+"observability/runbooks/worker-errors.md" = "observability/runbooks/worker-errors.md"
+"observability/runbooks/event-backlog.md" = "observability/runbooks/event-backlog.md"
+"observability/runbooks/identity.md" = "observability/runbooks/identity.md"
+"observability/runbooks/integrations.md" = "observability/runbooks/integrations.md"
+"observability/runbooks/backup-failure.md" = "observability/runbooks/backup-failure.md"
+"observability/runbooks/operator-jobs.md" = "observability/runbooks/operator-jobs.md"
+"observability/runbooks/retention.md" = "observability/runbooks/retention.md"
+"observability/runbooks/metrics-stale.md" = "observability/runbooks/metrics-stale.md"
 
 # Repair historical source links only when the replacement exists in that tag.
 [tool.hubuum_docs.link_migrations]

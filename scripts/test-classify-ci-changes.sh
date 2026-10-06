@@ -107,6 +107,8 @@ for shared_input in .python-version scripts/check-python-version.py \
 done
 
 for document_input in docs/new-page.md docs/deleted-page.md docs/openapi.json \
+  observability/README.md observability/runbooks/task-queue.md \
+  observability/runbooks/new-runbook.md \
   docs/storage_boundary/contract.md docs/generated/project_inventory.json; do
   document_output="$(bash "$classifier" "$document_input")"
   assert_flag "$document_output" documentation true

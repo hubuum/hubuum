@@ -16,6 +16,24 @@ existing installation:
 sudo /opt/hubuum/update-single-host.sh --monitoring
 ```
 
+If this reports `Unknown argument: --monitoring`, the installed updater predates
+monitoring support. Arguments are parsed before any script refresh, and older
+updaters did not all refresh the management scripts. Run the installer from your
+deployed server release once; for v0.0.17:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.17/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.17 --monitoring
+```
+
+This reuses the saved installation settings and secrets, replaces the management
+scripts, and performs the normal application update with monitoring enabled.
+It retains your application image choices and pins future management-script
+refreshes to v0.0.17; change `--script-ref` when adopting another release.
+For v0.0.17 with a Podman Compose provider that reports
+`missing services [hubuum-migrate]`, use the
+[administration-profile workaround](../docs/administration/troubleshooting.md#podman-cannot-find-the-migration-service).
+
 Both `all` and `backend` modes support Docker Compose and rootful Podman Compose.
 Monitoring stays disabled unless requested. In `all` mode the frontend domain
 serves `/grafana/` and `/prometheus/`; in `backend` mode the API domain serves

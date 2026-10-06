@@ -72,9 +72,17 @@ uses a small HTML wrapper for Zensical's accessible card layout. The shared styl
 adds only typography, color, and card treatment, and system fonts avoid a
 third-party font request.
 
-When linking within `docs/`, use relative `.md` paths. For code or assets outside
-`docs/`, use an explicit GitHub `blob/main/` or `tree/main/` URL. Those files are
-not part of the static site. Keep generated references generated: use the
+When linking within `docs/`, use relative `.md` paths. The operator guide and
+runbooks in `observability/` are also published: `tool.hubuum_docs.source_files`
+in `zensical.toml` maps their canonical sources to site pages. Link to their
+source files with relative `.md` paths; the renderer resolves those links inside
+the selected edition. New runbooks need both an import and a navigation entry.
+Historical editions import only files present in their release, never current
+instructions for a capability that did not exist yet.
+
+For other code or assets outside `docs/`, use an explicit GitHub `blob/main/` or
+`tree/main/` URL. Those files are not part of the static site. Keep generated
+references generated: use the
 [OpenAPI](../integrations/api.md), [inventory](../generated/project_inventory.md),
 and [operational-contract](../operational_contracts.md) workflows.
 

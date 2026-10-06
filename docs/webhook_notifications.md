@@ -206,7 +206,7 @@ body to `POST /api/v1/system-event-subscriptions`:
 ```
 
 System subscriptions match events with neither a direct nor a related
-collection. Use [Prometheus alerts](https://github.com/hubuum/hubuum/blob/main/observability/README.md) for thresholds
+collection. Use [Prometheus alerts](../observability/README.md) for thresholds
 such as queue age or database pressure; event subscriptions match emitted facts.
 
 ## Preview, Test, And Check Delivery
