@@ -4219,16 +4219,17 @@ to <code>HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS</code>.</p>
 authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.</p>
-<p>Backup version <code>7</code> also preserves sink delivery policy, system subscriptions
-and terminal test deliveries. Version <code>6</code> remains accepted with legacy defaults.
+<p>Backup version <code>8</code> preserves collection sink ownership and explicit use grants,
+along with sink delivery policy, system subscriptions and terminal test deliveries.
+Versions <code>6</code> and <code>7</code> remain accepted with legacy defaults and grant backfill.
 Transient sink admission schedules reset on restore. Older servers cannot read
-version <code>7</code>. The format preserves authoritative resource revisions, collection
+version <code>8</code>. The format preserves authoritative resource revisions, collection
 authorization-set revisions, temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
 tables. State sections include identity scopes, groups, principals, users,
 service accounts, memberships, collections, authorization state, hierarchy,
 permission grants, classes, computed-field definitions, relations, objects,
-export templates, remote targets, event sinks, and event subscriptions. History
+export templates, remote targets, event sinks, sink collection grants, and event subscriptions. History
 sections describe resource history, terminal tasks and results, audit events,
 and terminal event deliveries.</p>
 <p>Schema state additionally includes retained revisions, active identities,
@@ -4370,8 +4371,8 @@ password and issue a new token before exercising authenticated endpoints.</p>
 <h2 id="existing-deployment-upgrade-path">Existing deployment upgrade path<a class="headerlink" href="#existing-deployment-upgrade-path" title="Permanent link">&para;</a></h2>
 <p>Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-<a href="../database_roles/">PostgreSQL Database Roles</a>. For the 0.0.16 to 0.0.17 transition, format 6 logical backups are accepted
-by the candidate, which emits format 7. Stop all APIs, workers, and restore
+<a href="../database_roles/">PostgreSQL Database Roles</a>. The collection integration update accepts format 6 and 7 logical backups and
+emits format 8, preserving collection-owned sinks and direct grants. Stop all APIs, workers, and restore
 executors and take a PostgreSQL snapshot before migration. Binary-only rollback
 is unsupported: restore that snapshot and matching old binaries to recover,
 losing writes made after the snapshot. Retain credentials and old binaries too.
@@ -4504,8 +4505,8 @@ variables. They also accept <code>--backup-max-output-bytes</code> and
 and excluded operational rows. Configure <code>HUBUUM_RESTORE_MAX_UPLOAD_BYTES</code>
 separately when verifying or restoring larger artifacts. Restart API and worker
 processes together after changing deployment settings.</p>
-<p>The document stays at format 6 with unchanged sections, fields, exclusions,
-revision validation, and history semantics. PostgreSQL section arrays now use
+<p>Streaming preserves the document's format, sections, fields, exclusions,
+revision validation, and history semantics. PostgreSQL section arrays use
 primary-key order instead of full serialized-row order. Memory membership sources
 also use their stable composite key order. Offline output uses the
 same compact JSON representation as API output. Whitespace and row order can

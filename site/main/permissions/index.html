@@ -1151,6 +1151,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="A word about inheritance and admin privileges">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#event-integrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Event integrations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -4202,6 +4219,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="A word about inheritance and admin privileges">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#event-integrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Event integrations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -4767,6 +4801,11 @@ collection so those permissions inherit to the department collections. There is
 still no implicit access granted to magic groups except for the <code>admin</code> group,
 which is a special case. The <code>admin</code> group has full access to everything and is
 intended for Hubuum system administrators only.</p>
+<h3 id="event-integrations">Event integrations<a class="headerlink" href="#event-integrations" title="Permanent link">&para;</a></h3>
+<p><code>ManageEventSubscription</code> permits collection subscription and destination discovery
+and deletion. Creating or updating collection subscriptions and owned webhooks also
+requires <code>ReadAudit</code>. Shared sinks require an explicit administrator grant to the
+collection; those grants do not inherit. See <a href="../events/#sinks-and-subscriptions">event integrations</a>.</p>
 
 
 
