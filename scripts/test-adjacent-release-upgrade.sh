@@ -453,9 +453,13 @@ verify_restore_artifact() {
   backup_name="$(basename -- "$backup_path")"
   source_version="$(jq --exit-status '.backup_version' "$backup_path")"
   candidate_version="$(jq --exit-status '.backup_version' "$current_backup_file")"
-  # Format 7 accepts format 6 directly with legacy notification defaults. The
-  # isolated restore below must prove that path works without an older binary.
-  if [[ "$source_version" != "$candidate_version" && "$source_version:$candidate_version" != "6:7" ]]; then
+  # Formats 7 and 8 accept their supported predecessors directly, backfilling
+  # legacy notification defaults and collection sink grants as needed. The
+  # isolated restore below must prove those paths work without an older binary.
+  if [[ "$source_version" != "$candidate_version" &&
+    "$source_version:$candidate_version" != "6:7" &&
+    "$source_version:$candidate_version" != "6:8" &&
+    "$source_version:$candidate_version" != "7:8" ]]; then
     [[ "$source_version" == 5 && "$candidate_version" == 6 ]] || {
       echo "ERROR: untested backup format transition $source_version -> $candidate_version" >&2
       return 1
