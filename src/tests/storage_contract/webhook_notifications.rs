@@ -499,7 +499,7 @@ async fn owned_sink_audit_is_visible_to_its_collection(#[case] action: Action) {
             backend
                 .update_event_sink(
                     StorageEventSinkUpdate::builder(sink.id(), EventContext::system())
-                        .enabled(Some(false))
+                        .enabled(Some(true))
                         .try_build()
                         .unwrap(),
                 )
