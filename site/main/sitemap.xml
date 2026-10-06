@@ -130,6 +130,45 @@
         <loc>https://hubuum.github.io/hubuum/main/metrics-reference/</loc>
       </url>
       <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/availability/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/api-slo/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/database-pool/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/task-queue/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/worker-errors/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/event-backlog/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/identity/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/integrations/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/backup-failure/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/operator-jobs/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/retention/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/observability/runbooks/metrics-stale/</loc>
+      </url>
+      <url>
         <loc>https://hubuum.github.io/hubuum/main/logging/</loc>
       </url>
       <url>
