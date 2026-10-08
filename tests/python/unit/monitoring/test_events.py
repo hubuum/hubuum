@@ -2,10 +2,54 @@
 
 from copy import deepcopy
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 from integration.monitoring_events import EventScenario, INSTANCES, counts, queue_matches
+from integration.monitoring import Installation
+
+
+class OverlappingAlertTests(unittest.TestCase):
+    def test_standby_check_runs_inside_dead_letter_hold_before_replica_recovery(self):
+        scenario = Mock(spec=EventScenario)
+        scenario.installation = Mock()
+        scenario.installation.query.return_value = []
+        scenario.worker, scenario.worker_started = 'worker', False
+        scenario.caddyfile, scenario.original_caddy = Mock(), 'original'
+        scenario.delivery_id = 1
+        scenario.report = {'alert': {}}
+        scenario.alert_state.side_effect = ['inactive', 'pending', 'firing', 'inactive']
+        scenario.sql_counts.return_value = counts(total=2, succeeded=1, failed=1)
+        completed = []
+        scenario.installation.alert.side_effect = lambda: completed.append('standby recovered')
+
+        def wait(description, predicate, timeout=120):
+            if description == 'production dead-letter alert pending':
+                self.assertEqual(completed, [])
+            if description == 'production dead-letter alert firing':
+                self.assertEqual(completed, ['standby recovered'])
+                self.assertEqual(timeout, 720)
+            self.assertTrue(predicate(), description)
+
+        def snapshot(name, *_):
+            if name == 'recovered':
+                self.assertEqual(completed, ['standby recovered'])
+
+        scenario.snapshot.side_effect = snapshot
+        with patch('integration.monitoring_events.wait_for', side_effect=wait):
+            EventScenario.run(scenario)
+        scenario.installation.alert.assert_called_once()
+        self.assertTrue(scenario.report['alert']['recovered'])
+
+    def test_failed_scrape_alert_still_restarts_standby(self):
+        installation = Mock()
+        installation.request.return_value = (200, {'data': {'groups': [{'rules': [
+            {'name': 'HubuumScrapeUnavailable', 'duration': 300},
+        ]}]}})
+        with patch('integration.monitoring.wait_for', side_effect=AssertionError('timeout')):
+            with self.assertRaisesRegex(AssertionError, 'timeout'):
+                Installation.alert(installation)
+        self.assertEqual(installation.compose.call_args.args, ('start', 'hubuum-api-standby'))
 
 
 class EventQueueComparisonTests(unittest.TestCase):

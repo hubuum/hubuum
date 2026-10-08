@@ -261,11 +261,11 @@ Pull request validation is selected from the complete base-to-head diff:
 
 - Draft documentation-only pull requests run Markdown lint when Markdown files
   changed.
-- Draft code pull requests run Rust formatting and the complete default-feature
+- Draft Rust pull requests run Rust formatting and the complete default-feature
   test suite on Linux with PostgreSQL. They do not run the other feature
   combinations, cross-platform tests, production container build, release
   build, or benchmarks.
-- Ready-for-review code pull requests run the complete CI suite. The
+- Ready-for-review Rust pull requests run the complete CI suite. The
   `ready_for_review` event starts that suite immediately, and later pushes keep
   running it.
 - Ready-for-review documentation-only pull requests keep the smaller relevant
@@ -302,11 +302,19 @@ The lightweight change classifier is implemented by
 conservatively as code, container, artifact, and benchmark inputs. Keep its
 tests in `scripts/test-classify-ci-changes.sh` synchronized with any new build
 inputs. Direct literal `include_str!` and `include_bytes!` inputs are discovered
-by that test and must be classified as code automatically. Renames are evaluated
+by that test and must select Rust validation automatically. Renames are evaluated
 as a deletion plus an addition so both the old and new paths affect the selected
 tier. The stable `CI gate` job reports the combined result of every applicable
 PR or `main` validation job, is the check intended for branch protection, and
 must pass before `main-latest` artifacts or container images are published.
+Main archive compilation starts alongside validation, with at most four jobs per
+artifact matrix; temporary `candidate-main-*` archives expire after one day.
+Only the gated publication job creates the stable `main-*` artifact names.
+Deployment and tooling changes retain their Python, policy, and container checks
+without selecting the Rust OS/feature matrix. A focused server-binary test job
+keeps the Rust container/deployment assertions covered for those changes.
+Embedded Rust inputs and unknown
+paths still select Rust validation.
 
 ## Benchmarks
 
@@ -314,7 +322,8 @@ Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.y
 `terjekv/rust-pr-bench` v1.3.0, pinned to its release commit.
 
 PR comparisons cache Cargo downloads, compiled outputs, exact-version benchmark
-runners, and verified benchmark executables under the `hubuum-benchmarks` namespace.
+runners, and verified benchmark executables under separate
+`hubuum-benchmarks-standard` and `hubuum-benchmarks-postgres` namespaces.
 Every push to `main` also runs a `compile_only` build to warm caches accessible to
 later PRs. To warm them manually, dispatch the Benchmarks workflow on `main`.
 Warming skips measurements, service lifecycle hooks, and PR comments; ordinary
@@ -356,7 +365,6 @@ cargo bench --bench unified_search_query_parsing_callgrind
 cargo bench --bench unified_search_cursor_callgrind
 cargo bench --bench object_validation_geo_callgrind
 cargo bench --bench object_validation_nested_callgrind
-cargo bench --bench database_url_parsing_criterion -- --noplot
 cargo bench --bench password_hashing_criterion -- --noplot
 ```
 
@@ -449,11 +457,17 @@ query nondeterministically to the next operation.
   base-to-head diff.
 - Change classification happens before PostgreSQL services or benchmark
   runners are allocated. Superseded benchmark workflow runs are cancelled.
-- The self-contained benchmark job runs both backends in one combined
-  `backend: all` job, so PRs get a single consolidated benchmark export.
+- Discovery uses the pinned action and preserves moved-target base mappings.
+  Targets requiring `postgres-bench` compile and run in an independent lane,
+  including when only their base revision requires that feature. Each lane uses
+  `backend: all` and retains its own reports and regression checks.
+  The standard lane updates the PR comment; PostgreSQL reports are available in
+  the workflow artifacts so the lanes cannot overwrite each other's comment.
 - Gungraun's Callgrind measurements remain the practical gating signal with a
   low regression threshold.
-- Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
+- Criterion uses the same 50% regression threshold in both lanes; Gungraun
+  retains its 3% threshold. PostgreSQL logs database startup, base fixture,
+  additional scale fixture, and measurement timings for further analysis.
 - The shared benchmark action runs and reports all direct Criterion and
   Gungraun targets, including the self-provisioning PostgreSQL storage target.
 - A two-process runtime behavior validation job records base/head Prometheus counter

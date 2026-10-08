@@ -13,6 +13,9 @@ any=false
 markdown=false
 documentation=false
 code=false
+# The application matrix is narrower than code/tooling validation. Container
+# inputs still run focused Rust deployment contracts when this flag is false.
+rust=false
 rust_api_policy=false
 openapi=false
 operational_contract=false
@@ -94,8 +97,12 @@ for path in "$@"; do
       openapi=true
       operational_contract=true
       ;;
-    docs/operational-contract.json | docs/metrics-reference.md | \
-      .github/operational-contract-breaking-exceptions.json | \
+    docs/operational-contract.json | docs/metrics-reference.md)
+      code=true
+      rust=true
+      operational_contract=true
+      ;;
+    .github/operational-contract-breaking-exceptions.json | \
       scripts/check-operational-contract-compatibility.py | \
       scripts/resolve-operational-contract-baseline.sh | \
       scripts/test-operational-contract-github-api.sh | \
@@ -109,20 +116,24 @@ for path in "$@"; do
       ;;
     docs/export_template_guide.md | crates/hubuum-schema-diagnostics/README.md)
       code=true
+      rust=true
       container=true
       artifacts=true
       ;;
     docs/treetop/schema.cedarschema | docs/treetop/schema.json | \
       docs/treetop/test-fixture.cedar)
       code=true
+      rust=true
       ;;
     docs/generated/project_inventory.json | docs/querying.md | docs/webhook_notifications.md)
       code=true
+      rust=true
       ;;
     docs/storage_boundary.md | docs/storage_boundary/*)
       # These files are dynamic inputs to the storage architecture and
       # semantic-documentation tests in src/tests/application_boundary.rs.
       code=true
+      rust=true
       ;;
     zensical.toml | .github/docs-tools.env | .github/workflows/docs.yml | \
       scripts/docs.sh)
@@ -154,8 +165,9 @@ for path in "$@"; do
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
       ;;
-    .github/workflows/benchmarks.yml)
+    .github/workflows/benchmarks.yml | scripts/benchmark-lanes.py | tests/python/unit/tooling/test_benchmark_lanes.py)
       code=true
+      rust=true
       benchmarks=true
       runtime_benchmark=true
       ;;
@@ -164,6 +176,7 @@ for path in "$@"; do
       crates/hubuum-storage-postgres/src/scale_benchmark.rs | \
       crates/hubuum-storage-postgres/src/scale_benchmark/*)
       code=true
+      rust=true
       benchmarks=true
       scale_benchmark=true
       ;;
@@ -173,6 +186,7 @@ for path in "$@"; do
       ;;
     .python-version)
       code=true
+      rust=true
       openapi=true
       operational_contract=true
       container=true
@@ -182,6 +196,7 @@ for path in "$@"; do
       ;;
     .github/workflows/ci.yml)
       code=true
+      rust=true
       openapi=true
       operational_contract=true
       container=true
@@ -198,9 +213,11 @@ for path in "$@"; do
       ;;
     tests/python/integration/event_transports.py | src/tests/*)
       code=true
+      rust=true
       ;;
     src/*)
       code=true
+      rust=true
       operational_contract=true
       container=true
       artifacts=true
@@ -211,10 +228,12 @@ for path in "$@"; do
       ;;
     crates/*/benches/*)
       code=true
+      rust=true
       benchmarks=true
       ;;
     crates/hubuum-storage-postgres/migrations/*)
       code=true
+      rust=true
       container=true
       artifacts=true
       benchmarks=true
@@ -222,6 +241,7 @@ for path in "$@"; do
       ;;
     crates/*)
       code=true
+      rust=true
       operational_contract=true
       container=true
       artifacts=true
@@ -229,10 +249,12 @@ for path in "$@"; do
       ;;
     benches/*)
       code=true
+      rust=true
       benchmarks=true
       ;;
     Cargo.toml | Cargo.lock)
       code=true
+      rust=true
       openapi=true
       operational_contract=true
       container=true
@@ -243,11 +265,13 @@ for path in "$@"; do
       ;;
     Cross.toml | diesel.toml | build.rs)
       code=true
+      rust=true
       container=true
       artifacts=true
       ;;
     Dockerfile | entrypoint.sh | .dockerignore)
       code=true
+      rust=true
       container=true
       artifacts=true
       ;;
@@ -258,6 +282,7 @@ for path in "$@"; do
     tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
       scripts/ci-changed-paths.sh | tests/python/unit/tooling/test_ci_changed_paths.py)
       code=true
+      rust=true
       benchmarks=true
       runtime_benchmark=true
       scale_benchmark=true
@@ -278,10 +303,19 @@ for path in "$@"; do
     tests/python/run.py | tests/python/support/__init__.py)
       # The shared runner also launches the resource-budget benchmark probe.
       code=true
+      rust=true
       container=true
       benchmarks=true
       runtime_benchmark=true
       scale_benchmark=true
+      ;;
+    tests/python/support/event_services.py | tests/python/support/treetop_server.py)
+      code=true
+      rust=true
+      container=true
+      ;;
+    tests/python/unit/*)
+      code=true
       ;;
     tests/python/support/* | tests/python/integration/*)
       # Shared fixture changes must exercise the packaged application as well.
@@ -290,14 +324,17 @@ for path in "$@"; do
       ;;
     tests/*)
       code=true
+      rust=true
       ;;
     scripts/* | run_tests.sh | cleanup_test_databases.sh)
       code=true
+      rust=true
       ;;
     *)
       # Unknown inputs are treated conservatively so new build inputs do not
       # silently bypass validation or main artifact publication.
       code=true
+      rust=true
       documentation=true
       container=true
       artifacts=true
@@ -312,6 +349,7 @@ outputs=(
   "markdown=$markdown"
   "documentation=$documentation"
   "code=$code"
+  "rust=$rust"
   "rust_api_policy=$rust_api_policy"
   "openapi=$openapi"
   "operational_contract=$operational_contract"

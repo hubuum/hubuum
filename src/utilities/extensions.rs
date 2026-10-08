@@ -38,46 +38,11 @@ pub trait CustomStringExtensions {
     ///
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
     fn as_integer(&self) -> Result<Vec<i32>, ApiError>;
-
-    /// ## Replace unquoted ? placeholders with $n in a string
-    ///
-    /// This replaces query placeholders while preserving question marks inside
-    /// single-quoted SQL literals.
-    ///
-    /// ### Returns
-    ///
-    /// * A string with the ? placeholders replaced with $n
-    fn replace_question_mark_with_indexed_n(&self) -> String;
 }
 
 impl<T: AsRef<str>> CustomStringExtensions for T {
     fn as_permission(&self) -> Result<Permissions, ApiError> {
         Permissions::from_string(self.as_ref())
-    }
-
-    fn replace_question_mark_with_indexed_n(&self) -> String {
-        let mut n = 1;
-        let mut result = String::with_capacity(self.as_ref().len());
-        let mut characters = self.as_ref().chars().peekable();
-        let mut in_single_quoted_string = false;
-        while let Some(character) = characters.next() {
-            if character == '\'' {
-                result.push(character);
-                if in_single_quoted_string && characters.peek() == Some(&'\'') {
-                    if let Some(escaped_quote) = characters.next() {
-                        result.push(escaped_quote);
-                    }
-                } else {
-                    in_single_quoted_string = !in_single_quoted_string;
-                }
-            } else if character == '?' && !in_single_quoted_string {
-                result.push_str(&format!("${n}"));
-                n += 1;
-            } else {
-                result.push(character);
-            }
-        }
-        result
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
@@ -94,20 +59,6 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
             ))),
         }
     }
-
-    /*
-    fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.split(',')
-            .map(|part| part.trim())
-            .map(|part| {
-                DateTime::parse_from_rfc3339(part)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map(|utc_dt| utc_dt.naive_utc())
-                    .map_err(|e| e.into())
-            })
-            .collect()
-    }
-    */
 
     fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
         self.as_ref()
@@ -157,19 +108,4 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             ApiError::InvalidIntegerRange(message)
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CustomStringExtensions;
-
-    #[test]
-    fn placeholder_rewriting_ignores_question_marks_in_sql_strings() {
-        let sql = "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = ?";
-
-        assert_eq!(
-            sql.replace_question_mark_with_indexed_n(),
-            "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = $1"
-        );
-    }
 }

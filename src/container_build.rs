@@ -325,13 +325,12 @@ fn benchmark_workflows_cover_every_cargo_benchmark() {
     assert!(
         benchmark_job
             .iter()
-            .any(|line| line.contains("auto_discover: true"))
+            .any(|line| { line.contains("benchmarks_json: ${{ toJSON(matrix.benchmarks) }}") })
     );
-    assert!(
-        !benchmark_job
-            .iter()
-            .any(|line| line.contains("benchmarks_json:"))
-    );
+    assert!(workflow.contains("python3 scripts/benchmark-lanes.py"));
+    let discovery = read_repository_text("scripts/benchmark-lanes.py");
+    assert!(discovery.contains("discovery.discover_benchmarks("));
+    assert!(discovery.contains("discovery.pair_moved_benchmarks("));
     assert!(
         !benchmark_job
             .iter()
@@ -731,39 +730,47 @@ fn main_builds_remain_run_artifacts_without_a_rolling_github_release() {
 
     assert!(workflow.contains("\n  build-main-linux-artifacts:"));
     assert!(workflow.contains("\n  build-main-native-artifacts:"));
-    assert!(
-        workflow.contains("name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}")
-    );
+    assert!(workflow.contains("name: main-${{ matrix.platform }}-${{ matrix.feature }}"));
     assert!(!workflow.contains("\n  publish-main-release:"));
     assert!(!workflow.contains("main-latest"));
 }
 
-#[test]
-fn main_publication_runs_after_inapplicable_ci_jobs_are_skipped() {
+#[rstest]
+#[case(
+    "publish-main-artifacts",
+    "publish-main-container-images",
+    "!cancelled()"
+)]
+#[case(
+    "publish-main-container-images",
+    "publish-main-container-manifests",
+    "always()"
+)]
+fn main_publication_runs_after_inapplicable_ci_jobs_are_skipped(
+    #[case] job: &str,
+    #[case] next_job: &str,
+    #[case] status_condition: &str,
+) {
     let workflow = read_repository_text(".github/workflows/ci.yml");
+    let job_definition = lines_between(&workflow, &format!("  {job}:"), &format!("  {next_job}:"))
+        .unwrap_or_else(|| panic!("CI should define {job} before {next_job}"))
+        .join("\n");
 
-    for (job, next_job) in [
-        ("build-main-linux-artifacts", "build-main-native-artifacts"),
-        (
-            "build-main-native-artifacts",
-            "publish-main-container-images",
-        ),
-        (
-            "publish-main-container-images",
-            "publish-main-container-manifests",
-        ),
-    ] {
-        let job_definition =
-            lines_between(&workflow, &format!("  {job}:"), &format!("  {next_job}:"))
-                .unwrap_or_else(|| panic!("CI should define {job} before {next_job}"))
-                .join("\n");
-
-        assert!(job_definition.contains("    if: >-\n      always() &&"));
+    assert!(job_definition.contains(&format!("    if: >-\n      {status_condition} &&")));
+    assert!(job_definition.contains("needs.ci-gate.result == 'success'"));
+    if job == "publish-main-artifacts" {
+        for producer in ["build-main-linux-artifacts", "build-main-native-artifacts"] {
+            assert!(job_definition.contains(&format!("needs.{producer}.result == 'success'")));
+        }
+    } else {
         assert!(job_definition.contains("needs.changes.result == 'success'"));
-        assert!(job_definition.contains("needs.ci-gate.result == 'success'"));
         assert!(job_definition.contains("needs.changes.outputs.artifacts == 'true'"));
     }
+}
 
+#[test]
+fn main_manifest_publication_runs_after_inapplicable_ci_jobs_are_skipped() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
     let manifest_job = lines_between(
         &workflow,
         "  publish-main-container-manifests:",

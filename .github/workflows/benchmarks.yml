@@ -108,27 +108,75 @@ jobs:
             echo "run_runtime=$run_runtime"
           } >> "$GITHUB_OUTPUT"
 
+  benchmark-lanes:
+    name: Discover independent benchmark lanes
+    needs: [changes, warm-cache-changes]
+    if: >-
+      !cancelled() &&
+      (needs.changes.outputs.run_benchmarks == 'true' ||
+       needs.warm-cache-changes.outputs.benchmarks == 'true')
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.lanes.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .benchmark-base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: terjekv/rust-pr-bench
+          ref: d0202becabbd115351a879c21f53ab9da6812a44
+          path: .benchmark-action
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Partition discovered benchmarks, preserving moved baselines
+        id: lanes
+        env:
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          args=(--action-path .benchmark-action --head .)
+          if [[ "$IS_PULL_REQUEST" == "true" ]]; then
+            args+=(--base .benchmark-base)
+          fi
+          echo "matrix=$(python3 scripts/benchmark-lanes.py "${args[@]}")" >> "$GITHUB_OUTPUT"
+
   benchmarks:
-    name: Benchmarks
-    needs: changes
-    if: needs.changes.outputs.run_benchmarks == 'true'
+    name: Benchmarks (${{ matrix.name }})
+    needs: [changes, benchmark-lanes]
+    if: >-
+      !cancelled() &&
+      needs.benchmark-lanes.result == 'success' &&
+      needs.changes.outputs.run_benchmarks == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
     uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
     secrets: inherit
     with:
       # Keep build/cache inputs aligned with warm-cache below.
       action_ref: d0202becabbd115351a879c21f53ab9da6812a44
       backend: all
-      auto_discover: true
+      benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
       auto_detect_moved_benchmarks: true
       cargo_args: --locked
       cache: true
-      cache_namespace: hubuum-benchmarks
+      cache_namespace: hubuum-benchmarks-${{ matrix.name }}
       cache_binaries: true
       criterion_statistic: median
       criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
       regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
+      comment_mode: ${{ matrix.name == 'standard' && 'always' || 'never' }}
 
   warm-cache-changes:
     name: Classify benchmark cache inputs
@@ -160,21 +208,26 @@ jobs:
           bash scripts/classify-ci-changes.sh "${changed_files[@]}"
 
   warm-cache:
-    needs: warm-cache-changes
-    name: Warm benchmark caches on main
+    needs: [warm-cache-changes, benchmark-lanes]
+    name: Warm benchmark caches on main (${{ matrix.name }})
     if: >-
+      !cancelled() &&
+      needs.benchmark-lanes.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.warm-cache-changes.outputs.benchmarks == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
     uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
     with:
       action_ref: d0202becabbd115351a879c21f53ab9da6812a44
       backend: all
-      auto_discover: true
+      benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
       auto_detect_moved_benchmarks: true
       cargo_args: --locked
       cache: true
-      cache_namespace: hubuum-benchmarks
+      cache_namespace: hubuum-benchmarks-${{ matrix.name }}
       cache_binaries: true
       compile_only: true
       comment_mode: never

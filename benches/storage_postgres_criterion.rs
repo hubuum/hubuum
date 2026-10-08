@@ -551,9 +551,17 @@ impl StorageFixture {
 }
 
 fn benchmark_postgres_storage(c: &mut Criterion) {
+    let started = Instant::now();
     let database = PostgresBenchmarkDatabase::start();
+    eprintln!(
+        "postgres benchmark database startup: {:?}",
+        started.elapsed()
+    );
+    let started = Instant::now();
     let runtime = runtime();
     let fixture = StorageFixture::new(&runtime, database.url());
+    eprintln!("postgres benchmark base fixture: {:?}", started.elapsed());
+    let measurements_started = Instant::now();
     let collections = fixture.services.collections();
     let point_read_id = fixture.point_read_id();
     let leaf_id = fixture.leaf_id();
@@ -748,10 +756,16 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
             let _runtime_guard = runtime.enter();
             benchmark_pool(database.url())
         };
+        let scale_started = Instant::now();
         fixture.structured_search.add_unrelated_hydration_corpus(
             &runtime,
             &scale_setup_pool,
             fixture.collections[0].id,
+        );
+
+        eprintln!(
+            "postgres benchmark unrelated corpus fixture: {:?}",
+            scale_started.elapsed()
         );
 
         benchmark_hydration(&format!(
@@ -759,6 +773,10 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
         ));
     }
     group.finish();
+    eprintln!(
+        "postgres benchmark measurements including scale fixture: {:?}",
+        measurements_started.elapsed()
+    );
     // The benchmark owns the whole disposable database container. Dropping it
     // is both faster and more representative than timing an unrelated cascade
     // delete of the synthetic scale corpus.

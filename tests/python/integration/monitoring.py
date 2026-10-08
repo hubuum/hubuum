@@ -497,7 +497,7 @@ def main(argv=None):
         try:
             installation = Installation(directory, args.image, args.mode)
             report = installation.report
-            for stage in ('start', 'authenticate', 'data', 'traffic', 'events', 'panels', 'alert', 'lifecycle'):
+            for stage in ('start', 'authenticate', 'data', 'traffic', 'events', 'panels', 'lifecycle'):
                 print('Monitoring acceptance: ' + stage, flush=True)
                 installation.report['stage'] = stage
                 getattr(installation, stage)()

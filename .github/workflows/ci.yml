@@ -49,6 +49,7 @@ jobs:
     outputs:
       markdown: ${{ steps.paths.outputs.markdown }}
       code: ${{ steps.paths.outputs.code }}
+      rust: ${{ steps.paths.outputs.rust }}
       rust_api_policy: ${{ steps.paths.outputs.rust_api_policy }}
       openapi: ${{ steps.paths.outputs.openapi }}
       operational_contract: ${{ steps.paths.outputs.operational_contract }}
@@ -59,6 +60,7 @@ jobs:
       run_markdown: ${{ steps.policy.outputs.run_markdown }}
       run_default_suite: ${{ steps.policy.outputs.run_default_suite }}
       run_full_ci: ${{ steps.policy.outputs.run_full_ci }}
+      run_rust_ci: ${{ steps.policy.outputs.run_rust_ci }}
       run_openapi: ${{ steps.policy.outputs.run_openapi }}
       run_operational_contract: ${{ steps.policy.outputs.run_operational_contract }}
       run_container: ${{ steps.policy.outputs.run_container }}
@@ -93,6 +95,7 @@ jobs:
         id: policy
         env:
           CODE_CHANGED: ${{ steps.paths.outputs.code }}
+          RUST_CHANGED: ${{ steps.paths.outputs.rust }}
           CONTAINER_CHANGED: ${{ steps.paths.outputs.container }}
           OPENAPI_CHANGED: ${{ steps.paths.outputs.openapi }}
           OPERATIONAL_CONTRACT_CHANGED: ${{ steps.paths.outputs.operational_contract }}
@@ -111,8 +114,13 @@ jobs:
             run_full_ci=true
           fi
 
+          run_rust_ci=false
+          if [[ "$full_requested" == "true" && ("$RUST_CHANGED" == "true" || "$FORCE_FULL" == "true") ]]; then
+            run_rust_ci=true
+          fi
+
           run_default_suite=false
-          if [[ "$CODE_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
+          if [[ "$RUST_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
             run_default_suite=true
           fi
 
@@ -122,17 +130,17 @@ jobs:
           fi
 
           run_openapi=false
-          if [[ "$run_full_ci" == "true" || "$OPENAPI_CHANGED" == "true" ]]; then
+          if [[ "$run_rust_ci" == "true" || "$OPENAPI_CHANGED" == "true" ]]; then
             run_openapi=true
           fi
 
           run_operational_contract=false
-          if [[ "$run_full_ci" == "true" || "$OPERATIONAL_CONTRACT_CHANGED" == "true" ]]; then
+          if [[ "$run_rust_ci" == "true" || "$OPERATIONAL_CONTRACT_CHANGED" == "true" ]]; then
             run_operational_contract=true
           fi
 
           run_format=false
-          if [[ "$CODE_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
+          if [[ "$RUST_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
             run_format=true
           fi
 
@@ -141,7 +149,7 @@ jobs:
             run_markdown=true
           fi
 
-          if [[ "$run_full_ci" == "true" ]]; then
+          if [[ "$run_rust_ci" == "true" ]]; then
             feature_matrix='[{"name":"default","args":""},{"name":"no-default-features","args":"--no-default-features"},{"name":"rustls-no-openssl","args":"--no-default-features -F tls-rustls"},{"name":"all-features","args":"--all-features"}]'
           else
             feature_matrix='[{"name":"default","args":""}]'
@@ -152,6 +160,7 @@ jobs:
             echo "run_markdown=$run_markdown"
             echo "run_default_suite=$run_default_suite"
             echo "run_full_ci=$run_full_ci"
+            echo "run_rust_ci=$run_rust_ci"
             echo "run_openapi=$run_openapi"
             echo "run_operational_contract=$run_operational_contract"
             echo "run_container=$run_container"
@@ -284,7 +293,7 @@ jobs:
       always() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
-        needs.changes.outputs.code == 'true' ||
+        needs.changes.outputs.rust == 'true' ||
         needs.changes.outputs.rust_api_policy == 'true'
       )
     runs-on: ubuntu-24.04
@@ -360,7 +369,7 @@ jobs:
   lint:
     name: Lint
     needs: changes
-    if: needs.changes.outputs.run_full_ci == 'true'
+    if: needs.changes.outputs.run_rust_ci == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -377,12 +386,29 @@ jobs:
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libssl-dev
+      - name: Cache lint dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: lint
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Run clippy with all features
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Check Docker workspace manifest parity
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
+
+  deployment-checks:
+    name: Deployment scripts
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
       - name: Test deployment script refresh
         run: bash scripts/test-install-script-refresh.sh
       - name: Test single-host rolling update
@@ -391,6 +417,25 @@ jobs:
         run: |
           bash scripts/test-migration-compatibility.sh
           bash scripts/check-migration-compatibility.sh
+
+  deployment-build-contracts:
+    name: Deployment build contracts
+    needs: changes
+    if: >-
+      needs.changes.outputs.run_container == 'true' &&
+      needs.changes.outputs.run_default_suite != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: deployment-build-contracts
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libssl-dev
+      - name: Check production container and deployment contracts
+        run: cargo test --bin hubuum-server --locked
 
   release-metadata:
     name: Release metadata
@@ -802,7 +847,7 @@ jobs:
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
-        run: cargo build ${{ matrix.feature.args }} --locked --release
+        run: cargo build ${{ matrix.feature.args }} -F integration-test-support --locked --release
       - name: Test PostgreSQL adapter-native contracts
         if: matrix.feature.name == 'default'
         run: >-
@@ -819,7 +864,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() &&
-      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_full_ci == 'true')
+      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_rust_ci == 'true')
     runs-on: ubuntu-24.04
     services:
       valkey:
@@ -846,7 +891,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() &&
-      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_full_ci == 'true')
+      (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.run_rust_ci == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
@@ -928,7 +973,7 @@ jobs:
   test:
     name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
     needs: changes
-    if: needs.changes.outputs.run_full_ci == 'true'
+    if: needs.changes.outputs.run_rust_ci == 'true'
     runs-on: ${{ matrix.platform.os }}
     env:
       # Production artifact jobs retain the exact fat-LTO release profile.
@@ -1186,7 +1231,7 @@ jobs:
   all-features-release-build:
     name: Release build with all production features
     needs: changes
-    if: needs.changes.outputs.run_full_ci == 'true'
+    if: needs.changes.outputs.run_rust_ci == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -1198,7 +1243,7 @@ jobs:
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
       - name: Build release binaries with all production features
-        run: cargo build --no-default-features -F production-all --locked --release
+        run: cargo build --no-default-features -F production-all --locked --release --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker
 
   container-build:
     name: Container build (production features)
@@ -1246,8 +1291,8 @@ jobs:
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=container-amd64-production
+          cache-to: type=gha,mode=max,scope=container-amd64-production
       - name: Export static release binaries
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1258,7 +1303,7 @@ jobs:
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=container-amd64-production
       - name: Verify exported release binaries
         run: |
           for binary in dist/release-smoke/hubuum-server dist/release-smoke/hubuum-admin dist/release-smoke/hubuum-template-worker; do
@@ -1459,6 +1504,8 @@ jobs:
       - monitoring-integration
       - rust-api-policy
       - lint
+      - deployment-checks
+      - deployment-build-contracts
       - release-metadata
       - openapi-contract
       - operational-contract
@@ -1659,13 +1706,13 @@ jobs:
         if: contains(matrix.platform.os_name, 'macos')
         env:
           HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
-        run: cargo build --no-default-features -F production-all --locked --release --target ${{ matrix.platform.target }}
+        run: cargo build --no-default-features -F production-all --locked --release --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker --target ${{ matrix.platform.target }}
 
       - name: Build release binaries (Windows, self-contained feature set)
         if: contains(matrix.platform.os_name, 'windows')
         env:
           HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
-        run: cargo build -F tls-rustls,amqp,email,valkey,embedded-migrations,vendored-openssl --locked --release --target ${{ matrix.platform.target }}
+        run: cargo build -F tls-rustls,amqp,email,valkey,embedded-migrations,vendored-openssl --locked --release --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker --target ${{ matrix.platform.target }}
 
       - name: Verify macOS runtime dependencies
         if: contains(matrix.platform.os_name, 'macos')
@@ -1897,17 +1944,16 @@ jobs:
   build-main-linux-artifacts:
     name: Build static main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
     if: >-
-      always() &&
+      !cancelled() &&
       github.ref == 'refs/heads/main' &&
       needs.changes.result == 'success' &&
-      needs.ci-gate.result == 'success' &&
       needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
-      - ci-gate
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         platform:
           - arch: amd64
@@ -1959,10 +2005,11 @@ jobs:
           cd dist
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
           shasum -a 256 -c "${archive_name}.sha256"
-      - name: Upload main artifact
+      - name: Upload main candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          name: candidate-main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          retention-days: 1
           path: |
             dist/*.tar.gz
             dist/*.sha256
@@ -1970,17 +2017,16 @@ jobs:
   build-main-native-artifacts:
     name: Build native main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
     if: >-
-      always() &&
+      !cancelled() &&
       github.ref == 'refs/heads/main' &&
       needs.changes.result == 'success' &&
-      needs.ci-gate.result == 'success' &&
       needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
-      - ci-gate
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         platform:
           - target: x86_64-pc-windows-msvc
@@ -2014,10 +2060,11 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ${{ matrix.platform.target }}-stable-release
+          key: ${{ matrix.feature.ext }}
       - name: Build self-contained main binaries
         env:
           HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
-        run: cargo build ${{ matrix.feature.extra_args }} -F embedded-migrations,vendored-openssl --locked --release --target ${{ matrix.platform.target }}
+        run: cargo build ${{ matrix.feature.extra_args }} -F embedded-migrations,vendored-openssl --locked --release --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker --target ${{ matrix.platform.target }}
       - name: Verify macOS runtime dependencies
         if: contains(matrix.platform.os_name, 'macos')
         shell: bash
@@ -2065,11 +2112,45 @@ jobs:
           if ([System.IO.File]::ReadAllText("dist/$archive_name.sha256") -cne $checksum) {
             throw "Checksum file was not written exactly as expected"
           }
-      - name: Upload main artifact
+      - name: Upload main candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          name: candidate-main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          retention-days: 1
           path: dist/*
+
+  publish-main-artifacts:
+    name: Publish validated main artifact (${{ matrix.platform }}, ${{ matrix.feature }})
+    needs: [ci-gate, build-main-linux-artifacts, build-main-native-artifacts]
+    if: >-
+      !cancelled() &&
+      needs.ci-gate.result == 'success' &&
+      needs.build-main-linux-artifacts.result == 'success' &&
+      needs.build-main-native-artifacts.result == 'success'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        platform: [linux-x86_64, linux-aarch64, macos-aarch64, windows-x86_64]
+        feature: [all-features, no-tls, tls-openssl, tls-rustls]
+        exclude:
+          - platform: windows-x86_64
+            feature: tls-openssl
+          - platform: windows-x86_64
+            feature: all-features
+    steps:
+      - name: Download validated candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: candidate-main-${{ matrix.platform }}-${{ matrix.feature }}
+          path: dist
+      - name: Publish main artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: main-${{ matrix.platform }}-${{ matrix.feature }}
+          path: dist/*
+          if-no-files-found: error
 
   publish-main-container-images:
     name: Build main container (${{ matrix.platform.arch }})
@@ -2125,8 +2206,8 @@ jobs:
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=container-${{ matrix.platform.arch }}-production
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.platform.arch }}-production
       - name: Generate main container SBOM and vulnerability reports
         shell: bash
         run: |
@@ -2238,8 +2319,8 @@ jobs:
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=container-${{ matrix.platform.arch }}-production
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.platform.arch }}-production
       - name: Generate release container SBOM and vulnerability reports
         shell: bash
         run: |

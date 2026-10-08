@@ -226,6 +226,10 @@ https://caddy {{
             self.snapshot('dead', counts(total=2, succeeded=1, dead=1), 2)
             self.received([('/accepted', 200), ('/retry', 503), ('/retry', 503)])
             wait_for('production dead-letter alert pending', lambda: self.alert_state() == 'pending')
+            # The independent five-minute scrape alert fits inside the event
+            # alert's ten-minute hold. alert() restores the standby and waits
+            # for recovery before subsequent assertions require both replicas.
+            self.installation.alert()
             wait_for('production dead-letter alert firing', lambda: self.alert_state() == 'firing', timeout=720)
             self.receiver(200)
             self.api(f'/api/v1/event-deliveries/{self.delivery_id}/retry', method='POST')
