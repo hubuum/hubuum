@@ -846,8 +846,8 @@ jobs:
           "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
-      - name: Build (${{ matrix.feature.name }})
-        run: cargo build ${{ matrix.feature.args }} -F integration-test-support --locked --release
+      - name: Compile tests (${{ matrix.feature.name }})
+        run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release --no-run
       - name: Test PostgreSQL adapter-native contracts
         if: matrix.feature.name == 'default'
         run: >-
@@ -1168,19 +1168,19 @@ jobs:
           & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
           if ($LASTEXITCODE -ne 0) { throw "Database verification failed with exit code $LASTEXITCODE" }
       
-      - name: Build test configuration (non-Windows)
+      - name: Compile test configuration (non-Windows)
         if: "!contains(matrix.platform.os, 'windows')"
         run: >-
-          cargo build --no-default-features
+          cargo test --no-default-features
           -F production-all,integration-test-support
-          --locked --release
+          --locked --release --no-run
 
-      - name: Build test configuration (Windows)
+      - name: Compile test configuration (Windows)
         if: contains(matrix.platform.os, 'windows')
         run: >-
-          cargo build
+          cargo test
           -F tls-rustls,amqp,email,valkey,integration-test-support
-          --locked --release --target ${{ matrix.platform.target }}
+          --locked --release --target ${{ matrix.platform.target }} --no-run
       
       - name: Run tests (non-Windows, production features)
         if: "!contains(matrix.platform.os, 'windows')"
@@ -1405,6 +1405,37 @@ jobs:
             fi
             sleep 1
           done
+      - name: Export verified production image
+        run: docker save --output "$RUNNER_TEMP/production-container.tar" hubuum-server:ci
+      - name: Share verified production image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-container
+          path: ${{ runner.temp }}/production-container.tar
+          compression-level: 1
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: error
+
+  container-monitoring:
+    name: Container monitoring acceptance
+    needs: container-build
+    if: ${{ !cancelled() && needs.container-build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Download verified production image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-container
+          path: ${{ runner.temp }}
+      - name: Load verified production image
+        run: docker load --input "$RUNNER_TEMP/production-container.tar"
       - name: Verify installer monitoring with real server data and alerts
         timeout-minutes: 35
         run: |
@@ -1416,6 +1447,26 @@ jobs:
         with:
           name: monitoring-acceptance
           path: monitoring-acceptance.json
+
+  container-deployment:
+    name: Container deployment acceptance
+    needs: container-build
+    if: ${{ !cancelled() && needs.container-build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Download verified production image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-container
+          path: ${{ runner.temp }}
+      - name: Load verified production image
+        run: docker load --input "$RUNNER_TEMP/production-container.tar"
       - name: Verify committed functional corpus against the production image
         run: python3 tests/python/run.py integration corpus verify --image hubuum-server:ci
       - name: Verify the Atlas documentation corpus against the production image
@@ -1516,6 +1567,8 @@ jobs:
       - test
       - all-features-release-build
       - container-build
+      - container-monitoring
+      - container-deployment
     runs-on: ubuntu-24.04
     steps:
       - name: Require all applicable CI jobs to pass
@@ -1579,7 +1632,9 @@ jobs:
       needs.event-transport-contract.result == 'success' &&
       needs.valkey-rate-limit-contract.result == 'success' &&
       needs.treetop-authorization-conformance.result == 'success' &&
-      needs.container-build.result == 'success'
+      needs.container-build.result == 'success' &&
+      needs.container-monitoring.result == 'success' &&
+      needs.container-deployment.result == 'success'
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
@@ -1592,6 +1647,8 @@ jobs:
       - event-transport-contract
       - treetop-authorization-conformance
       - container-build
+      - container-monitoring
+      - container-deployment
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository

@@ -74,7 +74,33 @@ class PublicationGateTests(unittest.TestCase):
         gate = job("ci-gate")
         self.assertIn("      - deployment-checks\n", gate)
         self.assertIn("      - deployment-build-contracts\n", gate)
-        self.assertIn("      - container-build\n", gate)
+        for name in ("container-build", "container-monitoring", "container-deployment"):
+            with self.subTest(job=name):
+                self.assertIn(f"      - {name}\n", gate)
+
+    def test_tag_release_requires_all_container_checks(self):
+        gate = job("validate-tag-release")
+        for name in ("container-build", "container-monitoring", "container-deployment"):
+            with self.subTest(job=name):
+                self.assertIn(f"      - {name}\n", gate)
+                self.assertIn(f"needs.{name}.result == 'success'", gate)
+
+    def test_container_acceptance_consumes_the_same_build_in_parallel(self):
+        producer = job("container-build").split(
+            "      - name: Share verified production image\n", 1,
+        )[1]
+        artifact = re.search(r"^          name: (.+)$", producer, re.MULTILINE).group(1)
+        for name in ("container-monitoring", "container-deployment"):
+            with self.subTest(job=name):
+                consumer = job(name)
+                self.assertIn("    needs: container-build\n", consumer)
+                self.assertIn("!cancelled() && needs.container-build.result == 'success'", consumer)
+                download = consumer.split(
+                    "      - name: Download verified production image\n", 1,
+                )[1]
+                consumed = re.search(r"^          name: (.+)$", download, re.MULTILINE).group(1)
+                self.assertEqual(consumed, artifact)
+                self.assertIn('docker load --input "$RUNNER_TEMP/production-container.tar"', consumer)
 
     def test_deployment_inputs_still_run_rust_container_contracts(self):
         contracts = job("deployment-build-contracts")
