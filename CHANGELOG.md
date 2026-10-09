@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL object searches requesting exact totals with multiple JSON substring
+  filters share the filtering work between the count and page queries on cursor
+  pages, including empty pages.
+
 ## [0.0.18] - 2026-10-06
 
 ### Added
