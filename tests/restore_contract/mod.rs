@@ -53,6 +53,12 @@ async fn every_selectable_backend_preserves_recovery_across_backup_generations(
         let pool =
             postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
         let fixture = RecoveryFixture(RestoreContractFixture::new(kind, pool).await.unwrap());
+        // The shared runner compares every field (including provenance and revisions),
+        // then writes again and restores a second generation in both history modes.
+        let snapshot = fixture.0.capture(false).await.unwrap();
+        assert!(
+            !snapshot.into_parts().0[&StorageBackupStateSection::QueryUsageDeclarations].is_empty()
+        );
         let result = verify_backup_restore_contract(&fixture, include_history).await;
         fixture
             .0

@@ -1021,3 +1021,21 @@ profile = "authorization_resource_facts"
 effect = "batch_read"
 carrier = "Vec<StorageAuthorizationCollectionAccessQuery>"
 profile = "ordered_collection_decisions"
+
+[collection_profiles.query_usage_declarations]
+shape = "complete"
+ordering = "declaration ID ascending"
+duplicate_inputs = "not applicable; one class scope"
+missing_inputs = "NotFound for a missing class or changed authorized collection"
+multiplicity = "one row per declaration"
+completeness = "all declarations for the authorized class"
+bounds = "at most 32 declarations per class; bounded validated paths and operations"
+visibility = "class scope and authorized collection rechecked by the adapter"
+snapshot = "class authorization binding and declarations share a locked mutation boundary"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."QueryUsageStorage::list_query_usage"]
+effect = "complete_read"
+carrier = "StorageQueryUsageScope"
+profile = "query_usage_declarations"

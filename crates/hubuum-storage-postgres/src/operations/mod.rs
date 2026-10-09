@@ -40,6 +40,7 @@ pub mod object;
 pub mod object_aggregate;
 pub mod principal;
 pub mod probe;
+pub mod query_usage;
 pub(crate) mod related_filter;
 pub mod relation;
 pub mod relation_query;

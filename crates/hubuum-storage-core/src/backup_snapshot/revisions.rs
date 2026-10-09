@@ -31,6 +31,7 @@ const REVISION_STATE_SECTIONS: &[StorageBackupStateSection] = &[
     StorageBackupStateSection::CollectionAuthorization,
     StorageBackupStateSection::Classes,
     StorageBackupStateSection::ComputedFieldDefinitions,
+    StorageBackupStateSection::QueryUsageDeclarations,
     StorageBackupStateSection::ClassRelations,
     StorageBackupStateSection::Objects,
     StorageBackupStateSection::ObjectRelations,
