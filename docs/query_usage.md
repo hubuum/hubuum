@@ -72,3 +72,60 @@ Full backup version 9 includes logical declarations and their provenance.
 Versions 6 through 8 restore with an empty declaration set. Physical optimization
 resources are not portable backup content. The restore target must support
 version 9 before it can restore any new backup, including one with no declarations.
+
+## Observations and analysis
+
+`POST /api/v1/classes/{class_id}/query-usage/analysis` accepts
+`{"proposed": []}` or up to 32 hypothetical patterns. It requires an unscoped
+administrator token and `ReadClass`. Reviews can include shared native resource
+facts, so ordinary class management permission is insufficient. The operation
+never adopts suggestions, changes declarations, or creates native resources.
+
+Memory reports `unavailable`. PostgreSQL reports `insufficient_evidence` when
+usable workload evidence is missing or bounded catalog inspection is incomplete.
+A `complete` review can contain zero suggestions. Neither missing observations
+nor zero native scans establishes that a resource is unused.
+
+Collection is disabled by default. Enable it with
+`HUBUUM_QUERY_OBSERVATIONS_ENABLED=true`. Effective settings appear in the
+administrator configuration endpoint. CLI flags use the corresponding lowercase
+hyphenated names; TOML keys use lowercase underscores under
+`[query_observations]`.
+
+| Environment suffix after `HUBUUM_QUERY_OBSERVATIONS_` | Default | Accepted range |
+| --- | --- | --- |
+| `SAMPLE_EVERY` | 16 | 1–1,000,000 logical requests |
+| `MAX_PATTERNS` | 2048 | 1–16,384 per process |
+| `MAX_PATTERNS_PER_CLASS` | 64 | 1–128, no greater than the process limit |
+| `RETENTION_SECONDS` | 86400 | 1–604,800 |
+| `MAX_PREDICATES_PER_QUERY` | 16 | 1–32 |
+
+Collection retains only class attribution, validated paths, scalar types,
+operations, successful sampled request counts, timestamps, and whole-query
+elapsed time. Query values, object contents, and credentials are not retained.
+Class IDs and paths are never metric labels. Count-plus-page requests count once.
+Only direct filters with an unambiguous class are observed; unsupported,
+negated, related, and computed predicates are omitted. Operands exceeding 4096
+bytes are skipped. Failed requests add no observation.
+
+Entries expire from their first observation; continued use does not extend their
+retention window. Expiry is applied on subsequent collection or review. Capacity
+drops are reported. Observations are process-local and reset on restart; a load
+balanced deployment's review covers only the responding process. Whole-query
+timing includes other predicates and authorization and cannot establish the cost
+or benefit of an individual predicate.
+
+The initial PostgreSQL provider suggests new plain string equality declarations
+after at least five successful sampled observations, unless that pattern is
+already declared or covered by a matching usable native text expression index.
+It inspects at most 128 indexes, applies a two-second transaction statement
+timeout, and withholds suggestions if catalog coverage is incomplete. Other
+scalar declarations remain valid but are explicitly unsupported by this initial
+provider. Paths containing a case-insensitive `null` segment are excluded because
+the existing PostgreSQL filter compiler treats that unquoted array element as SQL
+NULL. Resource sizes and cumulative native scans are facts at assessment time;
+future benefit and maintenance cost remain unknown.
+
+Suggestions carry the same pattern accepted by ordinary declaration creation.
+Review and adopt them through the normal permission-checked, audited CRUD
+endpoints, which revalidate current state. No automatic adoption is performed.

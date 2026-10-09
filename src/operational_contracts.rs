@@ -1687,7 +1687,7 @@ fn storage_operation_values() -> Vec<String> {
     STORAGE_OPERATION_SOURCES
         .iter()
         .flat_map(|source| {
-            first_quoted_strings_after(source, "self.observe_storage_call(")
+            first_quoted_strings_after(source, ".observe_storage_call(")
                 .chain(first_quoted_strings_after(source, "self.call("))
         })
         .map(str::to_string)

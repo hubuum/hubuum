@@ -220,13 +220,24 @@ impl CatalogStorage for StorageHandle {
         &self,
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageObject>, StorageError> {
-        self.observe_storage_call(
-            self.backend_name(),
-            StorageCapability::Catalog,
-            "list_objects",
-            async { dispatch_backend!(self, |backend| backend.list_objects(query).await) },
-        )
-        .await
+        let ticket = self
+            .inner
+            .query_observations
+            .begin(query.options().filters(), None);
+        let result = self
+            .observe_storage_call(
+                self.backend_name(),
+                StorageCapability::Catalog,
+                "list_objects",
+                async { dispatch_backend!(self, |backend| backend.list_objects(query).await) },
+            )
+            .await;
+        if result.is_ok()
+            && let Some(ticket) = ticket
+        {
+            ticket.complete();
+        }
+        result
     }
 }
 
@@ -236,17 +247,28 @@ impl ComputedObjectStorage for StorageHandle {
         &self,
         query: StorageComputedObjectListQuery,
     ) -> Result<StorageComputedObjectPage, StorageError> {
-        self.observe_storage_call(
-            self.backend_name(),
-            StorageCapability::ComputedObject,
-            "list_computed_objects",
-            async {
-                dispatch_backend!(self, |backend| {
-                    backend.list_computed_objects(query).await
-                })
-            },
-        )
-        .await
+        let ticket = self
+            .inner
+            .query_observations
+            .begin(query.options().filters(), Some(query.class_id()));
+        let result = self
+            .observe_storage_call(
+                self.backend_name(),
+                StorageCapability::ComputedObject,
+                "list_computed_objects",
+                async {
+                    dispatch_backend!(self, |backend| {
+                        backend.list_computed_objects(query).await
+                    })
+                },
+            )
+            .await;
+        if result.is_ok()
+            && let Some(ticket) = ticket
+        {
+            ticket.complete();
+        }
+        result
     }
 
     async fn enrich_objects_with_computed(

@@ -5305,6 +5305,84 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/query-usage/analysis": {
+      "post": {
+        "tags": [
+          "query usage"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Query Usage Analysis",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/query-usage/analysis.",
+        "operationId": "postApiV1ClassesByClassIdQueryUsageAnalysis",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryUsageAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Read-only administrative review; availability and evidence are explicit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryUsageAnalysisResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or excessive proposed patterns",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped administrator and class read access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/query-usage/{declaration_id}": {
       "put": {
         "tags": [
@@ -31509,6 +31587,257 @@
           }
         }
       },
+      "QueryObservationConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "retention_seconds",
+          "max_predicates_per_query"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryObservationSettings": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "retention_seconds",
+          "max_predicates_per_query"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryObservationSnapshot": {
+        "type": "object",
+        "required": [
+          "source",
+          "settings",
+          "process_started_at",
+          "captured_at",
+          "patterns",
+          "capacity_drops"
+        ],
+        "properties": {
+          "capacity_drops": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryPatternObservation"
+            }
+          },
+          "process_started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/QueryObservationSettings"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "QueryPatternObservation": {
+        "type": "object",
+        "required": [
+          "pattern",
+          "sampled_queries",
+          "first_observed_at",
+          "last_observed_at",
+          "whole_query_duration_micros"
+        ],
+        "properties": {
+          "first_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          },
+          "sampled_queries": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "whole_query_duration_micros": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Whole storage request duration, not the cost of this predicate.",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryUsageAnalysisRequest": {
+        "type": "object",
+        "properties": {
+          "proposed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryUsagePatternSchema"
+            },
+            "description": "Up to 32 hypothetical patterns. Analysis never records or adopts them.",
+            "maxItems": 32
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueryUsageAnalysisResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "assessed_at",
+          "observations",
+          "assessments",
+          "suggestions",
+          "limitations"
+        ],
+        "properties": {
+          "assessed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "assessments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryUsageAssessment"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observations": {
+            "$ref": "#/components/schemas/QueryObservationSnapshot"
+          },
+          "status": {
+            "$ref": "#/components/schemas/QueryUsageAnalysisStatus"
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryUsageSuggestion"
+            }
+          }
+        }
+      },
+      "QueryUsageAnalysisStatus": {
+        "type": "string",
+        "enum": [
+          "unavailable",
+          "insufficient_evidence",
+          "complete"
+        ]
+      },
+      "QueryUsageAssessment": {
+        "type": "object",
+        "required": [
+          "pattern",
+          "schema_compatibility",
+          "can_prepare",
+          "resources",
+          "rationale"
+        ],
+        "properties": {
+          "can_prepare": {
+            "type": "boolean"
+          },
+          "declaration_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryUsageResource"
+            }
+          },
+          "schema_compatibility": {
+            "$ref": "#/components/schemas/QueryUsageCompatibility"
+          }
+        }
+      },
       "QueryUsageCompatibility": {
         "type": "string",
         "enum": [
@@ -31582,6 +31911,54 @@
         },
         "additionalProperties": false
       },
+      "QueryUsageResource": {
+        "type": "object",
+        "required": [
+          "reference",
+          "ownership",
+          "bytes",
+          "cleanup_eligible_if_removed"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cleanup_eligible_if_removed": {
+            "type": "boolean"
+          },
+          "declaration_owners": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "native_scan_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "ownership": {
+            "$ref": "#/components/schemas/QueryUsageResourceOwnership"
+          },
+          "reference": {
+            "type": "string"
+          }
+        }
+      },
+      "QueryUsageResourceOwnership": {
+        "type": "string",
+        "enum": [
+          "independently_managed",
+          "declaration_managed"
+        ]
+      },
       "QueryUsageResponse": {
         "type": "object",
         "required": [
@@ -31637,6 +32014,28 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "QueryUsageSuggestion": {
+        "type": "object",
+        "required": [
+          "proposed",
+          "observations",
+          "rationale"
+        ],
+        "properties": {
+          "observations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryPatternObservation"
+            }
+          },
+          "proposed": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          },
+          "rationale": {
+            "type": "string"
           }
         }
       },
@@ -32664,6 +33063,7 @@
         "type": "object",
         "required": [
           "schema_validation",
+          "query_observations",
           "server",
           "database",
           "tasks",
@@ -32703,6 +33103,9 @@
           },
           "permissions": {
             "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "query_observations": {
+            "$ref": "#/components/schemas/QueryObservationConfig"
           },
           "remote_calls": {
             "$ref": "#/components/schemas/RemoteCallConfig"

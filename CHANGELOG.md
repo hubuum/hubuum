@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Opt-in, bounded, value-free query workload observations and administrator-only
+  PostgreSQL query usage reviews. Reviews distinguish unavailable analysis from
+  insufficient evidence, report native coverage, and suggest undeclared text
+  equality patterns without automatically adopting them.
 - Class-scoped advisory query usage declarations with validated paths and scalar
   operations, revision-checked management, audit provenance, and schema
   compatibility assessments in PostgreSQL and memory storage. Declarations do

@@ -9,6 +9,7 @@ mod memory;
 mod notifications;
 mod observed;
 mod operational;
+mod query_observations;
 mod registry;
 
 pub use context::StorageContext;
