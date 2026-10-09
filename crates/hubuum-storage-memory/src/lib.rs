@@ -400,6 +400,8 @@ struct MemoryState {
     export_templates: BTreeMap<i32, StorageExportTemplate>,
     remote_targets: BTreeMap<i32, StorageRemoteTarget>,
     computed_fields: BTreeMap<i32, StorageComputedFieldDefinition>,
+    query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
+    next_query_usage_id: i32,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,
     authorization_grants: BTreeMap<(i32, i32), StorageAuthorizationGrant>,
@@ -814,6 +816,7 @@ mod imports;
 mod object_filters;
 mod operational;
 mod queries;
+mod query_usage;
 mod resources;
 mod schema_evolution;
 mod state;

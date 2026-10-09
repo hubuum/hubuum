@@ -236,6 +236,17 @@ pub(crate) async fn delete_collection_on(
     validate_positive_id(collection_id, "collection id")?;
     let collection = lock_revisioned_collection(connection, collection_id).await?;
     validate_collection_can_be_deleted(connection, &collection).await?;
+    let classes = crate::schema::hubuumclass::table
+        .filter(crate::schema::hubuumclass::collection_id.eq(collection_id))
+        .order(crate::schema::hubuumclass::id)
+        .for_update()
+        .select(super::class::ClassRow::as_select())
+        .load::<super::class::ClassRow>(connection)
+        .await?;
+    for class in classes {
+        super::query_usage::delete_class_query_usage(connection, &class, context).await?;
+    }
+
     diesel::delete(
         crate::schema::collections::table.filter(crate::schema::collections::id.eq(collection_id)),
     )

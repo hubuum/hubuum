@@ -7,14 +7,31 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Class-scoped advisory query usage declarations with validated paths and scalar
+  operations, revision-checked management, audit provenance, and schema
+  compatibility assessments in PostgreSQL and memory storage. Declarations do
+  not change filtering or object validation.
+
 ### Changed
 
 - PostgreSQL object searches requesting exact totals with multiple JSON substring
   filters share the filtering work between the count and page queries on cursor
   pages, including empty pages.
+- **Breaking storage SDK change:** selectable adapters must implement
+  `QueryUsageStorage`. Upgrade adapters with audited declaration management and
+  the new logical backup section before adopting this storage contract. Event
+  catalogue consumers with exhaustive `EntityType` matches must also handle
+  `QueryUsageDeclaration`.
+- **Breaking:** full backups now use version 9 to include query usage declarations. Upgrade
+  the restore server before restoring a version 9 backup; versions 6, 7, and 8
+  remain readable and restore without declarations.
 
 ### Fixed
 
+- Post-restore backup verification accepts the empty query usage section added
+  when restoring formats 6, 7, and 8, while still detecting unexpected declarations.
 - Memory storage applies class, collection, and direct JSON object filters before
   counting and limiting results, including ordinary lists, computed-object lists,
   and aggregates. Missing values and failed scalar conversions retain their

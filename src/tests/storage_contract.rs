@@ -7253,3 +7253,5 @@ pub(crate) fn prefix(label: &str) -> String {
     let suffix = crate::utilities::auth::generate_random_password(12).to_ascii_lowercase();
     format!("storage_contract_{label}_{suffix}")
 }
+
+mod query_usage;

@@ -5138,6 +5138,357 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/query-usage": {
+      "get": {
+        "tags": [
+          "query usage"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Query Usage",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/query-usage.",
+        "operationId": "getApiV1ClassesByClassIdQueryUsage",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class-scoped advisory query usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QueryUsageResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, duplicate declaration or class limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "query usage"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Query Usage",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/query-usage.",
+        "operationId": "postApiV1ClassesByClassIdQueryUsage",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryUsageCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Class-scoped advisory query usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, duplicate declaration or class limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/query-usage/{declaration_id}": {
+      "put": {
+        "tags": [
+          "query usage"
+        ],
+        "summary": "Put Api V1 Classes By Class Id Query Usage By Declaration Id",
+        "description": "Auto-generated documentation for PUT /api/v1/classes/{class_id}/query-usage/{declaration_id}.",
+        "operationId": "putApiV1ClassesByClassIdQueryUsageByDeclarationId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Declaration ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceID"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryUsageReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Class-scoped advisory query usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, duplicate declaration or class limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "query usage"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id Query Usage By Declaration Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/query-usage/{declaration_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdQueryUsageByDeclarationId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Declaration ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceID"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current declaration revision",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Class-scoped advisory query usage"
+          },
+          "400": {
+            "description": "Invalid declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision, duplicate declaration or class limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/related/classes": {
       "get": {
         "tags": [
@@ -31158,6 +31509,145 @@
           }
         }
       },
+      "QueryUsageCompatibility": {
+        "type": "string",
+        "enum": [
+          "compatible",
+          "incompatible",
+          "unknown"
+        ]
+      },
+      "QueryUsageCreateRequest": {
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "pattern": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueryUsageOperation": {
+        "type": "string",
+        "enum": [
+          "equals",
+          "gt",
+          "gte",
+          "lt",
+          "lte",
+          "between"
+        ]
+      },
+      "QueryUsagePatternSchema": {
+        "type": "object",
+        "description": "Schema for the validated storage pattern accepted at the HTTP boundary.",
+        "required": [
+          "path",
+          "value_type",
+          "operations"
+        ],
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryUsageOperation"
+            },
+            "description": "One to six operations; string and boolean support equals only."
+          },
+          "path": {
+            "type": "string",
+            "description": "Comma-separated JSON path; at most 512 bytes and 32 segments."
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/QueryUsageValueType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueryUsageReplaceRequest": {
+        "type": "object",
+        "required": [
+          "pattern",
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueryUsageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "class_id",
+          "pattern",
+          "revision",
+          "created_at",
+          "updated_at",
+          "schema_compatibility"
+        ],
+        "properties": {
+          "class_id": {
+            "$ref": "#/components/schemas/HubuumClassID"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/ResourceID"
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/QueryUsagePatternSchema"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "schema_compatibility": {
+            "$ref": "#/components/schemas/QueryUsageCompatibility",
+            "description": "Advisory assessment against the current class schema. Never affects validation."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "QueryUsageValueType": {
+        "type": "string",
+        "enum": [
+          "string",
+          "numeric",
+          "boolean"
+        ]
+      },
       "RebuildTaskDetails": {
         "type": "object",
         "properties": {
@@ -31825,6 +32315,12 @@
             "description": "Value to replace with."
           }
         }
+      },
+      "ResourceID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Validated positive resource id.",
+        "minimum": 1
       },
       "ResourceRevision": {
         "type": "integer",

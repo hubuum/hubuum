@@ -486,6 +486,7 @@ impl EventContext {
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub enum EntityType {
     ClassSchema,
+    QueryUsageDeclaration,
     ObjectValidation,
     Collection,
     Class,
@@ -514,6 +515,7 @@ impl EntityType {
         Self::Collection,
         Self::Class,
         Self::ClassSchema,
+        Self::QueryUsageDeclaration,
         Self::ObjectValidation,
         Self::Object,
         Self::ClassRelation,
@@ -539,6 +541,7 @@ impl EntityType {
         match self {
             EntityType::Collection => "collection",
             EntityType::ClassSchema => "class_schema",
+            EntityType::QueryUsageDeclaration => "query_usage_declaration",
             EntityType::ObjectValidation => "object_validation",
             EntityType::Class => "class",
             EntityType::Object => "object",
@@ -567,6 +570,7 @@ impl EntityType {
             "collection" => Ok(EntityType::Collection),
             "class" => Ok(EntityType::Class),
             "class_schema" => Ok(EntityType::ClassSchema),
+            "query_usage_declaration" => Ok(EntityType::QueryUsageDeclaration),
             "object_validation" => Ok(EntityType::ObjectValidation),
             "object" => Ok(EntityType::Object),
             "class_relation" => Ok(EntityType::ClassRelation),
@@ -709,7 +713,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::Collection | E::Class | E::Object | E::User | E::Group | E::ExportTemplate => {
             &[A::Created, A::Updated, A::Deleted]
         }
-        E::ClassSchema => &[A::Created, A::Updated, A::Deleted],
+        E::ClassSchema | E::QueryUsageDeclaration => &[A::Created, A::Updated, A::Deleted],
         E::ObjectValidation => &[A::Updated, A::Succeeded, A::Failed],
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
         E::EventSubscription | E::ComputedFieldDefinition => &[A::Created, A::Updated, A::Deleted],

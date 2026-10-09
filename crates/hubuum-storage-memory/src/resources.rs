@@ -1534,6 +1534,7 @@ fn delete_class_in_state(
         StorageHistoryOperation::Delete,
         context,
     )?;
+    super::query_usage::delete_class_query_usage(state, &current, context)?;
     state.classes.remove(&id.id());
     let objects = state
         .objects

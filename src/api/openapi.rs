@@ -4,8 +4,8 @@ use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
-    imports, me, principals, relations, remote_targets, restores, runtime_config, schema_evolution,
-    search, service_accounts, system_event_subscriptions, tasks, users,
+    imports, me, principals, query_usage, relations, remote_targets, restores, runtime_config,
+    schema_evolution, search, service_accounts, system_event_subscriptions, tasks, users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -266,6 +266,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
         remote_targets::patch_remote_target,
         remote_targets::delete_remote_target,
         remote_targets::invoke_remote_target,
+        query_usage::list_query_usage,
+        query_usage::create_query_usage,
+        query_usage::replace_query_usage,
+        query_usage::delete_query_usage,
         schema_evolution::list_object_compliance,
         schema_evolution::list_schema_revisions,
         schema_evolution::get_schema_state,
@@ -1676,6 +1680,8 @@ mod tests {
             "/api/v1/relations/objects/{relation_id}",
             "/api/v1/classes",
             "/api/v1/classes/{class_id}",
+            "/api/v1/classes/{class_id}/query-usage",
+            "/api/v1/classes/{class_id}/query-usage/{declaration_id}",
             "/api/v1/classes/by-name/{class_name}",
             "/api/v1/classes/by-name/{class_name}/permissions",
             "/api/v1/classes/by-name/{class_name}/related/classes",

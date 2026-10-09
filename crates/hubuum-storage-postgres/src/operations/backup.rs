@@ -44,6 +44,7 @@ pub(crate) const fn state_table(section: StorageBackupStateSection) -> &'static 
         StorageBackupStateSection::ClassSchemaState => "class_schema_state",
         StorageBackupStateSection::ObjectSchemaEvidence => "object_schema_evidence",
         StorageBackupStateSection::ComputedFieldDefinitions => "computed_field_definitions",
+        StorageBackupStateSection::QueryUsageDeclarations => "query_usage_declarations",
         StorageBackupStateSection::ClassRelations => "hubuumclass_relation",
         StorageBackupStateSection::Objects => "hubuumobject",
         StorageBackupStateSection::ObjectRelations => "hubuumobject_relation",
@@ -446,6 +447,7 @@ pub(crate) fn state_row_to_postgres(
             section,
             StorageBackupStateSection::ClassSchemaRevisions
                 | StorageBackupStateSection::ClassSchemaState
+                | StorageBackupStateSection::QueryUsageDeclarations
                 | StorageBackupStateSection::ObjectSchemaEvidence
         ),
     )?;

@@ -2,6 +2,7 @@ use hubuum_domain::JsonSchemaLimits;
 mod baseline;
 mod budget;
 pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
+mod query_usage;
 mod revisions;
 mod schemas;
 mod task_discovery;
@@ -71,6 +72,7 @@ backup_sections! {
         ClassSchemaRevisions => "class_schema_revisions",
         ClassSchemaState => "class_schema_state",
         ComputedFieldDefinitions => "computed_field_definitions",
+        QueryUsageDeclarations => "query_usage_declarations",
         ClassRelations => "class_relations",
         Objects => "objects",
         ObjectSchemaEvidence => "object_schema_evidence",
@@ -314,6 +316,9 @@ impl StorageBackupSnapshot {
         schema_limits: JsonSchemaLimits,
     ) -> Result<Self, StorageValidationError> {
         Self::normalize_legacy_event_sink_access(&mut state_sections);
+        state_sections
+            .entry(StorageBackupStateSection::QueryUsageDeclarations)
+            .or_default();
         let missing_state = StorageBackupStateSection::ALL
             .iter()
             .find(|section| !state_sections.contains_key(section));
@@ -367,6 +372,7 @@ impl StorageBackupSnapshot {
         };
         revisions::validate_backup_revisions(&snapshot)?;
         schemas::validate(&snapshot)?;
+        query_usage::validate(&snapshot)?;
         Ok(snapshot)
     }
 
@@ -667,7 +673,10 @@ mod tests {
         let debug = format!("{snapshot:?}");
 
         assert!(!debug.contains("secret"));
-        assert!(debug.contains("state_section_count: 24"));
+        assert!(debug.contains(&format!(
+            "state_section_count: {}",
+            StorageBackupStateSection::ALL.len()
+        )));
         assert!(debug.contains("history_row_count: Some(1)"));
     }
 }

@@ -128,3 +128,5 @@ impl Services {
 pub mod schema_evolution;
 
 pub mod credential_approvals;
+
+pub mod query_usage;

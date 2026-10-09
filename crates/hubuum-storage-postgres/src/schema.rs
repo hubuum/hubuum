@@ -645,6 +645,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    query_usage_declarations (id) {
+        id -> Int4,
+        class_id -> Int4,
+        pattern -> Jsonb,
+        revision -> Int8,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+        created_by -> Nullable<Int4>,
+        updated_by -> Nullable<Int4>,
+    }
+}
+
+diesel::table! {
     remote_call_results (id) {
         id -> Int4,
         task_id -> Int4,
@@ -964,6 +977,7 @@ diesel::joinable!(object_schema_evidence -> hubuumobject (object_id));
 diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(principals -> identity_scopes (identity_scope_id));
+diesel::joinable!(query_usage_declarations -> hubuumclass (class_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
@@ -1025,6 +1039,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     object_schema_evidence,
     permissions,
     principals,
+    query_usage_declarations,
     remote_call_results,
     remote_targets,
     remote_targets_history,

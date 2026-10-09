@@ -2140,3 +2140,31 @@ fn an_external_crate_can_implement_the_complete_backend_contract() {
     fn assert_complete<T: StorageBackend + Clone + 'static>() {}
     assert_complete::<CompleteExternalAdapter>();
 }
+
+#[async_trait]
+impl QueryUsageStorage for CompleteExternalAdapter {
+    async fn list_query_usage(
+        &self,
+        _request: StorageQueryUsageScope,
+    ) -> Result<Vec<StorageQueryUsageDeclaration>, StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+    async fn create_query_usage(
+        &self,
+        _request: StorageQueryUsageCreate,
+    ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+    async fn replace_query_usage(
+        &self,
+        _request: StorageQueryUsageReplace,
+    ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+    async fn delete_query_usage(
+        &self,
+        _request: StorageQueryUsageDelete,
+    ) -> Result<StorageMutationOutcome<()>, StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+}
