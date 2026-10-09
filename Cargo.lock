@@ -2110,8 +2110,6 @@ dependencies = [
  "ipnet",
  "json-patch",
  "libc",
- "lru",
- "minijinja",
  "openssl",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -2134,10 +2132,8 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-opentelemetry",
- "tracing-serde",
  "tracing-subscriber",
  "treetop-client",
- "urlparse",
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
@@ -2162,7 +2158,6 @@ dependencies = [
  "regex",
  "serde",
  "tokio",
- "tracing",
  "url",
 ]
 
@@ -2208,7 +2203,6 @@ name = "hubuum-event-sink-amqp"
 version = "0.0.1"
 dependencies = [
  "chrono",
- "futures",
  "hubuum-event-sinks-common",
  "hubuum-events-core",
  "lapin",
@@ -2223,7 +2217,6 @@ name = "hubuum-event-sink-email"
 version = "0.0.1"
 dependencies = [
  "chrono",
- "futures",
  "hubuum-event-rendering",
  "hubuum-event-sinks-common",
  "hubuum-events-core",
@@ -2240,7 +2233,6 @@ name = "hubuum-event-sink-valkey"
 version = "0.0.1"
 dependencies = [
  "chrono",
- "futures",
  "hubuum-event-sinks-common",
  "hubuum-events-core",
  "redis",
@@ -2412,7 +2404,6 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-storage-core",
- "hubuum-task-core",
  "json-patch",
  "serde_json",
  "tokio",

@@ -1110,11 +1110,11 @@ async fn metadata_for_row(
 }
 
 #[derive(Clone, Default)]
-struct TokenScopeRows {
-    permissions: Vec<String>,
-    collection_ids: Vec<i32>,
-    class_ids: Vec<i32>,
-    object_ids: Vec<i32>,
+pub(super) struct TokenScopeRows {
+    pub(super) permissions: Vec<String>,
+    pub(super) collection_ids: Vec<i32>,
+    pub(super) class_ids: Vec<i32>,
+    pub(super) object_ids: Vec<i32>,
 }
 
 async fn load_token_scopes_for_rows(
@@ -1136,96 +1136,8 @@ async fn load_token_scopes_for_rows(
     resource_token_ids.sort_unstable();
     resource_token_ids.dedup();
 
-    let permissions = if permission_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_scopes::table
-            .filter(crate::schema::token_scopes::token_id.eq_any(&permission_token_ids))
-            .order_by((
-                crate::schema::token_scopes::token_id.asc(),
-                crate::schema::token_scopes::permission.asc(),
-            ))
-            .select((
-                crate::schema::token_scopes::token_id,
-                crate::schema::token_scopes::permission,
-            ))
-            .load::<(i32, String)>(connection)
-            .await?
-    };
-    let collection_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_collection_scopes::table
-            .filter(crate::schema::token_collection_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_collection_scopes::token_id.asc(),
-                crate::schema::token_collection_scopes::collection_id.asc(),
-            ))
-            .select((
-                crate::schema::token_collection_scopes::token_id,
-                crate::schema::token_collection_scopes::collection_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-    let class_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_class_scopes::table
-            .filter(crate::schema::token_class_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_class_scopes::token_id.asc(),
-                crate::schema::token_class_scopes::class_id.asc(),
-            ))
-            .select((
-                crate::schema::token_class_scopes::token_id,
-                crate::schema::token_class_scopes::class_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-    let object_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_object_scopes::table
-            .filter(crate::schema::token_object_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_object_scopes::token_id.asc(),
-                crate::schema::token_object_scopes::object_id.asc(),
-            ))
-            .select((
-                crate::schema::token_object_scopes::token_id,
-                crate::schema::token_object_scopes::object_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-
-    let mut by_token = rows
-        .iter()
-        .filter(|row| row.is_scoped())
-        .map(|row| (row.id, TokenScopeRows::default()))
-        .collect::<HashMap<_, _>>();
-    for (token_id, permission) in permissions {
-        if let Some(scope) = by_token.get_mut(&token_id) {
-            scope.permissions.push(permission);
-        }
-    }
-    for (token_id, collection_id) in collection_ids {
-        if let Some(scope) = by_token.get_mut(&token_id) {
-            scope.collection_ids.push(collection_id);
-        }
-    }
-    for (token_id, class_id) in class_ids {
-        if let Some(scope) = by_token.get_mut(&token_id) {
-            scope.class_ids.push(class_id);
-        }
-    }
-    for (token_id, object_id) in object_ids {
-        if let Some(scope) = by_token.get_mut(&token_id) {
-            scope.object_ids.push(object_id);
-        }
-    }
+    let by_token =
+        load_token_scope_rows(connection, &permission_token_ids, &resource_token_ids).await?;
 
     rows.iter()
         .map(|row| {
@@ -1268,6 +1180,106 @@ async fn load_token_scopes_for_rows(
             )))
         })
         .collect()
+}
+
+/// Load raw scopes once per table, retaining their persisted order for each token.
+pub(super) async fn load_token_scope_rows(
+    connection: &mut PostgresConnection,
+    permission_token_ids: &[i32],
+    resource_token_ids: &[i32],
+) -> Result<HashMap<i32, TokenScopeRows>, PostgresStorageError> {
+    let permissions = if permission_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        crate::schema::token_scopes::table
+            .filter(crate::schema::token_scopes::token_id.eq_any(permission_token_ids))
+            .order_by((
+                crate::schema::token_scopes::token_id.asc(),
+                crate::schema::token_scopes::permission.asc(),
+            ))
+            .select((
+                crate::schema::token_scopes::token_id,
+                crate::schema::token_scopes::permission,
+            ))
+            .load::<(i32, String)>(connection)
+            .await?
+    };
+    let collection_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        crate::schema::token_collection_scopes::table
+            .filter(crate::schema::token_collection_scopes::token_id.eq_any(resource_token_ids))
+            .order_by((
+                crate::schema::token_collection_scopes::token_id.asc(),
+                crate::schema::token_collection_scopes::collection_id.asc(),
+            ))
+            .select((
+                crate::schema::token_collection_scopes::token_id,
+                crate::schema::token_collection_scopes::collection_id,
+            ))
+            .load::<(i32, i32)>(connection)
+            .await?
+    };
+    let class_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        crate::schema::token_class_scopes::table
+            .filter(crate::schema::token_class_scopes::token_id.eq_any(resource_token_ids))
+            .order_by((
+                crate::schema::token_class_scopes::token_id.asc(),
+                crate::schema::token_class_scopes::class_id.asc(),
+            ))
+            .select((
+                crate::schema::token_class_scopes::token_id,
+                crate::schema::token_class_scopes::class_id,
+            ))
+            .load::<(i32, i32)>(connection)
+            .await?
+    };
+    let object_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        crate::schema::token_object_scopes::table
+            .filter(crate::schema::token_object_scopes::token_id.eq_any(resource_token_ids))
+            .order_by((
+                crate::schema::token_object_scopes::token_id.asc(),
+                crate::schema::token_object_scopes::object_id.asc(),
+            ))
+            .select((
+                crate::schema::token_object_scopes::token_id,
+                crate::schema::token_object_scopes::object_id,
+            ))
+            .load::<(i32, i32)>(connection)
+            .await?
+    };
+
+    let mut by_token = permission_token_ids
+        .iter()
+        .chain(resource_token_ids)
+        .map(|&id| (id, TokenScopeRows::default()))
+        .collect::<HashMap<_, _>>();
+    for (token_id, permission) in permissions {
+        if let Some(scope) = by_token.get_mut(&token_id) {
+            scope.permissions.push(permission);
+        }
+    }
+    for (token_id, collection_id) in collection_ids {
+        if let Some(scope) = by_token.get_mut(&token_id) {
+            scope.collection_ids.push(collection_id);
+        }
+    }
+    for (token_id, class_id) in class_ids {
+        if let Some(scope) = by_token.get_mut(&token_id) {
+            scope.class_ids.push(class_id);
+        }
+    }
+    for (token_id, object_id) in object_ids {
+        if let Some(scope) = by_token.get_mut(&token_id) {
+            scope.object_ids.push(object_id);
+        }
+    }
+
+    Ok(by_token)
 }
 
 fn created_metadata(

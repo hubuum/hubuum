@@ -41,6 +41,7 @@ assert_literal_include_is_code() {
   local output
   output="$(bash "$classifier" "$include_path")"
   assert_flag "$output" code true
+  assert_flag "$output" rust true
 }
 
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
@@ -400,6 +401,7 @@ def job(name):
 def build_inputs(name):
     block = job(name)
     implementation = re.search(r"^    uses: (\S+)", block, re.MULTILINE).group(1)
+    block = block.split("\n    with:\n", 1)[1]
     inputs = {
         key: value.strip()
         for key, value in re.findall(
@@ -715,3 +717,26 @@ done
 webhook_output="$(bash "$classifier" docs/webhook_notifications.md)"
 assert_flag "$webhook_output" markdown true
 assert_flag "$webhook_output" documentation true
+
+# Deployment/tool-only changes keep their validation without a Rust OS matrix.
+for deployment_input in observability/prometheus/alerts.json scripts/observability.py \
+  scripts/install-single-host.sh tests/python/integration/monitoring_events.py \
+  tests/python/unit/monitoring/test_events.py tests/python/unit/tooling/test_benchmark_lanes.py; do
+  output="$(bash "$classifier" "$deployment_input")"
+  assert_flag "$output" code true
+  if [[ "$deployment_input" != tests/python/unit/tooling/test_benchmark_lanes.py ]]; then
+    assert_flag "$output" rust false
+    assert_flag "$output" container true
+  else
+    assert_flag "$output" rust true
+    assert_flag "$output" benchmarks true
+  fi
+done
+for rust_input in Cargo.toml src/models/token.rs crates/hubuum-query/src/lib.rs \
+  benches/storage_postgres_criterion.rs tests/api_identity_suite/service_accounts.rs \
+  docs/storage_boundary/architecture.md scripts/benchmark-lanes.py .cargo/config.toml \
+  unknown-build-input run_tests.sh tests/python/integration/event_transports.py \
+  tests/python/support/event_services.py; do
+  output="$(bash "$classifier" "$rust_input")"
+  assert_flag "$output" rust true
+done

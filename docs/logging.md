@@ -56,18 +56,11 @@ Clients may send `X-Correlation-ID`. Accepted values are 1 to 128 visible ASCII 
 
 ## Operation And Authorization Logs
 
-Domain mutation logs are queued by the audit event writer and emitted at `INFO` only after the surrounding database transaction commits. Failed and rolled-back transactions discard their queued mutation logs. These logs use the audit catalog labels:
-
-| Field | Description |
-| ----- | ----------- |
-| `operation` | `mutation_committed` |
-| `mutation_phase` | `committed` |
-| `entity_type` | Catalog entity label, such as `collection` |
-| `action` | Catalog action label, such as `created` |
-| `entity_id` | Entity identifier when available |
-| `actor_principal_id` | Acting principal when available |
-
-Service list/get paths log at `DEBUG`. The audit-event query path additionally uses the standardized `operation=read` helper with optional catalog entity, action, and entity ID filters.
+Domain mutations are recorded as transactional [audit events](events.md).
+PostgreSQL emits `DEBUG` diagnostics with `operation=append_event` when event
+insertion completes inside the transaction; these diagnostics do not establish
+that the surrounding transaction committed. Storage operation diagnostics are
+described below.
 
 Authorization decision logs use:
 

@@ -105,7 +105,6 @@ hubuum-storage-core = { path = "crates/hubuum-storage-core" }
 hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }
-minijinja = { version = "2", features = ["loader", "fuel"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.33", default-features = false, features = [
     "http-proto",
@@ -123,7 +122,6 @@ opentelemetry_sdk = { version = "0.33", default-features = false, features = [
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "signal"] }
 tracing = "0.1"
 tracing-opentelemetry = { version = "0.34", default-features = false }
-tracing-serde = "0"
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
     "chrono",
@@ -134,13 +132,11 @@ utoipa-swagger-ui = { version = "10", features = [
     "actix-web",
     "vendored",
 ], optional = true }
-urlparse = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 prometheus = "0.14"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 openssl = { version = "0.10.81", optional = true }
-lru = "0.18.5"
 # Treetop's client API is pre-1.0; review each version bump explicitly.
 treetop-client = { version = "0.1.0", optional = true }
 toml = "1.1"
@@ -270,10 +266,6 @@ required-features = ["integration-test-support"]
 
 [[bench]]
 name = "json_predicate_construction_callgrind"
-harness = false
-
-[[bench]]
-name = "database_url_parsing_criterion"
 harness = false
 
 [[bench]]

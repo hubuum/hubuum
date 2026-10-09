@@ -36,7 +36,7 @@ mod tests {
         Permissions, PrincipalID, PrincipalMemberResponse, PrincipalTokenCreateRequest,
         PrincipalTokenMetadata, ServiceAccount, ServiceAccountPointResponse,
         ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
-        TokenScope,
+        TokenScope, TokenScopeDetails,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -2301,37 +2301,47 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::unscoped(None, false)]
+    #[case::permissions(Some(vec![Permissions::ReadCollection]), false)]
+    #[case::resources(None, true)]
+    #[case::both(Some(vec![Permissions::ReadCollection]), true)]
     #[actix_web::test]
-    async fn test_token_metadata_loader_preserves_scopes_for_duplicate_tokens() {
+    async fn test_token_metadata_loader_preserves_scopes_for_duplicate_tokens(
+        #[case] permissions: Option<Vec<Permissions>>,
+        #[case] resource_scoped: bool,
+    ) {
         let context = TestContext::new().await;
-        let raw = scoped_token(
-            &context.pool,
-            context.normal_user.id,
-            &[Permissions::ReadCollection],
-        )
-        .await;
-        let token = crate::tests::persisted_test_token(&context.pool, &raw).await;
+        let fixture = context.with_collection().await;
+        let resources = resource_scoped.then(|| {
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(fixture.collection.id).unwrap(),
+            )]
+        });
+        let scope = TokenScope::from_request_parts(permissions, resources).unwrap();
+        let expected_scope = scope
+            .clone()
+            .map(TokenScopeDetails::from_scope)
+            .transpose()
+            .unwrap();
+        let raw =
+            PrincipalTokenCreateRequest::new(PrincipalID::new(context.normal_user.id).unwrap())
+                .scope(scope)
+                .create(&context.pool, &EventContext::system())
+                .await
+                .unwrap();
+        let token = crate::tests::persisted_test_token(&context.pool, &raw.get_token()).await;
         let duplicate_tokens = [token.clone(), token];
 
         let metadata = PrincipalTokenMetadata::load_for_tokens(&context.pool, &duplicate_tokens)
             .await
             .unwrap();
-        let permissions = metadata
+        let scopes = metadata
             .into_iter()
-            .map(|token| {
-                token
-                    .scope
-                    .and_then(|scope| scope.permissions().map(|permissions| permissions.to_vec()))
-            })
+            .map(|token| token.scope)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            permissions,
-            vec![
-                Some(vec![Permissions::ReadCollection]),
-                Some(vec![Permissions::ReadCollection])
-            ]
-        );
+        assert_eq!(scopes, vec![expected_scope.clone(), expected_scope]);
     }
 
     /// #29: the principal-shaped collection effective-permission route works for a

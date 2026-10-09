@@ -583,29 +583,6 @@ fn invalid_bearer_token() -> ApiError {
     ApiError::Unauthorized("Invalid token".to_string())
 }
 
-/// Soft-revoke a token by id, scoped to the owning principal. Filtering on BOTH
-/// ids prevents a manager of principal A from revoking principal B's token by
-/// guessing its id. Returns the number of rows updated (0 = not found / not theirs).
-///
-/// The compatibility name is retained for internal callers; the mutation is
-/// attributed to the system actor and still emits its audit event.
-pub async fn revoke_token_by_id_for_principal_without_events<C>(
-    backend: &C,
-    token_id: TokenID,
-    principal_id: PrincipalID,
-) -> Result<usize, ApiError>
-where
-    C: StorageContext,
-{
-    crate::services::identity::revoke_token(
-        backend,
-        token_id.id(),
-        principal_id.id(),
-        &EventContext::system(),
-    )
-    .await
-}
-
 pub async fn revoke_token_by_id_for_principal<C>(
     backend: &C,
     token_id: TokenID,

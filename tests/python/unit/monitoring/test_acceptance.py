@@ -1,13 +1,39 @@
 """Regression checks for safe live-monitoring failure evidence."""
 
 import json
+import ipaddress
 import os
 from pathlib import Path
 import subprocess
 from unittest.mock import Mock, patch
 import unittest
 
-from integration.monitoring import Installation, fixture_environment
+from integration.monitoring import Installation, fixture_environment, network_subnets
+
+
+class NetworkInspectionTests(unittest.TestCase):
+    def test_docker_and_podman_preserve_ipv4_and_ipv6_occupied_subnets(self):
+        for networks in (
+            [{'IPAM': {'Config': [{'Subnet': '172.31.4.0/24'}, {'Subnet': 'fd00::/64'}]}}],
+            [{'subnets': [{'subnet': '172.31.4.0/24'}, {'subnet': 'fd00::/64'}]}],
+            [{'IPAM': {'Config': [{'Subnet': '172.31.4.0/24'}]}},
+             {'subnets': [{'subnet': 'fd00::/64'}]}],
+        ):
+            with self.subTest(networks=networks):
+                self.assertEqual(list(network_subnets(networks)), [
+                    ipaddress.ip_network('172.31.4.0/24'), ipaddress.ip_network('fd00::/64'),
+                ])
+
+    def test_networks_without_allocated_subnets(self):
+        for networks in ([], [{'IPAM': None}], [{'IPAM': {'Config': None}}],
+                         [{'IPAM': {'Config': [{}]}}], [{'subnets': None}], [{'subnets': []}]):
+            with self.subTest(networks=networks):
+                self.assertEqual(list(network_subnets(networks)), [])
+
+    def test_unknown_or_invalid_network_data_is_not_silently_treated_as_available(self):
+        for networks in ([{}], [{'subnets': [{'subnet': 'invalid'}]}]):
+            with self.subTest(networks=networks), self.assertRaises(ValueError):
+                list(network_subnets(networks))
 
 
 class FailureEvidenceTests(unittest.TestCase):
@@ -80,3 +106,20 @@ class EnvironmentIsolationTests(unittest.TestCase):
                    return_value=subprocess.CompletedProcess([], 0, stdout='')) as command:
             installation.compose('up', '-d', 'hubuum-api-standby')
         self.assertEqual(command.call_args.kwargs['env'], installation.environment)
+
+
+class ComposeReplicaTests(unittest.TestCase):
+    def test_exec_selects_deployed_replica_instead_of_one_off_worker(self):
+        installation = Installation.__new__(Installation)
+        installation.engine = 'docker'
+        installation.project = 'isolated-project'
+        installation.directory = Path('/fixture')
+        installation.run = Mock(return_value='primary')
+
+        result = installation.compose('exec', '-T', 'hubuum-api', 'cat', '/tmp/role')
+
+        self.assertEqual(result, 'primary')
+        installation.run.assert_called_once_with(
+            'docker', 'compose', '-p', 'isolated-project', '--env-file', '/fixture/.env',
+            '-f', '/fixture/compose.yml', 'exec', '--index', '1', '-T',
+            'hubuum-api', 'cat', '/tmp/role')

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{BigInt, Bool, Integer, Timestamp};
 use diesel::{ExpressionMethods, QueryDsl, Queryable, QueryableByName};
@@ -8,6 +6,7 @@ use hubuum_domain::MAX_TOKEN_RESOURCE_SCOPES;
 use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
 use hubuum_storage_core::{StorageAuthorizationPermission, StorageError};
 
+use super::token::{TokenScopeRows, load_token_scope_rows};
 use crate::operations::event_record::append_events;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
@@ -62,15 +61,7 @@ impl TokenRetentionBasis {
     }
 }
 
-#[derive(Clone, Default)]
-struct StoredTokenScopeRows {
-    permissions: Vec<String>,
-    collection_ids: Vec<i32>,
-    class_ids: Vec<i32>,
-    object_ids: Vec<i32>,
-}
-
-impl StoredTokenScopeRows {
+impl TokenScopeRows {
     fn snapshot(self, token: &RetainedTokenRow) -> Result<serde_json::Value, PostgresStorageError> {
         let permissions = token
             .permission_scoped
@@ -327,7 +318,7 @@ async fn purge_selected_tokens(
         ))
         .load::<RetainedTokenRow>(connection)
         .await?;
-    let scopes = load_token_scope_rows(connection, &retained).await?;
+    let scopes = load_retained_token_scopes(connection, &retained).await?;
     let events = retained
         .iter()
         .zip(scopes)
@@ -349,96 +340,18 @@ async fn purge_selected_tokens(
     Ok(deleted)
 }
 
-async fn load_token_scope_rows(
+async fn load_retained_token_scopes(
     connection: &mut PostgresConnection,
     tokens: &[RetainedTokenRow],
-) -> Result<Vec<Option<StoredTokenScopeRows>>, PostgresStorageError> {
+) -> Result<Vec<Option<TokenScopeRows>>, PostgresStorageError> {
     let permission_token_ids = sorted_scope_token_ids(tokens, |token| token.permission_scoped);
     let resource_token_ids = sorted_scope_token_ids(tokens, |token| token.resource_scoped);
     if permission_token_ids.is_empty() && resource_token_ids.is_empty() {
         return Ok(vec![None; tokens.len()]);
     }
 
-    let permissions = if permission_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_scopes::table
-            .filter(crate::schema::token_scopes::token_id.eq_any(&permission_token_ids))
-            .order_by((
-                crate::schema::token_scopes::token_id.asc(),
-                crate::schema::token_scopes::permission.asc(),
-            ))
-            .select((
-                crate::schema::token_scopes::token_id,
-                crate::schema::token_scopes::permission,
-            ))
-            .load::<(i32, String)>(connection)
-            .await?
-    };
-    let collection_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_collection_scopes::table
-            .filter(crate::schema::token_collection_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_collection_scopes::token_id.asc(),
-                crate::schema::token_collection_scopes::collection_id.asc(),
-            ))
-            .select((
-                crate::schema::token_collection_scopes::token_id,
-                crate::schema::token_collection_scopes::collection_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-    let class_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_class_scopes::table
-            .filter(crate::schema::token_class_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_class_scopes::token_id.asc(),
-                crate::schema::token_class_scopes::class_id.asc(),
-            ))
-            .select((
-                crate::schema::token_class_scopes::token_id,
-                crate::schema::token_class_scopes::class_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-    let object_ids = if resource_token_ids.is_empty() {
-        Vec::new()
-    } else {
-        crate::schema::token_object_scopes::table
-            .filter(crate::schema::token_object_scopes::token_id.eq_any(&resource_token_ids))
-            .order_by((
-                crate::schema::token_object_scopes::token_id.asc(),
-                crate::schema::token_object_scopes::object_id.asc(),
-            ))
-            .select((
-                crate::schema::token_object_scopes::token_id,
-                crate::schema::token_object_scopes::object_id,
-            ))
-            .load::<(i32, i32)>(connection)
-            .await?
-    };
-
-    let mut rows_by_token = tokens
-        .iter()
-        .filter(|token| token.is_scoped())
-        .map(|token| (token.id, StoredTokenScopeRows::default()))
-        .collect::<HashMap<_, _>>();
-    append_scope_rows(&mut rows_by_token, permissions, |scope| {
-        &mut scope.permissions
-    });
-    append_scope_rows(&mut rows_by_token, collection_ids, |scope| {
-        &mut scope.collection_ids
-    });
-    append_scope_rows(&mut rows_by_token, class_ids, |scope| &mut scope.class_ids);
-    append_scope_rows(&mut rows_by_token, object_ids, |scope| {
-        &mut scope.object_ids
-    });
+    let rows_by_token =
+        load_token_scope_rows(connection, &permission_token_ids, &resource_token_ids).await?;
 
     Ok(tokens
         .iter()
@@ -464,21 +377,9 @@ fn sorted_scope_token_ids(
     ids
 }
 
-fn append_scope_rows<T>(
-    scopes: &mut HashMap<i32, StoredTokenScopeRows>,
-    rows: Vec<(i32, T)>,
-    values: impl Fn(&mut StoredTokenScopeRows) -> &mut Vec<T>,
-) {
-    for (token_id, value) in rows {
-        if let Some(scope) = scopes.get_mut(&token_id) {
-            values(scope).push(value);
-        }
-    }
-}
-
 fn token_purge_event(
     token: &RetainedTokenRow,
-    scope: Option<StoredTokenScopeRows>,
+    scope: Option<TokenScopeRows>,
     basis: TokenRetentionBasis,
 ) -> Result<NewEvent, PostgresStorageError> {
     let scope = scope.map(|scope| scope.snapshot(token)).transpose()?;

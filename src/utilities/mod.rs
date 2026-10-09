@@ -2,7 +2,6 @@
 pub mod aliases;
 pub mod auth;
 pub(crate) mod bounded_file;
-pub mod db;
 pub mod exporting;
 pub mod extensions;
 pub mod init;

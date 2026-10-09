@@ -294,40 +294,6 @@ impl NewCollection {
             .map(|outcome| outcome.into_value())
             .and_then(collection_from_storage)
     }
-
-    /// Persist the collection and apply permissions using the assignee embedded in the supplied
-    /// `NewCollectionWithAssignee`.
-    ///
-    /// This delegates into the same backend helper as [`Self::save_and_grant_all_to`], but takes
-    /// the assignee from the provided wrapper value.
-    pub async fn update_with_permissions<C>(
-        self,
-        backend: &C,
-        collection_with_assignee: NewCollectionWithAssignee,
-    ) -> Result<Collection, ApiError>
-    where
-        C: StorageContext,
-    {
-        let command = NewCollectionWithAssignee {
-            name: self.name,
-            description: self.description,
-            group_id: collection_with_assignee.group_id,
-            parent_collection_id: self
-                .parent_collection_id
-                .map(CollectionID::new)
-                .transpose()?,
-        };
-        storage_handle(backend)
-            .collection_store()
-            .create_collection(
-                collection_create_to_storage(command),
-                &EventContext::system(),
-            )
-            .await
-            .map_err(ApiError::from)
-            .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
-    }
 }
 
 impl PermissionController for Collection {}
