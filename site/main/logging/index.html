@@ -4596,42 +4596,11 @@ only selectable implementation is PostgreSQL.</p>
 <p>Hubuum applies the status-to-severity mapping to downstream service errors as well as normal responses. Successful liveness and readiness probe completions use <code>DEBUG</code> to avoid flooding normal operational logs; failed probes retain their status-derived severity. Early middleware rejections, including client-allowlist denials, are returned as responses so they receive the same completion event and <code>x-request-id</code> header as handler responses.</p>
 <p>Clients may send <code>X-Correlation-ID</code>. Accepted values are 1 to 128 visible ASCII bytes without whitespace. Hubuum echoes accepted values as <code>x-correlation-id</code>; invalid values are ignored without logging or echoing the supplied value. Hubuum always returns <code>x-request-id</code>.</p>
 <h2 id="operation-and-authorization-logs">Operation And Authorization Logs<a class="headerlink" href="#operation-and-authorization-logs" title="Permanent link">&para;</a></h2>
-<p>Domain mutation logs are queued by the audit event writer and emitted at <code>INFO</code> only after the surrounding database transaction commits. Failed and rolled-back transactions discard their queued mutation logs. These logs use the audit catalog labels:</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>operation</code></td>
-<td><code>mutation_committed</code></td>
-</tr>
-<tr>
-<td><code>mutation_phase</code></td>
-<td><code>committed</code></td>
-</tr>
-<tr>
-<td><code>entity_type</code></td>
-<td>Catalog entity label, such as <code>collection</code></td>
-</tr>
-<tr>
-<td><code>action</code></td>
-<td>Catalog action label, such as <code>created</code></td>
-</tr>
-<tr>
-<td><code>entity_id</code></td>
-<td>Entity identifier when available</td>
-</tr>
-<tr>
-<td><code>actor_principal_id</code></td>
-<td>Acting principal when available</td>
-</tr>
-</tbody>
-</table>
-<p>Service list/get paths log at <code>DEBUG</code>. The audit-event query path additionally uses the standardized <code>operation=read</code> helper with optional catalog entity, action, and entity ID filters.</p>
+<p>Domain mutations are recorded as transactional <a href="../events/">audit events</a>.
+PostgreSQL emits <code>DEBUG</code> diagnostics with <code>operation=append_event</code> when event
+insertion completes inside the transaction; these diagnostics do not establish
+that the surrounding transaction committed. Storage operation diagnostics are
+described below.</p>
 <p>Authorization decision logs use:</p>
 <table>
 <thead>

@@ -4881,11 +4881,11 @@ benchmark inputs change; manual benchmark dispatch still forces cache warming.</
 <ul>
 <li>Draft documentation-only pull requests run Markdown lint when Markdown files
   changed.</li>
-<li>Draft code pull requests run Rust formatting and the complete default-feature
+<li>Draft Rust pull requests run Rust formatting and the complete default-feature
   test suite on Linux with PostgreSQL. They do not run the other feature
   combinations, cross-platform tests, production container build, release
   build, or benchmarks.</li>
-<li>Ready-for-review code pull requests run the complete CI suite. The
+<li>Ready-for-review Rust pull requests run the complete CI suite. The
   <code>ready_for_review</code> event starts that suite immediately, and later pushes keep
   running it.</li>
 <li>Ready-for-review documentation-only pull requests keep the smaller relevant
@@ -4919,20 +4919,35 @@ to draft cancels superseded work unless a forcing label remains.</p>
 conservatively as code, container, artifact, and benchmark inputs. Keep its
 tests in <code>scripts/test-classify-ci-changes.sh</code> synchronized with any new build
 inputs. Direct literal <code>include_str!</code> and <code>include_bytes!</code> inputs are discovered
-by that test and must be classified as code automatically. Renames are evaluated
+by that test and must select Rust validation automatically. Renames are evaluated
 as a deletion plus an addition so both the old and new paths affect the selected
 tier. The stable <code>CI gate</code> job reports the combined result of every applicable
 PR or <code>main</code> validation job, is the check intended for branch protection, and
-must pass before <code>main-latest</code> artifacts or container images are published.</p>
+must pass before <code>main-latest</code> artifacts or container images are published.
+Main archive compilation starts alongside validation, with at most four jobs per
+artifact matrix; temporary <code>candidate-main-*</code> archives expire after one day.
+Only the gated publication job creates the stable <code>main-*</code> artifact names.
+Deployment and tooling changes retain their Python, policy, and container checks
+without selecting the Rust OS/feature matrix. A focused server-binary test job
+keeps the Rust container/deployment assertions covered for those changes.
+Embedded Rust inputs and unknown
+paths still select Rust validation.</p>
 <h2 id="benchmarks">Benchmarks<a class="headerlink" href="#benchmarks" title="Permanent link">&para;</a></h2>
 <p>Benchmarking runs in a separate GitHub workflow, <code>.github/workflows/benchmarks.yml</code>, via
 <code>terjekv/rust-pr-bench</code> v1.3.0, pinned to its release commit.</p>
 <p>PR comparisons cache Cargo downloads, compiled outputs, exact-version benchmark
-runners, and verified benchmark executables under the <code>hubuum-benchmarks</code> namespace.
+runners, and verified benchmark executables under separate
+<code>hubuum-benchmarks-standard</code> and <code>hubuum-benchmarks-postgres</code> namespaces.
 Every push to <code>main</code> also runs a <code>compile_only</code> build to warm caches accessible to
 later PRs. To warm them manually, dispatch the Benchmarks workflow on <code>main</code>.
 Warming skips measurements, service lifecycle hooks, and PR comments; ordinary
 PR runs still measure both revisions and apply the configured regression limits.</p>
+<p>CI uses 20 Criterion samples, one second of warmup, a two-second measurement
+target, and 10,000 bootstrap resamples for both revisions. Every benchmark case
+still runs. The shorter sampling budget trades some statistical precision for
+faster feedback; the 3% Gungraun instruction and 50% Criterion median regression
+limits are unchanged. Local runs retain Criterion's defaults unless these CLI
+options are supplied explicitly.</p>
 <p>Keep the comparison and warming jobs' action revision, namespace, benchmark
 selection, toolchain, features, and Cargo arguments aligned. Both use <code>--locked</code>
 and enable <code>cache_binaries</code> so exact source/build matches can skip compilation
@@ -4964,8 +4979,7 @@ transfer, compilation, and executable-reuse evidence. See the upstream
 <a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>unified_search_cursor_callgrind
 <a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>object_validation_geo_callgrind
 <a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>object_validation_nested_callgrind
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>database_url_parsing_criterion<span class="w"> </span>--<span class="w"> </span>--noplot
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>password_hashing_criterion<span class="w"> </span>--<span class="w"> </span>--noplot
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>password_hashing_criterion<span class="w"> </span>--<span class="w"> </span>--noplot
 </code></pre></div>
 <p>The CI benchmark action auto-discovers every direct <code>benches/*.rs</code> target and
 reports both Criterion and Gungraun results. The container-build tests enforce
@@ -4979,7 +4993,12 @@ migrates, and removes a disposable PostgreSQL container itself. Container
 startup, fixture creation, cleanup, and warmup happen outside the timed
 regions. It includes selective and non-selective structured related-object
 searches over 128 independent chains at the maximum supported depth of 10. The
-create scenario intentionally leaves its append-only audit events behind:</p>
+create scenario intentionally leaves its append-only audit events behind.</p>
+<p>The hydration cases also retain the full 100,000 unrelated-relation corpus.
+Fixture objects load in committed batches of 1,000 so the schema epoch updates
+and deferred projection checks do not accumulate a large row-version history
+inside one transaction. Production triggers remain enabled, and fixture row
+counts are checked before measurement. Setup stays outside the timed regions.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--features<span class="w"> </span>postgres-bench<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--bench<span class="w"> </span>storage_postgres_criterion<span class="w"> </span>--<span class="w"> </span>--noplot
 </code></pre></div>
@@ -5037,11 +5056,17 @@ query nondeterministically to the next operation.</p>
   base-to-head diff.</li>
 <li>Change classification happens before PostgreSQL services or benchmark
   runners are allocated. Superseded benchmark workflow runs are cancelled.</li>
-<li>The self-contained benchmark job runs both backends in one combined
-  <code>backend: all</code> job, so PRs get a single consolidated benchmark export.</li>
+<li>Discovery uses the pinned action and preserves moved-target base mappings.
+  Targets requiring <code>postgres-bench</code> compile and run in an independent lane,
+  including when only their base revision requires that feature. Each lane uses
+  <code>backend: all</code> and retains its own reports and regression checks.
+  The standard lane updates the PR comment; PostgreSQL reports are available in
+  the workflow artifacts so the lanes cannot overwrite each other's comment.</li>
 <li>Gungraun's Callgrind measurements remain the practical gating signal with a
   low regression threshold.</li>
-<li>Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.</li>
+<li>Criterion uses the same 50% regression threshold in both lanes; Gungraun
+  retains its 3% threshold. PostgreSQL logs database startup, base fixture,
+  additional scale fixture, and measurement timings for further analysis.</li>
 <li>The shared benchmark action runs and reports all direct Criterion and
   Gungraun targets, including the self-provisioning PostgreSQL storage target.</li>
 <li>A two-process runtime behavior validation job records base/head Prometheus counter
