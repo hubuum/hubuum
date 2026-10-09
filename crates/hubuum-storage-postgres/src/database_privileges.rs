@@ -744,7 +744,7 @@ mod tests {
             "GRANT UPDATE (\"dispatched_at\", \"fanout_locked_until\", \"fanout_claim_token\")"
         ));
         assert!(sql.contains("LIKE '%' || '_history'"));
-        assert!(sql.contains("object.relname IN ('restore_success_receipts')"));
+        assert!(sql.contains("object.relname IN ('restore_success_receipts', 'query_usage_resources', 'query_usage_resource_owners', 'query_usage_executor_cursor')"));
         assert!(sql.contains("REVOKE ALL ON SCHEMA \"public\" FROM \"hubuum_runtime\""));
         assert!(!sql.to_ascii_lowercase().contains(" password '"));
     }

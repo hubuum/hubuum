@@ -4,23 +4,24 @@
 //! an opaque [`StorageHandle`]. Adapter selection, endpoint diagnostics, and
 //! backend-specific initialization errors remain inside this module.
 
-use hubuum_domain::JsonSchemaLimits;
+use hubuum_domain::{ClassId, JsonSchemaLimits};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use hubuum_storage_core::{StorageCallSite, StorageNotification};
 use hubuum_storage_postgres::{
     DatabasePrivilegeFinding as PostgresDatabasePrivilegeFinding,
     DatabasePrivilegeReport as PostgresDatabasePrivilegeReport,
     DatabaseRoleNames as PostgresDatabaseRoleNames, PostgresObserver, PostgresPool,
-    PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, build_postgres_pool,
-    inspect_database_privileges,
+    PostgresPoolBuildError, PostgresPoolSettings, PostgresStorage, QueryUsageExecutor,
+    build_postgres_pool, inspect_database_privileges,
 };
 #[cfg(feature = "embedded-migrations")]
 use hubuum_storage_postgres::{MigrationMode as PostgresMigrationMode, inspect_migration_mode};
 use serde::Serialize;
+use serde_json::Value;
 use tracing::{error, info};
 
 use opentelemetry::trace::{Span as _, Status, Tracer};
@@ -678,6 +679,41 @@ pub(crate) async fn inspect_storage_database_privileges(
                 .map(Some)
         }
         StorageAdapterSettings::Memory => Ok(None),
+    }
+}
+
+/// Administrative composition of an optional native executor. Privileged settings
+/// never enter the ordinary server handle or worker configuration.
+pub(crate) async fn reconcile_query_usage_resources(
+    settings: &StorageSettings,
+    roles: Option<&StorageDatabaseRoleNames>,
+    class: Option<ClassId>,
+) -> Result<Value, StorageError> {
+    match &settings.adapter {
+        StorageAdapterSettings::Postgres(settings) => {
+            let owner = roles
+                .map(StorageDatabaseRoleNames::postgres_names)
+                .transpose()?
+                .map(|roles| roles.owner().clone());
+            let pool = build_postgres_pool(settings)
+                .map_err(PostgresAdapterFactory::initialization_error)?;
+            let executor = QueryUsageExecutor::new(pool, owner);
+            let started = Instant::now();
+            let result = executor.reconcile(class).await.map_err(StorageError::from);
+            tracing::info!(
+                backend = "postgresql",
+                operation = "reconcile_query_usage",
+                success = result.is_ok(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "query usage executor pass finished"
+            );
+            serde_json::to_value(result?).map_err(|_| {
+                StorageError::internal("Query usage executor report projection failed")
+            })
+        }
+        StorageAdapterSettings::Memory => Err(StorageError::invalid_input(
+            "The selected memory backend does not provide native query usage preparation",
+        )),
     }
 }
 

@@ -31735,6 +31735,39 @@
           }
         }
       },
+      "QueryUsageAdapterProgress": {
+        "type": "object",
+        "description": "Backend-owned operational facts; state names are not portable promises.",
+        "required": [
+          "reference",
+          "state",
+          "declaration_owners",
+          "updated_at"
+        ],
+        "properties": {
+          "declaration_owners": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "QueryUsageAnalysisRequest": {
         "type": "object",
         "properties": {
@@ -31808,6 +31841,16 @@
           "rationale"
         ],
         "properties": {
+          "adapter_progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QueryUsageAdapterProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "can_prepare": {
             "type": "boolean"
           },

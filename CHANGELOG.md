@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- A separate privileged PostgreSQL query usage executor prepares bounded shared
+  hash expression indexes for text equality declarations, tracks native ownership,
+  and retries preparation and cleanup across restarts. Administrative reviews
+  expose ownership and progress; independently managed resources are preserved.
 - Opt-in, bounded, value-free query workload observations and administrator-only
   PostgreSQL query usage reviews. Reviews distinguish unavailable analysis from
   insufficient evidence, report native coverage, and suggest undeclared text
