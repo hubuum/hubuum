@@ -13,6 +13,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   filters share the filtering work between the count and page queries on cursor
   pages, including empty pages.
 
+### Fixed
+
+- Memory storage applies class, collection, and direct JSON object filters before
+  counting and limiting results, including ordinary lists, computed-object lists,
+  and aggregates. Missing values and failed scalar conversions retain their
+  nonmatching behavior under negation.
+
 ## [0.0.18] - 2026-10-06
 
 ### Added

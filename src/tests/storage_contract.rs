@@ -1,5 +1,6 @@
 use hubuum_storage_core::{EventSinkGrantAction, StorageEventSinkGrantChange};
 mod authorization_resources;
+mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
 mod schema_evolution;

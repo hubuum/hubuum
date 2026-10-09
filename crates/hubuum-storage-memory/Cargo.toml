@@ -13,6 +13,7 @@ rust-api = "workspace-internal"
 
 [dependencies]
 async-trait = "0.1"
+bigdecimal = "0.4"
 chrono = "0.4"
 hubuum-computed-fields = { version = "=0.4.0", path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "0.4.0", path = "../hubuum-domain" }
@@ -20,6 +21,8 @@ hubuum-events-core = { version = "0.4.0", path = "../hubuum-events-core" }
 hubuum-query = { version = "0.4.0", path = "../hubuum-query" }
 hubuum-storage-core = { version = "0.4.0", path = "../hubuum-storage-core" }
 json-patch = "4"
+ipnet = "2.12"
+regex = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
