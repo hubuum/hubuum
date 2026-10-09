@@ -106,3 +106,20 @@ class EnvironmentIsolationTests(unittest.TestCase):
                    return_value=subprocess.CompletedProcess([], 0, stdout='')) as command:
             installation.compose('up', '-d', 'hubuum-api-standby')
         self.assertEqual(command.call_args.kwargs['env'], installation.environment)
+
+
+class ComposeReplicaTests(unittest.TestCase):
+    def test_exec_selects_deployed_replica_instead_of_one_off_worker(self):
+        installation = Installation.__new__(Installation)
+        installation.engine = 'docker'
+        installation.project = 'isolated-project'
+        installation.directory = Path('/fixture')
+        installation.run = Mock(return_value='primary')
+
+        result = installation.compose('exec', '-T', 'hubuum-api', 'cat', '/tmp/role')
+
+        self.assertEqual(result, 'primary')
+        installation.run.assert_called_once_with(
+            'docker', 'compose', '-p', 'isolated-project', '--env-file', '/fixture/.env',
+            '-f', '/fixture/compose.yml', 'exec', '--index', '1', '-T',
+            'hubuum-api', 'cat', '/tmp/role')

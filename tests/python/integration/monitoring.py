@@ -164,6 +164,10 @@ os.execv(ENGINE, [ENGINE, *args])
                  *args, env=self.environment)
 
     def compose(self, *args):
+        if args and args[0] == 'exec':
+            # Each fixture service has one deployed replica. Compose 2.38 can
+            # otherwise select its one-off event worker, which has no HTTP API.
+            args = ('exec', '--index', '1', *args[1:])
         return self.run(self.engine, 'compose', '-p', self.project, '--env-file',
                         str(self.directory / '.env'), '-f', str(self.directory / 'compose.yml'), *args)
 
