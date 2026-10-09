@@ -33,6 +33,8 @@ use crate::traits::{CanDelete, CanSave, CanUpdate};
 use hubuum_storage_postgres::diesel_async_prelude::{QueryableByName, RunQueryDsl};
 use hubuum_storage_postgres::{PostgresPool, capture_queries, with_connection};
 
+mod catalog;
+
 const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
 
 async fn object_relation_budget_fixture(

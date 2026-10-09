@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of ordinary catalog listing and filtering.
 
 use std::collections::HashMap;
+use std::future::Future;
 
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{JoinOnDsl, Queryable, Selectable, SelectableHelper};
@@ -86,18 +87,9 @@ pub async fn list_collections(
                 ),
                 None => None,
             };
-            let total = if include_total {
-                let count_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
-                let count_query =
-                    apply_collection_filters(count_query, &options, structured_predicate.clone())?;
-                Some(count_query.count().get_result::<i64>(connection).await?)
-            } else {
-                None
-            };
-
             let row_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
             let mut row_query =
-                apply_collection_filters(row_query, &options, structured_predicate)?;
+                apply_collection_filters(row_query, &options, structured_predicate.clone())?;
             let fields = collection_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
                 row_query,
@@ -120,6 +112,13 @@ pub async fn list_collections(
                 .into_iter()
                 .map(CollectionCatalogRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
+            let total = catalog_page_total(&options, rows.len(), async {
+                let count_query = collection_query(principal_id, is_admin, resource_scope.as_ref());
+                let count_query =
+                    apply_collection_filters(count_query, &options, structured_predicate)?;
+                Ok(count_query.count().get_result::<i64>(connection).await?)
+            })
+            .await?;
 
             crate::persisted_page(rows, total)
         })
@@ -162,15 +161,8 @@ pub async fn list_classes(
                 None => None,
             };
             let build_query = || class_query(&collection_ids, visibility.resources());
-            let total = if include_total {
-                let query =
-                    apply_class_filters(build_query(), &options, structured_predicate.clone())?;
-                Some(query.count().get_result::<i64>(connection).await?)
-            } else {
-                None
-            };
-
-            let mut query = apply_class_filters(build_query(), &options, structured_predicate)?;
+            let mut query =
+                apply_class_filters(build_query(), &options, structured_predicate.clone())?;
             let fields = class_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
                 query,
@@ -198,6 +190,11 @@ pub async fn list_classes(
                 .select(ClassRow::as_select())
                 .load::<ClassRow>(connection)
                 .await?;
+            let total = catalog_page_total(&options, rows.len(), async {
+                let query = apply_class_filters(build_query(), &options, structured_predicate)?;
+                Ok(query.count().get_result::<i64>(connection).await?)
+            })
+            .await?;
             let collections = load_collection_map_for_classes(connection, &rows).await?;
             let classes = rows
                 .into_iter()
@@ -248,23 +245,11 @@ pub async fn list_objects(
                 None => None,
             };
             let build_query = || object_query(&collection_ids, visibility.resources());
-            let total = if include_total {
-                let query = apply_object_filters(
-                    build_query(),
-                    &options,
-                    related_predicate.clone(),
-                    structured_predicate.clone(),
-                )?;
-                Some(query.count().get_result::<i64>(connection).await?)
-            } else {
-                None
-            };
-
             let mut query = apply_object_filters(
                 build_query(),
                 &options,
-                related_predicate,
-                structured_predicate,
+                related_predicate.clone(),
+                structured_predicate.clone(),
             )?;
             let fields = object_cursor_fields(&options)?;
             crate::apply_query_options_with_fields!(
@@ -292,10 +277,42 @@ pub async fn list_objects(
                 .into_iter()
                 .map(ObjectRow::into_storage)
                 .collect::<Result<Vec<_>, _>>()?;
+            let total = catalog_page_total(&options, rows.len(), async {
+                let query = apply_object_filters(
+                    build_query(),
+                    &options,
+                    related_predicate,
+                    structured_predicate,
+                )?;
+                Ok(query.count().get_result::<i64>(connection).await?)
+            })
+            .await?;
 
             crate::persisted_page(rows, total)
         })
         .await
+}
+
+async fn catalog_page_total(
+    options: &QueryOptions,
+    row_count: usize,
+    count: impl Future<Output = Result<i64, PostgresStorageError>>,
+) -> Result<Option<i64>, PostgresStorageError> {
+    if !options.include_total() {
+        return Ok(None);
+    }
+
+    // Only an exhausted initial page proves the size of the entire filtered,
+    // authorized result set. The storage limit includes any lookahead row;
+    // reaching it, or supplying a cursor, still requires an exact count.
+    if !options.has_cursor() && options.limit().is_none_or(|limit| row_count < limit) {
+        let total = i64::try_from(row_count).map_err(|_| {
+            PostgresStorageError::internal("Catalog page row count exceeds the supported range")
+        })?;
+        return Ok(Some(total));
+    }
+
+    count.await.map(Some)
 }
 
 fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresStorageError> {

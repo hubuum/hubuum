@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL object, class, and collection searches skip the separate count query
+  when the first page contains every match, preserving exact totals without
+  requiring `include_total=false`.
+
 ## [0.0.18] - 2026-10-06
 
 ### Added
