@@ -1,6 +1,7 @@
 use crate::errors::ApiError;
 use crate::models::permissions::Permissions;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use hubuum_query::parse_boolean_value;
 use tracing::error;
 
 pub trait CustomStringExtensions {
@@ -50,14 +51,7 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
     }
 
     fn as_boolean(&self) -> Result<bool, ApiError> {
-        match self.as_ref().to_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(ApiError::BadRequest(format!(
-                "Invalid boolean value: '{}'",
-                self.as_ref()
-            ))),
-        }
+        parse_boolean_value(self.as_ref()).map_err(ApiError::from)
     }
 
     fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {

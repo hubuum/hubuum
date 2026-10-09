@@ -395,43 +395,44 @@ impl StructuredSearchFixture {
         let prefix = unique_name("hydration-unrelated");
         runtime
             .block_on(with_connection(pool, async |connection| {
-                diesel::sql_query(
-                    "INSERT INTO hubuumobject \
-                        (name, collection_id, hubuum_class_id, data, description) \
-                     SELECT $1 || '-source-' || slot::text, $2, $3, \
-                            jsonb_build_object('hydration_corpus_slot', slot), \
-                            'unrelated template hydration benchmark source' \
-                     FROM generate_series(1, $4) AS slot",
-                )
-                .bind::<Text, _>(&prefix)
-                .bind::<Integer, _>(collection_id)
-                .bind::<Integer, _>(self.source_class_id.id())
-                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
-                .execute(connection)
-                .await?;
+                let target_class = self
+                    .hydration_target_class_ids
+                    .as_slice()
+                    .first()
+                    .expect("depth-one hydration target class");
+                // Every insert updates the class schema-state row and queues a
+                // deferred projection check. Commit small batches so those
+                // checks do not traverse a 100,000-version row history. Keep
+                // production triggers enabled and the complete scale corpus.
+                for (role, class_id) in
+                    [("source", self.source_class_id), ("target", *target_class)]
+                {
+                    for start in (1..=UNRELATED_HYDRATION_RELATIONS).step_by(1_000) {
+                        let end = (start + 999).min(UNRELATED_HYDRATION_RELATIONS);
+                        let inserted = diesel::sql_query(
+                            "INSERT INTO hubuumobject \
+                                (name, collection_id, hubuum_class_id, data, description) \
+                             SELECT $1 || '-' || slot::text, $2, $3, \
+                                    jsonb_build_object('hydration_corpus_slot', slot), \
+                                    'unrelated template hydration benchmark object' \
+                             FROM generate_series($4, $5) AS slot",
+                        )
+                        .bind::<Text, _>(format!("{prefix}-{role}"))
+                        .bind::<Integer, _>(collection_id)
+                        .bind::<Integer, _>(class_id.id())
+                        .bind::<Integer, _>(start)
+                        .bind::<Integer, _>(end)
+                        .execute(connection)
+                        .await?;
+                        assert_eq!(inserted, (end - start + 1) as usize);
+                    }
+                }
 
-                diesel::sql_query(
-                    "INSERT INTO hubuumobject \
-                        (name, collection_id, hubuum_class_id, data, description) \
-                     SELECT $1 || '-target-' || slot::text, $2, $3, \
-                            jsonb_build_object('hydration_corpus_slot', slot), \
-                            'unrelated template hydration benchmark target' \
-                     FROM generate_series(1, $4) AS slot",
-                )
-                .bind::<Text, _>(&prefix)
-                .bind::<Integer, _>(collection_id)
-                .bind::<Integer, _>(
-                    self.hydration_target_class_ids
-                        .as_slice()
-                        .first()
-                        .expect("depth-one hydration target class")
-                        .id(),
-                )
-                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
-                .execute(connection)
-                .await?;
+                diesel::sql_query("ANALYZE hubuumobject")
+                    .execute(connection)
+                    .await?;
 
-                diesel::sql_query(
+                let inserted = diesel::sql_query(
                     "INSERT INTO hubuumobject_relation \
                         (from_hubuum_object_id, to_hubuum_object_id, class_relation_id) \
                      SELECT source_object.id, target_object.id, class_relation.id \
@@ -448,10 +449,8 @@ impl StructuredSearchFixture {
                 .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
                 .execute(connection)
                 .await?;
+                assert_eq!(inserted, UNRELATED_HYDRATION_RELATIONS as usize);
 
-                diesel::sql_query("ANALYZE hubuumobject")
-                    .execute(connection)
-                    .await?;
                 diesel::sql_query("ANALYZE hubuumobject_relation")
                     .execute(connection)
                     .await?;

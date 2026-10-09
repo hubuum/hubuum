@@ -172,7 +172,8 @@ jobs:
       cache_namespace: hubuum-benchmarks-${{ matrix.name }}
       cache_binaries: true
       criterion_statistic: median
-      criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
+      # Apply the same bounded sampling budget to both revisions and every lane.
+      criterion_cli_args: "--noplot --sample-size 20 --warm-up-time 1 --measurement-time 2 --nresamples 10000"
       regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
       fail_on_regression: true

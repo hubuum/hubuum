@@ -329,6 +329,13 @@ later PRs. To warm them manually, dispatch the Benchmarks workflow on `main`.
 Warming skips measurements, service lifecycle hooks, and PR comments; ordinary
 PR runs still measure both revisions and apply the configured regression limits.
 
+CI uses 20 Criterion samples, one second of warmup, a two-second measurement
+target, and 10,000 bootstrap resamples for both revisions. Every benchmark case
+still runs. The shorter sampling budget trades some statistical precision for
+faster feedback; the 3% Gungraun instruction and 50% Criterion median regression
+limits are unchanged. Local runs retain Criterion's defaults unless these CLI
+options are supplied explicitly.
+
 Keep the comparison and warming jobs' action revision, namespace, benchmark
 selection, toolchain, features, and Cargo arguments aligned. Both use `--locked`
 and enable `cache_binaries` so exact source/build matches can skip compilation
@@ -384,7 +391,13 @@ migrates, and removes a disposable PostgreSQL container itself. Container
 startup, fixture creation, cleanup, and warmup happen outside the timed
 regions. It includes selective and non-selective structured related-object
 searches over 128 independent chains at the maximum supported depth of 10. The
-create scenario intentionally leaves its append-only audit events behind:
+create scenario intentionally leaves its append-only audit events behind.
+
+The hydration cases also retain the full 100,000 unrelated-relation corpus.
+Fixture objects load in committed batches of 1,000 so the schema epoch updates
+and deferred projection checks do not accumulate a large row-version history
+inside one transaction. Production triggers remain enabled, and fixture row
+counts are checked before measurement. Setup stays outside the timed regions.
 
 ```bash
 cargo bench --features postgres-bench \
