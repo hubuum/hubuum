@@ -39,10 +39,9 @@ COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 
 # Build dependencies against dummy targets. Benchmark targets are removed from
 # the copied manifests because benchmark sources are not present in this layer.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/usr/src/hubuum/target \
-    find . -name Cargo.toml -exec sh -c ' \
+# Keep Cargo sources and compiled dependencies in the exported layer: cache
+# mounts are not restored by GitHub Actions' remote BuildKit cache.
+RUN find . -name Cargo.toml -exec sh -c ' \
     for manifest do \
         awk '\'' \
             /^\[\[bench\]\]$/ { skip = 1; next } \
@@ -80,11 +79,8 @@ RUN find . -name Cargo.toml -exec sh -c ' \
     ' sh {} +
 
 ARG HUBUUM_BUILD_GIT_SHA="unknown"
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/usr/src/hubuum/target \
+RUN find ./src ./crates -path '*/src/*' -type f -exec touch {} + && \
     HUBUUM_BUILD_GIT_SHA="${HUBUUM_BUILD_GIT_SHA}" \
-    find ./src ./crates -path '*/src/*' -type f -exec touch {} + && \
     cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
         --bin hubuum-server --bin hubuum-admin --bin hubuum-template-worker && \
     cp target/release/hubuum-server /tmp/ && \

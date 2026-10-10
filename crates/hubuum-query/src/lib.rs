@@ -178,7 +178,7 @@ fn parse_query_parameter_with_options(
                 if include_total.is_some() {
                     return Err(QueryError::BadRequest("duplicate include_total".into()));
                 }
-                include_total = Some(parse_boolean(&value)?);
+                include_total = Some(parse_boolean_value(&value)?);
             }
             "sort" | "order_by" => {
                 for piece in value.split(',') {
@@ -320,16 +320,6 @@ fn decode_query_component<'a>(
             "Invalid query parameter: '{chunk}', invalid {component}: {e}",
         ))
     })
-}
-
-fn parse_boolean(value: &str) -> Result<bool, QueryError> {
-    match value.to_lowercase().as_str() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(QueryError::BadRequest(format!(
-            "Invalid boolean value: '{value}'"
-        ))),
-    }
 }
 
 fn parse_single_filter(
@@ -2424,12 +2414,14 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
 
 /// Parse one boolean query value using the common case-insensitive grammar.
 pub fn parse_boolean_value(input: &str) -> Result<bool, QueryError> {
-    match input.to_ascii_lowercase().as_str() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(QueryError::BadRequest(format!(
+    if input.eq_ignore_ascii_case("true") {
+        Ok(true)
+    } else if input.eq_ignore_ascii_case("false") {
+        Ok(false)
+    } else {
+        Err(QueryError::BadRequest(format!(
             "Invalid boolean value: '{input}'"
-        ))),
+        )))
     }
 }
 
@@ -2615,6 +2607,7 @@ fn integer_filter_limit_error(input: &str, max_values: usize) -> QueryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn filter_field_keeps_ordinary_variants_compact() {
@@ -3452,9 +3445,34 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case("true", true)]
+    #[case("TRUE", true)]
+    #[case("TrUe", true)]
+    #[case("false", false)]
+    #[case("FALSE", false)]
+    #[case("FaLsE", false)]
+    fn boolean_parser_accepts_ascii_case_variants(#[case] input: &str, #[case] expected: bool) {
+        assert_eq!(parse_boolean_value(input).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case(" true")]
+    #[case("false ")]
+    #[case("1")]
+    #[case("yes")]
+    #[case("falſe")]
+    #[case("ＴＲＵＥ")]
+    fn boolean_parser_preserves_invalid_input_in_errors(#[case] input: &str) {
+        assert_eq!(
+            parse_boolean_value(input).unwrap_err(),
+            QueryError::BadRequest(format!("Invalid boolean value: '{input}'"))
+        );
+    }
+
     #[test]
-    fn shared_scalar_parsers_accept_boolean_and_timestamp_forms() {
-        assert!(parse_boolean_value("TRUE").unwrap());
+    fn shared_scalar_parser_accepts_timestamp_forms() {
         assert_eq!(
             parse_datetime_list("2026-08-14,2026-08-14T12:30:00+02:00")
                 .unwrap()

@@ -25,6 +25,8 @@ use crate::operations::visibility::{CollectionVisibility, required_permissions};
 use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
+mod shared_filter;
+
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::collections)]
 struct CollectionCatalogRow {
@@ -244,6 +246,15 @@ pub async fn list_objects(
                 ),
                 None => None,
             };
+            if shared_filter::applies(&options) {
+                let query = apply_object_filters(
+                    object_query(&collection_ids, visibility.resources()),
+                    &options,
+                    related_predicate,
+                    structured_predicate,
+                )?;
+                return shared_filter::load_page(connection, query, &options).await;
+            }
             let build_query = || object_query(&collection_ids, visibility.resources());
             let mut query = apply_object_filters(
                 build_query(),

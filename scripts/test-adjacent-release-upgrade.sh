@@ -596,7 +596,7 @@ seed_previous_release() {
   api_request previous-api POST /api/v1/event-sinks \
     '{"name":"compat-sink","kind":"webhook","config":{},"enabled":true}'
   sink_id="$(json_id)"
-  api_request previous-api POST "/api/v1/collections/$collection_id/event-subscriptions" \
+  create_event_subscription previous-api "$collection_id" \
     "{\"sink_id\":$sink_id,\"name\":\"compat-events\",\"description\":\"adjacent release fixture\",\"entity_types\":[\"object\"],\"actions\":[\"created\",\"updated\"],\"filter\":{},\"routing\":{\"url\":\"https://example.invalid/compat\"},\"enabled\":true}"
 
   api_request previous-api POST /api/v1/remote-targets \

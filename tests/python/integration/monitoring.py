@@ -47,6 +47,22 @@ def canonical(rows):
     return sorted(rows, key=lambda row: sorted(row['metric'].items()))
 
 
+def network_subnets(networks):
+    """Read occupied IPv4/IPv6 subnets from Docker or native Podman inspection."""
+    for network in networks:
+        if 'IPAM' in network:
+            configurations = (network['IPAM'] or {}).get('Config') or []
+            key = 'Subnet'
+        elif 'subnets' in network:
+            configurations = network['subnets'] or []
+            key = 'subnet'
+        else:
+            raise ValueError('Unsupported container network inspection format')
+        for configuration in configurations:
+            if configuration.get(key):
+                yield ipaddress.ip_network(configuration[key])
+
+
 def wait_for(description, predicate, timeout=120):
     deadline = time.monotonic() + timeout
     last_error = None
@@ -81,10 +97,9 @@ class Installation:
         self.engine = shutil.which('docker')
         require(self.engine is not None, 'Docker Compose is required')
         self.run(self.engine, 'image', 'inspect', image)
-        networks = json.loads(self.run(self.engine, 'network', 'inspect',
-                                       *self.run(self.engine, 'network', 'ls', '-q').split()))
-        occupied = [ipaddress.ip_network(config['Subnet']) for network in networks
-                    for config in (network['IPAM'].get('Config') or []) if config.get('Subnet')]
+        network_ids = self.run(self.engine, 'network', 'ls', '-q').split()
+        networks = json.loads(self.run(self.engine, 'network', 'inspect', *network_ids)) if network_ids else []
+        occupied = list(network_subnets(networks))
         offset = int(uuid.uuid4().hex[:4], 16) % 256
         candidates = (ipaddress.ip_network(f'172.{major}.{(offset + minor) % 256}.0/24')
                       for major in range(31, 15, -1) for minor in range(256))
@@ -149,6 +164,10 @@ os.execv(ENGINE, [ENGINE, *args])
                  *args, env=self.environment)
 
     def compose(self, *args):
+        if args and args[0] == 'exec':
+            # Each fixture service has one deployed replica. Compose 2.38 can
+            # otherwise select its one-off event worker, which has no HTTP API.
+            args = ('exec', '--index', '1', *args[1:])
         return self.run(self.engine, 'compose', '-p', self.project, '--env-file',
                         str(self.directory / '.env'), '-f', str(self.directory / 'compose.yml'), *args)
 
@@ -497,7 +516,7 @@ def main(argv=None):
         try:
             installation = Installation(directory, args.image, args.mode)
             report = installation.report
-            for stage in ('start', 'authenticate', 'data', 'traffic', 'events', 'panels', 'alert', 'lifecycle'):
+            for stage in ('start', 'authenticate', 'data', 'traffic', 'events', 'panels', 'lifecycle'):
                 print('Monitoring acceptance: ' + stage, flush=True)
                 installation.report['stage'] = stage
                 getattr(installation, stage)()

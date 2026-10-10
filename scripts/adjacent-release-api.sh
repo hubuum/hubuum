@@ -104,3 +104,18 @@ create_principal_token() {
   credential_request "$service" "/api/v1/iam/principals/$principal_id/tokens" \
     "$payload" "$operation"
 }
+
+create_event_subscription() {
+  local service="$1"
+  local collection_id="$2"
+  local payload="$3"
+  local sink_id
+
+  sink_id="$(jq --exit-status '.sink_id' <<< "$payload")" || return
+  # Releases before collection sink grants have no grant endpoint and allow
+  # subscriptions directly. Only a missing endpoint permits that legacy flow.
+  api_request "$service" PUT "/api/v1/event-sinks/$sink_id/collections/$collection_id" \
+    "" "" "" true || return
+  api_request "$service" POST "/api/v1/collections/$collection_id/event-subscriptions" \
+    "$payload"
+}

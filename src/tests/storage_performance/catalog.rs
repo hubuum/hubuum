@@ -99,10 +99,20 @@ async fn object_cursor_page_keeps_the_total_for_all_matches(
     #[case] after_object: usize,
     #[case] expected_rows: usize,
     #[values(true, false)] internal_continuation: bool,
+    #[values(true, false)] shared_filter: bool,
 ) {
     let scope = TestScope::new();
     let fixture = fixture(&scope).await;
-    let mut options = parse_query_parameter(&object_query(&fixture, 10, "RedHat")).unwrap();
+    let query = if shared_filter {
+        object_query(&fixture, 10, "RedHat")
+    } else {
+        format!(
+            "classes={}&sort=id&limit=10\
+             &json_data__icontains=facts,operating_system,distribution=RedHat",
+            fixture.class.id
+        )
+    };
+    let mut options = parse_query_parameter(&query).unwrap();
     let values = vec![CursorValue::Integer(i64::from(
         fixture.objects[after_object].id,
     ))];
@@ -122,6 +132,10 @@ async fn object_cursor_page_keeps_the_total_for_all_matches(
     assert_eq!(rows.len(), expected_rows);
     assert_eq!(total, Some(3));
     assert_eq!(queries.queries_matching("SELECT COUNT("), 1);
+    assert_eq!(
+        queries.queries_matching("WITH catalog_matches"),
+        usize::from(shared_filter)
+    );
     fixture.cleanup().await.expect("catalog fixture cleanup");
 }
 

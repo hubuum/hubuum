@@ -1,6 +1,4 @@
-#[cfg(test)]
-use std::future::Future;
-use std::{cell::RefCell, fmt};
+use std::fmt;
 
 use opentelemetry::trace::TraceContextExt;
 use tracing::field::{Field, Visit};
@@ -13,45 +11,11 @@ use tracing_subscriber::{
     EnvFilter, Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-use crate::events::{Action, EntityType, TraceLink};
 use crate::models::Permissions;
 
 pub struct HubuumLoggingFormat;
 
 impl HubuumLoggingFormat {}
-
-#[derive(Clone, Debug)]
-struct OperationMutationLog {
-    entity_type: EntityType,
-    action: Action,
-    entity_id: Option<i32>,
-    actor_principal_id: Option<i32>,
-    request_id: Option<uuid::Uuid>,
-    correlation_id: Option<String>,
-    trace_link: Option<TraceLink>,
-}
-
-impl OperationMutationLog {
-    fn emit(self) {
-        tracing::info!(
-            message = "operation mutation committed",
-            operation = "mutation_committed",
-            mutation_phase = "committed",
-            entity_type = self.entity_type.as_str(),
-            action = self.action.as_str(),
-            entity_id = self.entity_id,
-            actor_principal_id = self.actor_principal_id,
-            request_id = self.request_id.map(|id| id.to_string()),
-            correlation_id = self.correlation_id.as_deref(),
-            trace_id = self.trace_link.as_ref().map(TraceLink::trace_id),
-            span_id = self.trace_link.as_ref().map(TraceLink::span_id),
-        );
-    }
-}
-
-tokio::task_local! {
-    static DEFERRED_OPERATION_MUTATIONS: RefCell<Vec<OperationMutationLog>>;
-}
 
 pub fn init_json_logging(log_level: &str) -> Result<(), String> {
     init_json_logging_with_tracer(log_level, None)
@@ -92,70 +56,6 @@ pub fn build_git_sha() -> &'static str {
     option_env!("HUBUUM_BUILD_GIT_SHA")
         .or(option_env!("GITHUB_SHA"))
         .unwrap_or("unknown")
-}
-
-pub fn log_operation_mutation(
-    entity_type: EntityType,
-    action: Action,
-    entity_id: Option<i32>,
-    actor_principal_id: Option<i32>,
-    request_id: Option<uuid::Uuid>,
-    correlation_id: Option<&str>,
-) {
-    let operation = OperationMutationLog {
-        entity_type,
-        action,
-        entity_id,
-        actor_principal_id,
-        request_id,
-        correlation_id: correlation_id.map(ToOwned::to_owned),
-        trace_link: crate::observability::tracing::current_trace_link(),
-    };
-    if DEFERRED_OPERATION_MUTATIONS
-        .try_with(|operations| operations.borrow_mut().push(operation.clone()))
-        .is_err()
-    {
-        operation.emit();
-    }
-}
-
-#[cfg(test)]
-async fn defer_operation_mutation_logs_until_commit<F, R, E>(future: F) -> Result<R, E>
-where
-    F: Future<Output = Result<R, E>>,
-{
-    if DEFERRED_OPERATION_MUTATIONS.try_with(|_| ()).is_ok() {
-        return future.await;
-    }
-
-    DEFERRED_OPERATION_MUTATIONS
-        .scope(RefCell::new(Vec::new()), async move {
-            let result = future.await;
-            let operations = DEFERRED_OPERATION_MUTATIONS.with(RefCell::take);
-            if result.is_ok() {
-                for operation in operations {
-                    operation.emit();
-                }
-            }
-            result
-        })
-        .await
-}
-
-pub fn log_operation_read(
-    entity_type: Option<EntityType>,
-    action: Option<Action>,
-    entity_id: Option<i32>,
-) {
-    let entity_type = entity_type.map(EntityType::as_str);
-    let action = action.map(Action::as_str);
-    tracing::debug!(
-        message = "operation read",
-        operation = "read",
-        entity_type,
-        action,
-        entity_id,
-    );
 }
 
 pub fn log_authorization_grant(
@@ -359,8 +259,7 @@ where
             );
         }
 
-        // Explicit event fields, including a trace link captured before a
-        // transaction committed, take precedence over ambient span fields.
+        // Explicit event fields take precedence over ambient span fields.
         let mut visitor = JsonFieldVisitor {
             fields: &mut fields,
         };
@@ -644,35 +543,6 @@ mod tests {
     }
 
     #[test]
-    fn operation_mutation_helper_uses_catalog_labels_without_payloads() {
-        let request_id = uuid::Uuid::new_v4();
-        let logs = capture_logs(|| {
-            log_operation_mutation(
-                EntityType::Collection,
-                Action::Created,
-                Some(9),
-                Some(12),
-                Some(request_id),
-                Some("operation-correlation"),
-            );
-        });
-
-        let event = logs.first().expect("operation event");
-        assert_eq!(event["severity"], "INFO");
-        assert_eq!(event["message"], "operation mutation committed");
-        assert_eq!(event["operation"], "mutation_committed");
-        assert_eq!(event["mutation_phase"], "committed");
-        assert_eq!(event["entity_type"], "collection");
-        assert_eq!(event["action"], "created");
-        assert_eq!(event["entity_id"], 9);
-        assert_eq!(event["actor_principal_id"], 12);
-        assert_eq!(event["request_id"], request_id.to_string());
-        assert_eq!(event["correlation_id"], "operation-correlation");
-        assert!(event.get("before").is_none());
-        assert!(event.get("after").is_none());
-    }
-
-    #[test]
     fn event_fields_override_span_fields_without_duplicate_json_keys() {
         let request_id = uuid::Uuid::new_v4();
         let raw_logs = capture_raw_logs(|| {
@@ -682,13 +552,10 @@ mod tests {
                 correlation_id = "span-correlation"
             );
             let _guard = span.enter();
-            log_operation_mutation(
-                EntityType::Collection,
-                Action::Created,
-                Some(9),
-                Some(12),
-                Some(request_id),
-                Some("event-correlation"),
+            info!(
+                message = "event fields override span fields",
+                request_id = %request_id,
+                correlation_id = "event-correlation",
             );
         });
 
@@ -699,61 +566,5 @@ mod tests {
         let event: serde_json::Value = serde_json::from_str(line).expect("json log line");
         assert_eq!(event["request_id"], request_id.to_string());
         assert_eq!(event["correlation_id"], "event-correlation");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn deferred_mutation_logs_are_emitted_after_success() {
-        let writer = JsonLogWriter::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(writer.clone())
-                .event_format(HubuumLoggingFormat),
-        );
-        let _guard = tracing::subscriber::set_default(subscriber);
-
-        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
-            log_operation_mutation(
-                EntityType::Collection,
-                Action::Created,
-                Some(9),
-                Some(12),
-                None,
-                None,
-            );
-            Ok(())
-        })
-        .await;
-
-        assert!(result.is_ok());
-        assert_eq!(writer.output().len(), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn deferred_mutation_logs_are_discarded_after_failure() {
-        let writer = JsonLogWriter::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(writer.clone())
-                .event_format(HubuumLoggingFormat),
-        );
-        let _guard = tracing::subscriber::set_default(subscriber);
-
-        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
-            log_operation_mutation(
-                EntityType::Collection,
-                Action::Created,
-                Some(9),
-                Some(12),
-                None,
-                None,
-            );
-            Err(())
-        })
-        .await;
-
-        assert!(result.is_err());
-        assert!(writer.output().is_empty());
     }
 }

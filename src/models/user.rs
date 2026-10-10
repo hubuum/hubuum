@@ -15,7 +15,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::storage::StorageContext;
 use crate::traits::{CursorPaginated, CursorValue};
 
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 pub const MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS: usize = 255;
 pub const MAX_LOGIN_NAME_CHARACTERS: usize = 255;
@@ -242,32 +242,6 @@ impl User {
         crate::services::identity::get_user_point(backend, self.id).await
     }
 
-    /// Set a new local password and revoke every active bearer token for this
-    /// user in the same database transaction.
-    pub async fn set_password<C>(
-        &self,
-        backend: &C,
-        new_password: &str,
-        context: &EventContext,
-    ) -> Result<(), ApiError>
-    where
-        C: StorageContext,
-    {
-        debug!(message = "Setting new password", user_id = self.id);
-        let password_hash = crate::utilities::auth::hash_password_async(new_password.to_string())
-            .await
-            .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
-        let revoked_tokens =
-            crate::services::identity::set_user_password(backend, self.id, password_hash, context)
-                .await?;
-        debug!(
-            message = "Password changed and active tokens revoked",
-            user_id = self.id,
-            revoked_tokens
-        );
-        Ok(())
-    }
-
     pub async fn create_token<C>(&self, backend: &C) -> Result<Token, ApiError>
     where
         C: StorageContext,
@@ -282,19 +256,6 @@ impl User {
         PrincipalTokenCreateRequest::new(PrincipalID::new(self.id)?)
             .create_issued(backend, &EventContext::system())
             .await
-    }
-
-    pub async fn delete_token<C>(&self, token_param: Token, backend: &C) -> Result<usize, ApiError>
-    where
-        C: StorageContext,
-    {
-        crate::services::identity::revoke_token_by_hash(
-            backend,
-            Some(self.id),
-            token_param.credentials()?.credentials,
-            &EventContext::system(),
-        )
-        .await
     }
 
     pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>

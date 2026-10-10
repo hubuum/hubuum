@@ -1,5 +1,6 @@
 use std::hint::black_box;
 use std::process::{Command, Output, Stdio};
+use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,7 +17,12 @@ use hubuum::models::{
 use hubuum::services::Services;
 use hubuum::storage::{BenchmarkStorageContext, TransactionStorage};
 use hubuum::traits::{CanDelete, CanSave};
+use hubuum_domain::PrincipalId;
+use hubuum_query::{CursorValue, encode_cursor_values, parse_query_parameter};
 use hubuum_storage_core::StorageCollectionCreate;
+use hubuum_storage_core::{
+    CatalogStorage, StorageAuthorizationPermission, StorageCatalogListQuery, StorageVisibility,
+};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{
     PostgresPool, PostgresPoolSettings, build_postgres_pool, with_connection,
@@ -395,43 +401,44 @@ impl StructuredSearchFixture {
         let prefix = unique_name("hydration-unrelated");
         runtime
             .block_on(with_connection(pool, async |connection| {
-                diesel::sql_query(
-                    "INSERT INTO hubuumobject \
-                        (name, collection_id, hubuum_class_id, data, description) \
-                     SELECT $1 || '-source-' || slot::text, $2, $3, \
-                            jsonb_build_object('hydration_corpus_slot', slot), \
-                            'unrelated template hydration benchmark source' \
-                     FROM generate_series(1, $4) AS slot",
-                )
-                .bind::<Text, _>(&prefix)
-                .bind::<Integer, _>(collection_id)
-                .bind::<Integer, _>(self.source_class_id.id())
-                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
-                .execute(connection)
-                .await?;
+                let target_class = self
+                    .hydration_target_class_ids
+                    .as_slice()
+                    .first()
+                    .expect("depth-one hydration target class");
+                // Every insert updates the class schema-state row and queues a
+                // deferred projection check. Commit small batches so those
+                // checks do not traverse a 100,000-version row history. Keep
+                // production triggers enabled and the complete scale corpus.
+                for (role, class_id) in
+                    [("source", self.source_class_id), ("target", *target_class)]
+                {
+                    for start in (1..=UNRELATED_HYDRATION_RELATIONS).step_by(1_000) {
+                        let end = (start + 999).min(UNRELATED_HYDRATION_RELATIONS);
+                        let inserted = diesel::sql_query(
+                            "INSERT INTO hubuumobject \
+                                (name, collection_id, hubuum_class_id, data, description) \
+                             SELECT $1 || '-' || slot::text, $2, $3, \
+                                    jsonb_build_object('hydration_corpus_slot', slot), \
+                                    'unrelated template hydration benchmark object' \
+                             FROM generate_series($4, $5) AS slot",
+                        )
+                        .bind::<Text, _>(format!("{prefix}-{role}"))
+                        .bind::<Integer, _>(collection_id)
+                        .bind::<Integer, _>(class_id.id())
+                        .bind::<Integer, _>(start)
+                        .bind::<Integer, _>(end)
+                        .execute(connection)
+                        .await?;
+                        assert_eq!(inserted, (end - start + 1) as usize);
+                    }
+                }
 
-                diesel::sql_query(
-                    "INSERT INTO hubuumobject \
-                        (name, collection_id, hubuum_class_id, data, description) \
-                     SELECT $1 || '-target-' || slot::text, $2, $3, \
-                            jsonb_build_object('hydration_corpus_slot', slot), \
-                            'unrelated template hydration benchmark target' \
-                     FROM generate_series(1, $4) AS slot",
-                )
-                .bind::<Text, _>(&prefix)
-                .bind::<Integer, _>(collection_id)
-                .bind::<Integer, _>(
-                    self.hydration_target_class_ids
-                        .as_slice()
-                        .first()
-                        .expect("depth-one hydration target class")
-                        .id(),
-                )
-                .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
-                .execute(connection)
-                .await?;
+                diesel::sql_query("ANALYZE hubuumobject")
+                    .execute(connection)
+                    .await?;
 
-                diesel::sql_query(
+                let inserted = diesel::sql_query(
                     "INSERT INTO hubuumobject_relation \
                         (from_hubuum_object_id, to_hubuum_object_id, class_relation_id) \
                      SELECT source_object.id, target_object.id, class_relation.id \
@@ -448,10 +455,8 @@ impl StructuredSearchFixture {
                 .bind::<Integer, _>(UNRELATED_HYDRATION_RELATIONS)
                 .execute(connection)
                 .await?;
+                assert_eq!(inserted, UNRELATED_HYDRATION_RELATIONS as usize);
 
-                diesel::sql_query("ANALYZE hubuumobject")
-                    .execute(connection)
-                    .await?;
                 diesel::sql_query("ANALYZE hubuumobject_relation")
                     .execute(connection)
                     .await?;
@@ -551,9 +556,18 @@ impl StorageFixture {
 }
 
 fn benchmark_postgres_storage(c: &mut Criterion) {
+    let started = Instant::now();
     let database = PostgresBenchmarkDatabase::start();
+    eprintln!(
+        "postgres benchmark database startup: {:?}",
+        started.elapsed()
+    );
+    let started = Instant::now();
     let runtime = runtime();
     let fixture = StorageFixture::new(&runtime, database.url());
+    eprintln!("postgres benchmark base fixture: {:?}", started.elapsed());
+    let measurements_started = Instant::now();
+    benchmark_catalog_search(c, &runtime, &fixture, database.url());
     let collections = fixture.services.collections();
     let point_read_id = fixture.point_read_id();
     let leaf_id = fixture.leaf_id();
@@ -695,13 +709,35 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
     {
         let hydration_roots = &fixture.structured_search.source_object_ids;
         assert_eq!(hydration_roots.len(), STRUCTURED_SEARCH_CHAINS as usize);
-        let mut benchmark_hydration = |corpus_label: &str| {
+        let scale_setup = Once::new();
+        let mut benchmark_hydration = |corpus_label: &str, scaled: bool| {
+            let prepare_corpus = || {
+                if scaled {
+                    scale_setup.call_once(|| {
+                        let scale_setup_pool = {
+                            let _runtime_guard = runtime.enter();
+                            benchmark_pool(database.url())
+                        };
+                        let scale_started = Instant::now();
+                        fixture.structured_search.add_unrelated_hydration_corpus(
+                            &runtime,
+                            &scale_setup_pool,
+                            fixture.collections[0].id,
+                        );
+                        eprintln!(
+                            "postgres benchmark unrelated corpus fixture: {:?}",
+                            scale_started.elapsed()
+                        );
+                    });
+                }
+            };
             for depth in 1..=3 {
                 let name = format!(
                     "template_multi_root_bidirectional_{}_roots_depth_{depth}_{corpus_label}",
                     hydration_roots.len()
                 );
                 group.bench_function(&name, |b| {
+                    prepare_corpus();
                     b.iter(|| {
                         let rows = runtime
                         .block_on(
@@ -725,6 +761,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 let target_class_id =
                     fixture.structured_search.hydration_target_class_ids[(depth - 1) as usize];
                 group.bench_function(&name, |b| {
+                    prepare_corpus();
                     b.iter(|| {
                         let rows = runtime
                             .block_on(hubuum::benchmark_support::template_related_include_objects(
@@ -742,26 +779,131 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
             }
         };
 
-        benchmark_hydration("base_corpus");
-
-        let scale_setup_pool = {
-            let _runtime_guard = runtime.enter();
-            benchmark_pool(database.url())
-        };
-        fixture.structured_search.add_unrelated_hydration_corpus(
-            &runtime,
-            &scale_setup_pool,
-            fixture.collections[0].id,
+        benchmark_hydration("base_corpus", false);
+        benchmark_hydration(
+            &format!("plus_{UNRELATED_HYDRATION_RELATIONS}_unrelated_relations"),
+            true,
         );
-
-        benchmark_hydration(&format!(
-            "plus_{UNRELATED_HYDRATION_RELATIONS}_unrelated_relations"
-        ));
     }
     group.finish();
+    eprintln!(
+        "postgres benchmark measurements including scale fixture: {:?}",
+        measurements_started.elapsed()
+    );
     // The benchmark owns the whole disposable database container. Dropping it
     // is both faster and more representative than timing an unrelated cascade
     // delete of the synthetic scale corpus.
+}
+
+fn benchmark_catalog_search(
+    c: &mut Criterion,
+    runtime: &Runtime,
+    fixture: &StorageFixture,
+    database_url: &str,
+) {
+    let pool = {
+        let _guard = runtime.enter();
+        benchmark_pool(database_url)
+    };
+    let collection_id = fixture.collections[0].id;
+    let mut group = c.benchmark_group("catalog_exact_totals");
+    for count in [300, 10_000] {
+        let (class_id, ids) = runtime.block_on(with_connection(&pool, async |connection| {
+            let class = diesel::sql_query(
+                "INSERT INTO hubuumclass (name, collection_id, description, validate_schema) \
+                 VALUES ($1, $2, 'catalog filter benchmark', false) RETURNING id",
+            ).bind::<Text, _>(unique_name("catalog-class"))
+                .bind::<Integer, _>(collection_id).get_result::<ClassIdRow>(connection).await?;
+            diesel::sql_query(
+                "INSERT INTO hubuumobject (name, collection_id, hubuum_class_id, data, description) \
+                 SELECT 'catalog-' || $1::integer::text || '-' || n::text, $2, $1, \
+                   jsonb_build_object('major_version', CASE WHEN $3 = 300 OR n % 10 < 5 THEN '9' ELSE '8' END, \
+                     'version', CASE WHEN $3 = 300 OR n % 10 = 0 THEN '9.8' ELSE '8.10' END, \
+                     'distribution', CASE WHEN $3 = 300 OR n % 7 = 0 THEN 'RedHat' ELSE 'Ubuntu' END, \
+                     'padding', (SELECT string_agg(md5(n::text || ':' || s::text), '') FROM generate_series(1, 512) s)), \
+                   'catalog filter benchmark' FROM generate_series(1, $3) n ORDER BY n",
+            ).bind::<Integer, _>(class.id).bind::<Integer, _>(collection_id)
+                .bind::<Integer, _>(count).execute(connection).await?;
+            diesel::sql_query("ANALYZE hubuumobject").execute(connection).await?;
+            let ids = diesel::sql_query("SELECT id FROM hubuumobject WHERE hubuum_class_id = $1 ORDER BY id")
+                .bind::<Integer, _>(class.id).load::<ClassIdRow>(connection).await?;
+            Ok::<_, hubuum_storage_postgres::PostgresStorageError>((class.id, ids))
+        })).expect("catalog benchmark fixture should load");
+
+        for (label, filters) in [
+            ("indexed", ""),
+            ("one_json", "&json_data__icontains=major_version=9"),
+            (
+                "multiple_json",
+                "&json_data__icontains=major_version=9&json_data__icontains=version=9.8&json_data__icontains=distribution=RedHat",
+            ),
+        ] {
+            let matching_ids = ids
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    count == 300
+                        || match label {
+                            "indexed" => true,
+                            "one_json" => (index + 1) % 10 < 5,
+                            _ => (index + 1) % 70 == 0,
+                        }
+                })
+                .map(|(_, row)| row.id)
+                .collect::<Vec<_>>();
+            let limit = if matching_ids.len() < 251 { 25 } else { 250 };
+            for (position, cursor, offset) in [
+                ("first", None, 0),
+                ("second", Some(matching_ids[limit - 1]), limit),
+                ("empty", matching_ids.last().copied(), matching_ids.len()),
+            ] {
+                let mut options = parse_query_parameter(&format!(
+                    "classes={class_id}&sort=id&limit={}{}",
+                    limit + 1,
+                    filters,
+                ))
+                .unwrap();
+                if let Some(id) = cursor {
+                    options
+                        .set_cursor(Some(
+                            encode_cursor_values(
+                                options.sort(),
+                                vec![CursorValue::Integer(i64::from(id))],
+                            )
+                            .unwrap(),
+                        ))
+                        .unwrap();
+                }
+                let query = StorageCatalogListQuery::new(
+                    options,
+                    StorageVisibility::new(
+                        PrincipalId::new(1).unwrap(),
+                        true,
+                        None::<Vec<StorageAuthorizationPermission>>,
+                        None,
+                    ),
+                );
+                let warmup = runtime
+                    .block_on(fixture.storage.list_objects(query.clone()))
+                    .unwrap();
+                assert_eq!(warmup.total(), Some(matching_ids.len() as i64));
+                assert_eq!(
+                    warmup.rows().len(),
+                    (matching_ids.len() - offset).min(limit + 1)
+                );
+                group.bench_function(format!("{count}/{label}/{position}"), |b| {
+                    b.iter(|| {
+                        black_box(
+                            runtime
+                                .block_on(fixture.storage.list_objects(black_box(query.clone())))
+                                .expect("catalog page should load"),
+                        );
+                    });
+                });
+            }
+        }
+    }
+    group.finish();
 }
 
 criterion_group!(benches, benchmark_postgres_storage);

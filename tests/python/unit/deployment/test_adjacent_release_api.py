@@ -1,4 +1,4 @@
-"""Exercise compatibility credential requests against a local HTTP fixture."""
+"""Exercise adjacent-release API requests against a local HTTP fixture."""
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -17,7 +17,7 @@ EXPIRY = "2026-09-23T12:34:56.123456"
 APPROVAL = {"approval": "fixture-approval", "token_expires_at": EXPIRY}
 
 
-class CredentialRequestTests(unittest.TestCase):
+class APIRequestTests(unittest.TestCase):
     def request(self, command, payload, responses):
         requests = []
 
@@ -42,6 +42,7 @@ class CredentialRequestTests(unittest.TestCase):
 
             do_POST = handle_request
             do_GET = handle_request
+            do_PUT = handle_request
 
             def log_message(self, *_args):
                 pass
@@ -150,3 +151,28 @@ service_url() { printf '%s' "$fixture_url"; }
                                         [(201, APPROVAL), (403, {"error": "rejected"})])
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(requests), 2)
+
+    def test_subscription_grants_the_sink_before_creation(self):
+        payload = {"sink_id": 7, "name": "fixture-subscription", "enabled": True}
+        for grant_status in (204, 404):
+            with self.subTest(grant_status=grant_status):
+                result, requests = self.request(
+                    'create_event_subscription previous-api 2 "$4"', payload,
+                    [(grant_status, {}), (201, {"id": 9})],
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(requests[0]["method"], "PUT")
+                self.assertEqual(requests[0]["path"], "/api/v1/event-sinks/7/collections/2")
+                self.assertEqual(requests[1]["method"], "POST")
+                self.assertEqual(requests[1]["path"], "/api/v1/collections/2/event-subscriptions")
+                self.assertEqual(requests[1]["body"], payload)
+
+    def test_failed_sink_grant_never_submits_the_subscription(self):
+        for status in (401, 403, 429, 503):
+            with self.subTest(status=status):
+                result, requests = self.request(
+                    'create_event_subscription previous-api 2 "$4"', {"sink_id": 7},
+                    [(status, {"error": "grant rejected"})],
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(len(requests), 1)
