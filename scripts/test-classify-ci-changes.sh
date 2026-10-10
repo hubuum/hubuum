@@ -525,7 +525,8 @@ assert_flag "$docker_output" container true
 assert_flag "$docker_output" artifacts true
 
 for compatibility_path in scripts/test-adjacent-release-upgrade.sh \
-  scripts/adjacent-release-api.sh tests/python/unit/deployment/test_adjacent_release_api.py; do
+  scripts/adjacent-release-api.sh tests/python/unit/deployment/test_adjacent_release_api.py \
+  tests/python/unit/deployment/test_adjacent_release_backups.py; do
   compatibility_output="$(bash "$classifier" "$compatibility_path")"
   assert_flag "$compatibility_output" code true
   assert_flag "$compatibility_output" container true

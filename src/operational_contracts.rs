@@ -46,6 +46,7 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/observed.rs"),
     include_str!("storage/context/schema_evolution.rs"),
+    include_str!("storage/context/query_usage.rs"),
     include_str!("storage/context/api.rs"),
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
@@ -2510,7 +2511,7 @@ fn document_contracts() -> DocumentContracts {
                 )
                 .map(str::to_string)
                 .collect(),
-            rejection_policy: "accept backup versions 6 and 7; normalize version 6 event configuration and delivery defaults",
+            rejection_policy: "accept backup versions 6 through 9; normalize version 6 event defaults and restore versions 6 through 8 without query usage declarations",
         },
         import: VersionedDocumentContract {
             version: Some(CURRENT_IMPORT_VERSION),

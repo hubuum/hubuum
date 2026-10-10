@@ -32,6 +32,7 @@ nav = [
       { "Collections & inheritance" = "collection_hierarchy.md" },
       { "Permissions" = "permissions.md" },
       { "Class schemas & compliance" = "schema_evolution.md" },
+      { "Query usage declarations" = "query_usage.md" },
       { "Computed fields" = "computed_fields.md" },
       { "History & provenance" = "temporal_history.md" },
     ] },

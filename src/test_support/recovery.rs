@@ -1,5 +1,5 @@
 use chrono::Utc;
-use hubuum_domain::{ClassRelationId, CollectionId, PrincipalId};
+use hubuum_domain::{ClassRelationId, CollectionId, PrincipalId, ResourceId};
 use hubuum_storage_core::*;
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
 use serde_json::{Value, json};
@@ -24,6 +24,7 @@ pub struct RestoreContractFixture {
     storage: StorageHandle,
     collection_id: CollectionId,
     class: StorageResolvedClass,
+    query_usage_id: ResourceId,
     scope: TestScope,
     mutation: AtomicUsize,
     original: StorageBackupSnapshot,
@@ -96,6 +97,19 @@ impl RestoreContractFixture {
             )
             .await
             .unwrap()
+            .into_value();
+        let query_usage = storage
+            .create_query_usage(StorageQueryUsageCreate::new(
+                StorageQueryUsageScope::new(class.id(), collection.id()),
+                StorageQueryUsagePattern::try_new(
+                    "serial",
+                    StorageQueryUsageValueType::String,
+                    vec![StorageQueryUsageOperation::Equals],
+                )
+                .unwrap(),
+                EventContext::user(PrincipalId::new(1).unwrap(), None, None),
+            ))
+            .await?
             .into_value();
         let resolved = storage
             .class_store()
@@ -214,6 +228,7 @@ impl RestoreContractFixture {
             storage,
             collection_id: collection.id(),
             class: resolved,
+            query_usage_id: query_usage.metadata().id(),
             scope,
             mutation: AtomicUsize::new(0),
         })
@@ -338,6 +353,37 @@ impl RestoreContractFixture {
     pub async fn mutate(&self) -> Result<(), ApiError> {
         let iteration = self.mutation.fetch_add(1, Ordering::SeqCst);
         let context = EventContext::system();
+        let usage_scope = StorageQueryUsageScope::new(self.class.class().id(), self.collection_id);
+        let declaration = self
+            .storage
+            .list_query_usage(usage_scope)
+            .await?
+            .into_iter()
+            .find(|record| record.metadata().id() == self.query_usage_id)
+            .expect("recovery fixture must retain its declaration");
+        let updated = self
+            .storage
+            .replace_query_usage(StorageQueryUsageReplace::new(
+                StorageQueryUsageCreate::new(
+                    usage_scope,
+                    StorageQueryUsagePattern::try_new(
+                        &format!("serial_{iteration}"),
+                        StorageQueryUsageValueType::String,
+                        vec![StorageQueryUsageOperation::Equals],
+                    )
+                    .unwrap(),
+                    context.clone(),
+                ),
+                declaration.metadata().id(),
+                declaration.metadata().revision(),
+            ))
+            .await?
+            .into_value();
+        assert_eq!(
+            updated.metadata().revision().get(),
+            declaration.metadata().revision().get() + 1
+        );
+        assert_eq!(updated.created_by(), Some(PrincipalId::new(1).unwrap()));
         let _ = self
             .storage
             .collection_store()

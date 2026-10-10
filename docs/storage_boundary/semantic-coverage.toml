@@ -448,3 +448,10 @@ scenarios = ["src/tests/storage_contract/schema_evolution.rs::permissive_schema_
 source = "crates/hubuum-storage-core/src/authorization_resources.rs"
 variants = ["Class", "Object", "Collection", "ClassRelation", "ObjectRelation", "ExportTemplate", "RemoteTarget"]
 scenarios = ["src/tests/storage_contract/authorization_resources.rs::batched_authorization_facts_match_individual_resolution_on_every_backend"]
+
+[traits.QueryUsageStorage]
+source = "crates/hubuum-storage-core/src/query_usage.rs"
+methods = ["list_query_usage", "create_query_usage", "replace_query_usage", "delete_query_usage"]
+effects = { complete_read = ["list_query_usage"], audited_mutation = ["create_query_usage", "replace_query_usage", "delete_query_usage"] }
+shared_scenarios = ["src/tests/storage_contract/query_usage.rs::declarations_have_audited_revision_checked_lifecycle", "src/tests/storage_contract/query_usage.rs::declarations_recheck_the_authorized_collection", "src/tests/storage_contract/query_usage.rs::declaration_quota_is_serialized_with_concurrent_creates", "src/tests/storage_contract/query_usage.rs::declaration_noop_preserves_revision_and_has_no_audit", "src/tests/storage_contract/query_usage.rs::declaration_capture_preserves_intent_and_provenance"]
+native_scenarios = ["src/tests/storage_contract/query_usage.rs::postgres_declaration_rolls_back_with_its_audit_event", "src/tests/storage_contract/query_usage.rs::postgres_declaration_constraints_reject_invalid_intent"]
