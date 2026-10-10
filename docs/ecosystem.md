@@ -1,5 +1,8 @@
 # The Hubuum ecosystem
 
+<!-- markdownlint-disable-next-line MD033 -->
+<span id="one-entry-point-clear-ownership"></span>
+
 The server owns the data model, permissions, and HTTP contracts. Companion
 projects provide interfaces for people and applications. Choose the interface
 that fits your workflow; all of them connect to a Hubuum server.
@@ -16,23 +19,11 @@ The archived [`hubuum-python`](https://github.com/hubuum/hubuum-python) reposito
 is an earlier implementation. The current Python client is
 **`hubuum-client-python`**.
 
-## One entry point, clear ownership
+## Choose compatible interfaces
 
-The [organization landing page](https://hubuum.github.io/) belongs in
-the separate `hubuum/hubuum.github.io` repository. It introduces the ecosystem
-and directs readers to each project. The `.github` repository supplies the GitHub
-organization profile, which can link to that landing page. See the
-[site ownership plan](contributing/documentation.md#organization-landing-page-and-project-sites).
+Start with [clients and interfaces](integrations/clients.md) for installation,
+API references, and compatibility records. Projects release independently;
+select the guide matching your installed version.
 
-This server site at `/hubuum/` owns shared concepts, server operation, API behavior, and cross-project
-workflows. Companion repositories own their installation instructions,
-language-specific examples, command/UI reference, and release history.
-
-Start with [clients and interfaces](integrations/clients.md) for practical entry
-points and compatibility links. Client and server version numbers do not match
-automatically; consult each project's declared server targets.
-
-Maintainers adding another client or interface should follow the
-[ecosystem documentation contract](contributing/documentation.md#connecting-companion-projects).
-It allows each project to publish its own detailed documentation while sharing
-navigation and an organization-wide entry point.
+For contributors, the [documentation workflow](contributing/documentation.md#connecting-companion-projects)
+explains content ownership and shared publishing.

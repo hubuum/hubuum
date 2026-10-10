@@ -5,7 +5,9 @@ provides two empty groups: atlas-readers inherits read access to the whole
 inventory; atlas-operators can maintain objects only in the operations child
 collection. Assign evaluation principals to the groups to exercise these rules.
 
-Hubuum divides user-created structures into classes and their objects. Objects are instances of classes, and both are contained within a single collection. A collection may contain multiple classes and objects.
+Hubuum divides user-created structures into classes and their objects. Objects are instances of classes. Each class and object belongs to one collection,
+but a class and its objects need not share the same collection. A collection may
+contain multiple classes and objects.
 
 Permissions within Hubuum are based on the following principles:
 
@@ -19,7 +21,7 @@ Group membership is principal-centric: both human users and service accounts are
 identity model, tokens, and how token **scopes** narrow these permissions for
 automated callers, see [auth_model.md](auth_model.md).
 
-For examples, hierarchy endpoints, and developer implementation notes, see
+For hierarchy endpoints and examples, see
 [collection_hierarchy.md](collection_hierarchy.md).
 
 ## Collection hierarchy and inheritance
@@ -72,11 +74,8 @@ different branches of the tree.
 
 ## Permission types
 
-There are three types of permissions for each collection:
-
-1. Permissions for the collections themselves
-2. Permissions for classes
-3. Permissions for objects
+Permissions are granted on collections and control operations on the collection
+and its resources. The following tables group them by resource.
 
 ### Permissions for collections
 
@@ -170,207 +169,84 @@ subjects require `ReadObjectRelation` on both endpoint collections. The worker r
 read permission and `ExecuteRemoteTarget` for the submitting user before executing the outbound HTTP
 call. `ReadRemoteTarget` is not required to invoke a target by ID.
 
-## Example
+<!-- Previous walkthrough bookmarks now point to the current group-based example. -->
+<!-- markdownlint-disable MD033 -->
+<span id="example"></span>
+<span id="part-1-a-relatively-simple-example"></span>
+<span id="part-2-a-second-department"></span>
+<span id="part-3-a-bit-of-offloading"></span>
+<span id="examples-in-api-form"></span>
+<span id="part-1-a-relatively-simple-example_1"></span>
+<!-- markdownlint-enable MD033 -->
 
-### Part 1: A (relatively) simple example
+## Example: grant a group access to Atlas
 
-Assume we have a university campus with a number of departments and a sentral security group. We have the following people:
+Load the [Atlas inventory](getting-started/example-dataset.md) and use an
+unscoped administrator token for these setup requests. Atlas already provides
+`atlas-readers` and `atlas-operators`; this example adds a separate group for
+people who may update existing operations objects but may not create or delete
+objects. Grant access through a group even when only one person needs it.
 
-- `alice` is a member of the central security group called `central-security`
-- `bob` is a systems administrator at the Department of Mathematics, and a member of the local admin group called `mathematics-administrators`
-- `chris` is a front line support technician at the Department of Mathematics, and a member of the local support group called `mathematics-support`
+### 1. Create the group
 
-At the Department of Mathematics, the local administrators manage a number of computers. Local administrators have the permissions to manage the computers, while the front line support only has read-only access. The central security group needs to have full permissions to everything at the university as a whole. We can solve this as follows:
+```http
+POST /api/v1/iam/groups
+Authorization: Bearer <admin-token>
+Content-Type: application/json
 
-- We create a collection `shared` to hold all the shared resources at the university.
-- We create a class `computer` to hold all the computers at the university and add it to the `shared` collection.
-- We create a collection `mathematics` to hold all the computer objects belonging to the Department of Mathematics.
-- We grant `central-security` the following permissions on the `shared` collection itself:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-  - `delegate`
-- We grant `central-security` the following permissions on the `mathematics` collection itself:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-  - `delegate`
-- We grant `mathematics-administrators` the following permissions on the `mathematics` collection itself:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-  - `delegate`
-- We grant `mathematics-administrators` the following class permissions on the `shared` collection to allow them to create new objects of the `computer` class:
-  - `read`
-  - `create`
-- We grant `mathematics-administrators` the following object permissions on the `mathematics` collection to allow them to administer the computers in the collection:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-- We grant `mathematics-support` the following object permissions on the `mathematics` collection:
-  - `read`
-
-When `bob` creates `eniac2`, a new computer object, he must assign it a collection. A permission check is performed for `bob` on the class `computers`, and we find that `bob` has `create` permissions on the class through the `mathematics-administrators` group. When `bob` assigns the object to the collection `mathematics`, an object-based permission check is performed for `bob` on the collection `mathematics`, and we find that `bob` has `create` permissions on the collection through the `mathematics-administrators` group. Thus, the object is created and `eniac2` becomes an object member of the collection `mathematics`. This also allows `chris` to read the object, but not to update or delete it.
-
-### Part 2: A second department
-
-Now that we everything from part 1 up and running, we enroll the Department of Physics in Hubuum. The Department of Physics has a local admin group called `physics-administrators` and a local support group called `physics-support`. They have their own computers, and they need to be able to administer them. We can solve this as follows:
-
-- We create a collection `physics` to hold all the computer objects belonging to the Department of Physics.
-- We grant `central-security` the following permissions on the `physics` collection itself:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-  - `delegate`
-- We grant `physics-administrators` the following permissions on the `physics` collection itself:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-  - `delegate`
-- We grant `physics-administrators` the following class permissions on the `shared` collection to allow them to create new objects of the `computer` class:
-  - `read`
-  - `create`
-- We grant `physics-administrators` the following object permissions on the `physics` collection to allow them to administer the computers in the collection:
-  - `create`
-  - `read`
-  - `update`
-  - `delete`
-- We grant `physics-support` the following object permissions on the `physics` collection:
-  - `read`
-
-This mirrors the setup for the Department of Mathematics, but with different groups and collections. Note that the `physics-administrators` group does not have any permissions on the `mathematics` collection, and vice versa. This means that `bob` cannot administer the computers belonging to the Department of Physics, but `alice` (through the `central-security` group) has full access to everything.
-
-### Part 3: A bit of offloading
-
-Now that we have two departments up and running, `bob` is asked to help out tidying out old computers at the Department of Physics. He's not to create new ones, but maybe update some information on some and delete others. The simple solution to this is to (temporarily) add `bob` to the `physics-administrators` group, but if one wants to be more fine-grained, we can grant `bob` (the user, not as a group) the following object permissions on the `physics` collection:
-
-- `read`
-- `update`
-- `delete`
-
-`bob` can now perform the required tasks, but he cannot create new objects in the `physics` collection. He can create computers (he has `create` permissions on the `shared` collection that holds the `computer` class), but due to the lack of object create permissions on the `physics` collection he cannot assign these computers to this colection.
-
-## Examples, in API form
-
-### Part 1 : A (relatively) simple example
-
-- Create a collection `shared` to hold all the shared resources at the university.
-
-Endpoint: `POST /api/v1/collections`
-
-```json
 {
-  "name": "shared",
-  "description": "Shared resources at the university"
+  "groupname": "atlas-maintainers",
+  "description": "Update existing Atlas operations objects"
 }
 ```
 
-This will return a link to the new collection, ie `/api/v1/collections/1` as wll as the new collection. We extract the ID, ie `1`, and use it in the following examples.
+Save the returned group `id` as `<group_id>`. Find the operations collection
+with `GET /api/v1/collections?name=atlas-demo-operations` and use its returned
+`id` as `<collection_id>`. IDs depend on the installation; do not assume fixed
+values.
 
-- A `computer` class that we add to the `shared` collection. We do not add a JSON schema, and we do not add any validation requirements.
+### 2. Grant collection permissions
 
-Endpoint: `POST /api/v1/classes`
+```http
+POST /api/v1/collections/<collection_id>/permissions/group/<group_id>
+Authorization: Bearer <admin-token>
+Content-Type: application/json
 
-```json
-{
-  "name": "computer",
-  "description": "A computer",
-  "collection": 1,  
-  "json_schema": null,
-  "validation_requirements": false,
-}
+[
+  "ReadCollection",
+  "ReadClass",
+  "ReadObject",
+  "UpdateObject"
+]
 ```
 
-- We create a collection `mathematics` to hold all objects (and classes) belonging to the Department of Mathematics. In this case, we're only adding computers. Assume we get the ID `2` for the new collection.
+The body is an array of permission names. `POST` adds permissions; `PUT` replaces
+the group's direct permission row. These grants also apply to descendants of
+the selected collection. They do not grant access to the parent catalogue.
 
-Endpoint: `POST /api/v1/collections`
+### 3. Add a principal and verify access
 
-```json
-{
-  "name": "mathematics",
-  "description": "Equipment at the Department of Mathematics"
-}
+An administrator can add an existing human or service account using
+`POST /api/v1/iam/groups/<group_id>/members/<principal_id>`. Resolve the principal
+ID from the identity API; user IDs and principal IDs are different identities.
+See [group membership](auth_model.md#tokens-and-groups-by-principal).
+
+Sign in as that non-admin principal with an unscoped token. With only this group
+membership, the principal can read and update the Server and Location objects
+in `atlas-demo-operations`, but cannot create or delete them or read objects in
+the parent collection. Other group memberships add permissions, while token
+scopes may narrow them.
+
+Inspect the effective grants when the result differs from your expectation:
+
+```http
+GET /api/v1/collections/<collection_id>/permissions/effective/principal/<principal_id>
+Authorization: Bearer <admin-token>
 ```
 
-- We grant the group `central-security` (assume the group has ID 1) all permissions on the `shared` and `mathematics` collections.
-
-Endpoint: `POST /api/v1/permissions/collections/1/groups/1`
-
-```json
-{
-  "has_create": true,
-  "has_read": true,
-  "has_update": true,
-  "has_delete": true,
-  "has_delegate": true
-}
-```
-
-Endpoint: `POST /api/v1/permissions/collections/2/groups/1`
-
-```json
-{
-  "has_create": true,
-  "has_read": true,
-  "has_update": true,
-  "has_delete": true,
-  "has_delegate": true
-}
-```
-
-- We grant the group `mathematics-administrators` (assume it has ID 2) all permissions on the `mathematics` collection:
-
-Endpoint: `POST /api/v1/permissions/collections/2/groups/2`
-
-```json
-{
-  "has_create": true,
-  "has_read": true,
-  "has_update": true,
-  "has_delete": true,
-  "has_delegate": true
-}
-```
-
-- We grant `mathematics-administrators` the following class permissions on the `shared` collection to allow them to create new objects of the `computer` class:
-
-Endpoint: `POST /api/v1/permissions/classes/1/groups/2`
-
-```json
-{
-  "has_create": true,
-  "has_read": true
-}
-````
-
-- We grant `mathematics-administrators` the following object permissions on the `mathematics` collection to allow them to administer the computers in the collection:
-
-Endpoint: `POST /api/v1/permissions/objects/2/groups/2`
-
-```json
-{
-  "has_create": true,
-  "has_read": true,
-  "has_update": true,
-  "has_delete": true
-}
-```
-
-- We grant `mathematics-support` (assume group ID 3) the following object permissions on the `mathematics` collection:
-
-Endpoint: `POST /api/v1/permissions/objects/2/groups/3`
-
-```json
-{
-  "has_read": true
-}
-```
+Remove the principal from the example group with `DELETE` on the membership
+route, then delete the group with `DELETE /api/v1/iam/groups/<group_id>` when
+finished. This leaves the original Atlas groups and inventory intact.
 
 ## A word about inheritance and admin privileges
 

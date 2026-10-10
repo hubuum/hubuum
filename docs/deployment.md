@@ -31,12 +31,24 @@ Podman support is intended for rootful installs only.
 
 ## All-In-One
 
+Download the installer from the server release you are deploying. This example
+pairs server **v0.0.18** with frontend **v0.0.19** and pins the management scripts
+to the same server release:
+
 ```bash
-sudo ./scripts/install-single-host.sh \
+curl --fail --location --output install-single-host.sh \
+  https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
-  --email admin@example.com
+  --email admin@example.com \
+  --script-ref v0.0.18 \
+  --server-tag v0.0.18 \
+  --frontend-tag v0.0.19
 ```
+
+Use the same downloaded installer for the variations below. For an existing
+installation, read [Updates](#updates) before running an installer or updater.
 
 This creates `/opt/hubuum` by default, generates `/opt/hubuum/.env`, writes `compose.yml` and `Caddyfile`, pulls published images, and starts the stack.
 
@@ -49,23 +61,11 @@ two frontend containers. Caddy actively checks backend `/readyz` and frontend
 HTTP health, excludes unavailable replicas, and retries connection failures
 against a healthy replica.
 
-A changed Caddy configuration can close a client connection before its first
-HTTP response while the old HTTP server shuts down. This is distinct from an
-unavailable backend. The live rollout test permits one retry of a read-only
-`/healthz` or `/readyz` probe after such a pre-response disconnect, within the
-original seven-second deadline, and reports these retries separately. HTTP
-errors, connection refusal, timeouts, partial responses, and repeated
-disconnects still fail the test. This does not authorize replaying writes or
-promise uninterrupted TCP connections across a proxy configuration reload.
-
-The generated configuration keeps the backend active-check interval at five
-seconds but defines only one health-checked reverse proxy per listener. In an
-all-mode public API deployment, each backend receives at most one public Caddy
-probe, one private BFF Caddy probe, and one Compose health check every five
-seconds. Increasing the interval would reduce this already small load but would
-also delay failed-upstream removal and rolling-update convergence. The
-readiness handler performs its schema and maintenance checks on one pooled
-connection.
+A Caddy reload can interrupt an existing connection. Retry read-only probes
+when appropriate; do not replay writes without checking whether they succeeded.
+The proxy and Compose health checks run every five seconds. See the
+[rollout verification notes](contributing/deployment-verification.md) for the
+availability test's guarantees and limits.
 
 The frontend BFF reaches the backend through a private Caddy listener, so it
 uses the same readiness-aware backend pool as direct API traffic. All-mode
@@ -80,12 +80,9 @@ compatible with the old application version for the duration of the rolling
 update; a migration that blocks application queries can still cause request
 latency even though an HTTP replica remains online.
 
-The resource-revision release supports the ordinary adjacent-release API
-overlap certified by CI: drain old workers first, run the migration while an
-old API replica serves requests, and then roll API replicas. Quiesce backup,
-restore, and import operations during the transition because backup v4 and
-import v2 intentionally reject their older formats. Do not start new workers
-until the candidate schema is ready.
+Whether an upgrade can roll depends on its pending migrations. The v0.0.17 to
+v0.0.18 transition requires downtime. Follow [Updates](#updates); historical
+rolling-upgrade evidence does not make an offline migration safe to roll.
 
 The standby owns its own database pool and application memory. Capacity-plan
 external PostgreSQL servers for both API pools, the primary's task-lease
@@ -106,10 +103,8 @@ existing external-auth TOML file instead.
 
 By default, the installer starts the stack directly with Compose. Pass `--systemd` to also write `/etc/systemd/system/hubuum.service`, enable it, and start the stack through that unit.
 
-Default app images:
-
-- Backend: `ghcr.io/hubuum/hubuum-server:main`
-- Frontend: `ghcr.io/hubuum/hubuum-frontend:main`
+Without explicit image options, the installer defaults to development `main`
+images. Use the release pins above for a released installation.
 
 ### Optional monitoring
 
@@ -131,25 +126,25 @@ complete host outage independently.
 
 ### Choosing Image Tags
 
-Fresh installations follow `main` for both application images. Use `--tag`
+Always choose versions explicitly for a released deployment. Use `--tag`
 to select a shared tag, or `--server-tag` and `--frontend-tag` to choose each
 independently. `--backend-tag` is an alias for `--server-tag`.
 
 ```bash
 # Follow development builds for both applications.
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
   --tag main
 
-# Pin the server while following frontend stable releases.
-sudo ./scripts/install-single-host.sh \
+# Pin a compatible server and frontend pair.
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
-  --server-tag v0.0.14 \
-  --frontend-tag latest
+  --server-tag v0.0.18 \
+  --frontend-tag v0.0.19
 ```
 
 Per-application tags override `--tag` regardless of argument order. Explicit
@@ -161,13 +156,13 @@ The resulting image references are saved as `BACKEND_IMAGE` and
 `FRONTEND_IMAGE` in `.env`. Re-running either script without tag options keeps
 those choices, including installations previously configured to follow `main`.
 `latest` follows stable releases and `main` follows development builds when you
-run an update. A version tag such as `v0.0.14` stays on that version; the scripts
+run an update. A version tag such as `v0.0.18` stays on that version; the scripts
 still pull the tag, so an image republished under the same tag can change. Use a
 full image reference with `@sha256:...` when you need immutable image contents.
-Each selected tag must exist in its image repository; server and frontend
-release versions can differ. The server `latest` alias will first be published
-by the next stable release containing this change. Until then, use `main` or an
-existing version such as `--server-tag v0.0.14`.
+Each selected tag must exist in its image repository. Server and frontend
+versions are independent; check their compatibility records before pairing them.
+Use a version tag or digest when reproducibility matters. `latest` and `main`
+are moving choices, not compatibility declarations.
 
 Image tag options do not change management-script refs (`--script-ref`) and
 cannot be used for source builds, which select code through `--backend-ref`
@@ -195,7 +190,7 @@ still publicly available on the API hostname.
 You can use the same DNS name and public `80`/`443` ports for both frontend and API by setting `--web` and `--api` to the same hostname. In that case, choose an explicit routing mode:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum.example.com \
   --shared-host-routing direct \
@@ -215,8 +210,9 @@ The frontend makes shared-host deployments easier by keeping internal/BFF routes
 The installer is self-contained enough to run directly from the repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/install-single-host.sh \
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
   | sudo bash -s -- \
+      --script-ref v0.0.18 --server-tag v0.0.18 --frontend-tag v0.0.19 \
       --web hubuum.example.com \
       --api hubuum-api.example.com \
       --email admin@example.com
@@ -225,10 +221,10 @@ curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/install-
 Use a branch, tag, commit SHA, or PR ref by changing the raw GitHub URL. Pass the same ref with `--script-ref` so the installed management helpers come from the same source:
 
 ```bash
-REF=main
+REF=v0.0.18
 curl -fsSL "https://raw.githubusercontent.com/hubuum/hubuum/${REF}/scripts/install-single-host.sh" \
   | sudo bash -s -- \
-      --script-ref "${REF}" \
+      --script-ref "${REF}" --server-tag v0.0.18 --frontend-tag v0.0.19 \
       --web hubuum.example.com \
       --api hubuum-api.example.com \
       --email admin@example.com
@@ -262,7 +258,7 @@ sudo ./scripts/install-backend.sh \
 Equivalent explicit form:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --mode backend \
   --api hubuum-api.example.com \
   --email admin@example.com
@@ -273,7 +269,7 @@ sudo ./scripts/install-single-host.sh \
 Pass `--database-url` to skip the managed Postgres container:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
@@ -284,7 +280,7 @@ This uses the default single-role topology. To isolate the runtime credential,
 opt into split roles and provide both URLs:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
@@ -323,7 +319,7 @@ Pass an absolute host path with `--auth-config` to enable LDAP or another
 configured external identity provider:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
@@ -370,7 +366,7 @@ examples.
 The installer does not clone repositories by default. Use `--build-from-source` only when you need to build local images from Git refs that are not available as published container images:
 
 ```bash
-sudo ./scripts/install-single-host.sh \
+sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
@@ -417,11 +413,11 @@ Use the same tag options to override and save the image choices for this and
 future updates:
 
 ```bash
-# Switch both applications to stable releases once both latest tags exist.
+# Follow each application's latest stable release after checking compatibility.
 sudo ./update-single-host.sh --tag latest
 
 # Pin only the server; keep the saved frontend choice.
-sudo ./update-single-host.sh --server-tag v0.0.17
+sudo ./update-single-host.sh --server-tag v0.0.18
 
 # Follow server development builds while keeping the frontend on stable releases.
 sudo ./update-single-host.sh --tag main --frontend-tag latest
@@ -436,15 +432,34 @@ then queries the candidate's `hubuum-admin --migration-mode`. A failed or
 unrecognized preflight stops the update before application processes are stopped.
 The candidate must support this command (0.0.17 or newer).
 
-**For the 0.0.16 to 0.0.17 transition, schedule downtime.** Quiesce backup,
-restore, and import operations, stop both APIs and the restore executor, and
-capture a PostgreSQL snapshot before invoking the updater. Retain matching old
-binaries and credentials. Pending offline migrations cause the updater to stop
-both APIs (including primary workers) and the restore executor before migration,
-then start only candidate processes. If migration fails, old binaries remain
-stopped. Fix forward or restore the pre-upgrade snapshot; binary-only rollback
-is unsupported and snapshot recovery loses subsequent writes. See
-[the event migration guide](events.md#upgrade-and-rollback).
+### Upgrade from v0.0.17 to v0.0.18
+
+Schedule downtime for `2026-10-05-000001_collection_event_sinks`:
+
+1. Stop all API, worker, and restore-executor writers.
+2. Take a PostgreSQL snapshot and retain matching v0.0.17 binaries and credentials.
+3. Re-run the v0.0.18 installer with `--dir /opt/hubuum --script-ref v0.0.18
+   --server-tag v0.0.18 --frontend-tag v0.0.19`, or apply the migration with
+   the matching `hubuum-admin --migrate`. Reconcile grants when using split
+   database roles.
+4. Start matching v0.0.18 server, worker, and restore-executor processes; check
+   readiness and integration configuration before resuming writes.
+
+The updater's migration preflight selects the offline path and leaves older
+processes stopped if migration fails. It **does not take the PostgreSQL snapshot**.
+Binary-only rollback is unsupported. To recover v0.0.17, stop the candidate and
+restore the pre-upgrade snapshot with matching older binaries; later writes are
+lost. Server v0.0.18 emits backup format 8 and accepts formats 6 and 7. An older
+server cannot restore format 8. See [event migrations](events.md#upgrade-and-rollback)
+and [backup compatibility](backup-restore.md).
+
+The v0.0.16 to v0.0.17 transition also requires downtime and a pre-upgrade
+PostgreSQL snapshot. Follow that release's
+[upgrade instructions](https://hubuum.github.io/hubuum/v0.0.17/events/#upgrade-and-rollback)
+before proceeding to v0.0.18. Do not apply historical rolling-upgrade instructions
+to either offline transition.
+
+### Rolling-compatible upgrades
 
 With no pending offline migration, it performs the rolling sequence:
 
@@ -485,38 +500,23 @@ management helpers and generate the current Compose and Caddy configuration,
 including standby services for installations that predate rolling updates.
 
 If the installed updater predates these options or automatic configuration
-refresh, run the current updater directly:
+refresh, use the pinned installer to refresh the scripts and saved configuration:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/update-single-host.sh \
-  | sudo bash -s -- --dir /opt/hubuum
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.18
 ```
 
-Add `--tag` or per-application tag options after `--dir /opt/hubuum` to change
-the saved choices during that upgrade. Re-running the current installer works
-the same way. Later runs of the refreshed, installed updater pick up deployment
-file and management-script changes automatically. The updater refuses to roll
-if configuration refresh fails to provide the required services.
+Add per-application tag options to change saved image choices after reviewing
+the upgrade requirements. The refreshed updater reads management scripts from
+the saved ref; changing image tags does not change that ref. Use the installer
+with `--script-ref` when changing the management-script version. The updater
+stops if configuration refresh fails to provide the required services.
 
-The live container contract test covers adoption from the published v0.0.1
-image: the old API remains online while the candidate applies all newer
-migrations, starts a ready standby, and replaces the old primary. Before this
-specific first-adoption upgrade, prevent new task submissions and allow queued
-and running tasks to drain. v0.0.1 co-locates lease-unaware task workers with
-its API and has no API-only standby to own traffic before migration, so the
-task-lease and task-provenance migrations cannot safely transfer an in-flight
-task to a new worker. The tested idle-queue upgrade preserves HTTP
-availability; it does not promise uninterrupted background task execution.
-
-A separate release-blocking test resolves the latest stable release by
-immutable image digest. It seeds users, groups, scoped credentials, nested
-collections, classes, objects, relations, computed fields, events, exports,
-remote targets, and asynchronous work through that release; drains its worker;
-and measures candidate migration availability. It then exercises both API
-versions against the migrated schema and proves an `N-1` application rollback
-before restoring the candidate. This certifies only adjacent application
-rollback and does not downgrade PostgreSQL or promise compatibility with older
-application generations.
+See [rollout verification](contributing/deployment-verification.md) for the
+historical adoption scenarios and adjacent-release checks. Those checks are
+scoped to each release's migration mode and do not promise rollback after an
+offline migration.
 
 ### Re-running The Installer To Update
 
@@ -524,17 +524,17 @@ The installer is idempotent and doubles as an in-place updater. Re-running it ag
 
 ```bash
 # Pull the latest configured images and apply any changed configuration in place.
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/install-single-host.sh \
-  | sudo bash -s -- --dir /opt/hubuum
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.18
 
 # Change a single setting (for example, pin a new backend image) and reuse the rest.
-sudo ./install-single-host.sh --backend-image ghcr.io/hubuum/hubuum-server:v1.2.3
+sudo ./install-single-host.sh --server-tag v0.0.18 --frontend-tag v0.0.19
 ```
 
 Any value passed explicitly on the command line overrides the stored one;
-everything else is taken from the existing `.env`. Application containers are
-rolled in standby-then-primary order. Infrastructure-container changes remain
-pending until the operator schedules their replacement.
+everything else is taken from the existing `.env`. Migration preflight selects
+an offline or rolling application update. Infrastructure-container changes
+remain pending until the operator schedules their replacement.
 
 ## Stop And Uninstall
 

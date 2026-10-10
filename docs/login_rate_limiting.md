@@ -4,7 +4,7 @@ Hubuum throttles failed login attempts to resist online password guessing. This 
 describes the model, how the real client IP is resolved behind proxies, the configuration
 knobs, and the admin endpoints for inspecting and releasing throttled scopes.
 
-For the configuration table summary, see [quick_start.md](quick_start.md). This page is the
+For the configuration table summary, see [Configuration reference](quick_start.md). This page is the
 in-depth reference.
 
 ## Threat model
