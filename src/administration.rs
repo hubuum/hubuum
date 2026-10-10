@@ -1,5 +1,6 @@
 use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use hubuum_domain::ClassId;
 use hubuum_domain::JsonSchemaLimits;
 use hubuum_storage_core::StorageBackupBudget;
 use serde::Serialize;
@@ -58,6 +59,11 @@ const DEFAULT_DATABASE_OWNER_ROLE: &str = "hubuum_owner";
 const DEFAULT_DATABASE_MIGRATOR_ROLE: &str = "hubuum_migrator";
 const DEFAULT_DATABASE_RUNTIME_ROLE: &str = "hubuum_runtime";
 
+fn parse_query_usage_class(value: &str) -> Result<ClassId, String> {
+    let id = value.parse::<i32>().map_err(|error| error.to_string())?;
+    ClassId::new(id).map_err(|error| error.to_string())
+}
+
 #[derive(Parser)]
 #[command(
     author = "Terje Kvernes <terje@kvernes.no>",
@@ -70,6 +76,14 @@ struct AdminCli {
     schema_validation: SchemaValidationOptions,
     #[command(flatten)]
     secrets: SecretSourceOptions,
+
+    /// Run one bounded privileged pass preparing and cleaning up query usage resources
+    #[arg(long, default_value_t = false, conflicts_with_all = ["backup", "restore", "restore_executor", "verify_backup", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges", "reset_password", "audit_templates", "export_template_health", "database_ready", "token_key_status"])]
+    reconcile_query_usage: bool,
+
+    /// Restrict new resource planning to this class; cleanup remains global
+    #[arg(long, requires = "reconcile_query_usage", value_parser = parse_query_usage_class)]
+    query_usage_class: Option<ClassId>,
 
     /// Write a consistent full-system backup document to this path
     #[arg(long, value_name = "PATH")]
@@ -294,7 +308,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
-    init_logging(&admin_cli.log_level);
+    init_logging(&admin_cli.log_level, admin_cli.reconcile_query_usage);
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
@@ -346,8 +360,15 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_role_mode = effective_database_role_mode(&admin_cli)?;
     #[cfg(not(feature = "embedded-migrations"))]
     let database_role_mode = admin_cli.database_role_mode;
-    let privileged_database_operation =
-        migration_requested || admin_cli.restore.is_some() || admin_cli.restore_executor;
+    if migration_requested && admin_cli.reconcile_query_usage {
+        return Err(ApiError::BadRequest(
+            "Query usage reconciliation must run separately from migrations".into(),
+        ));
+    }
+    let privileged_database_operation = migration_requested
+        || admin_cli.restore.is_some()
+        || admin_cli.restore_executor
+        || admin_cli.reconcile_query_usage;
     secrets::initialize(&admin_cli.secrets)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let database_url = if admin_cli.storage_backend == StorageBackendKind::Postgres {
@@ -466,6 +487,26 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 report.role(),
             )));
         }
+        return Ok(());
+    }
+
+    if admin_cli.reconcile_query_usage {
+        let roles = database_role_mode
+            .uses_split_roles()
+            .then(|| configured_database_roles(&admin_cli))
+            .transpose()?;
+        let report = crate::storage::reconcile_query_usage_resources(
+            &storage_settings,
+            roles.as_ref(),
+            admin_cli.query_usage_class,
+        )
+        .await?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
+                "Query usage executor report serialization failed".into()
+            ))?
+        );
         return Ok(());
     }
 
@@ -1401,14 +1442,19 @@ async fn load_export_template_health(storage: &StorageHandle) -> Result<(), ApiE
     Ok(())
 }
 
-fn init_logging(log_level: &str) {
+fn init_logging(log_level: &str, report_on_stdout: bool) {
     if !is_valid_log_level(log_level) {
         fatal_error(
             &format!("Invalid log level: {log_level}"),
             EXIT_CODE_CONFIG_ERROR,
         );
     }
-    if let Err(err) = logger::init_json_logging(log_level) {
+    let result = if report_on_stdout {
+        logger::init_json_logging_to_stderr(log_level)
+    } else {
+        logger::init_json_logging(log_level)
+    };
+    if let Err(err) = result {
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 }
@@ -1418,6 +1464,7 @@ mod tests {
     use clap::Parser;
     #[cfg(feature = "embedded-migrations")]
     use clap::{CommandFactory, FromArgMatches};
+    use hubuum_domain::ClassId;
 
     #[cfg(feature = "embedded-migrations")]
     use super::effective_database_role_mode;
@@ -1560,5 +1607,41 @@ mod tests {
 
             assert_eq!(cli.database_role_mode, expected);
         }
+    }
+    #[rstest::rstest]
+    #[case("--backup", "output.json")]
+    #[case("--restore", "input.json")]
+    #[case("--verify-backup", "input.json")]
+    #[test]
+    fn query_usage_execution_is_an_independent_admin_action(
+        #[case] flag: &str,
+        #[case] value: &str,
+    ) {
+        assert!(
+            AdminCli::try_parse_from(["hubuum-admin", "--reconcile-query-usage", flag, value])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn query_usage_execution_accepts_a_validated_class_scope() {
+        let cli = AdminCli::try_parse_from([
+            "hubuum-admin",
+            "--reconcile-query-usage",
+            "--query-usage-class",
+            "42",
+        ])
+        .unwrap();
+        assert!(cli.reconcile_query_usage);
+        assert_eq!(cli.query_usage_class, Some(ClassId::new(42).unwrap()));
+        assert!(
+            AdminCli::try_parse_from([
+                "hubuum-admin",
+                "--reconcile-query-usage",
+                "--query-usage-class",
+                "0"
+            ])
+            .is_err()
+        );
     }
 }

@@ -3,7 +3,10 @@
   "migration_table": "__diesel_schema_migrations",
   "history_table_suffix": "_history",
   "read_only_tables": [
-    "restore_success_receipts"
+    "restore_success_receipts",
+    "query_usage_resources",
+    "query_usage_resource_owners",
+    "query_usage_executor_cursor"
   ],
   "events_table": "events",
   "event_update_columns": [

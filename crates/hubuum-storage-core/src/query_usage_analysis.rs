@@ -214,6 +214,9 @@ pub struct StorageQueryUsageResource {
     cleanup_eligible_if_removed: bool,
 }
 impl StorageQueryUsageResource {
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
     pub fn external(reference: String, bytes: u64, native_scan_count: Option<u64>) -> Self {
         Self {
             reference,
@@ -243,6 +246,7 @@ pub struct StorageQueryUsageAssessment {
     schema_compatibility: StorageQueryUsageSchemaCompatibility,
     can_prepare: bool,
     resources: Vec<StorageQueryUsageResource>,
+    adapter_progress: Option<StorageQueryUsageAdapterProgress>,
     rationale: String,
 }
 impl StorageQueryUsageAssessment {
@@ -258,8 +262,13 @@ impl StorageQueryUsageAssessment {
             schema_compatibility: compatibility,
             can_prepare,
             resources: Vec::new(),
+            adapter_progress: None,
             rationale: rationale.into(),
         }
+    }
+    pub fn adapter_progress(mut self, progress: StorageQueryUsageAdapterProgress) -> Self {
+        self.adapter_progress = Some(progress);
+        self
     }
     pub fn declaration(mut self, value: &StorageQueryUsageDeclaration) -> Self {
         self.declaration_id = Some(value.metadata().id());
@@ -326,4 +335,31 @@ pub trait QueryUsageAnalysisProvider: Send + Sync {
         &self,
         request: StorageQueryUsageAnalysisRequest,
     ) -> Result<StorageQueryUsageAnalysis, StorageError>;
+}
+
+/// Informational adapter-owned progress, not a universal declaration lifecycle.
+#[derive(Clone, Debug, Serialize)]
+pub struct StorageQueryUsageAdapterProgress {
+    reference: String,
+    state: String,
+    declaration_owners: u64,
+    last_error: Option<String>,
+    updated_at: DateTime<Utc>,
+}
+impl StorageQueryUsageAdapterProgress {
+    pub fn new(
+        reference: String,
+        state: String,
+        declaration_owners: u64,
+        last_error: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            reference,
+            state,
+            declaration_owners,
+            last_error,
+            updated_at,
+        }
+    }
 }

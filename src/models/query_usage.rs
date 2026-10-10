@@ -131,6 +131,7 @@ pub struct QueryUsageAssessment {
     pub schema_compatibility: QueryUsageCompatibility,
     pub can_prepare: bool,
     pub resources: Vec<QueryUsageResource>,
+    pub adapter_progress: Option<QueryUsageAdapterProgress>,
     pub rationale: String,
 }
 
@@ -179,4 +180,14 @@ pub struct QueryUsageAnalysisResponse {
     pub assessments: Vec<QueryUsageAssessment>,
     pub suggestions: Vec<QueryUsageSuggestion>,
     pub limitations: Vec<String>,
+}
+
+/// Backend-owned operational facts; state names are not portable promises.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryUsageAdapterProgress {
+    pub reference: String,
+    pub state: String,
+    pub declaration_owners: u64,
+    pub last_error: Option<String>,
+    pub updated_at: DateTime<Utc>,
 }

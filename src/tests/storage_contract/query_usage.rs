@@ -403,3 +403,68 @@ async fn declaration_noop_preserves_revision_and_has_no_audit() {
         delete_backend_object_fixture(&backend, fixture).await;
     }
 }
+
+#[rstest::rstest]
+#[case::supported(ValueType::String, Operation::Equals)]
+#[case::unsupported_numeric(ValueType::Numeric, Operation::Gt)]
+#[case::unsupported_boolean(ValueType::Boolean, Operation::Equals)]
+#[actix_web::test]
+async fn declaration_intent_never_changes_filtering_pagination_or_totals(
+    #[case] value_type: ValueType,
+    #[case] operation: Operation,
+) {
+    use hubuum_query::parse_query_parameter;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &prefix("usage_semantics"),
+            vec![
+                json!({"serial":"alpha"}),
+                json!({"serial":"beta"}),
+                json!({"serial":"alpha"}),
+            ],
+        )
+        .await;
+        let scope = StorageQueryUsageScope::new(fixture.class.id(), fixture.collection.id());
+        let options = parse_query_parameter(&format!(
+            "class_id={}&json_data=serial=alpha&limit=1&include_total=true",
+            fixture.class.id()
+        ))
+        .unwrap();
+        let query = StorageCatalogListQuery::new(
+            options,
+            StorageVisibility::new(
+                principal_id(i32::MAX),
+                true,
+                None::<Vec<StorageAuthorizationPermission>>,
+                None,
+            ),
+        );
+        let (before, total_before) = backend
+            .list_objects(query.clone())
+            .await
+            .unwrap()
+            .into_parts();
+        let _ = backend
+            .create_query_usage(StorageQueryUsageCreate::new(
+                scope,
+                StorageQueryUsagePattern::try_new("serial", value_type, vec![operation]).unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .unwrap();
+        let (after, total_after) = backend.list_objects(query).await.unwrap().into_parts();
+        assert_eq!(
+            (
+                before.iter().map(StorageObject::id).collect::<Vec<_>>(),
+                total_before
+            ),
+            (
+                after.iter().map(StorageObject::id).collect::<Vec<_>>(),
+                total_after
+            )
+        );
+        delete_backend_object_fixture(&backend, fixture).await;
+    }
+}

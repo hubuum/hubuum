@@ -28,8 +28,8 @@ pub use execution::{
 };
 pub(crate) use factory::{
     StorageDatabasePrivilegeReport, StorageDatabaseRole, StorageDatabaseRoleNames, StorageSettings,
-    initialize_storage, inspect_storage_database_privileges, storage_database_role_grants_sql,
-    storage_database_role_setup_sql,
+    initialize_storage, inspect_storage_database_privileges, reconcile_query_usage_resources,
+    storage_database_role_grants_sql, storage_database_role_setup_sql,
 };
 #[cfg(feature = "embedded-migrations")]
 pub(crate) use factory::{
