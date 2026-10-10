@@ -420,7 +420,11 @@ these edits:
    `DatabaseDiagnosticsProvider` projection. If it supports native wake-ups,
    attach its `WorkerNotificationProvider` separately as a latency
    optimization. Registration itself must require neither provider. Native
-   diagnostics and notifications do not become required storage traits.
+   diagnostics and notifications do not become required storage traits. An
+   optional `QueryUsageAnalysisProvider` may review the bounded, value-free
+   observation snapshot collected by common storage dispatch. Its absence must
+   report unavailable analysis explicitly; all adapters still implement the
+   mandatory audited `QueryUsageStorage` declaration lifecycle.
 7. Add one `BackendTestEnvironment` variant. Keep its native client or pool
    inside that variant while provisioning the reusable audit, service, and
    HTTP fixtures.

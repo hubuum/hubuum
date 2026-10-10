@@ -89,3 +89,94 @@ impl QueryUsageResponse {
         serde_json::from_value(snapshot)
     }
 }
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryUsageAnalysisRequest {
+    /// Up to 32 hypothetical patterns. Analysis never records or adopts them.
+    #[serde(default)]
+    #[schema(value_type = Vec<QueryUsagePatternSchema>, max_items = 32)]
+    pub proposed: Vec<StorageQueryUsagePattern>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryUsageAnalysisStatus {
+    Unavailable,
+    InsufficientEvidence,
+    Complete,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryUsageResourceOwnership {
+    IndependentlyManaged,
+    DeclarationManaged,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryUsageResource {
+    pub reference: String,
+    pub ownership: QueryUsageResourceOwnership,
+    pub bytes: u64,
+    pub native_scan_count: Option<u64>,
+    pub declaration_owners: Option<u64>,
+    pub cleanup_eligible_if_removed: bool,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryUsageAssessment {
+    pub declaration_id: Option<ResourceId>,
+    pub pattern: QueryUsagePatternSchema,
+    pub schema_compatibility: QueryUsageCompatibility,
+    pub can_prepare: bool,
+    pub resources: Vec<QueryUsageResource>,
+    pub rationale: String,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryPatternObservation {
+    pub pattern: QueryUsagePatternSchema,
+    pub sampled_queries: u64,
+    pub first_observed_at: DateTime<Utc>,
+    pub last_observed_at: DateTime<Utc>,
+    /// Whole storage request duration, not the cost of this predicate.
+    pub whole_query_duration_micros: u64,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryObservationSettings {
+    pub enabled: bool,
+    pub sample_every: u32,
+    pub max_patterns: usize,
+    pub max_patterns_per_class: usize,
+    pub retention_seconds: u32,
+    pub max_predicates_per_query: usize,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryObservationSnapshot {
+    pub source: String,
+    pub settings: QueryObservationSettings,
+    pub process_started_at: DateTime<Utc>,
+    pub captured_at: DateTime<Utc>,
+    pub patterns: Vec<QueryPatternObservation>,
+    pub capacity_drops: u64,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryUsageSuggestion {
+    pub proposed: QueryUsagePatternSchema,
+    pub observations: Vec<QueryPatternObservation>,
+    pub rationale: String,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QueryUsageAnalysisResponse {
+    pub status: QueryUsageAnalysisStatus,
+    pub assessed_at: DateTime<Utc>,
+    pub observations: QueryObservationSnapshot,
+    pub assessments: Vec<QueryUsageAssessment>,
+    pub suggestions: Vec<QueryUsageSuggestion>,
+    pub limitations: Vec<String>,
+}

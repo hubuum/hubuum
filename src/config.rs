@@ -23,7 +23,10 @@ use environment::{constraints, validate_configuration_bounds};
 
 mod client_network;
 mod defaults;
+mod query_observations;
 mod schema_validation;
+use hubuum_storage_core::StorageQueryObservationSettings;
+use query_observations::QueryObservationOptions;
 mod secret_source;
 use hubuum_domain::JsonSchemaLimits;
 pub use schema_validation::SchemaValidationOptions;
@@ -239,6 +242,13 @@ pub struct AppConfig {
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
+
+    #[command(flatten)]
+    #[serde(default)]
+    pub query_observations: QueryObservationOptions,
+    #[clap(skip)]
+    #[serde(skip)]
+    query_observation_settings: StorageQueryObservationSettings,
 
     #[clap(skip)]
     #[serde(skip)]
@@ -1335,7 +1345,12 @@ impl AppConfig {
         self.schema_limits
     }
 
+    pub(crate) const fn query_observation_settings(&self) -> StorageQueryObservationSettings {
+        self.query_observation_settings
+    }
+
     fn validate(mut self) -> Result<Self, ApiError> {
+        self.query_observation_settings = self.query_observations.validate()?;
         self.schema_limits = self.schema_validation.validate()?;
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
@@ -1896,6 +1911,8 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
 
     let config = AppConfig {
         schema_validation: SchemaValidationOptions::from_environment()?,
+        query_observations: QueryObservationOptions::from_environment()?,
+        query_observation_settings: StorageQueryObservationSettings::default(),
         schema_limits: JsonSchemaLimits::default(),
         secrets: SecretSourceOptions::from_environment()
             .map_err(|error| ApiError::BadRequest(error.to_string()))?,

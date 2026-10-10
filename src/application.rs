@@ -178,7 +178,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     }
     .with_schema_limits(config.schema_limits());
     let storage = initialize_storage(&storage_settings)
-        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR))
+        .with_query_observations(config.query_observation_settings());
     let readiness = storage
         .get_readiness_snapshot()
         .await

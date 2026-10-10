@@ -1,3 +1,4 @@
+use crate::storage::query_observations::QueryObservations;
 use actix_web::web::Data;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
@@ -5,6 +6,7 @@ use hubuum_domain::{
     EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, JsonSchemaLimits, ObjectId,
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
+use hubuum_storage_core::{QueryUsageAnalysisProvider, StorageQueryObservationSettings};
 use hubuum_storage_memory::MemoryStorage;
 #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
 use hubuum_storage_postgres::PostgresPool;
@@ -137,6 +139,8 @@ struct StorageHandleInner {
     implementation: BackendImplementation,
     resource_ports: ResourceStoragePorts,
     observer: Arc<dyn StorageObserver>,
+    query_usage_analysis: Option<Arc<dyn QueryUsageAnalysisProvider>>,
+    query_observations: Arc<QueryObservations>,
     database_diagnostics: Option<Arc<dyn DatabaseDiagnosticsProvider>>,
     worker_notification_provider: Option<Arc<dyn WorkerNotificationProvider>>,
 }
@@ -273,9 +277,11 @@ impl StorageHandle {
     pub(in crate::storage) fn from_postgres_backend(backend: PostgresStorage) -> Self {
         let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
         let worker_notification_provider = Arc::new(backend.clone());
+        let query_usage_analysis = Arc::new(backend.clone());
         Self::from_registered_backend(backend)
             .with_database_diagnostics(database_diagnostics)
             .with_worker_notification_provider(worker_notification_provider)
+            .with_query_usage_analysis(query_usage_analysis)
     }
 
     #[cfg(test)]
@@ -285,9 +291,11 @@ impl StorageHandle {
     ) -> Self {
         let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
         let worker_notification_provider = Arc::new(backend.clone());
+        let query_usage_analysis = Arc::new(backend.clone());
         Self::from_registered_backend_with_observer(backend, observer)
             .with_database_diagnostics(database_diagnostics)
             .with_worker_notification_provider(worker_notification_provider)
+            .with_query_usage_analysis(query_usage_analysis)
     }
 
     pub(crate) fn from_registered_backend<S>(backend: S) -> Self
@@ -314,6 +322,10 @@ impl StorageHandle {
                 resource_ports,
                 observer,
                 database_diagnostics: None,
+                query_usage_analysis: None,
+                query_observations: Arc::new(QueryObservations::new(
+                    StorageQueryObservationSettings::default(),
+                )),
                 worker_notification_provider: None,
             }),
         }
@@ -336,6 +348,23 @@ impl StorageHandle {
         Arc::get_mut(&mut self.inner)
             .expect("new storage handles have no other owners")
             .worker_notification_provider = Some(provider);
+        self
+    }
+
+    fn with_query_usage_analysis(mut self, provider: Arc<dyn QueryUsageAnalysisProvider>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("new storage handles have no other owners")
+            .query_usage_analysis = Some(provider);
+        self
+    }
+
+    pub(crate) fn with_query_observations(
+        mut self,
+        settings: StorageQueryObservationSettings,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("new storage handles have no other owners")
+            .query_observations = Arc::new(QueryObservations::new(settings));
         self
     }
 

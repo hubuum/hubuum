@@ -7,17 +7,28 @@ impl ObjectAggregateStorage for StorageHandle {
         query: StorageObjectAggregateQuery,
         authorization: StorageObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
-        self.observe_storage_call(
-            self.backend_name(),
-            StorageCapability::ObjectAggregate,
-            "aggregate_objects",
-            async {
-                dispatch_backend!(self, |backend| {
-                    backend.aggregate_objects(query, authorization).await
-                })
-            },
-        )
-        .await
+        let ticket = self
+            .inner
+            .query_observations
+            .begin(query.options().filters(), Some(query.target().class_id()));
+        let result = self
+            .observe_storage_call(
+                self.backend_name(),
+                StorageCapability::ObjectAggregate,
+                "aggregate_objects",
+                async {
+                    dispatch_backend!(self, |backend| {
+                        backend.aggregate_objects(query, authorization).await
+                    })
+                },
+            )
+            .await;
+        if result.is_ok()
+            && let Some(ticket) = ticket
+        {
+            ticket.complete();
+        }
+        result
     }
 }
 
