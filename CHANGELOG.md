@@ -10,6 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - Corrected permission examples and release-specific deployment instructions, and separated user guides from implementation and verification notes.
+- PostgreSQL object, class, and collection searches skip the separate count query
+  when the first page contains every match, preserving exact totals without
+  requiring `include_total=false`.
 - PostgreSQL object searches requesting exact totals with multiple JSON substring
   filters share the filtering work between the count and page queries on cursor
   pages, including empty pages.
