@@ -29,7 +29,7 @@ health probes. Scrape every worker directly so worker counters and histograms
 are not hidden behind an API load balancer. Use process/container liveness for
 worker replicas rather than `/healthz`; the image's built-in Docker health check
 accounts for the worker role. API replicas expose `/healthz` and `/readyz` as
-documented in [Quick Start](quick_start.md#health-probes). See
+documented in [Configuration reference](quick_start.md#health-probes). See
 [Runtime Metrics](metrics.md#scrape-each-process-directly) for aggregation
 semantics.
 
@@ -43,6 +43,14 @@ The `all` role is the default, so existing single-instance deployments continue
 to behave as before.
 
 ## One-Shot Migrations
+
+For **v0.0.17 → v0.0.18**, stop all API, worker, and restore-executor writers,
+take a PostgreSQL snapshot, apply the collection-event-sinks migration and
+reconcile database grants, then deploy matching binaries. This is an **offline**
+upgrade; keeping an old API replica online is unsupported. Binary-only rollback
+is unsupported. Follow the [release upgrade procedure](deployment.md#upgrade-from-v0017-to-v0018)
+for recovery and backup-format requirements. The v0.0.16 → v0.0.17 transition
+also requires an offline upgrade.
 
 Every server container role checks schema readiness without applying
 migrations. Run exactly one migration job before rolling out the new
@@ -79,29 +87,12 @@ spec:
                   key: database-url
 ```
 
-Wait for the job to complete successfully before updating API or worker
-replicas. For the task-lease and task-provenance migrations, use this upgrade
-order:
-
-1. Stop old-version worker replicas, allowing their bounded graceful shutdown
-   to finish or fail active tasks.
-2. Run the one-shot migration.
-3. Deploy new worker and API replicas.
-
-For the lease migration, the drain prevents a new worker from treating a task
-owned by an old, lease-unaware worker as abandoned. For the provenance
-migration, it prevents an old worker from committing temporal mutations
-without the root task context that only the new worker propagates. Old API
-replicas may remain online during the migration: the expanded schema derives
-task initiators from `submitted_by` and treats their legacy `hubuum.actor_id`
-session setting as direct-user attribution.
-
-For the resource-revision migration, stop old worker replicas before running
-the migration, but an adjacent old API replica may continue serving ordinary
-requests. CI certifies old and candidate API reads and writes against the
-migrated schema before an application rollback smoke test. Backup v3 and import
-v1 are still deliberately rejected by the candidate, so quiesce backup,
-restore, and import operations until every replica is on the new version.
+Wait for the job to complete successfully before starting candidate API or
+worker replicas. Drain workers before every migration. Keep older API replicas
+online only when the candidate reports a rolling-compatible migration and the
+release's upgrade instructions explicitly permit it. Historical task-lease,
+provenance, and resource-revision migrations allowed particular overlaps; that
+is not a general guarantee for later releases.
 
 The `api` and `worker` entrypoints wait until the database records the latest
 migration required by the binary. API `/readyz` performs the same schema check.
@@ -165,7 +156,8 @@ the closed, transaction-protected restore operation.
 
 This repository does not currently publish a Helm chart. Direct Kubernetes
 manifests and externally maintained charts should implement the following
-contract for application upgrades without HTTP downtime:
+contract for rolling-compatible application upgrades. Offline migrations still
+require the maintenance procedure above:
 
 - Run API and worker processes in separate Deployments with the `api` and
   `worker` runtime roles. Do not put `all`-role pods behind the API Service.

@@ -51,40 +51,18 @@ tag's resolved commit. The ordinary `serve` command previews the working tree.
 
 ## Write for a reader's task
 
-| Section | Reader's question | Content to place here |
-| --- | --- | --- |
-| Overview | Is Hubuum relevant to us? | Concepts, ecosystem, maturity, compatibility |
-| Get started | How do I reach a first success? | Short, ordered tutorials with prerequisites and expected results |
-| User guide | How do I work with my data? | Modeling, permissions, queries, data workflows |
-| Administration | How do I run and recover it? | Deployment, configuration, identity, monitoring, runbooks |
-| API & integrations | How do I connect another system? | HTTP contracts, client entry points, compatibility |
-| Contributing | How do I change Hubuum correctly? | Development, architecture, verification, release policy |
+Keep tutorials short and ordered, with prerequisites and expected results. Put
+configuration tables in references, and implementation/test details under
+Contributing. Use [Configuration reference](../quick_start.md) as the label for
+that existing path. Follow the shared
+[content policy](https://github.com/hubuum/.github/blob/main/docs-tooling/README.md#content-policy)
+for terminology, cross-project links, examples, and stable anchors.
 
-Keep tutorials distinct from exhaustive references. Explain prerequisites,
-required permissions, expected results, and failure recovery. Reuse a canonical
-reference with a relative link instead of copying its configuration tables into
-another guide. The same page can be linked from several audience landing pages
-while having one canonical navigation entry.
-
-Use descriptive link labels, one H1 per page, a language on every code fence,
-and consistent Markdown table separators. Prefer normal Markdown; the home page
-uses a small HTML wrapper for Zensical's accessible card layout. The shared stylesheet
-adds only typography, color, and card treatment, and system fonts avoid a
-third-party font request.
-
-When linking within `docs/`, use relative `.md` paths. The operator guide and
-runbooks in `observability/` are also published: `tool.hubuum_docs.source_files`
-in `zensical.toml` maps their canonical sources to site pages. Link to their
-source files with relative `.md` paths; the renderer resolves those links inside
-the selected edition. New runbooks need both an import and a navigation entry.
-Historical editions import only files present in their release, never current
-instructions for a capability that did not exist yet.
-
-For other code or assets outside `docs/`, use an explicit GitHub `blob/main/` or
-`tree/main/` URL. Those files are not part of the static site. Keep generated
-references generated: use the
-[OpenAPI](../integrations/api.md), [inventory](../generated/project_inventory.md),
-and [operational-contract](../operational_contracts.md) workflows.
+When linking within `docs/`, use relative `.md` paths. The operator package and
+runbooks in `observability/` are imported by `tool.hubuum_docs.source_files` in
+`zensical.toml`; each imported page also needs one navigation entry. Use explicit
+GitHub URLs for other repository assets. Keep OpenAPI, inventory, and operational
+references generated from their canonical sources.
 
 ## Shared example dataset
 
@@ -139,154 +117,41 @@ continues to cover scale and specialized edge cases.
 
 ## GitHub Pages publishing
 
-The intended public URL is **<https://hubuum.github.io/hubuum/>**. The root opens
-the latest published stable release, with immutable releases at `/vX.Y.Z/` and
-an explicitly selected development edition at `/main/`. A version menu and banner
-identify the edition on every page. Search is scoped to the selected edition.
-
-The `Documentation` workflow runs on pull requests, pushes to `main`, published
-releases, successful release-tag CI runs, and manual dispatch. The CI-completion
-trigger covers releases created with `GITHUB_TOKEN`, which do not trigger another
-release workflow. It accepts only successful tag pushes from this repository;
-pull-request CI runs cannot enter the publishing path.
-It uses the shared change classifier for ordinary
-changes. Release events and manual runs always build. It always resolves the
-**Documentation check** job, including when no build is needed, so that check can
-be required by branch protection.
-
-Pull requests build development and latest-release editions and retain a
-`documentation-site` artifact for 14 days.
-Download and extract it, then run `python3 -m http.server 8000` in its directory
-to review it. PRs have read-only repository permission and cannot publish Pages.
-After merge or a stable release publication, a separate serialized deployment
-job combines validated editions with the retained archive on the `gh-pages`
-branch, then uploads and deploys a Pages artifact. The archive is generated
-output, stored under `site/` on that branch; source documentation remains on
-`main` and release tags. Deployment needs `contents: write` for the archive,
-`pages: write`, and `id-token: write`. No personal access token is needed.
-
-Release directories are append-only. Rebuilding the same source commit retains
-the existing snapshot; a moved tag with a different commit is rejected. Updating
-`main` never modifies a release directory. The default is the highest published
-stable version in the archive, so backfilling an older tag does not move it
-backward. Prereleases do not publish or become the default.
+The server publishes at <https://hubuum.github.io/hubuum/>. The root selects the
+latest stable release; `/vX.Y.Z/` retains that release and `/main/` describes
+development. Follow the shared
+[publishing and public-release verification policy](https://github.com/hubuum/.github/blob/main/docs-tooling/README.md#ci-and-publishing).
 
 ### One-time repository setup
 
-A repository administrator must select **Settings → Pages → Build and deployment
-→ Source → GitHub Actions**. Configure the `github-pages` environment to accept
-deployments from `main` and release tags matching `v*`. Add **Documentation check** to the repository's
-required checks if documentation builds should block merging.
-
-The shared [`scripts/setup-pages.sh`](https://github.com/hubuum/.github/blob/main/scripts/setup-pages.sh)
-configures Pages for all six sites from an authenticated administrator's terminal.
-
-After merging the setup, run the `Documentation` workflow on `main` if necessary
-to publish or retry the first deployment. The first publication includes the
-latest released tag even when that tag predates the website. Build validation
-works before Pages is enabled; publishing requires that repository setting.
+Use the shared [Pages setup script](https://github.com/hubuum/.github/blob/main/scripts/setup-pages.sh).
+The source is GitHub Actions, the deployment environment accepts `main` and
+release tags, and **Documentation check** is the required validation job.
 
 ### Publish an older release
 
-Open **Actions → Documentation → Run workflow**, select the `main` branch, and
-enter an existing stable release tag such as `v0.0.15` in **version**. The workflow
-requires a published, non-draft, non-prerelease GitHub release for that tag.
-It builds the original tagged documentation with the current pinned renderer,
-retains all previously published versions, and adds the new version to the menu.
-Leave the input empty to refresh development and ensure the latest release is
-present. The selected root remains the latest release.
-
-The archive lives independently of Actions artifact retention. Do not delete or
-force-push `gh-pages`: it retains the published release snapshots. A failed Pages
-deployment can be retried using a manual run; the archived snapshots remain
-unchanged.
-
-For a custom domain, configure it in GitHub Pages and update `site_url` in
-`zensical.toml` to the actual canonical URL, then rebuild. The same static
-`target/docs-site/` output can be uploaded to another static host. See
-[GitHub's Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
-for the hosting requirements.
+Run **Actions → Documentation → Run workflow** on `main` with the published
+stable tag in **version**. See the shared policy for immutable snapshots,
+backfills, and deployment recovery. Verify the public site after publication.
 
 ## Connecting companion projects
 
 ### Organization landing page and project sites
 
-The ecosystem entry point is **`https://hubuum.github.io/`**, published
-from a separate **`hubuum/hubuum.github.io`** repository. GitHub requires that
-repository name for an organization Pages site. This server repository publishes
-the project site at **`https://hubuum.github.io/hubuum/`**. Each companion
-repository can independently publish its own project site below the same host.
-See [GitHub's site types](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages).
-
-| Repository | Responsibility | Public entry point |
-| --- | --- | --- |
-| `hubuum/hubuum.github.io` | Ecosystem introduction, project cards, shared navigation, contribution and support links | `https://hubuum.github.io/` |
-| `hubuum/hubuum` | Server concepts, tutorials, administration, HTTP contracts, and versioned references | `https://hubuum.github.io/hubuum/` |
-| Each client, CLI, or frontend repository | Its own installation, examples, reference, compatibility, and releases | `https://hubuum.github.io/<repository>/` |
-| `hubuum/.github` | GitHub organization profile and shared community files | `https://github.com/hubuum` |
-
-The `.github/profile/README.md` file supplies the GitHub organization profile;
-it should introduce the ecosystem and link to the landing page. It does not
-control the root Pages site. See
-[GitHub's organization-profile instructions](https://docs.github.com/en/organizations/collaborating-with-groups-in-organizations/customizing-your-organizations-profile).
-
-The landing page contains an introduction, audience entry points, and five cards
-for Server, Frontend, CLI, Rust client, and Python client. Each card links to its
-documentation, source, and releases. All sites share typography, colors, ecosystem
-navigation, and a home link through pinned tooling in `.github`. Detailed content
-stays in the repository that owns it.
-
-The ecosystem landing page has no combined product version. Each project owns
-its own release selector, and stable entry links open that project's latest
-released documentation. The server keeps `/hubuum/vX.Y.Z/` and explicit
-`/hubuum/main/` editions. Client and server releases need not have matching
-numbers. Link to existing companion guides until their sites are published;
-do not advertise an unprovisioned Pages URL as a working documentation link.
-
-The organization-site repository and each companion site have their own Pages
-settings and publishing workflow. The server repository publishes `/hubuum/`;
-its deployments cannot overwrite the organization root or another project's site.
+The [ecosystem site](https://hubuum.github.io/) comes from `hubuum/hubuum.github.io`.
+This repository publishes the server site; companions publish their own sites.
+The GitHub organization profile in `.github` is separate from the Pages home.
+See the shared [repository ownership table](https://github.com/hubuum/.github/blob/main/docs-tooling/README.md#repository-ownership).
 
 ### Content ownership and shared navigation
 
-The server site links to the documentation maintained in the Rust client,
-Python client, CLI, and frontend repositories. It does not
-fetch another repository's moving default branch during a documentation build.
-
-For each companion project, maintain these entry points in
-[the ecosystem page](../ecosystem.md) and [the interface guide](../integrations/clients.md):
-
-1. Repository and stable documentation home.
-2. Installation and first-use guide.
-3. Command, UI, or language API reference.
-4. Release notes and tested server compatibility, including evidence where available.
-5. A backlink to the shared server concepts, API contracts, and operations guides.
-
-Each companion publishes its own Zensical site using shared tooling and its own
-navigation. This keeps independent releases independent and avoids copying
-examples into several repositories. The Python client retains its generated
-mkdocstrings API reference from the selected release's source.
-
-If unified cross-project search becomes a requirement, introduce a reviewed
-manifest of pinned companion revisions and an explicit import step, preserving
-source/edit links and licenses. Do not silently aggregate `main` branches or
-claim compatibility based only on the fact that documentation builds together.
+The server owns concepts, HTTP contracts, data fixtures, and operations.
+Companions own their installation, examples, API/command/UI references, and
+compatibility evidence. Link directly to the relevant guide in a matching
+released edition; never infer compatibility from equal version numbers.
 
 ## Changing the site tooling
 
-Update the shared Zensical version and multi-architecture digest together, then build
-the site and check navigation, search, both color schemes, and narrow-screen
-layout. GitHub Actions are pinned to immutable commit SHAs.
-
-Adopt shared changes by updating `.github/docs-tools.env` and both reusable
-workflow references to the same reviewed commit. The shared implementation and
-its tests are maintained in `docs-tooling/` in `hubuum/.github`;
-each project pins its own adoption point.
-
-When adding build inputs, update `scripts/classify-ci-changes.sh` and its
-regression tests so the documentation job runs for them. Do not suppress link
-validation to make a renamed heading or moved page pass; update the references.
-
-Shared stylesheet fixes apply to retained release editions without re-rendering
-their content. Released HTML, downloads, scripts, and source revisions stay
-unchanged; only the shared presentation CSS is refreshed.
+Follow the shared [validation and adoption procedure](https://github.com/hubuum/.github/blob/main/docs-tooling/README.md#validate-and-update).
+Keep `.github/docs-tools.env` and both reusable-workflow pins at the same SHA.
+When adding build inputs, check `scripts/classify-ci-changes.sh` and its tests.

@@ -113,15 +113,15 @@ the query. A selected class must itself be visible to the caller.
 
 `filter` is a recursive expression with one of five shapes:
 
-```json
+```text
 {"op":"and","args":[EXPRESSION, EXPRESSION]}
 ```
 
-```json
+```text
 {"op":"or","args":[EXPRESSION, EXPRESSION]}
 ```
 
-```json
+```text
 {"op":"not","arg":EXPRESSION}
 ```
 

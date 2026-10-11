@@ -103,7 +103,7 @@ relations. The [dataset guide](example-dataset.md) explains the complete model.
 ## Make a change
 
 Reading does not require write access. To try creating an additional object,
-ask for the atlas-operators role and follow the [name-addressed creation
+ask for membership in the atlas-operators group and follow the [name-addressed creation
 example](../name_addressing.md#creating-an-object-without-ids). It adds web-03
 to Server; the ten-object corpus remains the documented starting point.
 

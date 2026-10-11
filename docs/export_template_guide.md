@@ -582,22 +582,27 @@ Templated `related_objects` exports expose:
 - `source`
   - the hydrated root object
 
-The default relation depth is `2`. You can override it with:
+The default relation depth is `2`. Add this field to the export request to
+override it:
 
 ```json
-"relation_context": {
-  "depth": 1
+{
+  "relation_context": {
+    "depth": 1
+  }
 }
 ```
 
 ### `objects_in_class`
 
 Templated `objects_in_class` exports expose hydrated roots in `items` only when relation hydration
-is enabled explicitly:
+is enabled explicitly. Add this field to the export request:
 
 ```json
-"relation_context": {
-  "depth": 2
+{
+  "relation_context": {
+    "depth": 2
+  }
 }
 ```
 

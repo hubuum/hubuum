@@ -107,6 +107,9 @@ nav = [
     { "Integration test coverage" = "integration-coverage.md" },
   ] },
   { "Contributing" = [
+    { "Deployment verification" = "contributing/deployment-verification.md" },
+    { "Schema evolution internals" = "contributing/schema-evolution.md" },
+    { "Collection hierarchy internals" = "contributing/collection-hierarchy.md" },
     { "Contributor guide" = "contributing/index.md" },
     { "Development setup" = "development.md" },
     { "Testing" = "testing.md" },

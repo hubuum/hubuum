@@ -217,7 +217,7 @@ Worker behavior is configurable via:
 
 The canonical env-var reference lives in:
 
-- [Quick Start](quick_start.md)
+- [Configuration reference](quick_start.md)
 
 Defaults:
 

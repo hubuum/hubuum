@@ -183,7 +183,7 @@ Export objects related to a root object:
         "limit": 1
       }
     }
-  },
+  }
 }
 ```
 
@@ -415,7 +415,7 @@ enable `related.*` and `reachable.*`.
 - successful stored outputs get an `output_expires_at` timestamp at completion time
 - background task workers clean up expired stored outputs and append a `cleanup` task event
 
-Relevant env vars are documented centrally in [Quick Start](quick_start.md):
+Relevant env vars are documented centrally in [Configuration reference](quick_start.md):
 
 - `HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS`
 - `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
