@@ -21,6 +21,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   nonmatching behavior under negation. Ordinary `LIKE` filters require explicit
   substring wildcards, while JSON `LIKE` retains its substring behavior. Stored
   JSON timestamps containing comma-separated values do not match date filters.
+  Timezone-bearing SQL timestamps compare in UTC, and numeric filters preserve
+  PostgreSQL's precision and scale limits, infinities, and `NaN` behavior.
 
 ## [0.0.18] - 2026-10-06
 

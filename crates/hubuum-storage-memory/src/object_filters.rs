@@ -3,8 +3,8 @@
 use std::cmp::Ordering;
 use std::str::FromStr;
 
-use bigdecimal::BigDecimal;
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use bigdecimal::{BigDecimal, Zero};
+use chrono::{DateTime, NaiveDateTime};
 use hubuum_query::{
     FilterField, JsonFieldPath, Operator, ParsedQueryParam, QueryFilters, QueryScalarType,
     infer_query_scalar_type, parse_boolean_value, parse_datetime_list, parse_integer_list,
@@ -27,12 +27,52 @@ struct ObjectFilter {
 enum Operand {
     Text(String),
     Pattern(Regex),
-    Numbers(Vec<BigDecimal>),
+    Numbers(Vec<NumericValue>),
     Dates(Vec<NaiveDateTime>),
     Boolean(bool),
     Items(Vec<String>),
     Network(IpNet),
     Null,
+}
+
+// PostgreSQL orders NaN above infinity, and both above every finite number.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum NumericValue {
+    NegativeInfinity,
+    Finite(BigDecimal),
+    Infinity,
+    NaN,
+}
+
+impl NumericValue {
+    fn integer(value: impl Into<BigDecimal>) -> Self {
+        Self::Finite(value.into())
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        match value.to_ascii_lowercase().as_str() {
+            "nan" => return Some(Self::NaN),
+            "inf" | "+inf" | "infinity" | "+infinity" => return Some(Self::Infinity),
+            "-inf" | "-infinity" => return Some(Self::NegativeInfinity),
+            _ => {}
+        }
+        if let Some((_, exponent)) = value.split_once(['e', 'E']) {
+            // PostgreSQL bounds the input exponent even for a zero coefficient.
+            if exponent.parse::<i64>().ok()?.unsigned_abs() > (i32::MAX / 2) as u64 {
+                return None;
+            }
+        }
+        let value = BigDecimal::from_str(value).ok()?;
+        let scale = value.fractional_digit_count();
+        // Check PostgreSQL's unconstrained numeric limits without expanding an
+        // exponent into an arbitrarily large string or rounding excess scale.
+        let integer_digits = i128::from(value.decimal_digit_count()) - i128::from(scale);
+        if scale > 16_383 || (!value.is_zero() && integer_digits > 131_072) {
+            return None;
+        }
+        Some(Self::Finite(value))
+    }
 }
 
 impl ObjectFilters {
@@ -96,7 +136,7 @@ impl ObjectFilter {
         let operand = match operator {
             Operator::IsNull => Operand::Null,
             Operator::HasKey => Operand::Text(value.to_string()),
-            Operator::ArrayLength => Operand::Numbers(vec![BigDecimal::from(
+            Operator::ArrayLength => Operand::Numbers(vec![NumericValue::integer(
                 value.parse::<i32>().map_err(invalid)?,
             )]),
             Operator::In if filter.field == FilterField::Revision => Operand::Numbers(
@@ -106,14 +146,14 @@ impl ObjectFilter {
                 )
                 .map_err(invalid)?
                 .into_iter()
-                .map(BigDecimal::from)
+                .map(NumericValue::integer)
                 .collect(),
             ),
             Operator::In if scalar == Some(QueryScalarType::Numeric) => Operand::Numbers(
                 parse_integer_list(value)
                     .map_err(invalid)?
                     .into_iter()
-                    .map(BigDecimal::from)
+                    .map(NumericValue::integer)
                     .collect(),
             ),
             Operator::In if scalar == Some(QueryScalarType::Date) => {
@@ -135,13 +175,13 @@ impl ObjectFilter {
                         )
                         .map_err(invalid)?
                         .into_iter()
-                        .map(BigDecimal::from)
+                        .map(NumericValue::integer)
                         .collect()
                     } else {
                         parse_integer_list(value)
                             .map_err(invalid)?
                             .into_iter()
-                            .map(BigDecimal::from)
+                            .map(NumericValue::integer)
                             .collect()
                     };
                     Operand::Numbers(numbers)
@@ -272,11 +312,11 @@ impl ObjectFilter {
                 let Some(array) = value.as_ref().and_then(Value::as_array) else {
                     return false;
                 };
-                Some(expected[0] == array.len() as u64)
+                Some(expected[0] == NumericValue::integer(array.len() as u64))
             }
             Operand::Numbers(expected) => text
                 .as_deref()
-                .and_then(|value| BigDecimal::from_str(value.trim()).ok())
+                .and_then(NumericValue::parse)
                 .map(|actual| compare(&actual, expected, &self.operator)),
             Operand::Dates(expected) => text
                 .as_deref()
@@ -356,6 +396,7 @@ fn json_text(value: &Value) -> Option<String> {
 }
 
 fn parse_date(value: &str) -> Option<NaiveDateTime> {
+    let value = value.trim();
     parse_datetime_list(value)
         .ok()
         .and_then(|values| match values.as_slice() {
@@ -363,10 +404,12 @@ fn parse_date(value: &str) -> Option<NaiveDateTime> {
             _ => None,
         })
         .or_else(|| {
-            NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
-                .ok()
-                .map(|value| Utc.from_utc_datetime(&value).naive_utc())
+            ["%Y-%m-%d %H:%M:%S%.f %#z", "%Y-%m-%dT%H:%M:%S%.f %#z"]
+                .iter()
+                .find_map(|format| DateTime::parse_from_str(value, format).ok())
+                .map(|value| value.naive_utc())
         })
+        .or_else(|| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok())
 }
 
 fn parse_stored_boolean(value: &str) -> Option<bool> {
