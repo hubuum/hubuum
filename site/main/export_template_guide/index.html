@@ -343,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../contributing/" class="md-tabs__link">
+        <a href="../contributing/deployment-verification/" class="md-tabs__link">
           
   
   Contributing
@@ -3314,6 +3314,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../contributing/deployment-verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment verification
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/schema-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema evolution internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/collection-hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collection hierarchy internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/" class="md-nav__link">
         
   
@@ -3462,10 +3543,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
             
   
   
@@ -3483,8 +3564,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3630,10 +3711,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_10" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_10" id="__nav_6_10_label" tabindex="0">
             
   
   
@@ -3651,8 +3732,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_10_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_10">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3906,10 +3987,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="0">
             
   
   
@@ -3927,8 +4008,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_11">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4209,10 +4290,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
         
           
-          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="0">
             
   
   
@@ -4230,8 +4311,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_9">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -5244,17 +5325,22 @@ reachable alias bucket.</p>
 <li><code>source</code></li>
 <li>the hydrated root object</li>
 </ul>
-<p>The default relation depth is <code>2</code>. You can override it with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
-<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="p">}</span>
+<p>The default relation depth is <code>2</code>. Add this field to the export request to
+override it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="p">{</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="p">}</span>
 </code></pre></div>
 <h3 id="objects_in_class"><code>objects_in_class</code><a class="headerlink" href="#objects_in_class" title="Permanent link">&para;</a></h3>
 <p>Templated <code>objects_in_class</code> exports expose hydrated roots in <code>items</code> only when relation hydration
-is enabled explicitly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="p">}</span>
+is enabled explicitly. Add this field to the export request:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="p">{</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>Without <code>relation_context</code>, <code>items</code> stays a plain list of objects without <code>related.*</code> or
 <code>reachable.*</code>.</p>

@@ -343,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../contributing/" class="md-tabs__link">
+        <a href="../contributing/deployment-verification/" class="md-tabs__link">
           
   
   Contributing
@@ -3187,6 +3187,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../contributing/deployment-verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment verification
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/schema-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema evolution internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/collection-hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collection hierarchy internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/" class="md-nav__link">
         
   
@@ -3335,10 +3416,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
             
   
   
@@ -3356,8 +3437,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3503,10 +3584,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_10" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_10" id="__nav_6_10_label" tabindex="0">
             
   
   
@@ -3524,8 +3605,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_10_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_10">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3779,10 +3860,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="0">
             
   
   
@@ -3800,8 +3881,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_11">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4082,10 +4163,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
         
           
-          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="0">
             
   
   
@@ -4103,8 +4184,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_9">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4571,7 +4652,7 @@ health probes. Scrape every worker directly so worker counters and histograms
 are not hidden behind an API load balancer. Use process/container liveness for
 worker replicas rather than <code>/healthz</code>; the image's built-in Docker health check
 accounts for the worker role. API replicas expose <code>/healthz</code> and <code>/readyz</code> as
-documented in <a href="../quick_start/#health-probes">Quick Start</a>. See
+documented in <a href="../quick_start/#health-probes">Configuration reference</a>. See
 <a href="../metrics/#scrape-each-process-directly">Runtime Metrics</a> for aggregation
 semantics.</p>
 <p>Worker-only processes require at least one configured background worker and
@@ -4582,6 +4663,13 @@ starts background workers.</p>
 <p>The <code>all</code> role is the default, so existing single-instance deployments continue
 to behave as before.</p>
 <h2 id="one-shot-migrations">One-Shot Migrations<a class="headerlink" href="#one-shot-migrations" title="Permanent link">&para;</a></h2>
+<p>For <strong>v0.0.17 → v0.0.18</strong>, stop all API, worker, and restore-executor writers,
+take a PostgreSQL snapshot, apply the collection-event-sinks migration and
+reconcile database grants, then deploy matching binaries. This is an <strong>offline</strong>
+upgrade; keeping an old API replica online is unsupported. Binary-only rollback
+is unsupported. Follow the <a href="../deployment/#upgrade-from-v0017-to-v0018">release upgrade procedure</a>
+for recovery and backup-format requirements. The v0.0.16 → v0.0.17 transition
+also requires an offline upgrade.</p>
 <p>Every server container role checks schema readiness without applying
 migrations. Run exactly one migration job before rolling out the new
 application version. The production image contains <code>hubuum-admin</code> and embedded
@@ -4613,28 +4701,12 @@ the migration Secret out of API and worker Deployments.</p>
 <a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">                  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hubuum-migration-database</span>
 <a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">                  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">database-url</span>
 </code></pre></div>
-<p>Wait for the job to complete successfully before updating API or worker
-replicas. For the task-lease and task-provenance migrations, use this upgrade
-order:</p>
-<ol>
-<li>Stop old-version worker replicas, allowing their bounded graceful shutdown
-   to finish or fail active tasks.</li>
-<li>Run the one-shot migration.</li>
-<li>Deploy new worker and API replicas.</li>
-</ol>
-<p>For the lease migration, the drain prevents a new worker from treating a task
-owned by an old, lease-unaware worker as abandoned. For the provenance
-migration, it prevents an old worker from committing temporal mutations
-without the root task context that only the new worker propagates. Old API
-replicas may remain online during the migration: the expanded schema derives
-task initiators from <code>submitted_by</code> and treats their legacy <code>hubuum.actor_id</code>
-session setting as direct-user attribution.</p>
-<p>For the resource-revision migration, stop old worker replicas before running
-the migration, but an adjacent old API replica may continue serving ordinary
-requests. CI certifies old and candidate API reads and writes against the
-migrated schema before an application rollback smoke test. Backup v3 and import
-v1 are still deliberately rejected by the candidate, so quiesce backup,
-restore, and import operations until every replica is on the new version.</p>
+<p>Wait for the job to complete successfully before starting candidate API or
+worker replicas. Drain workers before every migration. Keep older API replicas
+online only when the candidate reports a rolling-compatible migration and the
+release's upgrade instructions explicitly permit it. Historical task-lease,
+provenance, and resource-revision migrations allowed particular overlaps; that
+is not a general guarantee for later releases.</p>
 <p>The <code>api</code> and <code>worker</code> entrypoints wait until the database records the latest
 migration required by the binary. API <code>/readyz</code> performs the same schema check.
 This prevents a missed or incomplete migration job from making a replica appear
@@ -4689,7 +4761,8 @@ the closed, transaction-protected restore operation.</p>
 <h2 id="kubernetes-and-helm-http-availability">Kubernetes And Helm HTTP Availability<a class="headerlink" href="#kubernetes-and-helm-http-availability" title="Permanent link">&para;</a></h2>
 <p>This repository does not currently publish a Helm chart. Direct Kubernetes
 manifests and externally maintained charts should implement the following
-contract for application upgrades without HTTP downtime:</p>
+contract for rolling-compatible application upgrades. Offline migrations still
+require the maintenance procedure above:</p>
 <ul>
 <li>Run API and worker processes in separate Deployments with the <code>api</code> and
   <code>worker</code> runtime roles. Do not put <code>all</code>-role pods behind the API Service.</li>

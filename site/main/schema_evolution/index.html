@@ -343,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../contributing/" class="md-tabs__link">
+        <a href="../contributing/deployment-verification/" class="md-tabs__link">
           
   
   Contributing
@@ -3193,6 +3193,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../contributing/deployment-verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment verification
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/schema-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema evolution internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/collection-hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collection hierarchy internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/" class="md-nav__link">
         
   
@@ -3341,10 +3422,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
             
   
   
@@ -3362,8 +3443,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3509,10 +3590,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_10" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_10" id="__nav_6_10_label" tabindex="0">
             
   
   
@@ -3530,8 +3611,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_10_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_10">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3785,10 +3866,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="0">
             
   
   
@@ -3806,8 +3887,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_11">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4088,10 +4169,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
         
           
-          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="0">
             
   
   
@@ -4109,8 +4190,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_9">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4984,45 +5065,11 @@ artifact conversion is provided. Install matching server, administrator, and
 restore-executor binaries, drain old workers, and run migrations before starting
 new processes. See <a href="../backup-restore/">backup and restore</a>.</p>
 <h2 id="storage-architecture-and-dependencies">Storage architecture and dependencies<a class="headerlink" href="#storage-architecture-and-dependencies" title="Permanent link">&para;</a></h2>
-<p><code>SchemaEvolutionStorage</code> is required by <code>WorkflowStorage</code>. Domain identities and
-compiled proof live in <code>hubuum-domain</code>; private-fielded requests, checkpoints,
-and evidence live in <code>hubuum-storage-core</code>. Application services use the opaque
-observed storage handle. PostgreSQL SQL, locking, triggers, and adapter errors
-remain in <code>hubuum-storage-postgres</code>; memory implements the complete contract.</p>
-<p>Activation invalidates shared computed-field evaluation generations and queues
-existing fenced rebuild work. <code>SchemaReference</code> is the reusable dependency
-identity for future indexes and effective/inherited schemas. This change does
-not add declarative indexes, inheritance, or automatic JSON transformations.</p>
-<p>The coordinated SDK crates move from 0.2 to 0.3 because the mandatory
-capability, task/event vocabularies, import DTO, and backup sections change.
-Adapters must implement every required schema method, including the separate
-<code>get_schema_work_report</code> projection with its mandatory <code>StorageSchemaReportBudget</code>,
-handle <code>schema_validation</code>,
-map the new event entities and logical sections, and preserve the schema
-transaction and lease semantics. See the storage boundary inventories.</p>
+<p>See the <a href="../contributing/schema-evolution/#storage-architecture-and-dependencies">implementation guide</a>
+for storage capabilities, adapter requirements, and SDK migration details.</p>
 <h2 id="verification-and-performance">Verification and performance<a class="headerlink" href="#verification-and-performance" title="Permanent link">&para;</a></h2>
-<p>Shared backend tests cover policies, atomic evidence and imports, redaction,
-authorization, concurrent activation, cancellation, recovery, and batch bounds.
-Native PostgreSQL tests retain direct constraint violations, an object write
-between inspection and commit, and a 128-object workload with 256 KiB JSON rows.
-That workload asserts constant activation query count, two checkouts per batch,
-and the aggregate byte bound. Ordinary backup/restore conformance exercises the
-new sections with both adapters.</p>
-<p>Impact regressions scan 8,192 mismatches across one or 256 reasons while bounding
-serialized checkpoint size. PostgreSQL probes measure query counts and rendered
-SQL/bind bytes across 4 and 32 default batches, rejecting accumulated finding
-reads or growing checkpoint writes. Native fault tests verify atomic rollback
-and consistent reports while another batch commits.</p>
-<p>Run <code>cargo bench --bench schema_validation_criterion</code> for deterministic compiled
-validation and budget-rejection throughput without database or global config.
-Separate groups cover accepted 16/256/1024 KiB payloads and rejected 2/3/4 MiB
-payloads, each with 128 integer samples. Fixtures check their expected outcome
-before timing. Batches contain at most 64 documents and 8 MiB of serialized JSON;
-reported throughput counts documents inspected. Admission also charges actual
-JSON escaping with conservative punctuation estimates and schema complexity, so a serialized object below the
-worker's byte limit can still exceed the validation budget.
-The native storage regression measures the database behavior; benchmark numbers
-are hardware-dependent and do not establish a worst-case lock or CPU deadline.</p>
+<p>See the <a href="../contributing/schema-evolution/#verification-and-performance">verification evidence and benchmarks</a>
+for conformance coverage and resource-budget measurements.</p>
 
 
 

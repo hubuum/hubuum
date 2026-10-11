@@ -343,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../contributing/" class="md-tabs__link">
+        <a href="../contributing/deployment-verification/" class="md-tabs__link">
           
   
   Contributing
@@ -3132,6 +3132,87 @@
   
   
     <li class="md-nav__item">
+      <a href="../contributing/deployment-verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment verification
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/schema-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema evolution internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/collection-hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collection hierarchy internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/" class="md-nav__link">
         
   
@@ -3280,10 +3361,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
         
           
-          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
             
   
   
@@ -3301,8 +3382,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_6">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_9">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3448,10 +3529,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_10" >
         
           
-          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_10" id="__nav_6_10_label" tabindex="0">
             
   
   
@@ -3469,8 +3550,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_7">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_10_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_10">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3724,10 +3805,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
         
           
-          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="0">
             
   
   
@@ -3745,8 +3826,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_8">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_11">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4027,10 +4108,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
         
           
-          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="0">
             
   
   
@@ -4048,8 +4129,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_9">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4505,36 +4586,8 @@ row, depth, and an <code>inherited</code> boolean.</p>
 <p>The <code>has_permissions</code> endpoint returns groups that have the requested
 permission directly on the collection or through an ancestor collection.</p>
 <h2 id="developer-notes">Developer Notes<a class="headerlink" href="#developer-notes" title="Permanent link">&para;</a></h2>
-<p>The database stores hierarchy in two places:</p>
-<ul>
-<li><code>collections.parent_collection_id</code> stores the direct tree edge</li>
-<li><code>collection_closure</code> stores every ancestor-to-descendant path, including the
-  self row at depth <code>0</code></li>
-</ul>
-<p>Authorization joins permission rows through <code>collection_closure</code>: a permission
-row on an ancestor is matched to the descendant collection being checked. The
-authorization path preserves the existing combined-permission invariant by
-filtering a single permission row for all requested flags and then counting the
-distinct target descendants covered by matching rows.</p>
-<p>Create and import paths must call the shared collection insert helper so the
-closure table receives the self row and inherited ancestor rows in the same
-transaction as the collection row. Move operations update <code>parent_collection_id</code>
-and rebuild only the closure rows that connect the moved subtree to ancestors
-outside that subtree.</p>
-<p>The hierarchy implementation intentionally remains inside the PostgreSQL
-storage adapter rather than the root application or backend-neutral contract.
-It depends on Diesel table definitions, PostgreSQL-specific closure-table SQL,
-temporal history, and permission semantics. Other storage adapters must preserve
-the same observable hierarchy contract but may use a different persistence
-representation.</p>
-<p>Performance-sensitive queries rely on these indexes:</p>
-<ul>
-<li><code>permissions_group_collection_idx</code> for principal/group permission lookups</li>
-<li><code>collections_parent_idx</code> for child listings and delete checks</li>
-<li><code>collection_closure_descendant_ancestor_depth_idx</code> for effective permission
-  explanations and target-descendant authorization checks</li>
-<li><code>collection_closure_ancestor_depth_idx</code> for subtree scans and move rewrites</li>
-</ul>
+<p>Storage representation, transaction rules, and indexes are documented in the
+<a href="../contributing/collection-hierarchy/">collection hierarchy implementation guide</a>.</p>
 
 
 
