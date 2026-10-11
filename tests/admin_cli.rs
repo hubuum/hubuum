@@ -51,6 +51,26 @@ fn assert_command_succeeded(output: &Output) {
     );
 }
 
+#[test]
+fn query_usage_report_keeps_diagnostics_out_of_json_stdout() {
+    let output = admin_command(&database_url())
+        .args([
+            "--reconcile-query-usage",
+            "--query-usage-class",
+            "2147483647",
+            "--json",
+            "--log-level",
+            "info",
+        ])
+        .output()
+        .unwrap();
+    assert_command_succeeded(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("stdout must contain exactly one JSON report");
+    assert!(report["resources"].is_array());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("query usage executor pass finished"));
+}
+
 struct SecretDirectory(PathBuf);
 
 impl SecretDirectory {

@@ -5,6 +5,7 @@ use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::FormattedFields;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{
@@ -21,10 +22,25 @@ pub fn init_json_logging(log_level: &str) -> Result<(), String> {
     init_json_logging_with_tracer(log_level, None)
 }
 
+pub(crate) fn init_json_logging_to_stderr(log_level: &str) -> Result<(), String> {
+    init_json_logging_with_writer(log_level, None, std::io::stderr)
+}
+
 pub fn init_json_logging_with_tracer(
     log_level: &str,
     tracer: Option<opentelemetry_sdk::trace::SdkTracer>,
 ) -> Result<(), String> {
+    init_json_logging_with_writer(log_level, tracer, std::io::stdout)
+}
+
+fn init_json_logging_with_writer<W>(
+    log_level: &str,
+    tracer: Option<opentelemetry_sdk::trace::SdkTracer>,
+    writer: W,
+) -> Result<(), String>
+where
+    W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
+{
     let filter = EnvFilter::try_new(log_level)
         .map_err(|err| format!("Error parsing log level '{log_level}': {err}"))?;
     let telemetry_layer = tracer.map(|tracer| {
@@ -45,6 +61,7 @@ pub fn init_json_logging_with_tracer(
             tracing_subscriber::fmt::layer()
                 .json()
                 .event_format(HubuumLoggingFormat)
+                .with_writer(writer)
                 .with_filter(filter),
         )
         .with(telemetry_layer)

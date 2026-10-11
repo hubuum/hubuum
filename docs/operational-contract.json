@@ -10161,6 +10161,57 @@
           "requires": []
         },
         {
+          "id": "reconcile_query_usage",
+          "long": "reconcile-query-usage",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup"
+          ],
+          "requires": []
+        },
+        {
+          "id": "query_usage_class",
+          "long": "query-usage-class",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "reconcile_query_usage"
+          ]
+        },
+        {
           "id": "backup",
           "long": "backup",
           "short": null,

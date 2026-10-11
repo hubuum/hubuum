@@ -14,6 +14,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   activity from either endpoint, including deleted relations. Existing requests
   retain their entity-only results, and visibility and snapshot redaction still
   apply.
+- A separate privileged PostgreSQL query usage executor prepares bounded shared
+  hash expression indexes for text equality declarations, tracks native ownership,
+  and retries preparation and cleanup across restarts. Administrative reviews
+  expose ownership and progress; independently managed resources are preserved.
 - Opt-in, bounded, value-free query workload observations and administrator-only
   PostgreSQL query usage reviews. Reviews distinguish unavailable analysis from
   insufficient evidence, report native coverage, and suggest undeclared text
@@ -50,6 +54,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   cancelled operations leave no observation. Direct structured-search predicates
   are observed consistently for local and external authorization.
 
+- PostgreSQL query usage cleanup locks and rechecks native index ownership before
+  dropping a resource, preserving independently managed replacements during
+  concurrent index changes.
 - Post-restore backup verification accepts the empty query usage section added
   when restoring formats 6, 7, and 8, while still detecting unexpected declarations.
 - Memory storage applies class, collection, and direct JSON object filters before
