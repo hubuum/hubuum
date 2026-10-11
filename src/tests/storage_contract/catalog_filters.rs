@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 #[case("json_data__not_equals=value=router", json!("switch"), json!("router"))]
 #[case("json_data__iequals=value=ROUTER", json!("router"), json!("switch"))]
 #[case("json_data__contains=value=out", json!("router"), json!("switch"))]
+#[case("json_data__like=value=out", json!("router"), json!("switch"))]
+#[case("json_data__not_like=value=out", json!("switch"), json!("router"))]
 #[case("json_data__startswith=value=r%t", json!("router"), json!("switch"))]
 #[case("json_data__regex=value=^r.*r$", json!("router"), json!("switch"))]
 #[case("json_data=value=42", json!(42), json!(43))]
@@ -22,6 +24,9 @@ use serde_json::{Value, json};
 #[case("json_data=value=true", json!("yes"), json!("invalid"))]
 #[case("json_data__not_equals=value=true", json!(false), Value::Null)]
 #[case("json_data=value=2026-01-01", json!("2026-01-01"), json!("2026-01-02"))]
+#[case("json_data=value=2026-01-01", json!("2026-01-01"), json!("2026-01-01,2026-01-02"))]
+#[case("json_data__not_equals=value=2026-01-01", json!("2026-01-02"), json!("2026-01-02,2026-01-03"))]
+#[case("json_data=value=2026-01-01", json!("2026-01-01 00:00:00"), json!("2026-01-02 00:00:00"))]
 #[case("json_data__gt=value=2026-01-01", json!("2026-01-02T00:00:00Z"), json!("invalid"))]
 #[case("json_data__is_null=value", Value::Null, json!(false))]
 #[case("json_data__not_is_null=value", json!(false), Value::Null)]
@@ -67,6 +72,56 @@ async fn direct_json_filters_agree_across_backends(
             rows.iter().map(StorageObject::id).collect::<Vec<_>>(),
             expected,
             "{}: {query}",
+            backend.descriptor().kind().as_str()
+        );
+        delete_backend_object_fixture(&backend, fixture).await;
+    }
+}
+
+#[rstest]
+#[case("name", "like", "object", 0)]
+#[case("name", "like", "%object%", 2)]
+#[case("name", "not_like", "object", 2)]
+#[case("description", "like", "compatibility", 0)]
+#[case("description", "like", "%compatibility%", 2)]
+#[case("description", "not_like", "compatibility", 2)]
+#[actix_web::test]
+async fn ordinary_like_filters_require_explicit_wildcards(
+    #[case] field: &str,
+    #[case] operator: &str,
+    #[case] pattern: &str,
+    #[case] expected: usize,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_object_fixture(
+            &backend,
+            &prefix("ordinary_like"),
+            vec![json!({}), json!({})],
+        )
+        .await;
+        let options = parse_query_parameter(&format!(
+            "class_id={}&{field}__{operator}={pattern}",
+            fixture.class.id().id()
+        ))
+        .unwrap();
+        let (rows, _) = backend
+            .list_objects(StorageCatalogListQuery::new(
+                options,
+                StorageVisibility::new(
+                    principal_id(i32::MAX),
+                    true,
+                    None::<Vec<StorageAuthorizationPermission>>,
+                    None,
+                ),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            rows.len(),
+            expected,
+            "{}",
             backend.descriptor().kind().as_str()
         );
         delete_backend_object_fixture(&backend, fixture).await;

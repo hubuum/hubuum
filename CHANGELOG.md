@@ -18,7 +18,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Memory storage applies class, collection, and direct JSON object filters before
   counting and limiting results, including ordinary lists, computed-object lists,
   and aggregates. Missing values and failed scalar conversions retain their
-  nonmatching behavior under negation.
+  nonmatching behavior under negation. Ordinary `LIKE` filters require explicit
+  substring wildcards, while JSON `LIKE` retains its substring behavior. Stored
+  JSON timestamps containing comma-separated values do not match date filters.
 
 ## [0.0.18] - 2026-10-06
 

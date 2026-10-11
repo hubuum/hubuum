@@ -55,6 +55,15 @@ Example:
 - `in`
 - `is_null`
 
+Regex syntax and matching behavior currently depend on the storage backend.
+PostgreSQL uses its [advanced regular expressions](https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP),
+while direct object filters in memory use the Rust [`regex` crate](https://docs.rs/regex/latest/regex/#syntax).
+Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
+`\yrouter\y` for word boundaries, while memory rejects `\y`; PostgreSQL's default
+`.` also matches a newline, while memory's default does not. Keep backend-specific
+patterns with their backend until a shared regex contract is defined
+([follow-up #458](https://github.com/hubuum/hubuum/issues/458)).
+
 ### Numeric and date fields
 
 - `equals`

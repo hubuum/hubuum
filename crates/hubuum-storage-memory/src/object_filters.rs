@@ -72,6 +72,11 @@ impl ObjectFilter {
         } else {
             (None, filter.value.as_str())
         };
+        // PostgreSQL's JSON LIKE filter adds substring wildcards; ordinary
+        // string fields apply the caller's LIKE pattern as written.
+        if path.is_some() && operator == Operator::Like {
+            operator = Operator::Contains;
+        }
         let scalar = match filter.field {
             FilterField::JsonData => infer_query_scalar_type(value, operator.clone()),
             FilterField::Id
@@ -353,7 +358,10 @@ fn json_text(value: &Value) -> Option<String> {
 fn parse_date(value: &str) -> Option<NaiveDateTime> {
     parse_datetime_list(value)
         .ok()
-        .and_then(|values| values.first().copied())
+        .and_then(|values| match values.as_slice() {
+            [value] => Some(*value),
+            _ => None,
+        })
         .or_else(|| {
             NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
                 .ok()
@@ -405,11 +413,7 @@ fn like_pattern(value: &str, operator: &Operator) -> Result<Regex, StorageError>
     let mut pattern = String::from(if insensitive { "(?is)\\A" } else { "(?s)\\A" });
     if matches!(
         operator,
-        Operator::Contains
-            | Operator::IContains
-            | Operator::Like
-            | Operator::EndsWith
-            | Operator::IEndsWith
+        Operator::Contains | Operator::IContains | Operator::EndsWith | Operator::IEndsWith
     ) {
         pattern.push_str(".*");
     }
@@ -429,11 +433,7 @@ fn like_pattern(value: &str, operator: &Operator) -> Result<Regex, StorageError>
     }
     if matches!(
         operator,
-        Operator::Contains
-            | Operator::IContains
-            | Operator::Like
-            | Operator::StartsWith
-            | Operator::IStartsWith
+        Operator::Contains | Operator::IContains | Operator::StartsWith | Operator::IStartsWith
     ) {
         pattern.push_str(".*");
     }
