@@ -77,6 +77,18 @@ macro_rules! option {
 /// Variables consumed by `AppConfig` through clap.
 pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_SCHEMA_MAX_BYTES", Schemas),
+    option!("HUBUUM_QUERY_OBSERVATIONS_ENABLED", Operations),
+    option!("HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY", Operations),
+    option!("HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS", Operations),
+    option!(
+        "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS",
+        Operations
+    ),
+    option!("HUBUUM_QUERY_OBSERVATIONS_RETENTION_SECONDS", Operations),
+    option!(
+        "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY",
+        Operations
+    ),
     option!("HUBUUM_SCHEMA_MAX_EXPANDED_WORK", Schemas),
     option!("HUBUUM_SCHEMA_MAX_INSTANCE_BYTES", Schemas),
     option!("HUBUUM_SCHEMA_MAX_INSTANCE_WORK", Schemas),
@@ -308,6 +320,48 @@ macro_rules! configuration_bound {
 /// Runtime validation and the generated operational contract consume these
 /// same entries, including the accessor for the value being validated.
 pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY",
+        minimum: Some(1),
+        maximum: Some(1000000),
+        value: |config| config.query_observations.query_observations_sample_every as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS",
+        minimum: Some(1),
+        maximum: Some(16384),
+        value: |config| config.query_observations.query_observations_max_patterns as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS",
+        minimum: Some(1),
+        maximum: Some(128),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_patterns_per_class as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_RETENTION_SECONDS",
+        minimum: Some(1),
+        maximum: Some(604800),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_retention_seconds as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY",
+        minimum: Some(1),
+        maximum: Some(32),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_predicates_per_query as i128
+        },
+    },
     ConfigurationBound {
         name: "HUBUUM_SCHEMA_MAX_BYTES",
         minimum: Some(1024),

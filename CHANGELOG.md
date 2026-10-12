@@ -14,6 +14,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   activity from either endpoint, including deleted relations. Existing requests
   retain their entity-only results, and visibility and snapshot redaction still
   apply.
+- Opt-in, bounded, value-free query workload observations and administrator-only
+  PostgreSQL query usage reviews. Reviews distinguish unavailable analysis from
+  insufficient evidence, report native coverage, and suggest undeclared text
+  equality patterns without automatically adopting them.
 - Class-scoped advisory query usage declarations with validated paths and scalar
   operations, revision-checked management, audit provenance, and schema
   compatibility assessments in PostgreSQL and memory storage. Declarations do
@@ -41,6 +45,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Memory storage now includes audit events visible through related collections
   and redacts their snapshots, matching PostgreSQL audit visibility.
+- Query workload observations sample each complete logical query once, including
+  external authorization batches. Timing includes authorization, and failed or
+  cancelled operations leave no observation. Direct structured-search predicates
+  are observed consistently for local and external authorization.
+
 - Post-restore backup verification accepts the empty query usage section added
   when restoring formats 6, 7, and 8, while still detecting unexpected declarations.
 - Memory storage applies class, collection, and direct JSON object filters before

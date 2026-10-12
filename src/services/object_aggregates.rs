@@ -46,68 +46,73 @@ pub(crate) async fn aggregate_objects(
         class_name,
         collection_id,
     } = target.into_parts();
-    let ObjectAggregateAuthorizationParts {
-        required_permissions,
-        token_scopes,
-    } = authorization.into_parts();
-    let response_spec = spec.clone();
-    let storage_spec = StorageObjectAggregateSpec::try_new(
-        spec.dimensions()
-            .iter()
-            .map(dimension_to_storage)
-            .collect::<Result<Vec<_>, _>>()?,
-        spec.measures()
-            .iter()
-            .map(measure_to_storage)
-            .collect::<Result<Vec<_>, _>>()?,
-        sort_to_storage(spec.sort()),
-    )?;
-    let page_limit = effective_page_limit(&query_options)?;
-    let permission_backend = match backend.authorization_mode() {
-        AuthorizationMode::Delegated(permission_backend)
-            if !permission_backend.supports_storage_visibility_filtering() =>
-        {
-            Some(permission_backend)
-        }
-        AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => None,
-    };
-    let is_admin = AuthzSubject::is_admin(principal, backend).await?;
-    let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
-    let query = StorageObjectAggregateQuery::builder(
-        StorageObjectAggregateTarget::new(class_id, class_name, collection_id),
-        query_options,
-        storage_spec,
-        visibility,
-    )
-    .personal_owner_id(personal_owner_id.map(PrincipalId::from))
-    .required_permissions(
-        required_permissions
-            .iter()
-            .copied()
-            .map(permission_to_storage),
-    )
-    .page_limit(page_limit)
-    .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
-    .try_build()?;
-
-    let page = if let Some(permission_backend) = permission_backend {
-        let principal = PrincipalRef::load(backend, principal).await?;
-        let authorizer = DelegatedObjectAggregateAuthorizer {
-            backend: permission_backend,
-            principal,
-        };
-        storage_handle(backend)
-            .aggregate_objects(
-                query,
-                StorageObjectAggregateAuthorization::Delegated(&authorizer),
+    let observed_query = query_options.clone();
+    storage_handle(backend)
+        .observe_query(&observed_query, Some(class_id), async {
+            let ObjectAggregateAuthorizationParts {
+                required_permissions,
+                token_scopes,
+            } = authorization.into_parts();
+            let response_spec = spec.clone();
+            let storage_spec = StorageObjectAggregateSpec::try_new(
+                spec.dimensions()
+                    .iter()
+                    .map(dimension_to_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                spec.measures()
+                    .iter()
+                    .map(measure_to_storage)
+                    .collect::<Result<Vec<_>, _>>()?,
+                sort_to_storage(spec.sort()),
+            )?;
+            let page_limit = effective_page_limit(&query_options)?;
+            let permission_backend = match backend.authorization_mode() {
+                AuthorizationMode::Delegated(permission_backend)
+                    if !permission_backend.supports_storage_visibility_filtering() =>
+                {
+                    Some(permission_backend)
+                }
+                AuthorizationMode::LocalStorage | AuthorizationMode::Delegated(_) => None,
+            };
+            let is_admin = AuthzSubject::is_admin(principal, backend).await?;
+            let visibility = visibility(principal.principal_id(), is_admin, token_scopes.as_ref())?;
+            let query = StorageObjectAggregateQuery::builder(
+                StorageObjectAggregateTarget::new(class_id, class_name, collection_id),
+                query_options,
+                storage_spec,
+                visibility,
             )
-            .await?
-    } else {
-        storage_handle(backend)
-            .aggregate_objects(query, StorageObjectAggregateAuthorization::Storage)
-            .await?
-    };
-    page_from_storage(page, &response_spec)
+            .personal_owner_id(personal_owner_id.map(PrincipalId::from))
+            .required_permissions(
+                required_permissions
+                    .iter()
+                    .copied()
+                    .map(permission_to_storage),
+            )
+            .page_limit(page_limit)
+            .cursor_max_encoded_bytes(cursor_budget.max_encoded_bytes())
+            .try_build()?;
+
+            let page = if let Some(permission_backend) = permission_backend {
+                let principal = PrincipalRef::load(backend, principal).await?;
+                let authorizer = DelegatedObjectAggregateAuthorizer {
+                    backend: permission_backend,
+                    principal,
+                };
+                storage_handle(backend)
+                    .aggregate_objects(
+                        query,
+                        StorageObjectAggregateAuthorization::Delegated(&authorizer),
+                    )
+                    .await?
+            } else {
+                storage_handle(backend)
+                    .aggregate_objects(query, StorageObjectAggregateAuthorization::Storage)
+                    .await?
+            };
+            page_from_storage(page, &response_spec)
+        })
+        .await
 }
 
 fn dimension_to_storage(

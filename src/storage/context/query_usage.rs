@@ -69,3 +69,34 @@ impl QueryUsageStorage for StorageHandle {
         .await
     }
 }
+
+impl StorageHandle {
+    pub(crate) async fn analyze_query_usage(
+        &self,
+        scope: StorageQueryUsageScope,
+        proposed: Vec<hubuum_storage_core::StorageQueryUsagePattern>,
+    ) -> Result<hubuum_storage_core::StorageQueryUsageAnalysis, StorageError> {
+        use hubuum_storage_core::{
+            StorageQueryUsageAnalysis, StorageQueryUsageAnalysisRequest,
+            StorageQueryUsageAnalysisStatus,
+        };
+        let request = StorageQueryUsageAnalysisRequest::try_new(
+            scope,
+            proposed,
+            self.inner.query_observations.snapshot(scope.class_id()),
+        )
+        .map_err(|error| error.into_request_error())?;
+        self.observe_storage_call(self.backend_name(), StorageCapability::QueryUsage, "analyze_query_usage", async {
+            match &self.inner.query_usage_analysis {
+                Some(provider) => provider.analyze_query_usage(request).await,
+                None => {
+                    // Recheck the authorized class scope even when analysis is unavailable.
+                    self.list_query_usage(scope).await?;
+                    let mut report = StorageQueryUsageAnalysis::new(StorageQueryUsageAnalysisStatus::Unavailable, request.into_observations());
+                    report.limitation("The selected storage backend has no query usage analysis provider. Declarations remain valid and query behavior is unchanged.");
+                    Ok(report)
+                }
+            }
+        }).await
+    }
+}

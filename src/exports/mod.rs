@@ -660,39 +660,44 @@ where
     }
 
     async fn objects(&self, mut query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
-        if let Some(is_admin) = self.authorization.local_is_admin() {
-            query.set_include_total(false);
-            return catalog_service::list_objects(
-                self.pool(),
-                self.subject.principal_id(),
-                is_admin,
-                self.scopes,
-                query,
-            )
-            .await
-            .map(|(rows, _)| rows);
-        }
-        let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
-        authorized_storage_page(
-            &query,
-            async |options| {
-                catalog_service::list_objects(
-                    self.pool(),
-                    self.subject.principal_id(),
-                    true,
-                    self.scopes,
-                    options,
+        let observed_query = query.clone();
+        storage_handle(self.backend)
+            .observe_query(&observed_query, None, async {
+                if let Some(is_admin) = self.authorization.local_is_admin() {
+                    query.set_include_total(false);
+                    return catalog_service::list_objects(
+                        self.pool(),
+                        self.subject.principal_id(),
+                        is_admin,
+                        self.scopes,
+                        query,
+                    )
+                    .await
+                    .map(|(rows, _)| rows);
+                }
+                let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
+                authorized_storage_page(
+                    &query,
+                    async |options| {
+                        catalog_service::list_objects(
+                            self.pool(),
+                            self.subject.principal_id(),
+                            true,
+                            self.scopes,
+                            options,
+                        )
+                        .await
+                        .map(|(rows, _)| rows)
+                    },
+                    async |candidates: Vec<HubuumObject>| {
+                        let resources = self.target_resources(&candidates).await?;
+                        self.authorize_candidates(candidates, resources, permissions.clone())
+                            .await
+                    },
                 )
                 .await
-                .map(|(rows, _)| rows)
-            },
-            async |candidates: Vec<HubuumObject>| {
-                let resources = self.target_resources(&candidates).await?;
-                self.authorize_candidates(candidates, resources, permissions.clone())
-                    .await
-            },
-        )
-        .await
+            })
+            .await
     }
 
     async fn class_relations(
@@ -3144,6 +3149,84 @@ mod tests {
         visible.cleanup().await.unwrap();
         hidden.cleanup().await.unwrap();
         group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn export_observes_one_query_across_authorization_batches() {
+        use crate::permissions::AppContext;
+        use crate::storage::StorageHandle;
+        use hubuum_domain::{ClassId, CollectionId};
+        use hubuum_storage_core::{StorageQueryObservationSettings, StorageQueryUsageScope};
+
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("observed_export").await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name("observed_export_class"),
+            description: String::new(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        for index in 0..140 {
+            NewHubuumObject {
+                collection_id: fixture.collection.id,
+                hubuum_class_id: class.id,
+                name: context.scoped_name(&format!("observed_export_{index}")),
+                description: String::new(),
+                data: serde_json::json!({"serial": "sample"}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+        }
+        let policy = Arc::new(MockTreetopBackend::new());
+        policy.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: None,
+            attrs: ResourceFields::default(),
+        });
+        let storage = StorageHandle::postgres(context.pool.get_ref().clone())
+            .with_query_observations(
+                StorageQueryObservationSettings::try_new(true, 1, 64, 64, 60, 16).unwrap(),
+            );
+        let backend = AppContext::new(storage.clone(), policy.clone());
+        let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
+            .await
+            .unwrap();
+        let options = crate::models::search::parse_query_parameter(&format!(
+            "class_id={}&json_data=serial=sample&limit=140",
+            class.id,
+        ))
+        .unwrap();
+        let objects = exporter.objects(options).await.unwrap();
+        assert_eq!(objects.len(), 140);
+        assert!(policy.authorization_batch_sizes().len() > 1);
+        let report = serde_json::to_value(
+            storage
+                .analyze_query_usage(
+                    StorageQueryUsageScope::new(
+                        ClassId::new(class.id).unwrap(),
+                        CollectionId::new(fixture.collection.id).unwrap(),
+                    ),
+                    vec![],
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        fixture.cleanup().await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
+        assert_eq!(report["observations"]["patterns"][0]["sampled_queries"], 1);
     }
 
     #[tokio::test]

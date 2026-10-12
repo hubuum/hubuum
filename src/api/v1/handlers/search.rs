@@ -1,3 +1,4 @@
+use crate::storage::storage_handle;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post};
 use bytes::Bytes;
 use futures_util::{
@@ -537,35 +538,44 @@ pub(crate) async fn execute_structured_search(
             finalize_structured_search(rows, total, page_context, StructuredSearchResult::Class)
         }
         StructuredSearchResourceKind::Object => {
-            let (rows, total) = if context
-                .permission_backend()
-                .supports_storage_visibility_filtering()
-            {
-                let is_admin = principal.is_admin(context).await?;
-                let prepared =
-                    prepare_db_pagination::<crate::models::HubuumObject>(&query_options)?;
-                crate::services::catalog::list_objects(
-                    context,
-                    principal.principal_id(),
-                    is_admin,
-                    scopes,
-                    prepared,
-                )
-                .await?
-            } else {
-                let policy_principal = PrincipalRef::load(context, principal).await?;
-                let page = externally_authorized_structured_objects(
-                    context,
-                    context.permission_backend(),
-                    &policy_principal,
-                    scopes,
-                    &query_options,
-                    request.filter.as_ref(),
-                )
-                .await?;
-                (page.rows, request.include_total.then_some(page.total_count))
-            };
-            finalize_structured_search(rows, total, page_context, StructuredSearchResult::Object)
+            storage_handle(context)
+                .observe_query(&query_options, None, async {
+                    let (rows, total) = if context
+                        .permission_backend()
+                        .supports_storage_visibility_filtering()
+                    {
+                        let is_admin = principal.is_admin(context).await?;
+                        let prepared =
+                            prepare_db_pagination::<crate::models::HubuumObject>(&query_options)?;
+                        crate::services::catalog::list_objects(
+                            context,
+                            principal.principal_id(),
+                            is_admin,
+                            scopes,
+                            prepared,
+                        )
+                        .await?
+                    } else {
+                        let policy_principal = PrincipalRef::load(context, principal).await?;
+                        let page = externally_authorized_structured_objects(
+                            context,
+                            context.permission_backend(),
+                            &policy_principal,
+                            scopes,
+                            &query_options,
+                            request.filter.as_ref(),
+                        )
+                        .await?;
+                        (page.rows, request.include_total.then_some(page.total_count))
+                    };
+                    finalize_structured_search(
+                        rows,
+                        total,
+                        page_context,
+                        StructuredSearchResult::Object,
+                    )
+                })
+                .await
         }
         StructuredSearchResourceKind::AuditEvent => {
             let (accessible_collection_ids, include_collection_less) =

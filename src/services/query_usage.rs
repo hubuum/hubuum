@@ -76,3 +76,16 @@ pub async fn delete(
         .await?;
     Ok(())
 }
+
+pub async fn analyze(
+    context: &impl StorageContext,
+    scope: StorageQueryUsageScope,
+    proposed: Vec<StorageQueryUsagePattern>,
+) -> Result<crate::models::query_usage::QueryUsageAnalysisResponse, ApiError> {
+    let report = storage_handle(context)
+        .analyze_query_usage(scope, proposed)
+        .await?;
+    serde_json::to_value(report)
+        .and_then(serde_json::from_value)
+        .map_err(|_| ApiError::InternalServerError("Query usage analysis projection failed".into()))
+}
