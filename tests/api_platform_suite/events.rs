@@ -155,12 +155,12 @@ mod tests {
     ) {
         let context = TestContext::new().await;
         let fixture = RelationAuditFixture::new(&context, object, from).await;
-        let response = get_request(
-            &context.pool,
-            &context.admin_token,
-            &format!("{}?sort=id&{query}", fixture.route),
-        )
-        .await;
+        let mut endpoint = format!("{}?sort=id", fixture.route);
+        if !query.is_empty() {
+            endpoint.push('&');
+            endpoint.push_str(query);
+        }
+        let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let response = assert_response_status(response, StatusCode::OK).await;
         let total = header_value(&response, "X-Total-Count").unwrap();
         let rows: Vec<EventResponse> = test::read_body_json(response).await;
