@@ -4137,6 +4137,15 @@
             }
           },
           {
+            "name": "include_relations",
+            "in": "query",
+            "description": "Include class relation events touching this class; defaults to false",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "action",
             "in": "query",
             "description": "Optional action filter",
@@ -7663,6 +7672,15 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          {
+            "name": "include_relations",
+            "in": "query",
+            "description": "Include object relation events touching this object; defaults to false",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -12468,6 +12486,15 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          {
+            "name": "include_relations",
+            "in": "query",
+            "description": "Include direct relation events for a class or object entity_type and entity_id; defaults to false",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           },
           {

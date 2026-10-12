@@ -1,8 +1,8 @@
 use crate::models::SystemEventSubscription;
 use crate::models::event_subscription::validate_webhook_templates;
-use hubuum_domain::{CollectionId, PrincipalId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId};
 use hubuum_events_core::EventSubscriptionScope;
-use hubuum_storage_core::{EventSinkGrantAction, StorageEventSinkGrantChange};
+use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -106,6 +106,14 @@ pub(crate) fn parse_audit_event_filters(
 ) -> Result<StorageAuditEventFilters, ApiError> {
     let entity_type = parse_optional_catalog_filter(passthrough, "entity_type", EntityType::parse)?;
     let entity_id = parse_optional_i32_filter(passthrough, "entity_id")?;
+    let include_relations = take_single(passthrough, "include_relations")?
+        .map(|value| {
+            value.parse::<bool>().map_err(|_| {
+                ApiError::BadRequest("include_relations must be true or false".to_string())
+            })
+        })
+        .transpose()?
+        .unwrap_or(false);
     let action = parse_optional_catalog_filter(passthrough, "action", Action::parse)?;
     let actor_kind = parse_optional_catalog_filter(passthrough, "actor_kind", ActorKind::parse)?;
     let actor_user_id = parse_optional_i32_filter(passthrough, "actor_user_id")?;
@@ -128,12 +136,27 @@ pub(crate) fn parse_audit_event_filters(
         None => (entity_type, entity_id),
     };
 
-    Ok(StorageAuditEventFilters::new()
-        .entity_type(entity_type)
-        .entity_id(entity_id.map(|id| {
-            hubuum_events_core::EventEntityId::new(id)
-                .expect("validated audit entity id must be positive")
-        }))
+    let filters = if include_relations {
+        let subject = match (entity_type, entity_id) {
+            (Some(EntityType::Class), Some(id)) => StorageAuditSubject::Class(ClassId::new(id)?),
+            (Some(EntityType::Object), Some(id)) => StorageAuditSubject::Object(ObjectId::new(id)?),
+            _ => {
+                return Err(ApiError::BadRequest(
+                    "include_relations=true requires a class or object entity_type and entity_id"
+                        .to_string(),
+                ));
+            }
+        };
+        StorageAuditEventFilters::new().involving(Some(subject))
+    } else {
+        StorageAuditEventFilters::new()
+            .entity_type(entity_type)
+            .entity_id(entity_id.map(|id| {
+                hubuum_events_core::EventEntityId::new(id)
+                    .expect("validated audit entity id must be positive")
+            }))
+    };
+    Ok(filters
         .action(action)
         .actor_kind(actor_kind)
         .actor_user_id(actor_user_id.map(PrincipalId::new).transpose()?)

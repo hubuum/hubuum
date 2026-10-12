@@ -6,8 +6,8 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    CollectionId, EventDeliveryId, EventDeliveryStatus, EventSinkId, EventSubscriptionId,
-    PrincipalId, ResourceRevision,
+    ClassId, CollectionId, EventDeliveryId, EventDeliveryStatus, EventSinkId, EventSubscriptionId,
+    ObjectId, PrincipalId, ResourceRevision,
 };
 use hubuum_events_core::{
     Action, ActorKind, EntityType, EventContext, EventEntityId, EventSequence,
@@ -103,11 +103,20 @@ fn validate_subscription_parts(
     validate_json_object("routing", routing)
 }
 
+/// An entity whose audit timeline includes its direct relation events.
+/// Endpoint membership comes from durable event metadata, not live relations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAuditSubject {
+    Class(ClassId),
+    Object(ObjectId),
+}
+
 /// Typed audit filters interpreted by the selected backend.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct StorageAuditEventFilters {
     entity_type: Option<EntityType>,
     entity_id: Option<EventEntityId>,
+    involving: Option<StorageAuditSubject>,
     action: Option<Action>,
     actor_kind: Option<ActorKind>,
     actor_user_id: Option<PrincipalId>,
@@ -123,6 +132,7 @@ impl StorageAuditEventFilters {
         Self {
             entity_type: None,
             entity_id: None,
+            involving: None,
             action: None,
             actor_kind: None,
             actor_user_id: None,
@@ -143,6 +153,19 @@ impl StorageAuditEventFilters {
     pub const fn entity_id(mut self, value: Option<EventEntityId>) -> Self {
         self.entity_id = value;
         self
+    }
+
+    /// Match the subject's own events or relations touching either endpoint.
+    /// Other filters still apply to the resulting combined timeline.
+    #[must_use]
+    pub const fn involving(mut self, value: Option<StorageAuditSubject>) -> Self {
+        self.involving = value;
+        self
+    }
+
+    #[must_use]
+    pub const fn involving_value(&self) -> Option<StorageAuditSubject> {
+        self.involving
     }
 
     #[must_use]
@@ -239,6 +262,7 @@ impl fmt::Debug for StorageAuditEventFilters {
             .debug_struct("StorageAuditEventFilters")
             .field("has_entity_type", &self.entity_type.is_some())
             .field("has_entity_id", &self.entity_id.is_some())
+            .field("has_involving", &self.involving.is_some())
             .field("has_action", &self.action.is_some())
             .field("has_actor_kind", &self.actor_kind.is_some())
             .field("has_actor_user_id", &self.actor_user_id.is_some())

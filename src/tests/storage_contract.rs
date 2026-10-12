@@ -1,4 +1,4 @@
-use hubuum_storage_core::{EventSinkGrantAction, StorageEventSinkGrantChange};
+use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
 mod authorization_resources;
 mod credential_approvals;
 mod event_delivery;
@@ -1731,6 +1731,115 @@ async fn every_registered_backend_satisfies_the_audited_mutation_contract() {
             .await
             .expect("certified backend must satisfy the audit contract");
         assert_eq!(report.checks(), 6);
+    }
+}
+
+#[rstest::rstest]
+#[case::class_from(false, 0)]
+#[case::class_to(false, 1)]
+#[case::object_from(true, 0)]
+#[case::object_to(true, 1)]
+#[actix_web::test]
+async fn relation_audit_timelines_survive_relation_deletion(
+    #[case] object: bool,
+    #[case] endpoint: usize,
+) {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let fixture = create_backend_relation_fixture(&backend, &prefix("relation_audit")).await;
+        let collection = fixture.collection.id();
+        let (subject, entity_type, relation_type, entity_id, relation_id) = if object {
+            let id = fixture.objects[endpoint].id();
+            (
+                StorageAuditSubject::Object(id),
+                EntityType::Object,
+                EntityType::ObjectRelation,
+                id.id(),
+                fixture.object_relation_id.id(),
+            )
+        } else {
+            let id = fixture.classes[endpoint].id();
+            (
+                StorageAuditSubject::Class(id),
+                EntityType::Class,
+                EntityType::ClassRelation,
+                id.id(),
+                fixture.class_relation_id.id(),
+            )
+        };
+        delete_backend_relation_fixture(&backend, fixture).await;
+
+        let (events, total) = backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![collection],
+                false,
+                StorageAuditEventFilters::new().involving(Some(subject)),
+                QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, true).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        let mut actual = events
+            .iter()
+            .map(|recorded| {
+                let (event, _, _) = recorded.as_parts();
+                (
+                    event.entity_type().as_str(),
+                    event.entity_id().unwrap().get(),
+                    event.action().as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        let mut expected = vec![
+            (entity_type.as_str(), entity_id, "created"),
+            (entity_type.as_str(), entity_id, "deleted"),
+            (relation_type.as_str(), relation_id, "created"),
+            (relation_type.as_str(), relation_id, "deleted"),
+        ];
+        expected.sort_unstable();
+        assert_eq!((actual, total), (expected, Some(4)));
+    }
+}
+
+#[rstest::rstest]
+#[case::class(false)]
+#[case::object(true)]
+#[actix_web::test]
+async fn relation_audit_timelines_redact_indirectly_visible_snapshots(#[case] object: bool) {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let fixture =
+            create_backend_relation_fixture(&backend, &prefix("relation_redaction")).await;
+        let subject = if object {
+            StorageAuditSubject::Object(fixture.objects[0].id())
+        } else {
+            StorageAuditSubject::Class(fixture.classes[0].id())
+        };
+        let (events, _) = backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![fixture.collection.id()],
+                false,
+                StorageAuditEventFilters::new().involving(Some(subject)),
+                QueryOptions::new(Vec::new(), Vec::new(), Some(100), None, true).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        let relation = events
+            .iter()
+            .map(|event| event.as_parts().0)
+            .find(|event| {
+                matches!(
+                    event.entity_type(),
+                    EntityType::ClassRelation | EntityType::ObjectRelation
+                )
+            })
+            .expect("relation event is visible through either related collection");
+        assert_eq!((relation.before(), relation.after()), (None, None));
+        delete_backend_relation_fixture(&backend, fixture).await;
     }
 }
 

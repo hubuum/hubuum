@@ -1,13 +1,17 @@
 use std::collections::HashSet;
 
 use diesel::SelectableHelper;
-use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
+use diesel::prelude::{
+    BoolExpressionMethods, ExpressionMethods, PgJsonbExpressionMethods, QueryDsl,
+};
 use diesel_async::RunQueryDsl;
 use hubuum_events_core::{Action, EntityType};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StoragePage,
+    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuditSubject,
+    StoragePage,
 };
+use serde_json::json;
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::dynamic_sql::BoundSqlPredicate;
@@ -117,7 +121,8 @@ fn build_audit_event_query(
     use crate::schema::event_related_collections::dsl as related;
     use crate::schema::events::dsl::{
         action, actor_kind, actor_user_id, after_revision, before_revision, collection_id,
-        entity_id, entity_type, events, id as event_row_id, initiator_user_id, occurred_at,
+        entity_id, entity_type, events, id as event_row_id, initiator_user_id, metadata,
+        occurred_at,
     };
 
     let mut query = events.into_boxed();
@@ -156,6 +161,34 @@ fn build_audit_event_query(
     }
     if let Some(value) = filters.entity_id_value() {
         query = query.filter(entity_id.eq(Some(value.get())));
+    }
+    if let Some(subject) = filters.involving_value() {
+        let (subject_type, subject_id, relation_type, from_key, to_key) = match subject {
+            StorageAuditSubject::Class(id) => (
+                EntityType::Class,
+                id.id(),
+                EntityType::ClassRelation,
+                "from_class_id",
+                "to_class_id",
+            ),
+            StorageAuditSubject::Object(id) => (
+                EntityType::Object,
+                id.id(),
+                EntityType::ObjectRelation,
+                "from_object_id",
+                "to_object_id",
+            ),
+        };
+        query = query.filter(
+            entity_type
+                .eq(subject_type.as_str())
+                .and(entity_id.eq(Some(subject_id)))
+                .or(entity_type.eq(relation_type.as_str()).and(
+                    metadata
+                        .contains(json!({from_key: subject_id}))
+                        .or(metadata.contains(json!({to_key: subject_id}))),
+                )),
+        );
     }
     if let Some(value) = filters.action_value() {
         query = query.filter(action.eq(value.as_str()));
