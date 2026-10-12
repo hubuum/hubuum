@@ -28,6 +28,7 @@ use crate::traits::scope_allows;
     params(
         ("entity_type" = Option<String>, Query, description = "Optional event entity type filter"),
         ("entity_id" = Option<i32>, Query, description = "Optional event entity id filter"),
+        ("include_relations" = Option<bool>, Query, description = "Include direct relation events for a class or object entity_type and entity_id; defaults to false"),
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
@@ -63,6 +64,7 @@ async fn list_visible_events(
     let filter_keys = [
         "entity_type",
         "entity_id",
+        "include_relations",
         "action",
         "actor_kind",
         "actor_user_id",
@@ -180,6 +182,7 @@ pub async fn get_collection_events(
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class id"),
+        ("include_relations" = Option<bool>, Query, description = "Include class relation events touching this class; defaults to false"),
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
@@ -221,6 +224,7 @@ pub async fn get_class_events(
     params(
         ("class_id" = i32, Path, description = "Class id"),
         ("object_id" = i32, Path, description = "Object id"),
+        ("include_relations" = Option<bool>, Query, description = "Include object relation events touching this object; defaults to false"),
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),

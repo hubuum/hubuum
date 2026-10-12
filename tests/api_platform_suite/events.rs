@@ -10,9 +10,9 @@ mod tests {
     };
     use crate::models::{GroupID, NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
     use crate::test_support::create_audit_event;
-    use crate::tests::TestContext;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{assert_response_status, header_value};
+    use crate::tests::{ObjectFixture, TestContext};
     use crate::tests::{create_test_group, create_test_user};
     use crate::traits::{CanSave, PermissionController};
 
@@ -33,6 +33,252 @@ mod tests {
         create_audit_event(pool, event)
             .await
             .expect("failed to emit test event")
+    }
+
+    struct RelationAuditFixture {
+        resources: ObjectFixture,
+        route: String,
+        generic_route: String,
+        events: Vec<EventResponse>,
+    }
+
+    impl RelationAuditFixture {
+        async fn new(context: &TestContext, object: bool, from: bool) -> Self {
+            let resources = context
+                .object_fixture(
+                    "relation_audit",
+                    NewHubuumClass {
+                        name: context.scoped_name("audit_class"),
+                        collection_id: 1,
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        description: String::new(),
+                    },
+                    vec![NewHubuumObject {
+                        name: context.scoped_name("audit_object"),
+                        collection_id: 1,
+                        hubuum_class_id: 1,
+                        data: json!({}),
+                        description: String::new(),
+                    }],
+                )
+                .await
+                .unwrap();
+            let (entity_type, relation_type, id, route) = if object {
+                (
+                    EntityType::Object,
+                    EntityType::ObjectRelation,
+                    resources[0].id,
+                    format!(
+                        "/api/v1/classes/{}/{}/events",
+                        resources.class.id, resources[0].id
+                    ),
+                )
+            } else {
+                (
+                    EntityType::Class,
+                    EntityType::ClassRelation,
+                    resources.class.id,
+                    format!("/api/v1/classes/{}/events", resources.class.id),
+                )
+            };
+            let response = get_request(&context.pool, &context.admin_token, &route).await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            let mut events: Vec<EventResponse> = test::read_body_json(response).await;
+            assert_eq!(events.len(), 1, "fixture creation emits one entity event");
+            let endpoint_key = match (object, from) {
+                (false, true) => "from_class_id",
+                (false, false) => "to_class_id",
+                (true, true) => "from_object_id",
+                (true, false) => "to_object_id",
+            };
+            // No live relation exists: the read must use the recorded endpoint.
+            for (kind, action, endpoint_id) in [
+                (relation_type, Action::Created, id),
+                (relation_type, Action::Deleted, id),
+                (relation_type, Action::Created, i32::MAX),
+                (
+                    if object {
+                        EntityType::ClassRelation
+                    } else {
+                        EntityType::ObjectRelation
+                    },
+                    Action::Created,
+                    id,
+                ),
+            ] {
+                let document = AuditDocument::try_new(
+                    "relation changed",
+                    Some(json!({"private": "before"})),
+                    Some(json!({"private": "after"})),
+                    json!({endpoint_key: endpoint_id, "related_collection_ids": [resources.collection_id()]}),
+                ).unwrap();
+                let event = emit_test_event(
+                    context.pool.get_ref(),
+                    &NewEvent::from_document(kind, action, ActorKind::System, document)
+                        .unwrap()
+                        .with_entity_id(event_entity_id(id)),
+                )
+                .await;
+                if kind == relation_type && endpoint_id == id {
+                    events.push(event);
+                }
+            }
+            Self {
+                resources,
+                route,
+                generic_route: format!(
+                    "{EVENTS_ENDPOINT}?entity_type={}&entity_id={id}",
+                    entity_type.as_str()
+                ),
+                events,
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::class_from(false, true)]
+    #[case::class_to(false, false)]
+    #[case::object_from(true, true)]
+    #[case::object_to(true, false)]
+    #[actix_web::test]
+    async fn entity_audit_relation_inclusion_is_opt_in(
+        #[case] object: bool,
+        #[case] from: bool,
+        #[values(
+            "",
+            "include_relations=false",
+            "include_relations=true",
+            "include_relations=true&action=deleted"
+        )]
+        query: &str,
+    ) {
+        let context = TestContext::new().await;
+        let fixture = RelationAuditFixture::new(&context, object, from).await;
+        let mut endpoint = format!("{}?sort=id", fixture.route);
+        if !query.is_empty() {
+            endpoint.push('&');
+            endpoint.push_str(query);
+        }
+        let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let total = header_value(&response, "X-Total-Count").unwrap();
+        let rows: Vec<EventResponse> = test::read_body_json(response).await;
+        let expected = fixture
+            .events
+            .iter()
+            .filter(|event| {
+                if query.contains("action=deleted") {
+                    event.action == "deleted"
+                } else {
+                    query.contains("include_relations=true") || event.id == fixture.events[0].id
+                }
+            })
+            .map(|event| event.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            (rows.iter().map(|event| event.id).collect::<Vec<_>>(), total),
+            (expected.clone(), expected.len().to_string())
+        );
+        fixture.resources.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::class(false)]
+    #[case::object(true)]
+    #[actix_web::test]
+    async fn relation_audit_cursor_pages_share_the_combined_total(#[case] object: bool) {
+        let context = TestContext::new().await;
+        let fixture = RelationAuditFixture::new(&context, object, true).await;
+        let base = format!(
+            "{}&include_relations=true&sort=id&limit=1",
+            fixture.generic_route
+        );
+        let mut endpoint = base.clone();
+        let mut ids = Vec::new();
+        loop {
+            let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            assert_eq!(
+                header_value(&response, "X-Total-Count").as_deref(),
+                Some("3")
+            );
+            let next = header_value(&response, "X-Next-Cursor");
+            let rows: Vec<EventResponse> = test::read_body_json(response).await;
+            ids.extend(rows.iter().map(|event| event.id));
+            assert!(
+                ids.len() <= 3,
+                "cursor must advance without duplicating events"
+            );
+            let Some(cursor) = next else { break };
+            endpoint = format!("{base}&cursor={cursor}");
+        }
+        assert_eq!(
+            ids,
+            fixture
+                .events
+                .iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>()
+        );
+        fixture.resources.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::class_denied(false, false)]
+    #[case::class_allowed(false, true)]
+    #[case::object_denied(true, false)]
+    #[case::object_allowed(true, true)]
+    #[actix_web::test]
+    async fn relation_audit_inclusion_preserves_visibility_and_redaction(
+        #[case] object: bool,
+        #[case] grant: bool,
+    ) {
+        let context = TestContext::new().await;
+        let fixture = RelationAuditFixture::new(&context, object, false).await;
+        if grant {
+            fixture
+                .resources
+                .collection
+                .owner_group
+                .add_member_without_events(&context.pool, &context.normal_user)
+                .await
+                .unwrap();
+        }
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{}?include_relations=true", fixture.route),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let rows: Vec<EventResponse> = test::read_body_json(response).await;
+        assert_eq!(rows.len(), if grant { 3 } else { 0 });
+        for relation in rows
+            .iter()
+            .filter(|event| event.entity_type.ends_with("_relation"))
+        {
+            assert_eq!((&relation.before, &relation.after), (&None, &None));
+        }
+        fixture.resources.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::invalid_boolean("include_relations=yes")]
+    #[case::duplicate("include_relations=true&include_relations=false")]
+    #[case::missing_subject("include_relations=true")]
+    #[case::missing_id("include_relations=true&entity_type=object")]
+    #[case::unsupported_subject("include_relations=true&entity_type=collection&entity_id=1")]
+    #[actix_web::test]
+    async fn relation_audit_rejects_invalid_selection(#[case] query: &str) {
+        let context = TestContext::new().await;
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{EVENTS_ENDPOINT}?{query}"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
     }
 
     #[actix_web::test]
@@ -309,6 +555,7 @@ mod tests {
     async fn object_event_route_enforces_path_class(
         #[case] matching_class: bool,
         #[case] expected_status: StatusCode,
+        #[values(false, true)] include_relations: bool,
     ) {
         let context = TestContext::new().await;
         let collection = context.collection_fixture("object_event_path_class").await;
@@ -351,7 +598,10 @@ mod tests {
         let response = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/classes/{}/{}/events", path_class_id, object.id),
+            &format!(
+                "/api/v1/classes/{}/{}/events?include_relations={include_relations}",
+                path_class_id, object.id
+            ),
         )
         .await;
         assert_response_status(response, expected_status).await;

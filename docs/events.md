@@ -49,6 +49,7 @@ Supported audit filters are:
 | ------ | ------- |
 | `entity_type` | Event entity type, such as `collection`, `class`, `object`, or `task` |
 | `entity_id` | Integer id of the affected entity |
+| `include_relations` | Include direct relation events for a class or object selected by type and id; defaults to `false` |
 | `action` | Event action for the entity type, such as `created`, `updated`, or `deleted` |
 | `actor_kind` | Immediate actor class: `user`, `worker`, or `system` |
 | `actor_user_id` | Principal id for user actors, including service accounts |
@@ -131,6 +132,32 @@ querying the object through an unrelated class URL.
 Use the generic endpoint for relation, permission, token, sink, and
 subscription events where the useful identity is often in event metadata rather
 than a single resource path.
+
+Class and object audit routes can include their direct relation activity with
+`include_relations=true`. The generic endpoint accepts the same option when both
+`entity_type=class` or `entity_type=object` and `entity_id` are provided:
+
+```http
+GET /api/v1/classes/34/events?include_relations=true
+GET /api/v1/classes/34/56/events?include_relations=true
+GET /api/v1/events?entity_type=object&entity_id=56&include_relations=true
+```
+
+The combined timeline includes the entity's own events and relation events whose
+recorded `from` or `to` endpoint matches it, including deleted relations. Each
+event retains its canonical event ID, entity type, relation ID, and action; it
+appears once per response even if both endpoints match. Class timelines include
+class relations, not the relations of their instances. Object timelines include
+object relations, not changes to their class relations.
+
+All visibility, snapshot redaction, action, actor, collection, time, and revision
+filters still apply. Sorting, cursor pagination, and totals operate on the
+combined visible result. In particular, `collection_id` still filters the event's
+own collection, so it can exclude relation events scoped only through related
+collections. Relation activity does not create extra entity update events or
+advance the entity's revision or `updated_at`. Omit the option or set it to
+`false` to retain the entity-only view. Invalid booleans, repeated options, and
+`true` without a class or object selection return `400 Bad Request`.
 
 ## Sinks And Subscriptions
 

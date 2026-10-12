@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Class and object audit routes, and explicitly selected classes or objects in
+  `/api/v1/events`, accept `include_relations=true` to include direct relation
+  activity from either endpoint, including deleted relations. Existing requests
+  retain their entity-only results, and visibility and snapshot redaction still
+  apply.
+
+### Fixed
+
+- Memory storage now includes audit events visible through related collections
+  and redacts their snapshots, matching PostgreSQL audit visibility.
+
 ### Changed
 
 - Corrected permission examples and release-specific deployment instructions, and separated user guides from implementation and verification notes.

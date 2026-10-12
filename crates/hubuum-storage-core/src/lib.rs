@@ -104,12 +104,12 @@ pub use computed_objects::{
 pub use credential_approval::*;
 pub use event_administration::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
-    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageEventDelivery,
-    StorageEventDeliveryBuilder, StorageEventDeliveryListQuery, StorageEventNotificationInput,
-    StorageEventNotificationSelection, StorageEventSink, StorageEventSinkBuilder,
-    StorageEventSinkCreate, StorageEventSinkCreateBuilder, StorageEventSinkDelete,
-    StorageEventSinkListQuery, StorageEventSinkUpdate, StorageEventSubscription,
-    StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
+    StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuditSubject,
+    StorageEventDelivery, StorageEventDeliveryBuilder, StorageEventDeliveryListQuery,
+    StorageEventNotificationInput, StorageEventNotificationSelection, StorageEventSink,
+    StorageEventSinkBuilder, StorageEventSinkCreate, StorageEventSinkCreateBuilder,
+    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
+    StorageEventSubscription, StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
     StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
 };

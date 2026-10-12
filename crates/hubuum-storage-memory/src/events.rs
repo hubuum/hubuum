@@ -3,7 +3,8 @@ use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::StorageEventDeliveryConfiguration;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
 use hubuum_storage_core::{
-    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
+    EventSinkGrantAction, StorageAuditSubject, StorageAuthorizedEventSink,
+    StorageEventSinkGrantChange,
 };
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
 use std::time::Instant;
@@ -20,13 +21,20 @@ impl AuditEventStorage for MemoryStorage {
             .events
             .iter()
             .filter(|recorded| {
-                let (event, _, _) = (*recorded).clone().into_parts();
+                let (event, _, _) = recorded.as_parts();
                 let visible = event
                     .collection_id()
                     .map_or(query.include_collection_less(), |id| {
                         query.accessible_collection_ids().contains(&id)
-                    });
+                    })
+                    || event
+                        .related_collection_ids()
+                        .iter()
+                        .any(|id| query.accessible_collection_ids().contains(id));
                 visible
+                    && filters
+                        .involving_value()
+                        .is_none_or(|subject| audit_subject_matches(subject, event))
                     && filters
                         .entity_type_value()
                         .is_none_or(|value| event.entity_type() == value)
@@ -60,7 +68,20 @@ impl AuditEventStorage for MemoryStorage {
                         .occurred_before_value()
                         .is_none_or(|value| event.occurred_at() < value)
             })
-            .cloned()
+            .map(|recorded| {
+                let (event, before_revision, after_revision) = recorded.clone().into_parts();
+                let directly_visible = event
+                    .collection_id()
+                    .map_or(query.include_collection_less(), |id| {
+                        query.accessible_collection_ids().contains(&id)
+                    });
+                let event = if directly_visible {
+                    event
+                } else {
+                    event.without_payloads()
+                };
+                StorageAuditEvent::new(event, before_revision, after_revision)
+            })
             .collect::<Vec<_>>();
         events.sort_by_key(|recorded| {
             let (event, _, _) = recorded.clone().into_parts();
@@ -76,6 +97,32 @@ impl AuditEventStorage for MemoryStorage {
         StoragePage::try_new(events, total)
             .map_err(|error| StorageError::backend_failure(error.to_string()))
     }
+}
+
+fn audit_subject_matches(subject: StorageAuditSubject, event: &EventEnvelope) -> bool {
+    let (entity_type, id, relation_type, endpoint_keys) = match subject {
+        StorageAuditSubject::Class(id) => (
+            EntityType::Class,
+            id.id(),
+            EntityType::ClassRelation,
+            ["from_class_id", "to_class_id"],
+        ),
+        StorageAuditSubject::Object(id) => (
+            EntityType::Object,
+            id.id(),
+            EntityType::ObjectRelation,
+            ["from_object_id", "to_object_id"],
+        ),
+    };
+    (event.entity_type() == entity_type && event.entity_id().map(EventEntityId::get) == Some(id))
+        || (event.entity_type() == relation_type
+            && endpoint_keys.iter().any(|key| {
+                event
+                    .metadata()
+                    .get(key)
+                    .and_then(serde_json::Value::as_i64)
+                    == Some(i64::from(id))
+            }))
 }
 
 #[async_trait]
