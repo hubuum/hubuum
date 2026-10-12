@@ -67,6 +67,30 @@ For every pageable operation:
 `QueryOptions` is a validated carrier, not a promise that every `FilterField`
 is valid for every operation. Each capability owns its accepted subset.
 
+### Filter Types and Backend Support
+
+PostgreSQL is the reference for supported stored-value conversions and native
+type limits. Execute filtering, counting, and paging in the selected backend so
+its indexes and query planner remain available. Shared request parsing validates
+query syntax and operands; it must not fetch rows or add per-row normalization
+to native adapters for the sake of another adapter.
+
+The [filter type contract](../querying.md#filter-types-and-stored-value-conversion)
+distinguishes query operands from stored JSON values. Adapters preserve its
+common forms and null/failed-conversion behavior. They implement inexpensive
+compatibility work locally and document native extensions or differences that
+would require costly emulation. PostgreSQL's wider input vocabulary is not a
+requirement to reproduce its complete parser, locale system, or regex engine.
+New backends must identify their supported forms and exceptions and exercise
+the applicable shared scenarios against PostgreSQL.
+
+For direct object filters, memory locally formats JSON text, converts timestamps
+with numeric offsets to UTC, and checks decimal limits and special numeric
+values. JSON text formatting runs only where a text predicate needs it; numeric
+comparisons do not expand exponents into strings, and structural predicates do
+not serialize subtrees. This compatibility work does not change PostgreSQL's
+SQL expressions, storage representation, or indexed execution paths.
+
 ### Candidate Page Contract
 
 `StorageCandidatePageLimit` validates a positive per-read bound no greater than

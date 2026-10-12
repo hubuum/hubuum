@@ -23,6 +23,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   JSON timestamps containing comma-separated values do not match date filters.
   Timezone-bearing SQL timestamps compare in UTC, and numeric filters preserve
   PostgreSQL's precision and scale limits, infinities, and `NaN` behavior.
+  Text filters on JSON objects and arrays now use PostgreSQL-style spacing,
+  key order, escaping, and numeric formatting in the memory adapter. The query
+  contract documents common scalar forms and deliberate native-backend differences.
 
 ## [0.0.18] - 2026-10-06
 

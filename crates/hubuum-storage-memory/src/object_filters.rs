@@ -1,5 +1,6 @@
 //! Compile direct object predicates once, before examining any stored rows.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::str::FromStr;
 
@@ -267,6 +268,7 @@ impl ObjectFilter {
     }
 
     fn matches(&self, object: &StorageObject) -> bool {
+        let direct;
         let value = match &self.path {
             Some(path) => path
                 .segments()
@@ -276,58 +278,64 @@ impl ObjectFilter {
                         .ok()
                         .and_then(|index| values.get(index)),
                     _ => value.get(segment),
-                })
-                .cloned(),
-            None => Some(match self.field {
-                FilterField::Id => Value::from(object.id().id()),
-                FilterField::ClassId | FilterField::Classes => Value::from(object.class_id().id()),
-                FilterField::CollectionId | FilterField::Collections => {
-                    Value::from(object.collection_id().id())
-                }
-                FilterField::Revision => Value::from(object.revision().get()),
-                FilterField::Name => Value::from(object.name()),
-                FilterField::Description => Value::from(object.description()),
-                FilterField::CreatedAt => Value::from(object.created_at().to_rfc3339()),
-                FilterField::UpdatedAt => Value::from(object.updated_at().to_rfc3339()),
-                _ => return false,
-            }),
-        };
-        let text = value.as_ref().and_then(json_text);
-        let matched = match &self.operand {
-            Operand::Null => Some(text.is_none()),
-            Operand::Text(expected) if self.operator == Operator::HasKey => {
-                value.as_ref().map(|value| {
-                    value
-                        .as_object()
-                        .is_some_and(|object| object.contains_key(expected))
-                        || value.as_array().is_some_and(|array| {
-                            array.iter().any(|value| value.as_str() == Some(expected))
-                        })
-                        || value.as_str() == Some(expected)
-                })
+                }),
+            None => {
+                direct = match self.field {
+                    FilterField::Id => Value::from(object.id().id()),
+                    FilterField::ClassId | FilterField::Classes => {
+                        Value::from(object.class_id().id())
+                    }
+                    FilterField::CollectionId | FilterField::Collections => {
+                        Value::from(object.collection_id().id())
+                    }
+                    FilterField::Revision => Value::from(object.revision().get()),
+                    FilterField::Name => Value::from(object.name()),
+                    FilterField::Description => Value::from(object.description()),
+                    FilterField::CreatedAt => Value::from(object.created_at().to_rfc3339()),
+                    FilterField::UpdatedAt => Value::from(object.updated_at().to_rfc3339()),
+                    _ => return false,
+                };
+                Some(&direct)
             }
-            Operand::Text(expected) => text.as_ref().map(|actual| actual == expected),
-            Operand::Pattern(pattern) => text.as_ref().map(|actual| pattern.is_match(actual)),
+        };
+        // Typed predicates need only scalar text. Render a container only for
+        // text predicates, avoiding copies and serialization for structural tests.
+        let text = || value.and_then(scalar_text);
+        let matched = match &self.operand {
+            Operand::Null => Some(value.is_none_or(Value::is_null)),
+            Operand::Text(expected) if self.operator == Operator::HasKey => value.map(|value| {
+                value
+                    .as_object()
+                    .is_some_and(|object| object.contains_key(expected))
+                    || value.as_array().is_some_and(|array| {
+                        array.iter().any(|value| value.as_str() == Some(expected))
+                    })
+                    || value.as_str() == Some(expected)
+            }),
+            Operand::Text(expected) => value.and_then(json_text).map(|actual| actual == *expected),
+            Operand::Pattern(pattern) => value
+                .and_then(json_text)
+                .map(|actual| pattern.is_match(&actual)),
             Operand::Numbers(expected) if self.operator == Operator::ArrayLength => {
-                let Some(array) = value.as_ref().and_then(Value::as_array) else {
+                let Some(array) = value.and_then(Value::as_array) else {
                     return false;
                 };
                 Some(expected[0] == NumericValue::integer(array.len() as u64))
             }
-            Operand::Numbers(expected) => text
+            Operand::Numbers(expected) => text()
                 .as_deref()
                 .and_then(NumericValue::parse)
                 .map(|actual| compare(&actual, expected, &self.operator)),
-            Operand::Dates(expected) => text
+            Operand::Dates(expected) => text()
                 .as_deref()
                 .and_then(parse_date)
                 .map(|actual| compare(&actual, expected, &self.operator)),
-            Operand::Boolean(expected) => text
-                .as_deref()
+            Operand::Boolean(expected) => value
                 .and_then(parse_stored_boolean)
                 .map(|actual| compare(&actual, &[*expected], &self.operator)),
             Operand::Network(expected) => {
-                text.as_deref()
+                text()
+                    .as_deref()
                     .and_then(parse_network)
                     .map(|actual| match self.operator {
                         Operator::InetEquals => actual == *expected,
@@ -345,25 +353,29 @@ impl ObjectFilter {
                     })
             }
             Operand::Items(expected) => {
-                let items = value.as_ref().and_then(Value::as_array).map(|array| {
+                let items = value.and_then(Value::as_array).map(|array| {
                     array
                         .iter()
                         .filter_map(json_text)
                         .collect::<std::collections::BTreeSet<_>>()
                 });
                 if self.operator == Operator::All {
-                    value.as_ref().map(|_| {
+                    value.map(|_| {
                         items.is_some_and(|items| {
                             items.iter().filter(|item| expected.contains(item)).count()
                                 == expected.len()
                         })
                     })
-                } else if text.as_ref().is_some_and(|text| expected.contains(text))
-                    || items.is_some_and(|items| items.iter().any(|item| expected.contains(item)))
-                {
-                    Some(true)
                 } else {
-                    text.as_ref().map(|_| false)
+                    let text = value.and_then(json_text);
+                    if text.as_ref().is_some_and(|text| expected.contains(text))
+                        || items
+                            .is_some_and(|items| items.iter().any(|item| expected.contains(item)))
+                    {
+                        Some(true)
+                    } else {
+                        text.map(|_| false)
+                    }
                 }
             }
         };
@@ -387,11 +399,73 @@ fn compare<T: Ord>(actual: &T, expected: &[T], operator: &Operator) -> bool {
     }
 }
 
+fn scalar_text(value: &Value) -> Option<Cow<'_, str>> {
+    match value {
+        Value::String(value) => Some(Cow::Borrowed(value)),
+        Value::Number(_) | Value::Bool(_) => Some(Cow::Owned(value.to_string())),
+        _ => None,
+    }
+}
+
 fn json_text(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
         Value::String(value) => Some(value.clone()),
-        _ => Some(value.to_string()),
+        _ => {
+            let mut output = String::new();
+            write_json_text(value, &mut output);
+            Some(output)
+        }
+    }
+}
+
+// Match PostgreSQL JSONB's text projection locally; native adapters keep their
+// own extraction expressions and indexes. This does not change stored JSON.
+fn write_json_text(value: &Value, output: &mut String) {
+    match value {
+        Value::Array(values) => {
+            output.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                write_json_text(value, output);
+            }
+            output.push(']');
+        }
+        Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_unstable_by(|(left, _), (right, _)| {
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            });
+            output.push('{');
+            for (index, (key, value)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                output.push_str(&serde_json::to_string(key).expect("JSON key serializes"));
+                output.push_str(": ");
+                write_json_text(value, output);
+            }
+            output.push('}');
+        }
+        Value::Number(value) => {
+            let source = value.to_string();
+            // Validate the exponent and output size before expanding notation.
+            // Typed comparisons use scalar_text instead and never expand it.
+            if let Some(NumericValue::Finite(value)) = NumericValue::parse(&source) {
+                if value.is_zero() && value.fractional_digit_count() < 0 {
+                    output.push('0');
+                } else {
+                    value
+                        .write_plain_string(output)
+                        .expect("String write succeeds");
+                }
+            } else {
+                output.push_str(&source);
+            }
+        }
+        _ => output.push_str(&value.to_string()),
     }
 }
 
@@ -412,7 +486,24 @@ fn parse_date(value: &str) -> Option<NaiveDateTime> {
         .or_else(|| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok())
 }
 
-fn parse_stored_boolean(value: &str) -> Option<bool> {
+fn parse_stored_boolean(value: &Value) -> Option<bool> {
+    let value = match value {
+        Value::Bool(value) => return Some(*value),
+        Value::String(value) => value,
+        Value::Number(value) => {
+            let NumericValue::Finite(value) = NumericValue::parse(&value.to_string())? else {
+                return None;
+            };
+            // JSONB prints exponent notation as a plain decimal. Boolean casts
+            // accept only the resulting "0" or "1", without a fractional part.
+            return match value.fractional_digit_count() <= 0 {
+                true if value.is_zero() => Some(false),
+                true if value == 1 => Some(true),
+                _ => None,
+            };
+        }
+        _ => return None,
+    };
     let value = value.trim().to_ascii_lowercase();
     if value == "1" {
         return Some(true);
