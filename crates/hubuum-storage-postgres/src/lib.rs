@@ -15,6 +15,8 @@ mod filters;
 mod migrations;
 mod operations;
 mod pool;
+mod query_usage_executor;
+pub use query_usage_executor::{QueryUsageExecutionReport, QueryUsageExecutor};
 #[cfg(feature = "query-capture")]
 mod query_capture;
 mod revision;

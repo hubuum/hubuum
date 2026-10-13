@@ -1,11 +1,12 @@
 //! Read-only, bounded PostgreSQL assessments and evidence-based suggestions.
+use chrono::{DateTime, Utc};
 use diesel::{
     prelude::*,
-    sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Oid, Text},
+    sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Oid, Text, Timestamptz},
 };
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
-    StorageQueryUsageAnalysis, StorageQueryUsageAnalysisRequest,
+    StorageQueryUsageAdapterProgress, StorageQueryUsageAnalysis, StorageQueryUsageAnalysisRequest,
     StorageQueryUsageAnalysisStatus as Status, StorageQueryUsageAssessment,
     StorageQueryUsageDeclaration, StorageQueryUsageOperation, StorageQueryUsagePattern,
     StorageQueryUsageResource, StorageQueryUsageSuggestion, StorageQueryUsageValueType,
@@ -45,11 +46,11 @@ pub(crate) fn supported(pattern: &StorageQueryUsagePattern) -> bool {
         && !pattern.path().segments().any(|segment| segment.eq_ignore_ascii_case("null"))
 }
 
-fn expression(pattern: &StorageQueryUsagePattern) -> String {
+pub(crate) fn expression(pattern: &StorageQueryUsagePattern) -> String {
     format!("((data #>> '{{{}}}'::text[]))", pattern.path().canonical())
 }
 
-async fn native_resources(
+pub(crate) async fn native_resources(
     connection: &mut PostgresConnection,
     patterns: &[String],
 ) -> Result<(BTreeMap<String, Vec<StorageQueryUsageResource>>, bool), PostgresStorageError> {
@@ -122,12 +123,23 @@ pub(crate) async fn analyze(
         let (resources, truncated) = native_resources(connection, &expressions).await?;
         let evidence = request.observations().settings().enabled() && request.observations().patterns().iter().any(|value| supported(value.pattern()) && value.sampled_queries() >= MIN_SAMPLED_QUERIES);
         let status = if evidence && !truncated { Status::Complete } else { Status::InsufficientEvidence };
+        let managed = managed_resources(connection, class.id).await?;
         let mut assessments = Vec::new();
         for (declaration, pattern) in declarations.iter().map(|value| (Some(value),value.pattern())).chain(request.proposed().iter().map(|value| (None,value))) {
-            let covered = if supported(pattern) { resources.get(&expression(pattern)).cloned().unwrap_or_default() } else { Vec::new() };
+            let mut covered = if supported(pattern) { resources.get(&expression(pattern)).cloned().unwrap_or_default() } else { Vec::new() };
+            let managed = managed.iter().find(|resource| supported(pattern) && resource.path == pattern.path().canonical());
+            if let Some(managed) = managed {
+                for resource in &mut covered {
+                    if managed.verified && managed.index_oid.is_some_and(|oid| resource.reference() == format!("postgresql:{oid}")) {
+                        let last_owner = managed.owners == 1 && declaration.is_some_and(|declaration| managed.class_owners.contains(&declaration.metadata().id().id()));
+                        *resource = resource.clone().with_declaration_ownership(managed.owners as u64, last_owner);
+                    }
+                }
+            }
             let rationale = if !supported(pattern) { "This PostgreSQL analysis currently supports plain string equality only; other intent remains recorded." } else if !covered.is_empty() { "A valid matching native expression resource already exists. Its observed scan count is backend-wide and does not establish use by this class." } else { "String equality can use a matching text expression resource. Creation has write and storage costs; this read-only assessment does not prepare anything." };
-            let mut assessment = StorageQueryUsageAssessment::new(pattern.clone(), pattern.schema_compatibility(class.json_schema.as_ref()), false, rationale).resources(covered);
+            let mut assessment = StorageQueryUsageAssessment::new(pattern.clone(), pattern.schema_compatibility(class.json_schema.as_ref()), supported(pattern), rationale).resources(covered);
             if let Some(declaration) = declaration { assessment = assessment.declaration(declaration); }
+            if let Some(managed) = managed { assessment = assessment.adapter_progress(managed.progress()); }
             assessments.push(assessment);
         }
         let mut candidates = request.observations().patterns().iter().filter(|observed| supported(observed.pattern()) && observed.sampled_queries() >= MIN_SAMPLED_QUERIES && !declarations.iter().any(|declaration| declaration.pattern() == observed.pattern()) && !resources.contains_key(&expression(observed.pattern()))).cloned().collect::<Vec<_>>();
@@ -141,7 +153,51 @@ pub(crate) async fn analyze(
         } else { report.limitation("Native catalog inspection reached its 128-index budget; absence of coverage is unknown, and suggestions are withheld."); }
         report.limitation("Native counters are cumulative and can be reset independently of application observations. They cover all classes using a shared resource, not a single declaration.");
         report.limitation("Only direct single-class scalar filters are observed. Related, computed, structured-only, negated, case-insensitive and unattributable patterns are omitted.");
-        report.limitation("Resource sizes and valid index coverage are observations; future cost, maintenance overhead and performance benefit are unknown. This build records declarations without native preparation.");
+        report.limitation("Resource sizes and valid index coverage are observations; future cost, maintenance overhead and performance benefit are unknown. Native preparation requires a separately scheduled privileged executor; support does not establish that it is running or that allocation budgets permit this declaration.");
         Ok(report)
     }).await
+}
+
+#[derive(QueryableByName)]
+struct ManagedResource {
+    #[diesel(sql_type=BigInt)]
+    id: i64,
+    #[diesel(sql_type=Text)]
+    path: String,
+    #[diesel(sql_type=Nullable<Oid>)]
+    index_oid: Option<u32>,
+    #[diesel(sql_type=Text)]
+    state: String,
+    #[diesel(sql_type=Nullable<Text>)]
+    last_error: Option<String>,
+    #[diesel(sql_type=Timestamptz)]
+    updated_at: DateTime<Utc>,
+    #[diesel(sql_type=BigInt)]
+    owners: i64,
+    #[diesel(sql_type=Array<Integer>)]
+    class_owners: Vec<i32>,
+    #[diesel(sql_type=Bool)]
+    verified: bool,
+}
+impl ManagedResource {
+    fn progress(&self) -> StorageQueryUsageAdapterProgress {
+        StorageQueryUsageAdapterProgress::new(
+            format!("postgresql:query_usage:{}", self.id),
+            self.state.clone(),
+            self.owners as u64,
+            self.last_error.clone(),
+            self.updated_at,
+        )
+    }
+}
+async fn managed_resources(
+    connection: &mut PostgresConnection,
+    class: i32,
+) -> Result<Vec<ManagedResource>, PostgresStorageError> {
+    Ok(diesel::sql_query("SELECT r.*,
+        (SELECT count(*) FROM query_usage_resource_owners o WHERE o.resource_id=r.id) AS owners,
+        ARRAY(SELECT o.declaration_id FROM query_usage_resource_owners o JOIN query_usage_declarations d ON d.id=o.declaration_id WHERE o.resource_id=r.id AND d.class_id=$1 ORDER BY o.declaration_id LIMIT 32) AS class_owners,
+        EXISTS(SELECT 1 FROM pg_class idx JOIN pg_namespace ns ON ns.oid=idx.relnamespace WHERE idx.oid=r.index_oid AND ns.nspname='public' AND idx.relname='hubuum_usage_' || r.id::text AND obj_description(idx.oid,'pg_class')='hubuum-query-usage:' || r.identity::text) AS verified
+        FROM query_usage_resources r ORDER BY id LIMIT 8")
+        .bind::<Integer,_>(class).load::<ManagedResource>(connection).await?)
 }

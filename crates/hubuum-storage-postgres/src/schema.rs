@@ -658,6 +658,32 @@ diesel::table! {
 }
 
 diesel::table! {
+    query_usage_executor_cursor (singleton) {
+        singleton -> Bool,
+        after_declaration_id -> Int4,
+    }
+}
+
+diesel::table! {
+    query_usage_resource_owners (declaration_id) {
+        declaration_id -> Int4,
+        resource_id -> Int8,
+    }
+}
+
+diesel::table! {
+    query_usage_resources (id) {
+        id -> Int8,
+        path -> Text,
+        identity -> Uuid,
+        index_oid -> Nullable<Oid>,
+        state -> Text,
+        last_error -> Nullable<Text>,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     remote_call_results (id) {
         id -> Int4,
         task_id -> Int4,
@@ -978,6 +1004,8 @@ diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(principals -> identity_scopes (identity_scope_id));
 diesel::joinable!(query_usage_declarations -> hubuumclass (class_id));
+diesel::joinable!(query_usage_resource_owners -> query_usage_declarations (declaration_id));
+diesel::joinable!(query_usage_resource_owners -> query_usage_resources (resource_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
@@ -1040,6 +1068,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     permissions,
     principals,
     query_usage_declarations,
+    query_usage_executor_cursor,
+    query_usage_resource_owners,
+    query_usage_resources,
     remote_call_results,
     remote_targets,
     remote_targets_history,
