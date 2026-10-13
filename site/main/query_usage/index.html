@@ -1057,6 +1057,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#observations-and-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Observations and analysis
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#postgresql-native-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PostgreSQL native preparation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator walkthrough
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4396,6 +4429,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#observations-and-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Observations and analysis
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#postgresql-native-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PostgreSQL native preparation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator walkthrough
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4559,6 +4625,212 @@ does not depend on either being available.</p>
 Versions 6 through 8 restore with an empty declaration set. Physical optimization
 resources are not portable backup content. The restore target must support
 version 9 before it can restore any new backup, including one with no declarations.</p>
+<h2 id="observations-and-analysis">Observations and analysis<a class="headerlink" href="#observations-and-analysis" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/v1/classes/{class_id}/query-usage/analysis</code> accepts
+<code>{"proposed": []}</code> or up to 32 hypothetical patterns. It requires an unscoped
+administrator token and <code>ReadClass</code>. Reviews can include shared native resource
+facts, so ordinary class management permission is insufficient. The operation
+never adopts suggestions, changes declarations, or creates native resources.</p>
+<p>Memory reports <code>unavailable</code>. PostgreSQL reports <code>insufficient_evidence</code> when
+usable workload evidence is missing or bounded catalog inspection is incomplete.
+A <code>complete</code> review can contain zero suggestions. Neither missing observations
+nor zero native scans establishes that a resource is unused.</p>
+<p>Collection is disabled by default. Enable it with
+<code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code>. Effective settings appear in the
+administrator configuration endpoint. CLI flags use the corresponding lowercase
+hyphenated names; TOML keys use lowercase underscores under
+<code>[query_observations]</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Environment suffix after <code>HUBUUM_QUERY_OBSERVATIONS_</code></th>
+<th>Default</th>
+<th>Accepted range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SAMPLE_EVERY</code></td>
+<td>16</td>
+<td>1–1,000,000 logical requests</td>
+</tr>
+<tr>
+<td><code>MAX_PATTERNS</code></td>
+<td>2048</td>
+<td>1–16,384 per process</td>
+</tr>
+<tr>
+<td><code>MAX_PATTERNS_PER_CLASS</code></td>
+<td>64</td>
+<td>1–128, no greater than the process limit</td>
+</tr>
+<tr>
+<td><code>RETENTION_SECONDS</code></td>
+<td>86400</td>
+<td>1–604,800</td>
+</tr>
+<tr>
+<td><code>MAX_PREDICATES_PER_QUERY</code></td>
+<td>16</td>
+<td>1–32</td>
+</tr>
+</tbody>
+</table>
+<p>Collection retains only class attribution, validated paths, scalar types,
+operations, successful sampled request counts, timestamps, and whole-query
+elapsed time. Query values, object contents, and credentials are not retained.
+Class IDs and paths are never metric labels. Count-plus-page requests count once,
+including all candidate batches needed for external authorization. Sampling is
+chosen once for the complete operation; internal storage calls do not advance the
+sampling counter.
+Only direct filters with an unambiguous class are observed, including positive
+fields in structured-search conjunctions. Unsupported, negated, related, computed,
+and disjunctive predicates are omitted. Structured traversal is limited to twice
+<code>MAX_PREDICATES_PER_QUERY</code> expression nodes; exceeding either budget skips the
+observation. Operands exceeding 4096
+bytes are skipped. Failed or cancelled operations add no observation.</p>
+<p>Entries expire from their first observation; continued use does not extend their
+retention window. Expiry is applied on subsequent collection or review. Capacity
+drops are reported. Observations are process-local and reset on restart; a load
+balanced deployment's review covers only the responding process. Whole-query
+timing includes other predicates and authorization and cannot establish the cost
+or benefit of an individual predicate.</p>
+<p>The initial PostgreSQL provider suggests new plain string equality declarations
+after at least five successful sampled observations, unless that pattern is
+already declared or covered by a matching usable native text expression index.
+It inspects at most 128 indexes, applies a two-second transaction statement
+timeout, and withholds suggestions if catalog coverage is incomplete. Other
+scalar declarations remain valid but are explicitly unsupported by this initial
+provider. Paths containing a case-insensitive <code>null</code> segment are excluded because
+the existing PostgreSQL filter compiler treats that unquoted array element as SQL
+NULL. Resource sizes and cumulative native scans are facts at assessment time;
+future benefit and maintenance cost remain unknown.</p>
+<p>Suggestions carry the same pattern accepted by ordinary declaration creation.
+Review and adopt them through the normal permission-checked, audited CRUD
+endpoints, which revalidate current state. No automatic adoption is performed.</p>
+<h2 id="postgresql-native-preparation">PostgreSQL native preparation<a class="headerlink" href="#postgresql-native-preparation" title="Permanent link">&para;</a></h2>
+<p>The optional PostgreSQL executor initially prepares plain string equality using
+a shared hash index on the exact JSON text expression used by the query compiler.
+It does not rewrite queries or add object constraints. Numeric, boolean, range,
+and unsupported path declarations remain recorded without preparation. Hash keys
+have bounded storage, so indexing cannot make valid long text values fail the
+btree index-entry size limit.</p>
+<p>Run a bounded pass outside the server and normal task worker:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
+</code></pre></div>
+<p>Supply the migration credential through the existing secret source and configure
+the owner role as for migrations. The runtime account receives read-only access
+to native ownership metadata and cannot allocate or delete physical resources.
+Schedule the command periodically to prepare new intent and retry cleanup. An
+optional <code>--query-usage-class 42</code> restricts new planning; cleanup remains global.
+Memory storage explicitly reports this executor as unsupported.</p>
+<p>Each pass plans at most 64 declarations and maintains at most eight owned
+resources, each with at most 128 owners. A durable scan cursor advances global
+planning so already covered declarations cannot starve later requests. Creation is limited to a source object table of at most 512 MiB. Native
+statements have a two-second timeout and a 100 ms lock timeout. Index creation
+uses transactional DDL and can briefly block object writes within that budget;
+larger or busy deployments can supply independently managed indexes instead.
+These limits may defer preparation indefinitely without rejecting declarations
+or changing query results. Run outside peak traffic and inspect the JSON report.
+No performance benefit is promised.</p>
+<p>Declarations on the same path share one owned resource across classes. Updating
+a pattern or deleting its declaration, class, or collection withdraws ownership.
+The last withdrawal leaves durable cleanup state until a later pass finishes.
+An independently managed matching index satisfies intent without being claimed
+or dropped. Cleanup verifies the stored OID, generated name, definition, and
+random ownership marker, then transactionally renames the index to lock it and
+rechecks its identity before dropping it. Concurrent replacements are preserved;
+failed checks roll back the rename. Renamed, replaced, or otherwise unverifiable
+resources retain a diagnostic for operator review.</p>
+<p>The executor defers while restore maintenance is active.</p>
+<p>Planning commits pending intent before execution. Every attempt rechecks live
+owners under locks; DDL and the physical ownership update commit together. A
+failed transaction leaves no partially committed index. Restarting the executor
+retries persisted work, and withdrawn queued intent cannot recreate a resource.
+The report exposes pending, ready, and cleanup states and generic diagnostics.
+These are PostgreSQL operational states, not portable declaration states.</p>
+<p>Administrative analysis adds verified ownership, sharing counts, removal
+eligibility, and adapter progress. <code>can_prepare</code> describes adapter support; it
+does not establish that the separate executor is running or that its budgets
+permit an allocation. Native counters still cannot prove that a particular
+class uses a shared index.</p>
+<p>Portable backups contain declarations only. Restore clears native ownership and
+leaves local resources available for reconciliation or cleanup against restored
+intent. Downgrading the native-resource migration requires withdrawing
+associated declarations and finishing cleanup first, so ownership evidence is
+never silently discarded.</p>
+<h2 id="operator-walkthrough">Operator walkthrough<a class="headerlink" href="#operator-walkthrough" title="Permanent link">&para;</a></h2>
+<p>Use an existing class and ordinary object filters throughout this workflow. The
+examples use class <code>42</code>, path <code>hardware,serial_number</code>, an unscoped administrator
+<code>HUBUUM_TOKEN</code>, and a <code>HUBUUM_URL</code> without a trailing slash.</p>
+<ol>
+<li><strong>Observe.</strong> Enable <code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code> on the API process
+   and restart it. In a disposable rehearsal, also set
+   <code>HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY=1</code> and issue at least five successful
+   requests like this. In production, keep the normal sampling rate and let real
+   traffic supply the evidence. Send the analysis request to the same process;
+   observations are local to each replica.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--get<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--data-urlencode<span class="w"> </span><span class="s1">'json_data=hardware,serial_number=SN-example'</span>
+</code></pre></div>
+<ol>
+<li><strong>Analyze.</strong> Review the observations, limitations, and proposed patterns:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/analysis"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span>--data<span class="w"> </span><span class="s1">'{"proposed":[]}'</span>
+</code></pre></div>
+<p>A suggestion carries a <code>proposed</code> pattern. Missing evidence returns
+   <code>insufficient_evidence</code>; existing coverage or an existing declaration can
+   legitimately leave <code>suggestions</code> empty. Review does not adopt anything.</p>
+<ol>
+<li><strong>Adopt.</strong> If the suggested workload matches your intent, copy its <code>proposed</code>
+   pattern into the ordinary creation request's <code>pattern</code> field:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"pattern":{"path":"hardware,serial_number","value_type":"string","operations":["equals"]}}'</span>
+</code></pre></div>
+<p>Keep the returned declaration <code>id</code> and <code>revision</code>. The example is appropriate
+   only when no declaration already exists for this path and type.</p>
+<ol>
+<li><strong>Reconcile.</strong> With the separate migration credential and owner-role settings
+   configured, run a privileged pass outside peak traffic:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--query-usage-class<span class="w"> </span><span class="m">42</span>
+</code></pre></div>
+<p>Inspect <code>deferred</code> and each resource's <code>state</code> and <code>last_error</code> in the JSON
+   report. Schedule later passes for pending work and cleanup. The class option
+   restricts new planning; cleanup still covers all managed resources.</p>
+<ol>
+<li><strong>Inspect.</strong> Repeat the analysis request. Check <code>assessments[].resources</code> for
+   native coverage and ownership, and <code>assessments[].adapter_progress</code> for pending,
+   ready, or cleanup state. Repeat representative queries and compare query plans
+   and timings using PostgreSQL tooling. PostgreSQL's planner decides whether to
+   use the index; a ready resource does not promise a speedup. Native scan counters
+   are cumulative and shared across classes, not evidence of one class's benefit.</li>
+</ol>
+<p>This preparation supports plain JSON string equality. It does not directly
+   accelerate grouping, sorting, substring search, numeric ranges, or computed
+   predicates. An eligible equality filter before aggregation may benefit if the
+   planner uses the index.</p>
+<ol>
+<li><strong>Withdraw.</strong> Read the current declaration revision before deleting it. For
+   example, if the declaration is still <code>id=17</code>, <code>revision=1</code>:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>DELETE<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/17?expected_revision=1"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
+</code></pre></div>
+<p>A stale revision returns a conflict. After successful withdrawal, inspect the
+   executor report: a shared resource remains until its last owner withdraws;
+   independently managed indexes remain under operator control. Ordinary filters
+   continue to work throughout preparation and cleanup.</p>
 
 
 
