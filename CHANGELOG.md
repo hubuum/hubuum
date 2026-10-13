@@ -37,6 +37,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Refresh compatible dependencies, including Actix Web 4.16, Diesel 2.3.14,
   OpenTelemetry 0.33.1, and TLS and JSON library updates.
+- Remove the unused optional `h2` 0.3 dependency from the lockfile and retire
+  its obsolete security advisory exception with the Actix update.
 - **Breaking login compatibility:** empty or whitespace-only principal names
   cannot receive login tokens. Before upgrading, create replacement local
   accounts with nonblank names and reassign their group memberships; correct
