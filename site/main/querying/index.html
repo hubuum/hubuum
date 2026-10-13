@@ -1325,6 +1325,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#filter-types-and-stored-value-conversion" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Filter types and stored-value conversion
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deliberate-backend-differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deliberate backend differences
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ip-address-and-network-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        IP address and network filtering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#json-array-and-structure-operators" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4719,6 +4752,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#filter-types-and-stored-value-conversion" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Filter types and stored-value conversion
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deliberate-backend-differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deliberate backend differences
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ip-address-and-network-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        IP address and network filtering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#json-array-and-structure-operators" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4848,7 +4914,10 @@
 
 
 <h1 id="querying-against-the-hubuum-api">Querying against the Hubuum API<a class="headerlink" href="#querying-against-the-hubuum-api" title="Permanent link">&para;</a></h1>
-<p>Hubuum list endpoints share a common query interface for filtering, sorting, and cursor pagination. These query options are applied in the database, not by loading a full result set into memory first.</p>
+<p>Hubuum list endpoints share a common query interface for filtering, sorting, and
+cursor pagination. The selected storage backend executes these operations.
+PostgreSQL applies them in the database, preserving native indexes and query
+planning.</p>
 <p>The response body for list endpoints remains a plain JSON array. Pagination metadata is returned in response headers.</p>
 <p>For endpoint-specific field support, see <a href="../query_support_matrix/">query_support_matrix.md</a>.
 The mutation-side contract is documented in
@@ -4890,6 +4959,14 @@ checks verify the filtered result and pagination against the server.</p>
 <li><code>in</code></li>
 <li><code>is_null</code></li>
 </ul>
+<p>Regex syntax and matching behavior currently depend on the storage backend.
+PostgreSQL uses its <a href="https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP">advanced regular expressions</a>,
+while direct object filters in memory use the Rust <a href="https://docs.rs/regex/latest/regex/#syntax"><code>regex</code> crate</a>.
+Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
+<code>\yrouter\y</code> for word boundaries, while memory rejects <code>\y</code>; PostgreSQL's default
+<code>.</code> also matches a newline, while memory's default does not. Keep backend-specific
+patterns with their backend until a shared regex contract is defined
+(<a href="https://github.com/hubuum/hubuum/issues/458">follow-up #458</a>).</p>
 <h3 id="numeric-and-date-fields">Numeric and date fields<a class="headerlink" href="#numeric-and-date-fields" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>equals</code></li>
@@ -5157,6 +5234,101 @@ non-empty and contain only ASCII letters, digits, <code>_</code>, or <code>$</co
 <li>calendar dates such as <code>2026-03-01</code></li>
 </ul>
 <p><code>between</code> uses the same comma-separated <code>min,max</code> format as the rest of the query interface.</p>
+<h3 id="filter-types-and-stored-value-conversion">Filter types and stored-value conversion<a class="headerlink" href="#filter-types-and-stored-value-conversion" title="Permanent link">&para;</a></h3>
+<p>Query operands and stored JSON values have different rules. Ordinary resource
+fields have fixed types. For JSON filters, the operator and query operand select
+the comparison type; a class schema does not override that inference.
+PostgreSQL's native conversions and type limits are authoritative for backend
+support. Memory implements the common forms below within its own direct object
+filters; other adapters need not pay for this compatibility work.</p>
+<table>
+<thead>
+<tr>
+<th>Comparison</th>
+<th>Query operand</th>
+<th>Stored JSON value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Numeric</td>
+<td>JSON <code>equals</code> and range comparisons currently require signed 32-bit integers; <code>between</code> requires two bounds. Decimal or exponent query operands are not supported.</td>
+<td>JSON numbers and numeric strings can contain decimals or exponents. Conversion preserves decimal precision rather than converting to floating point.</td>
+</tr>
+<tr>
+<td>Boolean</td>
+<td>JSON <code>equals</code> infers a boolean from <code>true</code> or <code>false</code>, ignoring case.</td>
+<td>Booleans and PostgreSQL-style strings such as <code>true</code>, <code>false</code>, <code>yes</code>, <code>no</code>, <code>on</code>, <code>off</code>, <code>1</code>, <code>0</code>, or unambiguous word prefixes are accepted, ignoring case and surrounding whitespace. JSON numbers are accepted when their JSONB text is exactly <code>0</code> or <code>1</code>; <code>1e0</code> qualifies, but <code>1.0</code> does not.</td>
+</tr>
+<tr>
+<td>Timestamp</td>
+<td>RFC3339 with an explicit offset, or <code>YYYY-MM-DD</code> interpreted as midnight UTC. <code>between</code> accepts two values.</td>
+<td>Common forms include calendar dates, RFC3339, and <code>YYYY-MM-DD HH:MM:SS[.fraction]</code> with an optional numeric offset. Explicit offsets compare in UTC.</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>Text operators force text comparison. JSON <code>equals</code> tries timestamp, boolean, and numeric inference before text. JSON <code>in</code>/<code>all</code> compare comma-separated text values without scalar inference.</td>
+<td>Strings are unquoted. Numbers, booleans, arrays, and objects use their JSONB-style text projection. This is a textual comparison, not structural JSON equality or containment.</td>
+</tr>
+<tr>
+<td>IP/network</td>
+<td>Use the explicit network operators with IPv4, IPv6, or CIDR operands.</td>
+<td>Valid address/network strings are compared as networks, not as raw text.</td>
+</tr>
+</tbody>
+</table>
+<p>Missing paths, JSON null, and failed numeric/boolean/timestamp/IP conversions do
+not satisfy scalar comparisons, including negated comparisons. Use <code>is_null</code> or
+<code>not_is_null</code> to test missing or null values. A malformed query operand is a
+request error; an unconvertible stored value simply does not match. These
+predicates apply before totals and pagination. The string <code>"null"</code> is text,
+not JSON null.</p>
+<p>Numeric strings use PostgreSQL's unconstrained <code>numeric</code> range: up to 131,072
+digits before the decimal point and 16,383 after it. Out-of-range strings do
+not match, even under negation. The memory adapter checks these bounds before
+formatting and mirrors <code>-Infinity &lt; finite values &lt; Infinity &lt; NaN</code>, including
+case-insensitive <code>inf</code>/<code>infinity</code> and <code>NaN</code> strings. These are stored strings,
+not valid JSON numeric literals, and they do not extend the integer query
+operand vocabulary. See PostgreSQL's <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">numeric types</a>.</p>
+<p>For text predicates, memory follows PostgreSQL's JSONB output: a space follows
+each comma and colon, object keys are ordered by UTF-8 byte length and then
+bytes, and numbers expand exponent notation while preserving fractional trailing
+zeros. For example, the stored subtree <code>[1,2]</code> is searched as <code>[1, 2]</code>, and
+<code>1.230e-5</code> as <code>0.00001230</code>. Strings inside containers remain JSON-escaped.
+This projection changes neither the stored document nor the API response.
+Prefer filtering a leaf path when whole-subtree formatting is irrelevant.
+See PostgreSQL's <a href="https://www.postgresql.org/docs/18/datatype-json.html">JSON input and output</a>.</p>
+<p>For timestamps, memory accepts numeric offsets such as <code>+01</code>, <code>+0130</code>, and
+<code>+01:30</code> on stored SQL-style timestamps, including surrounding whitespace.
+One stored string must represent one timestamp; a comma-separated list is not
+a stored timestamp. Keep query operands in RFC3339 or calendar-date form.</p>
+<h3 id="deliberate-backend-differences">Deliberate backend differences<a class="headerlink" href="#deliberate-backend-differences" title="Permanent link">&para;</a></h3>
+<p>The common forms above do not require adapters to emulate every native feature.
+PostgreSQL retains its native execution and input support. In particular:</p>
+<ul>
+<li><strong>Timestamp extensions and range:</strong> PostgreSQL also accepts named time zones,
+  relative/special dates, and other date spellings; memory does not promise these
+  forms. Such strings may fail conversion in memory. PostgreSQL's timestamp range
+  and microsecond precision differ from Chrono's range and nanosecond precision
+  in memory. Use years 0001–9999 and at most six fractional digits for portability.</li>
+<li><strong>Timezone-less stored timestamps:</strong> memory assumes UTC. PostgreSQL interprets
+  them using its session <code>TimeZone</code> before converting to UTC. Use explicit offsets,
+  or configure PostgreSQL sessions for UTC, to avoid different results.</li>
+<li><strong>Text matching:</strong> regex dialects, Unicode case folding, and locale-dependent
+  matching remain backend-specific. The <a href="#string-fields">string operator notes</a>
+  describe the regex differences. No shared normalization changes native collation.</li>
+<li><strong>Additional native inputs:</strong> PostgreSQL may accept numeric or IP spellings
+  outside the common forms; acceptance by its parser does not establish memory
+  support. Use ordinary decimal/exponent strings and complete IP addresses.</li>
+<li><strong>JSON paths named <code>null</code>:</strong> the current PostgreSQL compiler interprets a
+  case-insensitive <code>null</code> path segment as a SQL array null; memory treats it as
+  an object key. Avoid those segments in portable filters.</li>
+</ul>
+<p>PostgreSQL's <a href="https://www.postgresql.org/docs/18/datatype-datetime.html">date/time input documentation</a>
+describes its additional timestamp forms. Backend differences affect filtering
+only where those forms are used; they are not reasons to move PostgreSQL queries
+into application-side evaluation.</p>
+<h3 id="ip-address-and-network-filtering">IP address and network filtering<a class="headerlink" href="#ip-address-and-network-filtering" title="Permanent link">&para;</a></h3>
 <p>JSON-backed IP address and CIDR values also support network-aware operators:</p>
 <ul>
 <li><code>within_network</code>
