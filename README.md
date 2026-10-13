@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.18`](https://github.com/hubuum/hubuum/releases/tag/v0.0.18),
-published on October 6, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.19`](https://github.com/hubuum/hubuum/releases/tag/v0.0.19),
+published on October 13, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.18
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.19
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -62,6 +62,10 @@ and runtime roles are optional. Web restores also require a separately supervise
 
 The Alpine-based container image includes both the `rustls` and OpenSSL TLS backends. See the
 [release guide](docs/releasing.md#container-images) for the complete tag scheme.
+
+Hubuum serves HTTP/1.1, including over TLS. Native HTTP/2 is disabled because
+released Actix HTTP/2 support depends on an affected `h2` version. To offer
+HTTP/2 to clients, terminate it at a reverse proxy using HTTP/1.1 upstream.
 
 ## Concept
 
@@ -301,6 +305,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.19](https://github.com/hubuum/hubuum/releases/tag/v0.0.19) | 2026-10-13 | Adds successful-login notifications, query usage declarations and bounded PostgreSQL index preparation, and relation-aware audit timelines. Improves search performance and memory filtering. Introduces backup format 9 and breaking login, event-reader, and storage SDK requirements. |
 | [0.0.18](https://github.com/hubuum/hubuum/releases/tag/v0.0.18) | 2026-10-06 | Adds collection-owned webhook setup, permitted sink discovery, and explicit shared-sink grants. Binds credentials to destinations, introduces backup format 8, and fixes single-host migration profiles and versioned monitoring links. Requires an offline migration. |
 | [0.0.17](https://github.com/hubuum/hubuum/releases/tag/v0.0.17) | 2026-10-04 | Adds configurable webhooks, system notifications, operator monitoring, and versioned documentation. Requires an offline migration; introduces backup format 7, storage SDK 0.4, and Treetop 0.1. |
 | [0.0.16](https://github.com/hubuum/hubuum/releases/tag/v0.0.16) | 2026-09-22 | Requires fresh password approval for credential management. Adds resource-aware task discovery, an operations dashboard, tested alerts and runbooks, and system CA trust for SMTP. Includes two migrations and breaking API and storage SDK changes. |
@@ -313,20 +318,39 @@ Recent published releases:
 Before upgrading:
 
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
+  Version `0.0.19` disables native HTTP/2 in TLS builds as well. Configure direct
+  clients to use HTTP/1.1, or terminate HTTP/2 at a reverse proxy with HTTP/1.1
+  upstream connections.
   CI certifies the adjacent stable upgrade and its declared recovery procedure.
+- Apply the query usage declaration and resource migrations with `hubuum-admin --migrate`
+  and reconcile database role grants before starting matching `0.0.19` binaries.
+  PostgreSQL index preparation is optional and runs separately through
+  `hubuum-admin --reconcile-query-usage`; see [query usage](docs/query_usage.md).
+- **Breaking login compatibility:** replace empty or whitespace-only local account
+  names by creating nonblank accounts and reassigning their group memberships before
+  retiring the old accounts. Correct provider-managed names at the identity provider.
+  See [username requirements](docs/auth_model.md#username-requirements).
+- Upgrade strict event readers before enabling `authentication.succeeded` events.
+  Older servers cannot read the new event catalog entry. Preserve a pre-upgrade
+  backup and matching binaries; downgrade requires a compatible reader or restoring
+  that backup, losing later writes. See [login events](docs/events.md#successful-login-notifications).
+- Backups now emit format 9; formats 6, 7, and 8 remain accepted and restore without
+  query usage declarations. Upgrade all API, worker, and restore-executor processes
+  before producing new backups. Older servers cannot restore format 9.
+- Storage adapters must implement `QueryUsageStorage`, preserve declarations in
+  logical backups, and atomically persist login subjects with both login and token
+  lifecycle events. Update exhaustive event catalog matches and subscription filters
+  for the new entries and subject predicates.
 - **Upgrading from 0.0.17 requires downtime.** Stop every API, worker, and restore
   executor, take a PostgreSQL snapshot with all writers stopped, then apply
   `2026-10-05-000001_collection_event_sinks` and reconcile role grants. Start
-  matching `0.0.18` server, administrator, and template worker binaries.
+  matching server, administrator, and template worker binaries.
   The single-host updater uses `hubuum-admin --migration-mode` to select this
   offline sequence; take the snapshot before invoking it.
 - **Binary-only rollback to 0.0.17 is unsupported.** Restore the pre-upgrade
   database snapshot before starting matching old binaries. Recovery loses writes
   made after the snapshot. Keep the old binaries, credentials, and snapshot
   until the upgrade is accepted. See [upgrade and recovery](docs/events.md#upgrade-and-rollback).
-- Backups now emit format 8; formats 6 and 7 remain accepted with legacy sink
-  grants restored. Older servers cannot restore format 8. Upgrade all API,
-  worker, and restore-executor processes before producing new backups.
 - Collection integration setup requires `ManageEventSubscription` and `ReadAudit`.
   Shared global sinks need an explicit grant for each collection; existing
   collection/sink relationships receive grants during migration. Grants do not

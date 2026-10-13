@@ -3311,4 +3311,22 @@ fn actix_http2_stays_disabled_until_its_h2_dependency_is_fixed() {
             "{dependency} must not enable HTTP/2 while Actix depends on vulnerable h2 0.3"
         );
     }
+
+    // TLS features previously enabled HTTP/2 indirectly. Check the resolved
+    // dependency graph as well as the direct feature selection above.
+    let lockfile_path = repository_root().join("Cargo.lock");
+    let lockfile_source = read_source(&lockfile_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", lockfile_path.display()));
+    let lockfile =
+        toml::from_str::<toml::Value>(&lockfile_source).expect("lockfile should be valid");
+    let packages = lockfile
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .expect("lockfile should have packages");
+    assert!(
+        packages
+            .iter()
+            .all(|package| package.get("name").and_then(toml::Value::as_str) != Some("h2")),
+        "h2 must remain absent, including dependencies enabled indirectly by TLS features"
+    );
 }
