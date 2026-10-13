@@ -15,11 +15,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retain their entity-only results, and visibility and snapshot redaction still
   apply.
 
-### Fixed
-
-- Memory storage now includes audit events visible through related collections
-  and redacts their snapshots, matching PostgreSQL audit visibility.
-
 ### Changed
 
 - Corrected permission examples and release-specific deployment instructions, and separated user guides from implementation and verification notes.
@@ -32,6 +27,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Memory storage now includes audit events visible through related collections
+  and redacts their snapshots, matching PostgreSQL audit visibility.
 - Memory storage applies class, collection, and direct JSON object filters before
   counting and limiting results, including ordinary lists, computed-object lists,
   and aggregates. Missing values and failed scalar conversions retain their
