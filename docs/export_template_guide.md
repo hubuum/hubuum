@@ -126,6 +126,44 @@ Example:
 
 ## Template syntax
 
+### Sort tables in the web frontend
+
+The frontend's development edition after `v0.0.19` supports clickable column
+sorting in HTML report pages and previews. Add `data-sortable` to a table with a
+single `thead` row and data rows in `tbody`. Headers default to natural text
+sorting; `data-sort-type="number"` and `data-sort-type="date"` select numeric and
+chronological sorting. A cell's `data-sort-value` can supply an unformatted key.
+
+```html
+<table data-sortable>
+  <thead>
+    <tr><th>Name</th><th data-sort-type="date">Created</th></tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ item.name }}</td>
+      <td data-sort-value="{{ item.created_at | format_datetime('iso') }}">
+        {{ item.created_at | format_datetime('date') }}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+```
+
+The frontend supplies the trusted sorting helper. Template scripts remain
+blocked, and filtering and the initial row order still belong in the export
+query or template. Sorting affects only the displayed rows; it does not rerun
+an export or update its stored output. Direct API consumers receive the original
+HTML without the frontend's helper.
+
+See the frontend's [sortable report tables guide](https://hubuum.github.io/hubuum-frontend/main/sortable-report-tables/)
+for keyboard controls, sort values, grouping, and supported table structures.
+This is a frontend feature and requires no server API or schema changes.
+
+### Jinja syntax
+
 Stored export templates use Jinja syntax. See the
 [MiniJinja template syntax documentation](https://docs.rs/minijinja/latest/minijinja/syntax/)
 for the full expression and tag reference.
