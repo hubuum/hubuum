@@ -84,7 +84,11 @@ A missing method is a compile error. Dummy success, empty-result, and generic
 unsupported implementations do not satisfy the semantic contract. Truly
 optional behavior is composed outside the aggregate. In particular,
 `WorkerNotificationProvider` may be attached for low-latency wake-ups because
-durable polling remains the correctness path.
+durable polling remains the correctness path. `QueryUsageStorage` declaration
+management is mandatory, while `QueryUsageAnalysisProvider` is optional and
+read-only. A backend without that provider reports analysis as unavailable;
+query behavior never depends on declarations, observations, or native preparation.
+See [query usage](../query_usage.md) for vocabulary and bounded observations.
 
 ## Six-Part Audited Storage Contract
 

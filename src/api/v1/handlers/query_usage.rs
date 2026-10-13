@@ -129,3 +129,31 @@ pub async fn delete_query_usage(
     .await?;
     Ok(HttpResponse::NoContent().finish())
 }
+
+#[utoipa::path(post,path="/api/v1/classes/{class_id}/query-usage/analysis",tag="query usage",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID")),request_body=QueryUsageAnalysisRequest,responses((status=200,description="Read-only administrative review; availability and evidence are explicit",body=QueryUsageAnalysisResponse),(status=400,description="Invalid or excessive proposed patterns",body=ApiErrorResponse),(status=403,description="Unscoped administrator and class read access required",body=ApiErrorResponse),(status=404,description="Class not found",body=ApiErrorResponse)))]
+#[post("/{class_id}/query-usage/analysis")]
+pub async fn analyze_query_usage(
+    context: AppContext,
+    requestor: Authenticated,
+    path: web::Path<ClassId>,
+    request: web::Json<QueryUsageAnalysisRequest>,
+) -> Result<impl Responder, ApiError> {
+    if requestor.scopes().is_some() || !context.is_admin(&requestor.principal).await? {
+        return Err(ApiError::Forbidden(
+            "Query usage analysis requires unscoped administrator access".into(),
+        ));
+    }
+    let class_id = path.into_inner();
+    let class = class_id.instance(&context).await?;
+    can!(
+        &context,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
+    let scope = StorageQueryUsageScope::new(class_id, CollectionId::new(class.collection_id)?);
+    Ok(ApiResponse::ok(
+        service::analyze(&context, scope, request.into_inner().proposed).await?,
+    ))
+}

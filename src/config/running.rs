@@ -11,6 +11,7 @@ use super::{AppConfig, ClientAllowlist, token_hash_key_ring};
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunningConfig {
     pub schema_validation: SchemaValidationConfig,
+    pub query_observations: QueryObservationConfig,
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub tasks: TaskConfig,
@@ -332,6 +333,7 @@ impl RunningConfig {
             .expect("token hash key-ring configuration must be validated before serving config");
 
         Self {
+            query_observations: config.query_observation_settings().into(),
             schema_validation: SchemaValidationConfig {
                 max_schema_bytes: config.schema_limits().schema_bytes(),
                 max_expanded_work: config.schema_limits().expanded_work(),
@@ -634,5 +636,27 @@ mod tests {
         assert!(!debug.contains("correct horse battery staple"));
         assert!(!debug.contains("collector-secret"));
         assert!(!debug.contains("collector-client-key.pem"));
+    }
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct QueryObservationConfig {
+    pub enabled: bool,
+    pub sample_every: u32,
+    pub max_patterns: usize,
+    pub max_patterns_per_class: usize,
+    pub retention_seconds: u32,
+    pub max_predicates_per_query: usize,
+}
+impl From<hubuum_storage_core::StorageQueryObservationSettings> for QueryObservationConfig {
+    fn from(value: hubuum_storage_core::StorageQueryObservationSettings) -> Self {
+        Self {
+            enabled: value.enabled(),
+            sample_every: value.sample_every(),
+            max_patterns: value.max_patterns(),
+            max_patterns_per_class: value.max_patterns_per_class(),
+            retention_seconds: value.retention_seconds(),
+            max_predicates_per_query: value.max_predicates_per_query(),
+        }
     }
 }

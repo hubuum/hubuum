@@ -1823,6 +1823,7 @@
             "add_group_member",
             "admit_task_execution",
             "aggregate_objects",
+            "analyze_query_usage",
             "anonymize_user",
             "append_task_event",
             "apply_claimed_import_best_effort",
@@ -2225,6 +2226,7 @@
             "add_group_member",
             "admit_task_execution",
             "aggregate_objects",
+            "analyze_query_usage",
             "anonymize_user",
             "append_task_event",
             "apply_claimed_import_best_effort",
@@ -5144,6 +5146,141 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_ENABLED",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "true",
+        "false"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2048"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 16384,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "64"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 128,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "16"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 32,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_RETENTION_SECONDS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "86400"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 604800,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "16"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 1000000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS",
       "owner": "remotecalls",
       "exposure": "public",
@@ -7351,6 +7488,123 @@
           },
           "default": [
             "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_enabled",
+          "long": "query-observations-enabled",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_ENABLED",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_sample_every",
+          "long": "query-observations-sample-every",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_patterns",
+          "long": "query-observations-max-patterns",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2048"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_patterns_per_class",
+          "long": "query-observations-max-patterns-per-class",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "64"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_retention_seconds",
+          "long": "query-observations-retention-seconds",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_RETENTION_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "86400"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_predicates_per_query",
+          "long": "query-observations-max-predicates-per-query",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16"
           ],
           "dynamic_default": null,
           "allowed_values": [],

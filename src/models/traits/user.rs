@@ -8,7 +8,7 @@ use crate::models::{
 use crate::errors::ApiError;
 use crate::permissions::AuthorizationContext;
 use crate::services::authorized_traversal;
-use crate::storage::StorageContext;
+use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
 
@@ -114,16 +114,21 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::catalog::list_objects(
-            backend,
-            self.principal_id(),
-            is_admin,
-            scopes,
-            query_options,
-        )
-        .await
-        .map(|(rows, _)| rows)
+        let observed_query = query_options.clone();
+        storage_handle(backend)
+            .observe_query(&observed_query, None, async {
+                let is_admin = AuthzSubject::is_admin(self, backend).await?;
+                crate::services::catalog::list_objects(
+                    backend,
+                    self.principal_id(),
+                    is_admin,
+                    scopes,
+                    query_options,
+                )
+                .await
+                .map(|(rows, _)| rows)
+            })
+            .await
     }
 
     async fn count_objects<C>(
@@ -136,17 +141,24 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         query_options.set_include_total(true);
-        let is_admin = AuthzSubject::is_admin(self, backend).await?;
-        crate::services::catalog::list_objects(
-            backend,
-            self.principal_id(),
-            is_admin,
-            scopes,
-            query_options,
-        )
-        .await?
-        .1
-        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
+        let observed_query = query_options.clone();
+        storage_handle(backend)
+            .observe_query(&observed_query, None, async {
+                let is_admin = AuthzSubject::is_admin(self, backend).await?;
+                crate::services::catalog::list_objects(
+                    backend,
+                    self.principal_id(),
+                    is_admin,
+                    scopes,
+                    query_options,
+                )
+                .await?
+                .1
+                .ok_or_else(|| {
+                    ApiError::InternalServerError("catalog count was not returned".to_string())
+                })
+            })
+            .await
     }
 
     async fn search_class_relations<C>(

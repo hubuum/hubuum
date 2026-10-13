@@ -179,6 +179,10 @@ pub struct StorageComputedObjectListQuery {
 }
 
 impl StorageComputedObjectListQuery {
+    pub const fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+
     #[must_use]
     pub const fn new(
         class_id: ClassId,

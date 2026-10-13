@@ -1016,10 +1016,17 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
         }
     }
 
+    // Optional analysis is observed at the same opaque handle boundary without
+    // becoming a requirement of every selectable StorageBackend.
+    let analysis = item_body(&context_source, "fn", "analyze_query_usage");
+    assert_eq!(analysis.matches("observe_storage_call(").count(), 1);
+    assert!(labels.contains(&("QueryUsage".to_string(), "analyze_query_usage".to_string())));
+    expected_observations += 1;
+
     assert_eq!(
         labels.len(),
         expected_observations,
-        "every observed contract method must have one unique bounded label pair"
+        "every observed operation must have one unique bounded label pair"
     );
 }
 

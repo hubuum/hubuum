@@ -45,7 +45,8 @@ pub struct MockAllowRule {
 /// to the mock.
 const ADMIN_ACTION_MARKER: Permissions = Permissions::ReadCollection;
 
-type AuthorizationHook = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+type AuthorizationHook =
+    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<(), ApiError>> + Send>> + Send>;
 
 struct DeferredAuthorizationHook {
     calls_to_skip: usize,
@@ -143,7 +144,25 @@ impl MockTreetopBackend {
     {
         *self.authorization_hook.lock().unwrap() = Some(DeferredAuthorizationHook {
             calls_to_skip,
-            hook: Box::new(move || Box::pin(hook())),
+            hook: Box::new(move || {
+                Box::pin(async move {
+                    hook().await;
+                    Ok(())
+                })
+            }),
+        });
+    }
+
+    pub fn fail_authorization_after_calls(&self, calls_to_skip: usize) {
+        *self.authorization_hook.lock().unwrap() = Some(DeferredAuthorizationHook {
+            calls_to_skip,
+            hook: Box::new(|| {
+                Box::pin(async {
+                    Err(ApiError::InternalServerError(
+                        "injected policy failure".to_string(),
+                    ))
+                })
+            }),
         });
     }
 
@@ -273,7 +292,7 @@ impl PermissionBackend for MockTreetopBackend {
             }
         };
         if let Some(hook) = hook {
-            hook().await;
+            hook().await?;
         }
         // Order preserved by zipping per request.
         Ok(requests

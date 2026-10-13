@@ -1,5 +1,6 @@
 use super::*;
 use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
+use crate::storage::storage_handle;
 
 //
 // Object API
@@ -99,52 +100,59 @@ async fn list_objects_in_class(
     // class_id/classes filter.
     scope_object_query_to_class(&mut params, &class_id)?;
 
-    debug!(
-        message = "Getting objects in class",
-        user_id = requestor.principal.id().id(),
-        class_id = class_id.id(),
-        query = query_string
-    );
+    let observed_query = params.clone();
+    storage_handle(&context)
+        .observe_query(&observed_query, None, async {
+            debug!(
+                message = "Getting objects in class",
+                user_id = requestor.principal.id().id(),
+                class_id = class_id.id(),
+                query = query_string
+            );
 
-    let computed_querying = params
-        .sort()
-        .iter()
-        .any(|sort| sort.field.computed_query().is_some())
-        || params
-            .filters()
-            .iter()
-            .any(|filter| filter.field.computed_query().is_some());
+            let computed_querying = params
+                .sort()
+                .iter()
+                .any(|sort| sort.field.computed_query().is_some())
+                || params
+                    .filters()
+                    .iter()
+                    .any(|filter| filter.field.computed_query().is_some());
 
-    if computed_querying {
-        let class = class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
-        return computed_objects::list_objects(
-            &context,
-            &requestor,
-            &class,
-            params,
-            include_computed,
-        )
-        .await;
-    }
+            if computed_querying {
+                let class =
+                    class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
+                return computed_objects::list_objects(
+                    &context,
+                    &requestor,
+                    &class,
+                    params,
+                    include_computed,
+                )
+                .await;
+            }
 
-    let (page, total_count) = load_raw_object_page(&context, &requestor, &params).await?;
-    if !include_computed {
-        return object_read_page(page, total_count, effective_page_limit(&params)?, false);
-    }
+            let (page, total_count) = load_raw_object_page(&context, &requestor, &params).await?;
+            if !include_computed {
+                return object_read_page(page, total_count, effective_page_limit(&params)?, false);
+            }
 
-    let class = class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
-    let personal_owner = computed_personal_owner(&context, &requestor, &class).await?;
-    let next_cursor = page.next_cursor;
-    let enriched = enrich_objects_with_computed(&context, page.items, personal_owner).await?;
-    object_read_page(
-        Page {
-            items: enriched,
-            next_cursor,
-        },
-        total_count,
-        effective_page_limit(&params)?,
-        true,
-    )
+            let class = class_for_object_list(&context, &class_id, resolved_class.as_ref()).await?;
+            let personal_owner = computed_personal_owner(&context, &requestor, &class).await?;
+            let next_cursor = page.next_cursor;
+            let enriched =
+                enrich_objects_with_computed(&context, page.items, personal_owner).await?;
+            object_read_page(
+                Page {
+                    items: enriched,
+                    next_cursor,
+                },
+                total_count,
+                effective_page_limit(&params)?,
+                true,
+            )
+        })
+        .await
 }
 
 async fn load_raw_object_page(

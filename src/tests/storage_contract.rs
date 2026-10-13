@@ -7364,3 +7364,4 @@ pub(crate) fn prefix(label: &str) -> String {
 }
 
 mod query_usage;
+mod query_usage_analysis;
