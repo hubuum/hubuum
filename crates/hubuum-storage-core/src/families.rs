@@ -13,10 +13,10 @@ use crate::{
     ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryStorage,
     IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
     MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
-    OperationalStateStorage, PrincipalStorage, RelationQueryStorage, RemoteTargetStorage,
-    RestoreStorage, SchemaEvolutionStorage, ServiceAccountStorage, TaskExecutionStorage,
-    TaskQueueStorage, TokenRetentionStorage, TokenStorage, TransactionStorage,
-    UnifiedSearchStorage, UserStorage,
+    OperationalStateStorage, PrincipalStorage, QueryUsageStorage, RelationQueryStorage,
+    RemoteTargetStorage, RestoreStorage, SchemaEvolutionStorage, ServiceAccountStorage,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
+    TransactionStorage, UnifiedSearchStorage, UserStorage,
 };
 
 /// Atomic domain-resource lifecycle and transaction behavior.
@@ -104,6 +104,7 @@ pub trait WorkflowStorage:
     RemoteTargetStorage
     + ComputedFieldStorage
     + SchemaEvolutionStorage
+    + QueryUsageStorage
     + TaskQueueStorage
     + TaskExecutionStorage
     + BackupSnapshotStorage
@@ -117,6 +118,7 @@ impl<T> WorkflowStorage for T where
     T: RemoteTargetStorage
         + ComputedFieldStorage
         + SchemaEvolutionStorage
+        + QueryUsageStorage
         + TaskQueueStorage
         + TaskExecutionStorage
         + BackupSnapshotStorage

@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 21 detailed groups below are not a one-to-one module map. Neither form
+the 22 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -146,6 +146,16 @@ Imports and restores implement their explicit `ImportStorage` and
 These are operation-shaped capabilities, not table repositories. A backend
 decides how each operation is implemented and never exposes rows, connections,
 or a query builder.
+
+### `query_usage`
+
+Required trait: `QueryUsageStorage`.
+
+Owns bounded class-scoped query intent and audited, revision-checked declaration
+creation, replacement, and deletion. Both adapters preserve declarations across
+backup and restore, reassess them against the active schema, and remove them with
+their class or collection. Declarations do not change query semantics or promise
+a particular physical index.
 
 ### `identity_and_authorization_data`
 

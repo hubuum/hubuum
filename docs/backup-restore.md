@@ -58,18 +58,21 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `8` preserves collection sink ownership and explicit use grants,
-along with sink delivery policy, system subscriptions and terminal test deliveries.
-Versions `6` and `7` remain accepted with legacy defaults and grant backfill.
+Backup version `9` adds class query usage declarations, including their revisions
+and creation/modification attribution. Versions `6` through `8` remain accepted
+and restore with no declarations; legacy event defaults and sink grants are
+backfilled where needed. Collection sink ownership, explicit use grants, delivery
+policy, system subscriptions and terminal test deliveries remain preserved.
 Transient sink admission schedules reset on restore. Older servers cannot read
-version `8`. The format preserves authoritative resource revisions, collection
-authorization-set revisions, temporal-history revisions, and event before/after
+version `9`, even when its declaration set is empty. The format preserves
+authoritative resource revisions, collection authorization-set revisions,
+temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
 tables. State sections include identity scopes, groups, principals, users,
 service accounts, memberships, collections, authorization state, hierarchy,
-permission grants, classes, computed-field definitions, relations, objects,
-export templates, remote targets, event sinks, sink collection grants, and event subscriptions. History
-sections describe resource history, terminal tasks and results, audit events,
+permission grants, classes, query usage declarations, computed-field definitions,
+relations, objects, export templates, remote targets, event sinks, sink collection
+grants, and event subscriptions. History sections describe resource history, terminal tasks and results, audit events,
 and terminal event deliveries.
 
 Schema state additionally includes retained revisions, active identities,
@@ -251,10 +254,14 @@ password and issue a new token before exercising authenticated endpoints.
 
 Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-[PostgreSQL Database Roles](database_roles.md). The collection integration update accepts format 6 and 7 logical backups and
-emits format 8, preserving collection-owned sinks and direct grants. Stop all APIs, workers, and restore
-executors and take a PostgreSQL snapshot before migration. Binary-only rollback
-is unsupported: restore that snapshot and matching old binaries to recover,
+[PostgreSQL Database Roles](database_roles.md). The query usage update accepts
+formats 6 through 8 and emits format 9. Upgrade every API, worker, and restore
+executor before producing format 9 backups, and retain a pre-upgrade backup for
+rollback. Query usage declarations are portable; adapter-owned indexes and their
+ownership records are not. See [query usage recovery](query_usage.md#storage-and-recovery).
+When also crossing the collection integration update, stop all APIs, workers,
+and restore executors and take a PostgreSQL snapshot before migration. Binary-only
+rollback is unsupported: restore that snapshot and matching old binaries to recover,
 losing writes made after the snapshot. Retain credentials and old binaries too.
 See [the offline upgrade requirements](events.md#upgrade-and-rollback).
 

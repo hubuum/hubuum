@@ -28,6 +28,7 @@ mod computed_fields;
 mod export_templates;
 mod imports;
 mod notifications;
+mod query_usage;
 mod remote_targets;
 mod restores;
 mod schema_evolution;

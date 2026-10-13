@@ -210,6 +210,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "CatalogStorage",
     "ComputedFieldStorage",
     "SchemaEvolutionStorage",
+    "QueryUsageStorage",
     "ComputedObjectStorage",
     "ObjectAggregateStorage",
     "RelationQueryStorage",
