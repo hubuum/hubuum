@@ -956,6 +956,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../query_usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query usage declarations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../computed_fields/" class="md-nav__link">
         
   
@@ -3674,6 +3701,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#query_usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>query_usage</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#identity_and_authorization_data" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4684,6 +4722,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#query_usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>query_usage</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#identity_and_authorization_data" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5075,7 +5124,7 @@ and semantics. Group keys such as <code>domain_lifecycle</code> and <code>catalo
 not operation-trait keys or metric labels. <code>hubuum_storage_core::capabilities</code>
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 21 detailed groups below are not a one-to-one module map. Neither form
+the 22 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.</p>
 <p>Each discovery module reexports one method-free family bound with the matching
 singular name: <code>ResourceStorage</code>, <code>IdentityStorage</code>, <code>QueryStorage</code>,
@@ -5178,6 +5227,13 @@ Imports and restores implement their explicit <code>ImportStorage</code> and
 <p>These are operation-shaped capabilities, not table repositories. A backend
 decides how each operation is implemented and never exposes rows, connections,
 or a query builder.</p>
+<h3 id="query_usage"><code>query_usage</code><a class="headerlink" href="#query_usage" title="Permanent link">&para;</a></h3>
+<p>Required trait: <code>QueryUsageStorage</code>.</p>
+<p>Owns bounded class-scoped query intent and audited, revision-checked declaration
+creation, replacement, and deletion. Both adapters preserve declarations across
+backup and restore, reassess them against the active schema, and remove them with
+their class or collection. Declarations do not change query semantics or promise
+a particular physical index.</p>
 <h3 id="identity_and_authorization_data"><code>identity_and_authorization_data</code><a class="headerlink" href="#identity_and_authorization_data" title="Permanent link">&para;</a></h3>
 <p>Required traits:</p>
 <ul>

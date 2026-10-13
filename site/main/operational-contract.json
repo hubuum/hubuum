@@ -1803,6 +1803,7 @@
             "restore",
             "service_account",
             "schema_evolution",
+            "query_usage",
             "task_execution",
             "task_queue",
             "token_retention",
@@ -1857,6 +1858,7 @@
             "create_object",
             "create_object_relation",
             "create_personal_computed_field",
+            "create_query_usage",
             "create_remote_target",
             "create_service_account",
             "create_shared_computed_field",
@@ -1873,6 +1875,7 @@
             "delete_object",
             "delete_object_relation",
             "delete_personal_computed_field",
+            "delete_query_usage",
             "delete_remote_target",
             "delete_service_account",
             "delete_shared_computed_field",
@@ -2000,6 +2003,7 @@
             "list_personal_computed_fields",
             "list_principal_collection_permissions",
             "list_principal_groups",
+            "list_query_usage",
             "list_related_classes",
             "list_related_objects",
             "list_related_objects_for_roots",
@@ -2048,6 +2052,7 @@
             "renew_task_lease",
             "renew_token",
             "replace_export_template",
+            "replace_query_usage",
             "request_computed_field_rebuild",
             "request_schema_work",
             "request_task_cancellation",
@@ -2200,6 +2205,7 @@
             "restore",
             "service_account",
             "schema_evolution",
+            "query_usage",
             "task_execution",
             "task_queue",
             "token_retention",
@@ -2254,6 +2260,7 @@
             "create_object",
             "create_object_relation",
             "create_personal_computed_field",
+            "create_query_usage",
             "create_remote_target",
             "create_service_account",
             "create_shared_computed_field",
@@ -2270,6 +2277,7 @@
             "delete_object",
             "delete_object_relation",
             "delete_personal_computed_field",
+            "delete_query_usage",
             "delete_remote_target",
             "delete_service_account",
             "delete_shared_computed_field",
@@ -2397,6 +2405,7 @@
             "list_personal_computed_fields",
             "list_principal_collection_permissions",
             "list_principal_groups",
+            "list_query_usage",
             "list_related_classes",
             "list_related_objects",
             "list_related_objects_for_roots",
@@ -2445,6 +2454,7 @@
             "renew_task_lease",
             "renew_token",
             "replace_export_template",
+            "replace_query_usage",
             "request_computed_field_rebuild",
             "request_schema_work",
             "request_task_cancellation",
@@ -6985,6 +6995,14 @@
         ]
       },
       {
+        "name": "query_usage_declaration",
+        "actions": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      },
+      {
         "name": "object_validation",
         "actions": [
           "updated",
@@ -7151,7 +7169,7 @@
   },
   "documents": {
     "backup": {
-      "version": 8,
+      "version": 9,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -7178,6 +7196,7 @@
         "class_schema_revisions",
         "class_schema_state",
         "computed_field_definitions",
+        "query_usage_declarations",
         "class_relations",
         "objects",
         "object_schema_evidence",
@@ -7202,7 +7221,7 @@
         "audit_events",
         "terminal_event_deliveries"
       ],
-      "rejection_policy": "accept backup versions 6 and 7; normalize version 6 event configuration and delivery defaults"
+      "rejection_policy": "accept backup versions 6 through 9; normalize version 6 event defaults and restore versions 6 through 8 without query usage declarations"
     },
     "import": {
       "version": 2,
