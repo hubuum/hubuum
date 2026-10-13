@@ -1478,6 +1478,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Template syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sort-tables-in-the-web-frontend" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sort tables in the web frontend
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jinja-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Jinja syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4598,6 +4626,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Template syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sort-tables-in-the-web-frontend" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sort tables in the web frontend
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jinja-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Jinja syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4992,6 +5048,37 @@ Run the template with <code>POST /api/v1/export-templates/{template_id}/exports<
 <a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="template-syntax">Template syntax<a class="headerlink" href="#template-syntax" title="Permanent link">&para;</a></h2>
+<h3 id="sort-tables-in-the-web-frontend">Sort tables in the web frontend<a class="headerlink" href="#sort-tables-in-the-web-frontend" title="Permanent link">&para;</a></h3>
+<p>The frontend's development edition after <code>v0.0.19</code> supports clickable column
+sorting in HTML report pages and previews. Add <code>data-sortable</code> to a table with a
+single <code>thead</code> row and data rows in <code>tbody</code>. Headers default to natural text
+sorting; <code>data-sort-type="number"</code> and <code>data-sort-type="date"</code> select numeric and
+chronological sorting. A cell's <code>data-sort-value</code> can supply an unformatted key.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">&lt;</span><span class="nt">table</span> <span class="na">data-sortable</span><span class="p">&gt;</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="p">&lt;</span><span class="nt">thead</span><span class="p">&gt;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="p">&lt;</span><span class="nt">tr</span><span class="p">&gt;&lt;</span><span class="nt">th</span><span class="p">&gt;</span>Name<span class="p">&lt;/</span><span class="nt">th</span><span class="p">&gt;&lt;</span><span class="nt">th</span> <span class="na">data-sort-type</span><span class="o">=</span><span class="s">"date"</span><span class="p">&gt;</span>Created<span class="p">&lt;/</span><span class="nt">th</span><span class="p">&gt;&lt;/</span><span class="nt">tr</span><span class="p">&gt;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="p">&lt;/</span><span class="nt">thead</span><span class="p">&gt;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="p">&lt;</span><span class="nt">tbody</span><span class="p">&gt;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    {% for item in items %}
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="p">&lt;</span><span class="nt">tr</span><span class="p">&gt;</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>      <span class="p">&lt;</span><span class="nt">td</span><span class="p">&gt;</span>{{ item.name }}<span class="p">&lt;/</span><span class="nt">td</span><span class="p">&gt;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>      <span class="p">&lt;</span><span class="nt">td</span> <span class="na">data-sort-value</span><span class="o">=</span><span class="s">"{{ item.created_at | format_datetime('iso') }}"</span><span class="p">&gt;</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        {{ item.created_at | format_datetime('date') }}
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>      <span class="p">&lt;/</span><span class="nt">td</span><span class="p">&gt;</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="p">&lt;/</span><span class="nt">tr</span><span class="p">&gt;</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    {% endfor %}
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="p">&lt;/</span><span class="nt">tbody</span><span class="p">&gt;</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="p">&lt;/</span><span class="nt">table</span><span class="p">&gt;</span>
+</code></pre></div>
+<p>The frontend supplies the trusted sorting helper. Template scripts remain
+blocked, and filtering and the initial row order still belong in the export
+query or template. Sorting affects only the displayed rows; it does not rerun
+an export or update its stored output. Direct API consumers receive the original
+HTML without the frontend's helper.</p>
+<p>See the frontend's <a href="https://hubuum.github.io/hubuum-frontend/main/sortable-report-tables/">sortable report tables guide</a>
+for keyboard controls, sort values, grouping, and supported table structures.
+This is a frontend feature and requires no server API or schema changes.</p>
+<h3 id="jinja-syntax">Jinja syntax<a class="headerlink" href="#jinja-syntax" title="Permanent link">&para;</a></h3>
 <p>Stored export templates use Jinja syntax. See the
 <a href="https://docs.rs/minijinja/latest/minijinja/syntax/">MiniJinja template syntax documentation</a>
 for the full expression and tag reference.</p>
@@ -5004,12 +5091,12 @@ for the full expression and tag reference.</p>
 <li>normal Jinja expressions, filters, <code>set</code>, and macros are supported</li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>{{ meta.count }}
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>{{ request.scope.kind }}
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>{% for item in items %}{{ item.name }}
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>{% endfor %}
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>{% for item in items %}{% for tag in item.data.tags %}- {{ tag }}
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>{{ meta.count }}
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>{{ request.scope.kind }}
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>{% for item in items %}{{ item.name }}
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>{% endfor %}
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>{% for item in items %}{% for tag in item.data.tags %}- {{ tag }}
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>{% endfor %}{% endfor %}
 </code></pre></div>
 <h2 id="minijinja-operators-and-expressions">MiniJinja operators and expressions<a class="headerlink" href="#minijinja-operators-and-expressions" title="Permanent link">&para;</a></h2>
 <p>Templates use the standard MiniJinja expression language unless otherwise noted below.</p>
@@ -5046,24 +5133,24 @@ for the full expression and tag reference.</p>
 <li><code>|join_nonempty(...)</code></li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>{% if item.data.owner is defined and item.data.owner %}
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Owner: {{ item.data.owner }}
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>{% endif %}
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>{% if "prod" in item.data.tags %}
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>{{ item.name }} is production
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>{% endif %}
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>{{ item.name ~ "@" ~ item.data.hostname }}
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>{% if host.related.rooms|length &gt; 0 %}
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>First room: {{ host.related.rooms[0].name }}
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>{% endif %}
-<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
-<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>{{ "alice,bob"|csv_cell }}
-<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>{{ {"host": item.name, "owner": item.data.owner}|tojson }}
-<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>{{ coalesce(item.data.primary_contact, item.data.owner, "unknown") }}
-<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>{{ item.updated_at|format_datetime("date") }}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>{% if item.data.owner is defined and item.data.owner %}
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>Owner: {{ item.data.owner }}
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>{% endif %}
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>{% if "prod" in item.data.tags %}
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>{{ item.name }} is production
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>{% endif %}
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>{{ item.name ~ "@" ~ item.data.hostname }}
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>{% if host.related.rooms|length &gt; 0 %}
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>First room: {{ host.related.rooms[0].name }}
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>{% endif %}
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>{{ "alice,bob"|csv_cell }}
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>{{ {"host": item.name, "owner": item.data.owner}|tojson }}
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>{{ coalesce(item.data.primary_contact, item.data.owner, "unknown") }}
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>{{ item.updated_at|format_datetime("date") }}
 </code></pre></div>
 <p>What we do not add on top of MiniJinja:</p>
 <ul>
@@ -5082,26 +5169,26 @@ for the full expression and tag reference.</p>
 <li><code>export.&lt;name&gt;</code></li>
 </ul>
 <p>Example layout template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>{# name: layout.html #}
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="cp">&lt;!doctype html&gt;</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="p">&lt;</span><span class="nt">html</span><span class="p">&gt;</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">&lt;</span><span class="nt">body</span><span class="p">&gt;</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>{% block body %}{% endblock %}
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">&lt;/</span><span class="nt">body</span><span class="p">&gt;</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="p">&lt;/</span><span class="nt">html</span><span class="p">&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>{# name: layout.html #}
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="cp">&lt;!doctype html&gt;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">&lt;</span><span class="nt">html</span><span class="p">&gt;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">&lt;</span><span class="nt">body</span><span class="p">&gt;</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>{% block body %}{% endblock %}
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">&lt;/</span><span class="nt">body</span><span class="p">&gt;</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">&lt;/</span><span class="nt">html</span><span class="p">&gt;</span>
 </code></pre></div>
 <p>Example macro template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>{# name: macros.txt #}
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>{% macro owner(item) %}{{ item.data.owner|default("unknown") }}{% endmacro %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>{# name: macros.txt #}
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>{% macro owner(item) %}{{ item.data.owner|default("unknown") }}{% endmacro %}
 </code></pre></div>
 <p>Example child template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>{% extends "layout.html" %}
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>{% import "macros.txt" as macros %}
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>{% block body %}
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>{% for item in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ item.name }} - {{ macros.owner(item) }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>{% endblock %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>{% extends "layout.html" %}
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>{% import "macros.txt" as macros %}
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>{% block body %}
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>{% for item in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ item.name }} - {{ macros.owner(item) }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>{% endblock %}
 </code></pre></div>
 <p>Composition rules:</p>
 <ul>
@@ -5114,142 +5201,142 @@ for the full expression and tag reference.</p>
 <p>Template:</p>
 <!-- doc-example: template-guide/plain/template -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Export scope: {{ meta.scope.kind }}
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>Rows: {{ meta.count }}
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>{% for item in items %}- {{ item.name }} owned by {{ item.data.owner }}
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>{% endfor -%}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Export scope: {{ meta.scope.kind }}
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>Rows: {{ meta.count }}
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>{% for item in items %}- {{ item.name }} owned by {{ item.data.owner }}
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>{% endfor -%}
 </code></pre></div>
 <p>Rendered output:</p>
 <!-- doc-example: template-guide/plain/output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Export scope: objects_in_class
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>Rows: 2
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>- srv-app-01 owned by alice
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>- srv-db-01 owned by bob
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Export scope: objects_in_class
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>Rows: 2
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>- srv-app-01 owned by alice
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>- srv-db-01 owned by bob
 </code></pre></div>
 <h2 id="html-example">HTML example<a class="headerlink" href="#html-example" title="Permanent link">&para;</a></h2>
 <p>Template:</p>
 <!-- doc-example: template-guide/html/template -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">&lt;</span><span class="nt">h1</span><span class="p">&gt;</span>Server export<span class="p">&lt;/</span><span class="nt">h1</span><span class="p">&gt;</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for item in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>{{ item.name }}<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - {{ item.data.hostname }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">&lt;</span><span class="nt">h1</span><span class="p">&gt;</span>Server export<span class="p">&lt;/</span><span class="nt">h1</span><span class="p">&gt;</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for item in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>{{ item.name }}<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - {{ item.data.hostname }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
 </code></pre></div>
 <p>Rendered output:</p>
 <!-- doc-example: template-guide/html/output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">&lt;</span><span class="nt">h1</span><span class="p">&gt;</span>Server export<span class="p">&lt;/</span><span class="nt">h1</span><span class="p">&gt;</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>srv-app-01<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - srv-app-01.example.org<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>srv-db-01<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - srv-db-01.example.org<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">&lt;</span><span class="nt">h1</span><span class="p">&gt;</span>Server export<span class="p">&lt;/</span><span class="nt">h1</span><span class="p">&gt;</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>srv-app-01<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - srv-app-01.example.org<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>srv-db-01<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span> - srv-db-01.example.org<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
 </code></pre></div>
 <p>Interpolated values are HTML-escaped automatically for <code>text/html</code> output.</p>
 <h2 id="csv-example">CSV example<a class="headerlink" href="#csv-example" title="Permanent link">&para;</a></h2>
 <p>Template:</p>
 <!-- doc-example: template-guide/csv/template -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>name,owner,hostname
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>{% for item in items %}{{ item.name }},{{ item.data.owner }},{{ item.data.hostname }}
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>{% endfor -%}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>name,owner,hostname
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>{% for item in items %}{{ item.name }},{{ item.data.owner }},{{ item.data.hostname }}
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>{% endfor -%}
 </code></pre></div>
 <p>Rendered output:</p>
 <!-- doc-example: template-guide/csv/output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>name,owner,hostname
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>srv-app-01,alice,srv-app-01.example.org
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>srv-db-01,bob,srv-db-01.example.org
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>name,owner,hostname
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>srv-app-01,alice,srv-app-01.example.org
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>srv-db-01,bob,srv-db-01.example.org
 </code></pre></div>
 <h2 id="nested-array-example">Nested array example<a class="headerlink" href="#nested-array-example" title="Permanent link">&para;</a></h2>
 <p>Given item data like:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="p">{</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"srv-app-01"</span><span class="p">,</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">"tags"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"prod"</span><span class="p">,</span><span class="w"> </span><span class="s2">"app"</span><span class="p">]</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"srv-app-01"</span><span class="p">,</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">"tags"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"prod"</span><span class="p">,</span><span class="w"> </span><span class="s2">"app"</span><span class="p">]</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Template:</p>
 <!-- doc-example: template-guide/nested-array/template -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>{% for item in items %}{{ item.name }}
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>{% for tag in item.data.tags %}  - {{ tag }}
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>{% endfor %}{% endfor -%}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>{% for item in items %}{{ item.name }}
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>{% for tag in item.data.tags %}  - {{ tag }}
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>{% endfor %}{% endfor -%}
 </code></pre></div>
 <p>Rendered output:</p>
 <!-- doc-example: template-guide/nested-array/output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>srv-app-01
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>  - prod
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>  - app
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>srv-db-01
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>  - prod
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>  - db
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>srv-app-01
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>  - prod
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>  - app
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>srv-db-01
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>  - prod
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>  - db
 </code></pre></div>
 <p>You can also read a single array element directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>{% for item in items %}{{ item.name }} primary_tag={{ item.data.tags[0] }}
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>{% for item in items %}{{ item.name }} primary_tag={{ item.data.tags[0] }}
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>{% endfor %}
 </code></pre></div>
 <p>For data keys that contain dots, spaces, or punctuation, use bracket notation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>{% for item in items %}{{ item.data["owner.name"] }} {{ item.data["service tier"] }}
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>{% for item in items %}{{ item.data["owner.name"] }} {{ item.data["service tier"] }}
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>{% endfor %}
 </code></pre></div>
 <h2 id="relation-export-example">Relation export example<a class="headerlink" href="#relation-export-example" title="Permanent link">&para;</a></h2>
 <p>Direct relation scopes use the normal <code>items</code> context. Templated <code>related_objects</code> exports are rooted at the requested source object: <code>items</code> contains that single hydrated source object, and <code>source</code> points to the same value.</p>
 <p>Example executable template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="p">{</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">"collection_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export.host-related"</span><span class="p">,</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Related host export"</span><span class="p">,</span>
-<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">  </span><span class="nt">"content_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text/plain"</span><span class="p">,</span>
-<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">  </span><span class="nt">"template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Related objects for {{ source.name }}"</span><span class="p">,</span>
-<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export"</span><span class="p">,</span>
-<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">  </span><span class="nt">"scope_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"related_objects"</span><span class="p">,</span>
-<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="w">  </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
-<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="w">  </span><span class="nt">"default_query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"depth__lte=2&amp;to_classes=91&amp;sort=path"</span><span class="p">,</span>
-<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">  </span><span class="nt">"default_missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"strict"</span>
-<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="p">{</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">"collection_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export.host-related"</span><span class="p">,</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Related host export"</span><span class="p">,</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">  </span><span class="nt">"content_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text/plain"</span><span class="p">,</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">  </span><span class="nt">"template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Related objects for {{ source.name }}"</span><span class="p">,</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export"</span><span class="p">,</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">  </span><span class="nt">"scope_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"related_objects"</span><span class="p">,</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="w">  </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="w">  </span><span class="nt">"default_query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"depth__lte=2&amp;to_classes=91&amp;sort=path"</span><span class="p">,</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">  </span><span class="nt">"default_missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"strict"</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="p">}</span>
 </code></pre></div>
 <p>Run it with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="p">{</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">"object_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">101</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">{</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">"object_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">101</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="p">}</span>
 </code></pre></div>
 <p>Template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>Related objects for {{ source.name }}
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>{% for item in source.reachable.rooms %}- {{ item.name }} path={{ item.path }}
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>Related objects for {{ source.name }}
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>{% for item in source.reachable.rooms %}- {{ item.name }} path={{ item.path }}
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>{% endfor %}
 </code></pre></div>
 <p>For direct relation exports, <code>class_relations</code> items contain fields such as <code>from_hubuum_class_id</code> and <code>to_hubuum_class_id</code>, while <code>object_relations</code> items contain fields such as <code>from_hubuum_object_id</code>, <code>to_hubuum_object_id</code>, and <code>class_relation_id</code>.</p>
 <h2 id="included-related-objects">Included related objects<a class="headerlink" href="#included-related-objects" title="Permanent link">&para;</a></h2>
 <p><code>objects_in_class</code> exports can add bounded related-object arrays to each item with <code>include.related_objects</code>. Use this when the export is centered on one class but the template needs nearby objects, such as a host's room.</p>
 <p>Example executable template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">{</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">"collection_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export.host-room"</span><span class="p">,</span>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Host room export"</span><span class="p">,</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">  </span><span class="nt">"content_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text/plain"</span><span class="p">,</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">  </span><span class="nt">"template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"{% for item in items %}{{ item.name }}{% endfor %}"</span><span class="p">,</span>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export"</span><span class="p">,</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">  </span><span class="nt">"scope_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"objects_in_class"</span><span class="p">,</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">  </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
-<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">  </span><span class="nt">"default_query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name__equals=nommo"</span><span class="p">,</span>
-<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">  </span><span class="nt">"include"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="w">    </span><span class="nt">"related_objects"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="w">      </span><span class="nt">"room"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="w">        </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">91</span><span class="p">,</span>
-<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="w">        </span><span class="nt">"class_relation_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">77</span><span class="p">,</span>
-<a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="w">        </span><span class="nt">"direction"</span><span class="p">:</span><span class="w"> </span><span class="s2">"outgoing"</span><span class="p">,</span>
-<a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="w">        </span><span class="nt">"sort"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name"</span><span class="p">,</span>
-<a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">        </span><span class="nt">"max_depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">        </span><span class="nt">"limit"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
-<a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">      </span><span class="p">}</span>
-<a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">  </span><span class="nt">"default_missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"strict"</span>
-<a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="p">{</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">"collection_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export.host-room"</span><span class="p">,</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Host room export"</span><span class="p">,</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="w">  </span><span class="nt">"content_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text/plain"</span><span class="p">,</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="w">  </span><span class="nt">"template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"{% for item in items %}{{ item.name }}{% endfor %}"</span><span class="p">,</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"export"</span><span class="p">,</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="w">  </span><span class="nt">"scope_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"objects_in_class"</span><span class="p">,</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="w">  </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="w">  </span><span class="nt">"default_query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name__equals=nommo"</span><span class="p">,</span>
+<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="w">  </span><span class="nt">"include"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="w">    </span><span class="nt">"related_objects"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="w">      </span><span class="nt">"room"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="w">        </span><span class="nt">"class_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">91</span><span class="p">,</span>
+<a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="w">        </span><span class="nt">"class_relation_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">77</span><span class="p">,</span>
+<a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a><span class="w">        </span><span class="nt">"direction"</span><span class="p">:</span><span class="w"> </span><span class="s2">"outgoing"</span><span class="p">,</span>
+<a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="w">        </span><span class="nt">"sort"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name"</span><span class="p">,</span>
+<a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a><span class="w">        </span><span class="nt">"max_depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a><span class="w">        </span><span class="nt">"limit"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a><span class="w">  </span><span class="nt">"default_missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"strict"</span>
+<a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a><span class="p">}</span>
 </code></pre></div>
 <p>Template:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>{% for item in items %}{{ item.name }} is in {{ item.related.room[0].name }}
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>{% for item in items %}{{ item.name }} is in {{ item.related.room[0].name }}
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>{% endfor %}
 </code></pre></div>
 <p>The alias (<code>room</code> above) becomes <code>item.related.room</code> in export templates and <code>related.room</code> in JSON output. Included values are arrays even when <code>limit</code> is <code>1</code>, and each related object includes its normal object fields plus <code>path</code>. An export can include up to 8 related-object aliases.</p>
 <p>Use <code>class_relation_id</code> and <code>direction</code> when the relation meaning matters. Use <code>sort</code> (<code>path</code>, <code>name</code>, or <code>created_at</code>) to decide which related object appears first when the alias has a small <code>limit</code>. The top-level <code>related</code> item field is reserved for these export includes.</p>
@@ -5258,8 +5345,8 @@ for the full expression and tag reference.</p>
 <p>Example template:</p>
 <!-- doc-example: template-guide/missing-data/template -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>{% for item in items %}{{ item.name }} owner={{ item.data.primary_contact }}
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>{% endfor -%}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>{% for item in items %}{{ item.name }} owner={{ item.data.primary_contact }}
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>{% endfor -%}
 </code></pre></div>
 <p>If <code>primary_contact</code> does not exist:</p>
 <ul>
@@ -5271,14 +5358,14 @@ for the full expression and tag reference.</p>
 <p>Rendered output with <code>null</code>:</p>
 <!-- doc-example: template-guide/missing-data/null-output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>srv-app-01 owner=null
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>srv-db-01 owner=null
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>srv-app-01 owner=null
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>srv-db-01 owner=null
 </code></pre></div>
 <p>Rendered output with <code>omit</code>:</p>
 <!-- doc-example: template-guide/missing-data/omit-output -->
 
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>srv-app-01 owner=
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>srv-db-01 owner=
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>srv-app-01 owner=
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>srv-db-01 owner=
 </code></pre></div>
 <h2 id="relation-aware-object-export_templates">Relation-aware object export_templates<a class="headerlink" href="#relation-aware-object-export_templates" title="Permanent link">&para;</a></h2>
 <p>Templated object exports can expose hydrated relation-aware objects.</p>
@@ -5354,20 +5441,20 @@ reachable alias bucket.</p>
 </ul>
 <p>The default relation depth is <code>2</code>. Add this field to the export request to
 override it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="p">{</span>
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
-<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="p">{</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="p">}</span>
 </code></pre></div>
 <h3 id="objects_in_class"><code>objects_in_class</code><a class="headerlink" href="#objects_in_class" title="Permanent link">&para;</a></h3>
 <p>Templated <code>objects_in_class</code> exports expose hydrated roots in <code>items</code> only when relation hydration
 is enabled explicitly. Add this field to the export request:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="p">{</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
-<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="p">{</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="w">  </span><span class="nt">"relation_context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="w">    </span><span class="nt">"depth"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>Without <code>relation_context</code>, <code>items</code> stays a plain list of objects without <code>related.*</code> or
 <code>reachable.*</code>.</p>
@@ -5378,43 +5465,43 @@ is enabled explicitly. Add this field to the export request:</p>
 <li>that <code>Room</code> is related to one or more <code>Person</code> objects</li>
 </ul>
 <p>For a templated <code>related_objects</code> export rooted at a host:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>{% for host in items %}
-<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>Host: {{ host.name }}
-<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>{% for room in host.related.rooms %}
-<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>Room: {{ room.name }}
-<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>People:
-<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>{% for person in room.related.persons %}- {{ person.name }}
-<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>{% endfor %}{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>{% for host in items %}
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>Host: {{ host.name }}
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>{% for room in host.related.rooms %}
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>Room: {{ room.name }}
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>People:
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>{% for person in room.related.persons %}- {{ person.name }}
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a>{% endfor %}{% endfor %}{% endfor %}
 </code></pre></div>
 <p>If you want the host export to flatten reachable people without manually stepping through rooms,
 use <code>reachable</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>{% for host in items %}
-<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>Host: {{ host.name }}
-<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>People:
-<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>{% if host.reachable.persons is defined %}
-<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>{% for person in host.reachable.persons %}- {{ person.name }}
-<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>{% endfor %}
-<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a>{% else %}
-<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a>- none
-<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>{% endif %}
-<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>{% for host in items %}
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>Host: {{ host.name }}
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>People:
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>{% if host.reachable.persons is defined %}
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>{% for person in host.reachable.persons %}- {{ person.name }}
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>{% endfor %}
+<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a>{% else %}
+<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a>- none
+<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>{% endif %}
+<a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a>{% endfor %}
 </code></pre></div>
 <p>If <code>alice</code> is reachable through both <code>room-101</code> and <code>room-102</code>, <code>host.reachable.persons</code> still
 contains <code>alice</code> only once.</p>
 <p>If you want to keep both branches, use <code>paths</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>{% for host in items %}
-<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>Host: {{ host.name }}
-<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>People by path:
-<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>{% for person in host.paths.persons %}- {{ person.name }} via {{ person.path_objects[1].name }}
-<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>{% for host in items %}
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>Host: {{ host.name }}
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>People by path:
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>{% for person in host.paths.persons %}- {{ person.name }} via {{ person.path_objects[1].name }}
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>{% endfor %}{% endfor %}
 </code></pre></div>
 <p>In that case the same <code>alice</code> object will appear once per visible route, so a host connected to
 <code>alice</code> through <code>room-101</code> and <code>room-102</code> yields two <code>paths.persons</code> entries.</p>
 <p>Rendered output:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>Host: host-01
-<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>People:
-<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>- alice
-<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>- bob
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>Host: host-01
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>People:
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>- alice
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>- bob
 </code></pre></div>
 <p>Use <code>related</code> when the export should preserve the path shape and show the intermediate room. Use
 <code>reachable</code> when the export should flatten the result to "all people this host can reach within the
@@ -5425,59 +5512,59 @@ class alias, so optional lookups should still be guarded in <code>strict</code> 
 <p>For templated <code>related_objects</code> exports, <code>source</code> is the same hydrated root object that also
 appears as <code>items[0]</code>.</p>
 <p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>Host: {{ source.name }}
-<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>People:
-<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>{% for person in source.reachable.persons %}- {{ person.name }}
-<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>Host: {{ source.name }}
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>People:
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>{% for person in source.reachable.persons %}- {{ person.name }}
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>{% endfor %}
 </code></pre></div>
 <p>Using <code>items</code> keeps export_templates reusable between <code>related_objects</code> and <code>objects_in_class</code>. Using
 <code>source</code> is convenient when an export is always rooted at one object.</p>
 <p>Rendered output:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>Host: host-01
-<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>Room: room-101
-<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>People:
-<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>- alice
-<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>- bob
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>Host: host-01
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>Room: room-101
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>People:
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>- alice
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>- bob
 </code></pre></div>
 <p>For a class-wide host export, use <code>objects_in_class</code> plus <code>relation_context.depth</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>{% for host in items %}
-<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>{% for room in host.related.rooms %}
-<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>{% for person in room.related.persons %}
-<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>{{ host.name }},{{ room.name }},{{ person.name }}
-<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>{% endfor %}{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>{% for host in items %}
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>{% for room in host.related.rooms %}
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>{% for person in room.related.persons %}
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>{{ host.name }},{{ room.name }},{{ person.name }}
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>{% endfor %}{% endfor %}{% endfor %}
 </code></pre></div>
 <p>The flatter class-wide version can use <code>reachable</code> instead:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>{% for host in items %}
-<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>{% for person in host.reachable.persons %}
-<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>{{ host.name }},{{ person.name }}
-<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>{% for host in items %}
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>{% for person in host.reachable.persons %}
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>{{ host.name }},{{ person.name }}
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>{% endfor %}{% endfor %}
 </code></pre></div>
 <p>If you want a more defensive version that handles missing or empty relations cleanly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>{% for host in items %}
-<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>Host: {{ host.name }}
-<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>{% if host.related.rooms is defined and host.related.rooms %}
-<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>{% for room in host.related.rooms %}
-<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>Room: {{ room.name }}
-<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a>{% if room.related.persons is defined and room.related.persons %}
-<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a>People:
-<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a>{% for person in room.related.persons %}- {{ person.name }}
-<a id="__codelineno-38-9" name="__codelineno-38-9" href="#__codelineno-38-9"></a>{% endfor %}
-<a id="__codelineno-38-10" name="__codelineno-38-10" href="#__codelineno-38-10"></a>{% else %}
-<a id="__codelineno-38-11" name="__codelineno-38-11" href="#__codelineno-38-11"></a>People:
-<a id="__codelineno-38-12" name="__codelineno-38-12" href="#__codelineno-38-12"></a>- none
-<a id="__codelineno-38-13" name="__codelineno-38-13" href="#__codelineno-38-13"></a>{% endif %}
-<a id="__codelineno-38-14" name="__codelineno-38-14" href="#__codelineno-38-14"></a>{% endfor %}
-<a id="__codelineno-38-15" name="__codelineno-38-15" href="#__codelineno-38-15"></a>{% else %}
-<a id="__codelineno-38-16" name="__codelineno-38-16" href="#__codelineno-38-16"></a>Room: none
-<a id="__codelineno-38-17" name="__codelineno-38-17" href="#__codelineno-38-17"></a>{% endif %}
-<a id="__codelineno-38-18" name="__codelineno-38-18" href="#__codelineno-38-18"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>{% for host in items %}
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a>Host: {{ host.name }}
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a>{% if host.related.rooms is defined and host.related.rooms %}
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a>{% for room in host.related.rooms %}
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a>Room: {{ room.name }}
+<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a>{% if room.related.persons is defined and room.related.persons %}
+<a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a>People:
+<a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a>{% for person in room.related.persons %}- {{ person.name }}
+<a id="__codelineno-39-9" name="__codelineno-39-9" href="#__codelineno-39-9"></a>{% endfor %}
+<a id="__codelineno-39-10" name="__codelineno-39-10" href="#__codelineno-39-10"></a>{% else %}
+<a id="__codelineno-39-11" name="__codelineno-39-11" href="#__codelineno-39-11"></a>People:
+<a id="__codelineno-39-12" name="__codelineno-39-12" href="#__codelineno-39-12"></a>- none
+<a id="__codelineno-39-13" name="__codelineno-39-13" href="#__codelineno-39-13"></a>{% endif %}
+<a id="__codelineno-39-14" name="__codelineno-39-14" href="#__codelineno-39-14"></a>{% endfor %}
+<a id="__codelineno-39-15" name="__codelineno-39-15" href="#__codelineno-39-15"></a>{% else %}
+<a id="__codelineno-39-16" name="__codelineno-39-16" href="#__codelineno-39-16"></a>Room: none
+<a id="__codelineno-39-17" name="__codelineno-39-17" href="#__codelineno-39-17"></a>{% endif %}
+<a id="__codelineno-39-18" name="__codelineno-39-18" href="#__codelineno-39-18"></a>{% endfor %}
 </code></pre></div>
 <p>The same pattern also works for HTML and CSV:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for host in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>{{ host.name }}<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for room in host.related.rooms %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ room.name }}<span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for person in room.related.persons %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ person.name }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for host in items %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>{{ host.name }}<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for room in host.related.rooms %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ room.name }}<span class="p">&lt;</span><span class="nt">ul</span><span class="p">&gt;</span>{% for person in room.related.persons %}<span class="p">&lt;</span><span class="nt">li</span><span class="p">&gt;</span>{{ person.name }}<span class="p">&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;&lt;/</span><span class="nt">li</span><span class="p">&gt;</span>{% endfor %}<span class="p">&lt;/</span><span class="nt">ul</span><span class="p">&gt;</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>host,room,person
-<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a>{% for host in items %}{% for room in host.related.rooms %}{% for person in room.related.persons %}{{ host.name }},{{ room.name }},{{ person.name }}
-<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a>{% endfor %}{% endfor %}{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>host,room,person
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>{% for host in items %}{% for room in host.related.rooms %}{% for person in room.related.persons %}{{ host.name }},{{ room.name }},{{ person.name }}
+<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>{% endfor %}{% endfor %}{% endfor %}
 </code></pre></div>
 <h2 id="limits-and-constraints">Limits and constraints<a class="headerlink" href="#limits-and-constraints" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5497,9 +5584,9 @@ appears as <code>items[0]</code>.</p>
 <p>Hubuum now provides <code>|csv_cell</code> for individual CSV cells. Use it instead of hand-written quoting
 for fields that may contain commas, quotes, or newlines.</p>
 <p>Example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>name,owner
-<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>{% for item in items %}{{ item.name|csv_cell }},{{ item.data.owner|default("")|csv_cell }}
-<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>{% endfor %}
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a>name,owner
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a>{% for item in items %}{{ item.name|csv_cell }},{{ item.data.owner|default("")|csv_cell }}
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a>{% endfor %}
 </code></pre></div>
 <h2 id="missing-fields-and-warnings">Missing fields and warnings<a class="headerlink" href="#missing-fields-and-warnings" title="Permanent link">&para;</a></h2>
 <p>Missing values are controlled by <code>missing_data_policy</code>:</p>
@@ -5527,13 +5614,13 @@ for fields that may contain commas, quotes, or newlines.</p>
 <li>Read the returned <code>TaskResponse</code>, wait for completion, then fetch the rendered result from <code>GET /api/v1/exports/{task_id}/output</code></li>
 </ol>
 <p>Example template run request:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="p">{</span>
-<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">  </span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name__contains=srv-&amp;sort=name"</span><span class="p">,</span>
-<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">  </span><span class="nt">"missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"omit"</span><span class="p">,</span>
-<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="w">  </span><span class="nt">"limits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a><span class="w">    </span><span class="nt">"max_items"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span>
-<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="p">{</span>
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="w">  </span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"name__contains=srv-&amp;sort=name"</span><span class="p">,</span>
+<a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a><span class="w">  </span><span class="nt">"missing_data_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"omit"</span><span class="p">,</span>
+<a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="w">  </span><span class="nt">"limits"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="w">    </span><span class="nt">"max_items"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span>
+<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="p">}</span>
 </code></pre></div>
 
 
