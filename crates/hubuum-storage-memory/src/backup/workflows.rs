@@ -23,6 +23,14 @@ pub(super) fn capture(
             .collect::<Result<_, _>>()?,
     );
     sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.scope().collection_id().map(|id| id.id()), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(
+        StorageBackupStateSection::QueryUsageDeclarations,
+        state
+            .query_usage
+            .values()
+            .map(|value| capture_row(progress, row(value.snapshot())))
+            .collect::<Result<_, _>>()?,
+    );
     sections.insert(StorageBackupStateSection::ComputedFieldDefinitions, state.computed_fields.values().map(|v| {
         let (visibility, owner) = match v.visibility() { StorageComputedFieldVisibility::Shared => ("shared", None), StorageComputedFieldVisibility::Personal { owner_id } => ("personal", Some(owner_id.id())) };
         let m = v.metadata();
@@ -39,6 +47,12 @@ pub(super) fn restore(
     state: &mut MemoryState,
 ) -> Result<(), StorageError> {
     state.event_sink_schedule.clear();
+    for row in &sections[&StorageBackupStateSection::QueryUsageDeclarations] {
+        let value = StorageQueryUsageDeclaration::from_snapshot(row.clone().into_value())
+            .map_err(invalid_contract_value)?;
+        state.query_usage.insert(value.metadata().id().id(), value);
+    }
+    state.next_query_usage_id = next_id(&state.query_usage)?;
     state.event_sink_grants = sections[&StorageBackupStateSection::EventSinkCollectionGrants]
         .iter()
         .map(|row| {

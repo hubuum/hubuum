@@ -222,6 +222,7 @@ mod identity;
 mod identity_queries;
 mod operational;
 mod queries;
+mod query_usage;
 mod relations;
 mod schema_evolution;
 mod tasks;

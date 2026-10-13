@@ -10,6 +10,8 @@ mod backend;
 mod backup_snapshot;
 pub mod capabilities;
 mod catalog;
+mod query_usage;
+pub use query_usage::*;
 mod collection_authorization;
 mod computed_fields;
 mod computed_objects;

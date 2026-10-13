@@ -30,3 +30,5 @@ pub mod credential_approvals;
 pub mod system_event_subscriptions;
 
 pub mod collection_event_sinks;
+
+pub mod query_usage;

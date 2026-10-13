@@ -733,6 +733,14 @@ pub(crate) fn verify_restored_backup_matches(
     let mut restored = restored.clone();
     normalize_legacy_event_configuration(&mut source);
     normalize_legacy_class_schema_policies(&mut source);
+    if source.backup_version < 9 {
+        // Restore adds this empty section for backups predating declarations.
+        source
+            .state
+            .sections
+            .entry(StorageBackupStateSection::QueryUsageDeclarations)
+            .or_default();
+    }
     if let Some(history) = &mut source.history {
         for (section, rows) in &mut history.sections {
             for row in rows {
@@ -2010,10 +2018,17 @@ mod tests {
     #[rstest::rstest]
     #[case::six(6)]
     #[case::seven(7)]
+    #[case::eight(8)]
     #[case::current(CURRENT_BACKUP_VERSION)]
     fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
         let mut document = minimally_valid_document();
         document.backup_version = version;
+        if version < 9 {
+            document
+                .state
+                .sections
+                .remove(&StorageBackupStateSection::QueryUsageDeclarations);
+        }
         if version < 8 {
             document
                 .state
@@ -2085,6 +2100,41 @@ mod tests {
         let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
 
         assert!(error.to_string().contains("invalid RFC 3339 timestamp"));
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[rstest]
+    #[case::version_six(6, false, true)]
+    #[case::version_seven(7, false, true)]
+    #[case::version_eight(8, false, true)]
+    #[case::unexpected_declaration(8, true, false)]
+    #[case::missing_current_section(CURRENT_BACKUP_VERSION, false, false)]
+    fn restored_backup_comparison_normalizes_only_absent_legacy_declarations(
+        #[case] version: i32,
+        #[case] unexpected_declaration: bool,
+        #[case] accepted: bool,
+    ) {
+        let mut restored = minimally_valid_document();
+        let mut source = restored.clone();
+        source.backup_version = version;
+        source
+            .state
+            .sections
+            .remove(&StorageBackupStateSection::QueryUsageDeclarations);
+        source.manifest = BackupManifest::from_sections(&source.state, None);
+        if unexpected_declaration {
+            restored
+                .state
+                .sections
+                .get_mut(&StorageBackupStateSection::QueryUsageDeclarations)
+                .unwrap()
+                .push(StorageBackupRow::try_from_value(json!({"id": 1})).unwrap());
+        }
+
+        assert_eq!(
+            verify_restored_backup_matches(&source, &restored).is_ok(),
+            accepted
+        );
     }
 
     #[cfg(feature = "embedded-migrations")]

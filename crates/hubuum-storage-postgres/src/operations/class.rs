@@ -257,6 +257,7 @@ pub(crate) async fn delete_class_on(
     context: &EventContext,
 ) -> Result<StorageMutationOutcome<()>, PostgresStorageError> {
     let before = lock_resolved_class(connection, target).await?;
+    super::query_usage::delete_class_query_usage(connection, &before, context).await?;
     super::schema_evolution::schema_event_on(
         connection,
         &before,
