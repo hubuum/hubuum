@@ -14,13 +14,13 @@ use crate::tests::{
     TestContext, app_context, app_context_with_permission_backend, create_test_group,
 };
 
-async fn login(context: &TestContext, user: &User) -> Value {
+async fn login(context: &TestContext, user: &User, password: &str) -> Value {
     let response = post_request(
         &context.pool,
         "",
         "/api/v0/auth/login",
         &json!({
-            "name": user.name(&context.pool).await.unwrap(), "password": "testpassword"
+            "name": user.name(&context.pool).await.unwrap(), "password": password
         }),
     )
     .await;
@@ -72,7 +72,8 @@ async fn login_snapshots_selected_admin_policy(
     let response = test::TestRequest::post()
         .uri("/api/v0/auth/login")
         .set_json(json!({
-            "name": user.name(&context.pool).await.unwrap(), "password": "testpassword"
+            "name": user.name(&context.pool).await.unwrap(),
+            "password": if local_admin { "testadminpassword" } else { "testpassword" }
         }))
         .send_request(&app)
         .await;
@@ -125,7 +126,7 @@ async fn authentication_without_login_issuance_does_not_emit_success(#[case] reu
 #[actix_web::test]
 async fn non_admin_cannot_read_even_their_own_login_event() {
     let context = TestContext::new().await;
-    login(&context, &context.normal_user).await;
+    login(&context, &context.normal_user, "testpassword").await;
     let response = get_request(
         &context.pool,
         &context.normal_token,
@@ -153,8 +154,13 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
     } else {
         &context.normal_user
     };
+    let password = if admin {
+        "testadminpassword"
+    } else {
+        "testpassword"
+    };
     let original_name = user.name(&context.pool).await.unwrap();
-    let body = login(&context, user).await;
+    let body = login(&context, user, password).await;
     let events = events(&context, user).await;
     let event = &events[0];
     assert_eq!(event.collection_id, None);
@@ -217,18 +223,25 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
     )
     .await
     .unwrap();
-    let response = get_request(
+    let count = hubuum_storage_postgres::test_support::count_event_deliveries(
         &context.pool,
-        &operator_token,
-        &format!("/api/v1/event-deliveries?subscription_id={}", saved["id"]),
+        event.id.try_into().unwrap(),
     )
-    .await;
-    let queued: Vec<Value> =
-        test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
-    assert_eq!(queued.len(), usize::from(admin));
+    .await
+    .unwrap();
+    assert_eq!(count, i64::from(admin));
     if admin {
-        assert_eq!(queued[0]["event_id"], event.id);
-        assert_eq!(queued[0]["status"], "pending");
+        let queued = hubuum_storage_postgres::test_support::load_event_delivery_for_event(
+            &context.pool,
+            event.id.try_into().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            i64::from(queued.subscription_id().id()),
+            saved["id"].as_i64().unwrap()
+        );
+        assert_eq!(queued.status().as_str(), "pending");
         let settings = hubuum_domain::EventDeliverySettings::builder()
             .batch_size(1)
             .lock_timeout_ms(30_000)
@@ -240,7 +253,7 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
             .unwrap();
         let work = hubuum_storage_postgres::test_support::claim_event_delivery_by_id(
             &context.pool,
-            hubuum_domain::EventDeliveryId::new(queued[0]["id"].as_i64().unwrap()).unwrap(),
+            queued.id(),
             settings,
         )
         .await
@@ -281,7 +294,7 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
     );
     let serialized = serde_json::to_string(&(event, &preview)).unwrap();
     for secret in [
-        "testpassword",
+        password,
         user.password.as_deref().unwrap(),
         body["token"].as_str().unwrap(),
     ] {
