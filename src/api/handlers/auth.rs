@@ -3,6 +3,7 @@ use std::fmt;
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
+use crate::events::{EventContext, RequestProvenance};
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
@@ -10,6 +11,7 @@ use crate::middlewares::rate_limit::{
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
+use crate::services::authentication::issue_login_token;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -97,7 +99,7 @@ pub async fn login(
     };
 
     debug!(message = "Login started", user = name);
-    let user = match crate::auth::login(&context, login).await {
+    let authenticated = match crate::auth::login(&context, login).await {
         Ok(user) => user,
         Err(e) => {
             let (outcome, metric_outcome) = if matches!(e, ApiError::Unauthorized(_)) {
@@ -113,7 +115,11 @@ pub async fn login(
 
     finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await?;
 
-    let token_generation_result = user.create_issued_token(&context).await;
+    let user = authenticated.user();
+    let event_context = RequestProvenance::from_request(&req)
+        .map(|provenance| provenance.user_event_context(user.id))
+        .unwrap_or_else(EventContext::system);
+    let token_generation_result = issue_login_token(&context, &authenticated, &event_context).await;
 
     let token = match token_generation_result {
         Ok(token) => token,

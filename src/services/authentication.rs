@@ -1,12 +1,58 @@
 use chrono::SubsecRound;
+use hubuum_domain::PrincipalId;
+use hubuum_events_core::{EventContext, EventSubject};
 use tracing::{Instrument, field, info_span};
 
+use crate::auth::AuthenticatedLogin;
 use crate::errors::ApiError;
-use crate::models::{Token, configured_token_lifetime};
+use crate::models::principal::load_principal_by_id;
+use crate::models::token::configured_token_issuance_policy;
+use crate::models::{IssuedToken, Token, configured_token_lifetime};
+use crate::permissions::AppContext;
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageContext,
-    StorageTokenFormat, StorageTokenMigrationOutcome, storage_handle,
+    StorageTokenCreate, StorageTokenFormat, StorageTokenMigrationOutcome, TokenStorage,
+    storage_handle,
 };
+use crate::utilities::auth::generate_token;
+
+/// Commit a login token and immutable event-time subject using the configured
+/// authorization policy, after provider authentication and identity synchronization.
+pub(crate) async fn issue_login_token(
+    context: &AppContext,
+    authenticated: &AuthenticatedLogin,
+    event_context: &EventContext,
+) -> Result<IssuedToken, ApiError> {
+    let user = authenticated.user();
+    let principal = load_principal_by_id(context, user.id).await?;
+    let is_admin = context.is_admin(user).await?;
+    let subject = EventSubject::try_new(
+        PrincipalId::new(principal.id)?,
+        principal.name,
+        principal.kind,
+        authenticated.identity_scope().to_string(),
+        authenticated.provider_kind().to_string(),
+        is_admin,
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    let token = generate_token();
+    let request = StorageTokenCreate::for_login(
+        subject,
+        token.storage_digest()?,
+        super::identity::token_policy(configured_token_issuance_policy()?),
+        event_context,
+    );
+    let metadata = storage_handle(context)
+        .create_token(request)
+        .await?
+        .into_value();
+    let expires_at = metadata.expires_at().ok_or_else(|| {
+        ApiError::InternalServerError(
+            "newly issued token is missing its persisted expiry".to_string(),
+        )
+    })?;
+    Ok(IssuedToken::new(token, expires_at.naive_utc()))
+}
 
 /// Validate one presented bearer token through the selected complete storage
 /// backend.

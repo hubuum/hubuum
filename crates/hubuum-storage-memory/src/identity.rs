@@ -2850,9 +2850,23 @@ fn create_token_in_state(
         request.event_context(),
         format!("Token {} created", id.id()),
     )?;
-    Ok(super::credential_approval::outcome(
+    let mut additional_audits = approval_audit.into_iter().collect::<Vec<_>>();
+    if let Some(subject) = request.login_subject() {
+        additional_audits.push(append_memory_event!(
+            state,
+            EntityType::Authentication,
+            subject.principal_id().id(),
+            Some(subject.name()),
+            None,
+            Action::Succeeded,
+            request.event_context(),
+            subject.successful_login_document(),
+            None,
+            None,
+        )?);
+    }
+    Ok(StorageMutationOutcome::committed_with_audits(
         metadata,
-        receipt,
-        approval_audit,
+        StorageAuditReceipts::new(receipt, additional_audits),
     ))
 }

@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{PrincipalId, TokenId};
-use hubuum_events_core::EventContext;
+use hubuum_events_core::{EventContext, EventSubject};
 
 use crate::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthenticationTokenScope,
@@ -103,9 +103,15 @@ pub struct StorageTokenCreateParts {
     scope: Option<StorageAuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
+    login_subject: Option<EventSubject>,
 }
 
 impl StorageTokenCreateParts {
+    /// Snapshot present only for successful login issuance.
+    pub fn login_subject(&self) -> Option<&EventSubject> {
+        self.login_subject.as_ref()
+    }
+
     #[must_use]
     pub const fn principal_id(&self) -> PrincipalId {
         self.principal_id
@@ -215,9 +221,32 @@ pub struct StorageTokenCreate {
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
     credential_claim: Option<crate::StorageCredentialClaim>,
+    login_subject: Option<EventSubject>,
 }
 
 impl StorageTokenCreate {
+    /// Issue a login token and its subject snapshot atomically. Actor and token
+    /// owner are derived from the same subject; request correlation is preserved.
+    #[must_use]
+    pub fn for_login(
+        subject: EventSubject,
+        digest: StorageTokenDigest,
+        policy: StorageTokenIssuancePolicy,
+        context: &EventContext,
+    ) -> Self {
+        let context = EventContext::user(
+            subject.principal_id(),
+            context.request_id(),
+            context.correlation_id().cloned(),
+        )
+        .with_trace_link(context.trace_link().cloned());
+        let principal_id = subject.principal_id();
+        Self {
+            login_subject: Some(subject),
+            ..Self::new(principal_id, digest, policy, context)
+        }
+    }
+
     /// Attach a fresh-authentication claim; adapters consume it in the mutation transaction.
     #[must_use]
     pub fn with_credential_claim(mut self, claim: crate::StorageCredentialClaim) -> Self {
@@ -245,6 +274,7 @@ impl StorageTokenCreate {
             policy,
             event_context,
             credential_claim: None,
+            login_subject: None,
         }
     }
 
@@ -283,6 +313,7 @@ impl StorageTokenCreate {
             scope: self.scope,
             policy: self.policy,
             event_context: self.event_context,
+            login_subject: self.login_subject,
         }
     }
 }
@@ -550,6 +581,9 @@ pub trait TokenStorage: Send + Sync {
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenKeyUsage>, StorageError>;
 
+    /// Commit token.created and, for a login request, authentication.succeeded
+    /// with its supplied immutable subject in the same transaction. Return both
+    /// audit receipts; never derive the subject from later identity state.
     async fn create_token(
         &self,
         request: StorageTokenCreate,

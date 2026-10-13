@@ -3,6 +3,7 @@ mod authorization_resources;
 mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
+mod login_events;
 mod schema_evolution;
 mod task_control;
 mod webhook_notifications;

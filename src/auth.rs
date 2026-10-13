@@ -390,18 +390,48 @@ impl AuthProviderBackend for LdapAuthProvider {
     }
 }
 
+/// Proof that a configured provider authenticated and synchronized this user.
+/// Credential reauthentication may inspect the user without issuing a login token.
+pub struct AuthenticatedLogin {
+    user: User,
+    identity_scope: String,
+    provider_kind: String,
+}
+
+impl AuthenticatedLogin {
+    pub fn user(&self) -> &User {
+        &self.user
+    }
+
+    pub(crate) fn identity_scope(&self) -> &str {
+        &self.identity_scope
+    }
+
+    pub(crate) fn provider_kind(&self) -> &str {
+        &self.provider_kind
+    }
+}
+
 pub async fn login(
     storage: &impl crate::storage::StorageContext,
     login: LoginUser,
-) -> Result<User, ApiError> {
+) -> Result<AuthenticatedLogin, ApiError> {
     login.validate()?;
+    login_with_registry(storage, login, auth_provider_registry()?).await
+}
+
+async fn login_with_registry(
+    storage: &impl crate::storage::StorageContext,
+    login: LoginUser,
+    registry: &AuthProviderRegistry,
+) -> Result<AuthenticatedLogin, ApiError> {
     let storage = crate::storage::storage_handle(storage);
     let scope = login
         .identity_scope
         .as_deref()
         .unwrap_or(LOCAL_IDENTITY_SCOPE)
         .to_string();
-    let provider = auth_provider_registry()?.provider(&scope)?;
+    let provider = registry.provider(&scope)?;
     let span = info_span!(
         "auth.provider",
         auth.provider.kind = bounded_provider_kind(&provider.kind),
@@ -421,7 +451,11 @@ pub async fn login(
             "rejected"
         },
     );
-    result
+    result.map(|user| AuthenticatedLogin {
+        user,
+        identity_scope: scope,
+        provider_kind: provider.kind.clone(),
+    })
 }
 
 fn bounded_provider_kind(kind: &str) -> &'static str {
@@ -1154,3 +1188,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod login_events;
