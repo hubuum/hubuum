@@ -75,6 +75,31 @@ credentials. Long term, service account credentials should be treated as a
 credential provider plugged into the same principal model, not as a separate
 identity system.
 
+### Username requirements
+
+A human user's username is the principal's `name`. For successful login:
+
+- The name must contain at least one non-whitespace character. Empty names and
+  names consisting entirely of spaces, tabs, or other Unicode whitespace are
+  unsupported.
+- The login request's `name` must be at most 255 Unicode characters, including
+  any whitespace.
+- Names must be unique within their identity scope. Local login matches the name
+  exactly, including case and whitespace; it does not trim the supplied name.
+  External providers may impose additional matching rules.
+
+The stored principal name must also be nonblank, including when an external
+provider supplies it after authentication.
+
+**Upgrade requirement:** successful-login events require a nonblank principal
+name. Older versions allowed empty or whitespace-only local names, and user
+creation does not yet reject them. Such accounts can pass password verification
+but cannot receive a login token; the login endpoint currently returns
+`500 Internal authentication failure`. Before upgrading, create replacement local
+accounts with valid names and reassign their group memberships before retiring
+the affected accounts. The local user update API does not support renaming.
+Correct provider-managed names in the identity provider.
+
 ---
 
 ## Authorization is group-based

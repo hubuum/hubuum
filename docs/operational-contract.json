@@ -7208,6 +7208,12 @@
         ]
       },
       {
+        "name": "authentication",
+        "actions": [
+          "succeeded"
+        ]
+      },
+      {
         "name": "credential_approval",
         "actions": [
           "created",

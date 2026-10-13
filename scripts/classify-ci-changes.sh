@@ -54,7 +54,7 @@ for path in "$@"; do
 
   case "$path" in
     src/config/running.rs | src/models/credential_approval.rs | \
-      src/api/v1/handlers/credential_approvals.rs)
+      src/api/v1/handlers/credential_approvals.rs | crates/hubuum-events-core/src/*)
       openapi=true
       ;;
     crates/hubuum-domain/src/json_schema.rs | crates/hubuum-domain/src/json_schema/* | \

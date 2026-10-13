@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Successful local and external logins emit administrator-only
+  `authentication.succeeded` events atomically with token issuance. System
+  subscriptions can select immutable event-time subject IDs, identity scopes,
+  and administrator status for Slack or other existing notification sinks.
 - Class and object audit routes, and explicitly selected classes or objects in
   `/api/v1/events`, accept `include_relations=true` to include direct relation
   activity from either endpoint, including deleted relations. Existing requests
@@ -29,6 +33,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking login compatibility:** empty or whitespace-only principal names
+  cannot receive login tokens. Before upgrading, create replacement local
+  accounts with nonblank names and reassign their group memberships; correct
+  provider-managed names in the identity provider. See the
+  [username requirements](docs/auth_model.md#username-requirements).
+- **Breaking storage SDK change:** adapters must persist the optional login
+  subject on `StorageTokenCreate` atomically with both login and token lifecycle
+  events. Update exhaustive `EntityType` matches for `Authentication` and filter
+  struct literals for the new subject predicates. Upgrade event readers before
+  enabling the new server; older servers cannot read the new catalog entry.
+  Downgrading requires a compatible reader or restoring a pre-upgrade backup.
 - Corrected permission examples and release-specific deployment instructions, and separated user guides from implementation and verification notes.
 - PostgreSQL object, class, and collection searches skip the separate count query
   when the first page contains every match, preserving exact totals without

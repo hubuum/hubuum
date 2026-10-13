@@ -12,6 +12,9 @@
 //! `entity_type` is the API/concept name, **not** the table name (`class`, not
 //! `hubuumclass`), and actions are **non-uniform** per entity type.
 
+mod subject;
+pub use subject::EventSubject;
+
 use std::fmt;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -498,6 +501,7 @@ pub enum EntityType {
     UserGroup,
     Permission,
     Token,
+    Authentication,
     CredentialApproval,
     RemoteTarget,
     ExportTemplate,
@@ -525,6 +529,7 @@ impl EntityType {
         Self::UserGroup,
         Self::Permission,
         Self::Token,
+        Self::Authentication,
         Self::CredentialApproval,
         Self::RemoteTarget,
         Self::ExportTemplate,
@@ -552,6 +557,7 @@ impl EntityType {
             EntityType::UserGroup => "user_group",
             EntityType::Permission => "permission",
             EntityType::Token => "token",
+            EntityType::Authentication => "authentication",
             EntityType::CredentialApproval => "credential_approval",
             EntityType::RemoteTarget => "remote_target",
             EntityType::ExportTemplate => "export_template",
@@ -580,6 +586,7 @@ impl EntityType {
             "user_group" => Ok(EntityType::UserGroup),
             "permission" => Ok(EntityType::Permission),
             "token" => Ok(EntityType::Token),
+            "authentication" => Ok(EntityType::Authentication),
             "credential_approval" => Ok(EntityType::CredentialApproval),
             "remote_target" => Ok(EntityType::RemoteTarget),
             "export_template" => Ok(EntityType::ExportTemplate),
@@ -719,7 +726,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::EventSubscription | E::ComputedFieldDefinition => &[A::Created, A::Updated, A::Deleted],
         E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
-        E::Restore => &[A::Succeeded],
+        E::Restore | E::Authentication => &[A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
@@ -879,6 +886,9 @@ pub struct EventEnvelope {
     before: Option<serde_json::Value>,
     after: Option<serde_json::Value>,
     metadata: serde_json::Value,
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schema(ignore))]
+    subject: Option<EventSubject>,
     schema_version: i32,
 }
 
@@ -1100,6 +1110,13 @@ impl EventEnvelopeBuilder {
             }
         }
 
+        let subject = metadata
+            .get("subject")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value::<EventSubject>(value.clone()))
+            .transpose()
+            .map_err(|error| EventEnvelopeError::new(format!("invalid event subject: {error}")))?;
+
         let schema_version = self.schema_version.unwrap_or(CURRENT_EVENT_SCHEMA_VERSION);
         if schema_version <= 0 {
             return Err(EventEnvelopeError::new(
@@ -1134,6 +1151,7 @@ impl EventEnvelopeBuilder {
             before: self.before,
             after: self.after,
             metadata,
+            subject,
             schema_version,
         })
     }
@@ -1167,6 +1185,11 @@ impl fmt::Debug for EventEnvelope {
 }
 
 impl EventEnvelope {
+    /// Event-time subject snapshot; never resolved from current identity state.
+    pub fn subject(&self) -> Option<&EventSubject> {
+        self.subject.as_ref()
+    }
+
     /// Restrict delivery snapshots to the subscription's own collection, matching
     /// the audit API's related-collection projection. Global admin subscriptions
     /// retain the complete envelope.
@@ -1329,6 +1352,15 @@ impl EventEnvelope {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventSubscriptionFilter {
+    /// Match affected principal IDs from the immutable event-time subject.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subject_principal_ids: Vec<PrincipalId>,
+    /// Match identity scope names from the immutable event-time subject.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subject_identity_scopes: Vec<String>,
+    /// Require the recorded administrator status. Missing subject context never matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_is_admin: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub task_kinds: Vec<hubuum_domain::TaskKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1353,7 +1385,17 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        (self.task_kinds.is_empty()
+        matches_optional(
+            &self.subject_principal_ids,
+            event.subject().map(EventSubject::principal_id),
+        ) && matches_optional_str(
+            &self.subject_identity_scopes,
+            event.subject().map(EventSubject::identity_scope),
+        ) && self.subject_is_admin.is_none_or(|expected| {
+            event
+                .subject()
+                .is_some_and(|subject| subject.is_admin() == expected)
+        }) && (self.task_kinds.is_empty()
             || (event.entity_type() == EntityType::Task
                 && event
                     .metadata()
@@ -1386,6 +1428,11 @@ impl EventSubscriptionFilter {
     }
 
     pub fn validate(&self) -> Result<(), EventFilterError> {
+        ensure_unique("subject_principal_ids", &self.subject_principal_ids)?;
+        ensure_unique_str("subject_identity_scopes", &self.subject_identity_scopes)?;
+        for value in &self.subject_identity_scopes {
+            ensure_non_empty("subject_identity_scopes", value)?;
+        }
         ensure_unique("collection_ids", &self.collection_ids)?;
         ensure_unique("related_collection_ids", &self.related_collection_ids)?;
         ensure_unique("entity_ids", &self.entity_ids)?;
@@ -2309,6 +2356,125 @@ mod tests {
         assert!(EventSubscriptionScope::System.matches(&event));
     }
 
+    #[rstest::rstest]
+    #[case(serde_json::json!({"subject_is_admin": true}), true)]
+    #[case(serde_json::json!({"subject_is_admin": false}), false)]
+    #[case(serde_json::json!({"subject_principal_ids": [7, 8]}), true)]
+    #[case(serde_json::json!({"subject_principal_ids": [40]}), false)]
+    #[case(serde_json::json!({"subject_identity_scopes": ["local", "directory"]}), true)]
+    #[case(serde_json::json!({"subject_identity_scopes": ["local"]}), false)]
+    #[case(serde_json::json!({"subject_is_admin": true, "subject_principal_ids": [7], "subject_identity_scopes": ["directory"], "actor_user_ids": [40]}), true)]
+    #[case(serde_json::json!({"subject_is_admin": true, "subject_principal_ids": [7], "subject_identity_scopes": ["local"]}), false)]
+    fn subject_filters_use_snapshot_with_and_between_fields(
+        #[case] filter: serde_json::Value,
+        #[case] expected: bool,
+    ) {
+        let subject = EventSubject::try_new(
+            PrincipalId::new(7).unwrap(),
+            "original-name".into(),
+            hubuum_domain::PrincipalKind::Human,
+            "directory".into(),
+            "ldap".into(),
+            true,
+        )
+        .unwrap();
+        // The actor is principal 40, independently of subject 7.
+        let event = envelope_builder()
+            .metadata(subject.successful_login_document().metadata().clone())
+            .try_build()
+            .unwrap();
+        let filter: EventSubscriptionFilter = serde_json::from_value(filter).unwrap();
+        filter.validate().unwrap();
+        assert_eq!(filter.matches(&event), expected);
+    }
+
+    #[rstest::rstest]
+    #[case(serde_json::json!({"subject_is_admin": true}))]
+    #[case(serde_json::json!({"subject_is_admin": false}))]
+    #[case(serde_json::json!({"subject_principal_ids": [40]}))]
+    #[case(serde_json::json!({"subject_identity_scopes": ["local"]}))]
+    fn historical_events_do_not_match_explicit_subject_predicates(
+        #[case] filter: serde_json::Value,
+    ) {
+        let filter: EventSubscriptionFilter = serde_json::from_value(filter).unwrap();
+        assert!(!filter.matches(&envelope()));
+    }
+
+    #[rstest::rstest]
+    fn administrator_filter_compares_both_boolean_values(
+        #[values(true, false)] recorded: bool,
+        #[values(true, false)] required: bool,
+    ) {
+        let subject = EventSubject::try_new(
+            PrincipalId::new(7).unwrap(),
+            "principal".into(),
+            hubuum_domain::PrincipalKind::Human,
+            "local".into(),
+            "local".into(),
+            recorded,
+        )
+        .unwrap();
+        let event = envelope_builder()
+            .metadata(subject.successful_login_document().metadata().clone())
+            .try_build()
+            .unwrap();
+        let filter = EventSubscriptionFilter {
+            subject_is_admin: Some(required),
+            ..Default::default()
+        };
+        assert_eq!(filter.matches(&event), recorded == required);
+    }
+
+    #[rstest::rstest]
+    #[case("name", serde_json::json!(" "))]
+    #[case("identity_scope", serde_json::json!(""))]
+    #[case("authentication_provider_kind", serde_json::json!(""))]
+    #[case("principal_id", serde_json::json!(0))]
+    #[case("kind", serde_json::json!("unknown"))]
+    #[case("is_admin", serde_json::Value::Null)]
+    fn subject_snapshot_rejects_incomplete_or_invalid_context(
+        #[case] field: &str,
+        #[case] value: serde_json::Value,
+    ) {
+        let mut subject = serde_json::json!({"principal_id": 7, "name": "principal", "kind": "human", "identity_scope": "local", "authentication_provider_kind": "local", "is_admin": true});
+        subject[field] = value;
+        assert!(
+            envelope_builder()
+                .metadata(serde_json::json!({"subject": subject}))
+                .try_build()
+                .is_err()
+        );
+    }
+
+    #[rstest::rstest]
+    #[case(serde_json::json!({"subject_principal_ids": [7, 7]}))]
+    #[case(serde_json::json!({"subject_identity_scopes": ["local", "local"]}))]
+    #[case(serde_json::json!({"subject_identity_scopes": ["  "]}))]
+    fn subject_filters_reject_invalid_values(#[case] filter: serde_json::Value) {
+        let filter: EventSubscriptionFilter = serde_json::from_value(filter).unwrap();
+        assert!(filter.validate().is_err());
+    }
+
+    #[rstest::rstest]
+    #[case(serde_json::json!({"subject_principal_ids": [0]}))]
+    #[case(serde_json::json!({"subject_principal_ids": [-1]}))]
+    #[case(serde_json::json!({"subject_is_admin": "false"}))]
+    fn subject_filters_reject_invalid_wire_types(#[case] filter: serde_json::Value) {
+        assert!(serde_json::from_value::<EventSubscriptionFilter>(filter).is_err());
+    }
+
+    #[test]
+    fn authentication_catalog_is_success_only() {
+        assert_eq!(
+            EntityType::parse("authentication").unwrap(),
+            EntityType::Authentication
+        );
+        assert_eq!(
+            valid_actions(EntityType::Authentication),
+            &[Action::Succeeded]
+        );
+    }
+
     #[test]
     fn empty_subscription_filter_matches_any_event() {
         assert!(EventSubscriptionFilter::default().matches(&envelope()));
@@ -2332,6 +2498,7 @@ mod tests {
             initiator_user_ids: vec![],
             request_ids: vec![request_id],
             correlation_ids: vec!["correlation".to_string()],
+            ..Default::default()
         };
 
         assert!(filter.matches(&event));

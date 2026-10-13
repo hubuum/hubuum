@@ -185,6 +185,8 @@ pub struct EventResponse {
     pub summary: String,
     pub before: Option<serde_json::Value>,
     pub after: Option<serde_json::Value>,
+    /// Event-specific metadata. Authentication events include an immutable
+    /// `subject` object described by the EventSubject schema.
     pub metadata: serde_json::Value,
     pub schema_version: i32,
     pub before_revision: Option<ResourceRevision>,

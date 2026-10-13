@@ -705,6 +705,16 @@ done
 notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
 assert_flag "$notification_output" code true
 
+for login_event_input in crates/hubuum-events-core/src/subject.rs \
+  src/auth/login_events.rs src/tests/storage_contract/login_events.rs \
+  tests/api_identity_suite/login_events.rs; do
+  login_event_output="$(bash "$classifier" "$login_event_input")"
+  assert_flag "$login_event_output" rust true
+done
+login_event_output="$(bash "$classifier" crates/hubuum-events-core/src/subject.rs)"
+assert_flag "$login_event_output" openapi true
+assert_flag "$login_event_output" operational_contract true
+
 notification_output="$(bash "$classifier" .github/migration-offline-reviews.json)"
 assert_flag "$notification_output" code true
 

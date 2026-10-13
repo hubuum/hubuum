@@ -29,6 +29,12 @@ enter subscription boundary types. Mutation helpers keep their representation
 private, and catalog parsing uses semantic `parse` methods; database column
 terminology is not part of the public API.
 
+`EventSubject` validates a private, immutable identity and authorization snapshot
+stored in `metadata.subject`. Envelope construction parses it once; subject
+filters use that snapshot without resolving current principal or group state.
+The `Authentication` catalog variant and subject filter fields expand the Rust
+API: update exhaustive matches and use `Default` for omitted filter fields.
+
 ## Errors, Runtime, and Security
 
 The crate performs no I/O and requires no asynchronous runtime. Constructors

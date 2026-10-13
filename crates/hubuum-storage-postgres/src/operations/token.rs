@@ -11,7 +11,9 @@ use diesel::{
 };
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, TokenId, TokenIssuancePolicy};
-use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
+use hubuum_events_core::{
+    Action, AuditDocument, EntityType, EventContext, EventEntityId, NewEvent,
+};
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
     StorageAuditReceipt, StorageAuditReceipts, StorageAuthenticationResourceScope,
@@ -289,6 +291,7 @@ pub async fn create_token(
     let scope = parts.scope().cloned();
     let policy = parts.policy();
     let event_context = parts.event_context().clone();
+    let login_subject = parts.login_subject().cloned();
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(
@@ -314,16 +317,30 @@ pub async fn create_token(
                         expires_at,
                         scope: scope.clone(),
                         policy,
-                        event_context,
+                        event_context: event_context.clone(),
                         renewed_from_token_id: None,
                         principal_already_checked: false,
                     },
                 )
                 .await?;
-                Ok(super::credential_approval::outcome(
+                let mut additional_audits = approval_audit.into_iter().collect::<Vec<_>>();
+                if let Some(subject) = login_subject {
+                    let event = NewEvent::from_document(
+                        EntityType::Authentication,
+                        Action::Succeeded,
+                        event_context.actor_kind(),
+                        subject.successful_login_document(),
+                    )
+                    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
+                    .with_context(&event_context)
+                    .with_entity_id(EventEntityId::new(subject.principal_id().id())?)
+                    .with_entity_name(subject.name());
+                    additional_audits
+                        .push(append_event(connection, &event).await?.into_audit_receipt());
+                }
+                Ok(StorageMutationOutcome::committed_with_audits(
                     created_metadata(token, scope)?,
-                    audit,
-                    approval_audit,
+                    StorageAuditReceipts::new(audit, additional_audits),
                 ))
             },
         )

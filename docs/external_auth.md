@@ -108,6 +108,8 @@ data.
 ## Login
 
 Local users can omit `identity_scope` or use `local`.
+Login names must satisfy the [username requirements](auth_model.md#username-requirements),
+including a nonblank principal name and the 255-character login request limit.
 
 ```json
 {

@@ -103,6 +103,16 @@ fan-out capability creates durable delivery rows, and delivery workers call the
 configured sinks with at-least-once semantics. Notifications reduce latency;
 polling the durable event and delivery state remains the recovery path.
 
+Login issuance uses `StorageTokenCreate::for_login`: `TokenStorage::create_token`
+must commit the token, `token.created`, and `authentication.succeeded` together
+and return both audit receipts. The application supplies a validated
+`EventSubject` after authentication, identity synchronization, and the configured
+administrator-policy check. Adapters persist this immutable snapshot in
+`metadata.subject`; fan-out must not look up current membership or identity.
+Ordinary token creation and renewal have no login subject and must not emit an
+authentication event. PostgreSQL rollback and shared adapter tests cover this
+contract in `src/tests/storage_contract/login_events.rs`.
+
 The lower-level lifecycle traits also require an `EventContext`; there is no
 optional-context escape hatch in the ordinary storage contract. A committed
 resource mutation returns `StorageMutationOutcome::Committed` with an `StorageAuditReceipt`

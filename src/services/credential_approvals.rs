@@ -142,7 +142,8 @@ pub async fn verify_password(
     actor: &CredentialActor,
     login: LoginUser,
 ) -> Result<FreshCredentialAuthentication, ApiError> {
-    let user = crate::auth::login(context, login).await?;
+    let authenticated = crate::auth::login(context, login).await?;
+    let user = authenticated.user();
     if user.id != actor.id() {
         return Err(ApiError::Unauthorized("Authentication failed".into()));
     }

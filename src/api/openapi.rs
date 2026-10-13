@@ -76,7 +76,7 @@ use crate::pagination::{
 };
 use actix_web::{HttpResponse, Responder};
 use hubuum_events_core::{
-    EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
+    EventSubject, EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
 };
 use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
@@ -501,6 +501,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateEventSink,
             EventSubscription,
             EventSubscriptionFilter,
+            EventSubject,
             NewEventSubscription,
             UpdateEventSubscription,
             ImportTaskResultResponse,

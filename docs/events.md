@@ -248,12 +248,95 @@ Supported `filter` fields are:
 | `request_ids` | Match request UUIDs |
 | `correlation_ids` | Match correlation ids exactly |
 | `task_kinds` | Match recognized task kinds in task-event metadata; missing metadata does not match |
+| `subject_principal_ids` | Match affected principal IDs from the event-time subject snapshot |
+| `subject_identity_scopes` | Match exact identity scope names from the event-time subject snapshot |
+| `subject_is_admin` | Require the recorded administrator status, `true` or `false` |
 
 Each field is optional. Empty and omitted fields match all events for that
 dimension. Multiple populated fields are combined with AND; values inside one
 field are combined with OR. The filter can only narrow the subscription's
 collection-scoped visibility. It cannot deliver unrelated collection events to a
 subscription.
+
+An explicit subject predicate requires a recorded subject. Historical events
+without subject context do not match, including `subject_is_admin: false`.
+Subject ID lists require positive integers; duplicate list values and empty
+identity scope names are rejected.
+
+### Successful Login Notifications
+
+`authentication.succeeded` records a completed local or configured external
+login. The event and the issued token commit in one transaction, alongside the
+existing `token.created` event. Both events attribute the actor to the
+authenticated principal. Login does not wait for webhook delivery.
+
+The event has no collection. Audit visibility and system-subscription management
+require an unscoped administrator. Its `entity_id` is the principal ID, and
+`entity_name` and `metadata.subject` retain the identity at login time:
+
+```json
+{
+  "subject": {
+    "principal_id": 42,
+    "name": "alice",
+    "kind": "human",
+    "identity_scope": "company-directory",
+    "authentication_provider_kind": "ldap",
+    "is_admin": true
+  }
+}
+```
+
+The actor performs an operation; the subject is the affected principal. They
+coincide for login, but subject filters never fall back to actor fields. The
+server evaluates administrator status through its configured authorization
+backend after authentication and external identity synchronization. This is a
+durable snapshot: later promotions, demotions, renames, deletions, or group
+changes cannot change matching during delayed fan-out or retries. Provenance
+actor names, in contrast, remain resolved at read time.
+
+To notify an existing Slack webhook sink when an administrator logs in:
+
+```http
+POST /api/v1/system-event-subscriptions
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "admin-logins",
+  "sink_id": 123,
+  "entity_types": ["authentication"],
+  "actions": ["succeeded"],
+  "filter": {"subject_is_admin": true},
+  "enabled": true
+}
+```
+
+The existing Slack template can use `summary`, which identifies the principal,
+scope, provider, and administrator status. Templates can also use
+`event.metadata.subject`. Passwords, credential hashes, bearer tokens, and raw
+provider authentication responses are never included. Failed authentication,
+failed or rolled-back token issuance, explicit token creation, renewal,
+credential reauthentication, bearer validation, and background identity refresh
+do not emit successful-login events. An authorization-policy lookup failure
+fails token issuance rather than recording an unknown administrator status.
+
+Preview and queued test delivery use the existing sink endpoints; see
+[Preview And Test](#preview-and-test). Normal delivery retains the existing
+[at-least-once behavior](#delivery-semantics): consumers must deduplicate by
+`event_id`. A retry reuses the original event snapshot.
+
+No database migration or historical backfill is needed. The envelope shape and
+schema version are unchanged; the catalog and optional filter fields expand.
+Upgrade event consumers that reject unknown catalog entries before deploying
+this server. **Storage SDK compatibility:** adapters must implement the login
+issuance contract, exhaustive catalog matches must handle `Authentication`, and
+filter struct literals must include the new fields or use `Default`. Older
+servers cannot deserialize the new catalog entry; downgrade only with a
+compatible reader or by restoring a pre-upgrade backup. CLI commands for system
+subscriptions and subject filters are client follow-up work; the server endpoint
+already exists.
 
 Example sink:
 
