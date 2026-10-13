@@ -63,6 +63,10 @@ and runtime roles are optional. Web restores also require a separately supervise
 The Alpine-based container image includes both the `rustls` and OpenSSL TLS backends. See the
 [release guide](docs/releasing.md#container-images) for the complete tag scheme.
 
+Hubuum serves HTTP/1.1, including over TLS. Native HTTP/2 is disabled because
+released Actix HTTP/2 support depends on an affected `h2` version. To offer
+HTTP/2 to clients, terminate it at a reverse proxy using HTTP/1.1 upstream.
+
 ## Concept
 
 Most content management systems (CMDBs) are strongly opinionated. They provide fairly strict models with user interfaces designed for those models and all their data. This design may not be ideal for every use case.
@@ -314,6 +318,9 @@ Recent published releases:
 Before upgrading:
 
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
+  Version `0.0.19` disables native HTTP/2 in TLS builds as well. Configure direct
+  clients to use HTTP/1.1, or terminate HTTP/2 at a reverse proxy with HTTP/1.1
+  upstream connections.
   CI certifies the adjacent stable upgrade and its declared recovery procedure.
 - Apply the query usage declaration and resource migrations with `hubuum-admin --migrate`
   and reconcile database role grants before starting matching `0.0.19` binaries.

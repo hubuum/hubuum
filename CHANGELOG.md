@@ -37,8 +37,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Refresh compatible dependencies, including Actix Web 4.16, Diesel 2.3.14,
   OpenTelemetry 0.33.1, and TLS and JSON library updates.
-- Remove the unused optional `h2` 0.3 dependency from the lockfile and retire
-  its obsolete security advisory exception with the Actix update.
 - **Breaking login compatibility:** empty or whitespace-only principal names
   cannot receive login tokens. Before upgrading, create replacement local
   accounts with nonblank names and reassign their group memberships; correct
@@ -90,6 +88,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Text filters on JSON objects and arrays now use PostgreSQL-style spacing,
   key order, escaping, and numeric formatting in the memory adapter. The query
   contract documents common scalar forms and deliberate native-backend differences.
+
+### Security
+
+- **Breaking HTTP/2 compatibility:** disable native HTTP/2 in every build,
+  including Rustls and OpenSSL builds, to remove the affected `h2` 0.3 dependency
+  and its RUSTSEC-2026-0258 advisory exception. Earlier TLS builds implicitly
+  enabled HTTP/2 despite the direct feature guard; Actix Web 4.16 separates TLS
+  from HTTP/2. Clients must use HTTP/1.1 to connect directly, or terminate HTTP/2
+  at a reverse proxy configured with HTTP/1.1 upstream connections.
 
 ## [0.0.18] - 2026-10-06
 
