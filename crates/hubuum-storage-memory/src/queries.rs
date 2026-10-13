@@ -1,4 +1,5 @@
 use super::*;
+use crate::object_filters::ObjectFilters;
 
 #[async_trait]
 impl CatalogStorage for MemoryStorage {
@@ -57,6 +58,7 @@ impl CatalogStorage for MemoryStorage {
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageObject>, StorageError> {
         let (options, visibility) = query.into_parts();
+        let filters = ObjectFilters::new(options.filters())?;
         let state = self.state.read().await;
         let rows = state
             .objects
@@ -66,12 +68,7 @@ impl CatalogStorage for MemoryStorage {
                     scope.object_ids().contains(&object.id())
                         || scope.class_ids().contains(&object.class_id())
                         || scope.collection_ids().contains(&object.collection_id())
-                }) && resource_filters_match(
-                    &options,
-                    object.id().id(),
-                    object.name(),
-                    object.description(),
-                )
+                }) && filters.matches(object)
             })
             .cloned()
             .collect();
@@ -582,6 +579,7 @@ impl ComputedObjectStorage for MemoryStorage {
     ) -> Result<StorageComputedObjectPage, StorageError> {
         let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
         let (requested, _, effective_page_limit) = options.into_parts();
+        let filters = ObjectFilters::new(requested.filters())?;
         let state = self.state.read().await;
         let mut rows = state
             .objects
@@ -595,6 +593,7 @@ impl ComputedObjectStorage for MemoryStorage {
                     object_ids.contains(&object.id())
                 }
             })
+            .filter(|object| filters.matches(object))
             .filter(|object| {
                 requested.filters().as_slice().iter().all(|filter| {
                     if let Some(computed) = filter.field.computed_query() {
@@ -627,14 +626,7 @@ impl ComputedObjectStorage for MemoryStorage {
                         );
                         return string_filter_matches(&actual, &filter.operator, &filter.value);
                     }
-                    let actual = match filter.field {
-                        FilterField::Id => object.id().id().to_string(),
-                        FilterField::Name => object.name().to_string(),
-                        FilterField::ClassId => object.class_id().id().to_string(),
-                        FilterField::CollectionId => object.collection_id().id().to_string(),
-                        _ => return true,
-                    };
-                    string_filter_matches(&actual, &filter.operator, &filter.value)
+                    true
                 })
             })
             .cloned()
@@ -676,6 +668,7 @@ impl ObjectAggregateStorage for MemoryStorage {
         query: StorageObjectAggregateQuery,
         authorization: StorageObjectAggregateAuthorization<'_>,
     ) -> Result<StorageObjectAggregatePage, StorageError> {
+        let filters = ObjectFilters::new(query.options().filters())?;
         let (collection_name, mut objects) = {
             let state = self.state.read().await;
             let collection = state
@@ -686,18 +679,7 @@ impl ObjectAggregateStorage for MemoryStorage {
                 .objects
                 .values()
                 .filter(|object| object.class_id() == query.target().class_id())
-                .filter(|object| {
-                    query.options().filters().as_slice().iter().all(|filter| {
-                        let actual = match filter.field {
-                            FilterField::Id => object.id().id().to_string(),
-                            FilterField::Name => object.name().to_string(),
-                            FilterField::ClassId => object.class_id().id().to_string(),
-                            FilterField::CollectionId => object.collection_id().id().to_string(),
-                            _ => return true,
-                        };
-                        string_filter_matches(&actual, &filter.operator, &filter.value)
-                    })
-                })
+                .filter(|object| filters.matches(object))
                 .cloned()
                 .collect::<Vec<_>>();
             (collection.name().to_string(), objects)

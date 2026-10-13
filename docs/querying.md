@@ -1,6 +1,9 @@
 # Querying against the Hubuum API
 
-Hubuum list endpoints share a common query interface for filtering, sorting, and cursor pagination. These query options are applied in the database, not by loading a full result set into memory first.
+Hubuum list endpoints share a common query interface for filtering, sorting, and
+cursor pagination. The selected storage backend executes these operations.
+PostgreSQL applies them in the database, preserving native indexes and query
+planning.
 
 The response body for list endpoints remains a plain JSON array. Pagination metadata is returned in response headers.
 
@@ -54,6 +57,15 @@ Example:
 - `regex`
 - `in`
 - `is_null`
+
+Regex syntax and matching behavior currently depend on the storage backend.
+PostgreSQL uses its [advanced regular expressions](https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP),
+while direct object filters in memory use the Rust [`regex` crate](https://docs.rs/regex/latest/regex/#syntax).
+Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
+`\yrouter\y` for word boundaries, while memory rejects `\y`; PostgreSQL's default
+`.` also matches a newline, while memory's default does not. Keep backend-specific
+patterns with their backend until a shared regex contract is defined
+([follow-up #458](https://github.com/hubuum/hubuum/issues/458)).
 
 ### Numeric and date fields
 
@@ -394,6 +406,82 @@ Date-oriented JSON filters accept the same date formats as other date filters:
 - calendar dates such as `2026-03-01`
 
 `between` uses the same comma-separated `min,max` format as the rest of the query interface.
+
+### Filter types and stored-value conversion
+
+Query operands and stored JSON values have different rules. Ordinary resource
+fields have fixed types. For JSON filters, the operator and query operand select
+the comparison type; a class schema does not override that inference.
+PostgreSQL's native conversions and type limits are authoritative for backend
+support. Memory implements the common forms below within its own direct object
+filters; other adapters need not pay for this compatibility work.
+
+| Comparison | Query operand | Stored JSON value |
+| --- | --- | --- |
+| Numeric | JSON `equals` and range comparisons currently require signed 32-bit integers; `between` requires two bounds. Decimal or exponent query operands are not supported. | JSON numbers and numeric strings can contain decimals or exponents. Conversion preserves decimal precision rather than converting to floating point. |
+| Boolean | JSON `equals` infers a boolean from `true` or `false`, ignoring case. | Booleans and PostgreSQL-style strings such as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, `0`, or unambiguous word prefixes are accepted, ignoring case and surrounding whitespace. JSON numbers are accepted when their JSONB text is exactly `0` or `1`; `1e0` qualifies, but `1.0` does not. |
+| Timestamp | RFC3339 with an explicit offset, or `YYYY-MM-DD` interpreted as midnight UTC. `between` accepts two values. | Common forms include calendar dates, RFC3339, and `YYYY-MM-DD HH:MM:SS[.fraction]` with an optional numeric offset. Explicit offsets compare in UTC. |
+| Text | Text operators force text comparison. JSON `equals` tries timestamp, boolean, and numeric inference before text. JSON `in`/`all` compare comma-separated text values without scalar inference. | Strings are unquoted. Numbers, booleans, arrays, and objects use their JSONB-style text projection. This is a textual comparison, not structural JSON equality or containment. |
+| IP/network | Use the explicit network operators with IPv4, IPv6, or CIDR operands. | Valid address/network strings are compared as networks, not as raw text. |
+
+Missing paths, JSON null, and failed numeric/boolean/timestamp/IP conversions do
+not satisfy scalar comparisons, including negated comparisons. Use `is_null` or
+`not_is_null` to test missing or null values. A malformed query operand is a
+request error; an unconvertible stored value simply does not match. These
+predicates apply before totals and pagination. The string `"null"` is text,
+not JSON null.
+
+Numeric strings use PostgreSQL's unconstrained `numeric` range: up to 131,072
+digits before the decimal point and 16,383 after it. Out-of-range strings do
+not match, even under negation. The memory adapter checks these bounds before
+formatting and mirrors `-Infinity < finite values < Infinity < NaN`, including
+case-insensitive `inf`/`infinity` and `NaN` strings. These are stored strings,
+not valid JSON numeric literals, and they do not extend the integer query
+operand vocabulary. See PostgreSQL's [numeric types](https://www.postgresql.org/docs/18/datatype-numeric.html).
+
+For text predicates, memory follows PostgreSQL's JSONB output: a space follows
+each comma and colon, object keys are ordered by UTF-8 byte length and then
+bytes, and numbers expand exponent notation while preserving fractional trailing
+zeros. For example, the stored subtree `[1,2]` is searched as `[1, 2]`, and
+`1.230e-5` as `0.00001230`. Strings inside containers remain JSON-escaped.
+This projection changes neither the stored document nor the API response.
+Prefer filtering a leaf path when whole-subtree formatting is irrelevant.
+See PostgreSQL's [JSON input and output](https://www.postgresql.org/docs/18/datatype-json.html).
+
+For timestamps, memory accepts numeric offsets such as `+01`, `+0130`, and
+`+01:30` on stored SQL-style timestamps, including surrounding whitespace.
+One stored string must represent one timestamp; a comma-separated list is not
+a stored timestamp. Keep query operands in RFC3339 or calendar-date form.
+
+### Deliberate backend differences
+
+The common forms above do not require adapters to emulate every native feature.
+PostgreSQL retains its native execution and input support. In particular:
+
+- **Timestamp extensions and range:** PostgreSQL also accepts named time zones,
+  relative/special dates, and other date spellings; memory does not promise these
+  forms. Such strings may fail conversion in memory. PostgreSQL's timestamp range
+  and microsecond precision differ from Chrono's range and nanosecond precision
+  in memory. Use years 0001–9999 and at most six fractional digits for portability.
+- **Timezone-less stored timestamps:** memory assumes UTC. PostgreSQL interprets
+  them using its session `TimeZone` before converting to UTC. Use explicit offsets,
+  or configure PostgreSQL sessions for UTC, to avoid different results.
+- **Text matching:** regex dialects, Unicode case folding, and locale-dependent
+  matching remain backend-specific. The [string operator notes](#string-fields)
+  describe the regex differences. No shared normalization changes native collation.
+- **Additional native inputs:** PostgreSQL may accept numeric or IP spellings
+  outside the common forms; acceptance by its parser does not establish memory
+  support. Use ordinary decimal/exponent strings and complete IP addresses.
+- **JSON paths named `null`:** the current PostgreSQL compiler interprets a
+  case-insensitive `null` path segment as a SQL array null; memory treats it as
+  an object key. Avoid those segments in portable filters.
+
+PostgreSQL's [date/time input documentation](https://www.postgresql.org/docs/18/datatype-datetime.html)
+describes its additional timestamp forms. Backend differences affect filtering
+only where those forms are used; they are not reasons to move PostgreSQL queries
+into application-side evaluation.
+
+### IP address and network filtering
 
 JSON-backed IP address and CIDR values also support network-aware operators:
 

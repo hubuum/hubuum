@@ -2398,13 +2398,16 @@ name = "hubuum-storage-memory"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bigdecimal",
  "chrono",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-storage-core",
+ "ipnet",
  "json-patch",
+ "regex",
  "serde_json",
  "tokio",
  "uuid",
