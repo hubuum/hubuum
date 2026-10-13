@@ -24858,7 +24858,9 @@
             "type": "integer",
             "format": "int64"
           },
-          "metadata": {},
+          "metadata": {
+            "description": "Event-specific metadata. Authentication events include an immutable\n`subject` object described by the EventSubject schema."
+          },
           "occurred_at": {
             "type": "string",
             "format": "date-time"
@@ -25027,6 +25029,38 @@
           "valkey_stream",
           "amqp"
         ]
+      },
+      "EventSubject": {
+        "type": "object",
+        "description": "Immutable event-time identity and authorization snapshot in `metadata.subject`.\nThis is the affected principal, independently of the operation's actor.",
+        "required": [
+          "principal_id",
+          "name",
+          "kind",
+          "identity_scope",
+          "authentication_provider_kind",
+          "is_admin"
+        ],
+        "properties": {
+          "authentication_provider_kind": {
+            "type": "string"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrincipalKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/PrincipalID"
+          }
+        }
       },
       "EventSubscription": {
         "type": "object",
@@ -25213,6 +25247,27 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "subject_identity_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Match identity scope names from the immutable event-time subject."
+          },
+          "subject_is_admin": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Require the recorded administrator status. Missing subject context never matches."
+          },
+          "subject_principal_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrincipalID"
+            },
+            "description": "Match affected principal IDs from the immutable event-time subject."
           },
           "task_kinds": {
             "type": "array",

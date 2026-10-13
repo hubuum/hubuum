@@ -4719,6 +4719,15 @@ the audit event does not satisfy the contract.</p>
 fan-out capability creates durable delivery rows, and delivery workers call the
 configured sinks with at-least-once semantics. Notifications reduce latency;
 polling the durable event and delivery state remains the recovery path.</p>
+<p>Login issuance uses <code>StorageTokenCreate::for_login</code>: <code>TokenStorage::create_token</code>
+must commit the token, <code>token.created</code>, and <code>authentication.succeeded</code> together
+and return both audit receipts. The application supplies a validated
+<code>EventSubject</code> after authentication, identity synchronization, and the configured
+administrator-policy check. Adapters persist this immutable snapshot in
+<code>metadata.subject</code>; fan-out must not look up current membership or identity.
+Ordinary token creation and renewal have no login subject and must not emit an
+authentication event. PostgreSQL rollback and shared adapter tests cover this
+contract in <code>src/tests/storage_contract/login_events.rs</code>.</p>
 <p>The lower-level lifecycle traits also require an <code>EventContext</code>; there is no
 optional-context escape hatch in the ordinary storage contract. A committed
 resource mutation returns <code>StorageMutationOutcome::Committed</code> with an <code>StorageAuditReceipt</code>

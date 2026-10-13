@@ -4604,7 +4604,9 @@ identities even when their display names match.</p>
 Keep repository examples generic and do not commit organization-specific LDAP
 data.</p>
 <h2 id="login">Login<a class="headerlink" href="#login" title="Permanent link">&para;</a></h2>
-<p>Local users can omit <code>identity_scope</code> or use <code>local</code>.</p>
+<p>Local users can omit <code>identity_scope</code> or use <code>local</code>.
+Login names must satisfy the <a href="../auth_model/#username-requirements">username requirements</a>,
+including a nonblank principal name and the 255-character login request limit.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"identity_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"example-directory"</span><span class="p">,</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alice"</span><span class="p">,</span>

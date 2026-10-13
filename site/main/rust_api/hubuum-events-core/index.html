@@ -4524,6 +4524,11 @@ filters retain a serialized field representation and are validated when they
 enter subscription boundary types. Mutation helpers keep their representation
 private, and catalog parsing uses semantic <code>parse</code> methods; database column
 terminology is not part of the public API.</p>
+<p><code>EventSubject</code> validates a private, immutable identity and authorization snapshot
+stored in <code>metadata.subject</code>. Envelope construction parses it once; subject
+filters use that snapshot without resolving current principal or group state.
+The <code>Authentication</code> catalog variant and subject filter fields expand the Rust
+API: update exhaustive matches and use <code>Default</code> for omitted filter fields.</p>
 <h2 id="errors-runtime-and-security">Errors, Runtime, and Security<a class="headerlink" href="#errors-runtime-and-security" title="Permanent link">&para;</a></h2>
 <p>The crate performs no I/O and requires no asynchronous runtime. Constructors
 return explicit errors for invalid caller input and do not intentionally panic.

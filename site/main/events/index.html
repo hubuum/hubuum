@@ -1548,6 +1548,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Sinks And Subscriptions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#successful-login-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Successful Login Notifications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4543,6 +4560,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Sinks And Subscriptions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#successful-login-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Successful Login Notifications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5088,6 +5122,18 @@ delivery rows are created.</p>
 <td><code>task_kinds</code></td>
 <td>Match recognized task kinds in task-event metadata; missing metadata does not match</td>
 </tr>
+<tr>
+<td><code>subject_principal_ids</code></td>
+<td>Match affected principal IDs from the event-time subject snapshot</td>
+</tr>
+<tr>
+<td><code>subject_identity_scopes</code></td>
+<td>Match exact identity scope names from the event-time subject snapshot</td>
+</tr>
+<tr>
+<td><code>subject_is_admin</code></td>
+<td>Require the recorded administrator status, <code>true</code> or <code>false</code></td>
+</tr>
 </tbody>
 </table>
 <p>Each field is optional. Empty and omitted fields match all events for that
@@ -5095,54 +5141,119 @@ dimension. Multiple populated fields are combined with AND; values inside one
 field are combined with OR. The filter can only narrow the subscription's
 collection-scoped visibility. It cannot deliver unrelated collection events to a
 subscription.</p>
-<p>Example sink:</p>
+<p>An explicit subject predicate requires a recorded subject. Historical events
+without subject context do not match, including <code>subject_is_admin: false</code>.
+Subject ID lists require positive integers; duplicate list values and empty
+identity scope names are rejected.</p>
+<h3 id="successful-login-notifications">Successful Login Notifications<a class="headerlink" href="#successful-login-notifications" title="Permanent link">&para;</a></h3>
+<p><code>authentication.succeeded</code> records a completed local or configured external
+login. The event and the issued token commit in one transaction, alongside the
+existing <code>token.created</code> event. Both events attribute the actor to the
+authenticated principal. Login does not wait for webhook delivery.</p>
+<p>The event has no collection. Audit visibility and system-subscription management
+require an unscoped administrator. Its <code>entity_id</code> is the principal ID, and
+<code>entity_name</code> and <code>metadata.subject</code> retain the identity at login time:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory-webhook"</span><span class="p">,</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"webhook"</span><span class="p">,</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">"destination_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span><span class="p">,</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">"headers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="nt">"X-Integration"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory"</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory_webhook"</span><span class="p">,</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">}</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"subject"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">"principal_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alice"</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"human"</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">"identity_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"company-directory"</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">"authentication_provider_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ldap"</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">"is_admin"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>The actor performs an operation; the subject is the affected principal. They
+coincide for login, but subject filters never fall back to actor fields. The
+server evaluates administrator status through its configured authorization
+backend after authentication and external identity synchronization. This is a
+durable snapshot: later promotions, demotions, renames, deletions, or group
+changes cannot change matching during delayed fan-out or retries. Provenance
+actor names, in contrast, remain resolved at read time.</p>
+<p>To notify an existing Slack webhook sink when an administrator logs in:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">POST /api/v1/system-event-subscriptions</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">Content-Type: application/json</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin-logins"</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">123</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"authentication"</span><span class="p">],</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"succeeded"</span><span class="p">],</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"subject_is_admin"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">}</span>
+</code></pre></div>
+<p>The existing Slack template can use <code>summary</code>, which identifies the principal,
+scope, provider, and administrator status. Templates can also use
+<code>event.metadata.subject</code>. Passwords, credential hashes, bearer tokens, and raw
+provider authentication responses are never included. Failed authentication,
+failed or rolled-back token issuance, explicit token creation, renewal,
+credential reauthentication, bearer validation, and background identity refresh
+do not emit successful-login events. An authorization-policy lookup failure
+fails token issuance rather than recording an unknown administrator status.</p>
+<p>Preview and queued test delivery use the existing sink endpoints; see
+<a href="#preview-and-test">Preview And Test</a>. Normal delivery retains the existing
+<a href="#delivery-semantics">at-least-once behavior</a>: consumers must deduplicate by
+<code>event_id</code>. A retry reuses the original event snapshot.</p>
+<p>No database migration or historical backfill is needed. The envelope shape and
+schema version are unchanged; the catalog and optional filter fields expand.
+Upgrade event consumers that reject unknown catalog entries before deploying
+this server. <strong>Storage SDK compatibility:</strong> adapters must implement the login
+issuance contract, exhaustive catalog matches must handle <code>Authentication</code>, and
+filter struct literals must include the new fields or use <code>Default</code>. Older
+servers cannot deserialize the new catalog entry; downgrade only with a
+compatible reader or by restoring a pre-upgrade backup. CLI commands for system
+subscriptions and subject filters are client follow-up work; the server endpoint
+already exists.</p>
+<p>Example sink:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory-webhook"</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"webhook"</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">"destination_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">"headers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">"X-Integration"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory"</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory_webhook"</span><span class="p">,</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="p">}</span>
 </code></pre></div>
 <p>Example collection subscription:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"collection-lifecycle-to-inventory"</span><span class="p">,</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Send collection lifecycle events to inventory"</span><span class="p">,</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"collection"</span><span class="p">],</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"created"</span><span class="p">,</span><span class="w"> </span><span class="s2">"updated"</span><span class="p">,</span><span class="w"> </span><span class="s2">"deleted"</span><span class="p">],</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="nt">"actor_kinds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"user"</span><span class="p">]</span>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">    </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"collection-lifecycle-to-inventory"</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Send collection lifecycle events to inventory"</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"collection"</span><span class="p">],</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"created"</span><span class="p">,</span><span class="w"> </span><span class="s2">"updated"</span><span class="p">,</span><span class="w"> </span><span class="s2">"deleted"</span><span class="p">],</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nt">"actor_kinds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"user"</span><span class="p">]</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">    </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="p">}</span>
 </code></pre></div>
 <p>For email sinks, create narrow subscriptions rather than sending every audit
 event to human recipients. For example, this subscription sends only failed
 task lifecycle events to the configured mailbox. Create it through
 <code>POST /api/v1/system-event-subscriptions</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"task-failures-to-ops"</span><span class="p">,</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Email ops when tasks fail"</span><span class="p">,</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"task"</span><span class="p">],</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"failed"</span><span class="p">],</span>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="nt">"actor_kinds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"worker"</span><span class="p">]</span>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">    </span><span class="nt">"recipients"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Ops &lt;ops@example.com&gt;"</span><span class="p">]</span>
-<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">"sink_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"task-failures-to-ops"</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Email ops when tasks fail"</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="nt">"entity_types"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"task"</span><span class="p">],</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"failed"</span><span class="p">],</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">"filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">"actor_kinds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"worker"</span><span class="p">]</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">    </span><span class="nt">"recipients"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Ops &lt;ops@example.com&gt;"</span><span class="p">]</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="p">}</span>
 </code></pre></div>
 <p>Both the sink and the subscription must be enabled for matching events to fan
 out to delivery rows. Disabling either one stops new matching deliveries
@@ -5151,11 +5262,11 @@ without deleting historical events or existing delivery rows.</p>
 <p>Webhook delivery is the reference concrete sink. For a setup walkthrough, see
 <a href="../webhook_notifications/">chat and notification webhooks</a>. By default, a webhook
 subscription posts the event envelope as JSON to the URL in its <code>routing</code> object:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://example.com/hubuum/events"</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://example.com/hubuum/events"</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>The request method is always <code>POST</code>. Hubuum sends the event UUID in both
 <code>Idempotency-Key</code> and <code>X-Hubuum-Event-Id</code>, and the JSON body includes the same
@@ -5166,18 +5277,18 @@ claimed delivery batch. A deleted principal keeps its durable ID and has a
 <code>null</code> name when no current or tombstoned principal record can be resolved.</p>
 <p>Webhook sink <code>config</code> may include static string headers and optional local
 delivery limits:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">"destination_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span><span class="p">,</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">"headers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">"X-Integration"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory-sync"</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="p">},</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nt">"timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">5000</span><span class="p">,</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nt">"max_response_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">65536</span><span class="p">,</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">    </span><span class="nt">"max_request_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span>
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory_webhook"</span>
-<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">"destination_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://inventory.example/hubuum/events"</span><span class="p">,</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="nt">"headers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">      </span><span class="nt">"X-Integration"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory-sync"</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nt">"timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">5000</span><span class="p">,</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="nt">"max_response_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">65536</span><span class="p">,</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="nt">"max_request_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inventory_webhook"</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="p">}</span>
 </code></pre></div>
 <p>When <code>secret_ref</code> is set, Hubuum resolves the alias through the selected
 <a href="../secret_sources/">secret source</a> and sends it as a bearer token. With the
@@ -5191,18 +5302,18 @@ response-header redaction.</p>
 <p>AMQP delivery is available when Hubuum is built with the <code>amqp</code> feature. An
 AMQP sink publishes the event envelope as JSON to the exchange in sink
 <code>config</code>. AMQP event delivery requires TLS, so configure <code>amqps://</code> URLs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"amqps://publisher:{secret}@rabbitmq.example/%2f"</span><span class="p">,</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">"exchange"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum.events"</span><span class="p">,</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">"exchange_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"topic"</span><span class="p">,</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nt">"declare_exchange"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="nt">"durable"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">"mandatory"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rabbitmq_password"</span>
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"amqps://publisher:{secret}@rabbitmq.example/%2f"</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nt">"exchange"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum.events"</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nt">"exchange_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"topic"</span><span class="p">,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="nt">"declare_exchange"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">    </span><span class="nt">"durable"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">    </span><span class="nt">"mandatory"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rabbitmq_password"</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="p">}</span>
 </code></pre></div>
 <p>When <code>secret_ref</code> is set, the AMQP URI must contain <code>{secret}</code>. Hubuum resolves
 the alias through the selected <a href="../secret_sources/">secret source</a>,
@@ -5222,24 +5333,24 @@ the connection URL uses the standard Redis protocol URL form accepted by Redis
 and Valkey deployments. Event delivery requires TLS, so configure <code>rediss://</code>
 URLs.</p>
 <p>The subscription <code>routing</code> object selects the stream key:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">"stream"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum:events"</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">"stream"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hubuum:events"</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>The sink <code>config</code> holds the Valkey connection URL and optional stream trim
 settings:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rediss://default:{secret}@valkey.example/0"</span><span class="p">,</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="nt">"max_len"</span><span class="p">:</span><span class="w"> </span><span class="mi">100000</span><span class="p">,</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nt">"approximate_trim"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span><span class="p">,</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nt">"io_timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">25000</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"valkey_password"</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="p">{</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rediss://default:{secret}@valkey.example/0"</span><span class="p">,</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">"max_len"</span><span class="p">:</span><span class="w"> </span><span class="mi">100000</span><span class="p">,</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nt">"approximate_trim"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span><span class="p">,</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">    </span><span class="nt">"io_timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">25000</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"valkey_password"</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="p">}</span>
 </code></pre></div>
 <p>When <code>secret_ref</code> is set, the URI must contain <code>{secret}</code>. Hubuum resolves the
 alias through the selected <a href="../secret_sources/">secret source</a>, percent-encodes
@@ -5257,28 +5368,28 @@ for the blocking driver call and defaults to 25,000 ms.</p>
 transport is intended for human-facing notifications, while the canonical event
 stream remains the source of truth for audit and retry state.</p>
 <p>The subscription <code>routing</code> object holds the message recipients:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">"recipients"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Ops &lt;ops@example.com&gt;"</span><span class="p">],</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nt">"cc"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"audit@example.com"</span><span class="p">],</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nt">"bcc"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"archive@example.com"</span><span class="p">]</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">"routing"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nt">"recipients"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Ops &lt;ops@example.com&gt;"</span><span class="p">],</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">"cc"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"audit@example.com"</span><span class="p">],</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="nt">"bcc"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"archive@example.com"</span><span class="p">]</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>to</code> is accepted as an alias for <code>recipients</code>.</p>
 <p>The sink <code>config</code> holds the SMTP connection URL, sender, optional reply-to
 address, and MiniJinja export templates for the subject and text body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smtps://hubuum:{secret}@smtp.example.com"</span><span class="p">,</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nt">"from"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Hubuum &lt;hubuum@example.com&gt;"</span><span class="p">,</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nt">"reply_to"</span><span class="p">:</span><span class="w"> </span><span class="s2">"noreply@example.com"</span><span class="p">,</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span><span class="p">,</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="nt">"subject_template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Hubuum {{ entity_type }} {{ action }}: {{ entity_name | default_if_empty(summary) }}"</span><span class="p">,</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">    </span><span class="nt">"body_template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"{{ summary }}\n\nEvent: {{ event_id }}\nEntity: {{ entity_type }}\nAction: {{ action }}\n"</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smtp_password"</span>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="p">{</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smtps://hubuum:{secret}@smtp.example.com"</span><span class="p">,</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">"from"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Hubuum &lt;hubuum@example.com&gt;"</span><span class="p">,</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="nt">"reply_to"</span><span class="p">:</span><span class="w"> </span><span class="s2">"noreply@example.com"</span><span class="p">,</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000000</span><span class="p">,</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">    </span><span class="nt">"subject_template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Hubuum {{ entity_type }} {{ action }}: {{ entity_name | default_if_empty(summary) }}"</span><span class="p">,</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="nt">"body_template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"{{ summary }}\n\nEvent: {{ event_id }}\nEntity: {{ entity_type }}\nAction: {{ action }}\n"</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">  </span><span class="nt">"secret_ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smtp_password"</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="p">}</span>
 </code></pre></div>
 <p>SMTP URLs must use the TLS <code>smtps://</code> scheme. Certificate verification uses the
 system trust store, including operator-installed private CAs (<code>SSL_CERT_FILE</code>
@@ -5311,18 +5422,18 @@ dead delivery with <code>POST /api/v1/event-deliveries/{delivery_id}/retry</code
 a row to the dead-letter state with
 <code>POST /api/v1/event-deliveries/{delivery_id}/dead</code>.</p>
 <p>Delivery workers are configurable and default-disabled:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>HUBUUM_EVENT_FANOUT_WORKERS=1
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>HUBUUM_EVENT_FANOUT_BATCH_SIZE=100
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS=5000
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS=30000
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>HUBUUM_EVENT_DELIVERY_WORKERS=0
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>HUBUUM_EVENT_DELIVERY_BATCH_SIZE=100
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS=5000
-<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS=30000
-<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS=25000
-<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS=1000
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS=300000
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS=10
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>HUBUUM_EVENT_FANOUT_WORKERS=1
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>HUBUUM_EVENT_FANOUT_BATCH_SIZE=100
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS=5000
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS=30000
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>HUBUUM_EVENT_DELIVERY_WORKERS=0
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>HUBUUM_EVENT_DELIVERY_BATCH_SIZE=100
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS=5000
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS=30000
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS=25000
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS=1000
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS=300000
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS=10
 </code></pre></div>
 <p>Keep delivery workers at <code>0</code> when the deployment uses the audit log only or
 when sink credentials are not ready. Set <code>HUBUUM_EVENT_DELIVERY_WORKERS</code> above
@@ -5393,11 +5504,11 @@ admin action for rows that should be released from <code>failed</code> or <code>
 <p>Event retention purge is available as an operational worker, but is disabled by
 default because it deletes audit rows. Enable it only after choosing retention
 windows that match the deployment's audit requirements:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>HUBUUM_EVENT_RETENTION_PURGE_ENABLED=true
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>HUBUUM_EVENT_RETENTION_DAYS=365
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>HUBUUM_EVENT_DELIVERY_RETENTION_DAYS=30
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS=3600
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE=1000
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>HUBUUM_EVENT_RETENTION_PURGE_ENABLED=true
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>HUBUUM_EVENT_RETENTION_DAYS=365
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>HUBUUM_EVENT_DELIVERY_RETENTION_DAYS=30
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS=3600
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE=1000
 </code></pre></div>
 <p>The purge path is the only application path allowed to bypass the append-only
 <code>events</code> trigger. It sets the transaction-local <code>events.allow_purge</code> guard
@@ -5427,8 +5538,8 @@ terminal state.</p>
 events through the database or event sinks instead of writing container-local
 files. Enable local JSON Lines archival only when the configured directory is
 durable and access-controlled:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive
 </code></pre></div>
 <p>Each claim is written atomically to <code>&lt;batch-uuid&gt;.jsonl</code>. Every line contains
 <code>retention_batch_id</code>, <code>archived_at</code>, and the full event row, including durable
@@ -5556,10 +5667,10 @@ test, so tests cannot suppress normal sends at receivers using that header.</p>
 <p>Administrators can preview or enqueue a webhook test using an existing event
 UUID and saved subscription. Preview resolves no secrets and performs no HTTP
 request; it returns only the JSON payload and sink kind:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="err">POST /api/v1/event-sinks/3/preview</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="err">{"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="err">POST /api/v1/event-sinks/3/preview</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="err">{"subscription_id": 7, "event_id": "00000000-0000-4000-8000-000000000001"}</span>
 </code></pre></div>
 <p>Use <code>/api/v1/event-sinks/3/test</code> with the same body to enqueue a delivery.
 Replace the example identifiers with real saved records. Both verify sink and
