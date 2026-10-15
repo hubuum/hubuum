@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Update the locked rustls dependency to 0.23.46, addressing
+  RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and
+  RUSTSEC-2026-0349.
+
 ## [0.0.19] - 2026-10-13
 
 ### Added
