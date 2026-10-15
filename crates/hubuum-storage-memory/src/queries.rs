@@ -8,6 +8,7 @@ impl CatalogStorage for MemoryStorage {
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
+        let filters = ResourceFilters::new(&options)?;
         let state = self.state.read().await;
         let rows = state
             .collections
@@ -16,8 +17,7 @@ impl CatalogStorage for MemoryStorage {
                 visibility
                     .resources()
                     .is_none_or(|scope| scope.collection_ids().contains(&collection.id()))
-                    && resource_filters_match(
-                        &options,
+                    && filters.matches(
                         collection.id().id(),
                         collection.name(),
                         collection.description(),
@@ -33,6 +33,7 @@ impl CatalogStorage for MemoryStorage {
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageClassWithCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
+        let filters = ResourceFilters::new(&options)?;
         let state = self.state.read().await;
         let rows = state
             .classes
@@ -41,12 +42,7 @@ impl CatalogStorage for MemoryStorage {
                 visibility.resources().is_none_or(|scope| {
                     scope.class_ids().contains(&class.id())
                         || scope.collection_ids().contains(&class.collection_id())
-                }) && resource_filters_match(
-                    &options,
-                    class.id().id(),
-                    class.name(),
-                    class.description(),
-                )
+                }) && filters.matches(class.id().id(), class.name(), class.description())
             })
             .map(|class| class_with_collection(&state, class))
             .collect::<Result<Vec<_>, StorageError>>()?;
@@ -580,6 +576,17 @@ impl ComputedObjectStorage for MemoryStorage {
         let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
         let (requested, _, effective_page_limit) = options.into_parts();
         let filters = ObjectFilters::new(requested.filters())?;
+        let computed_filters = requested
+            .filters()
+            .iter()
+            .filter_map(|filter| {
+                filter
+                    .field
+                    .computed_query()
+                    .map(|computed| (computed, filter))
+            })
+            .map(|(computed, filter)| Ok((computed, StringFilter::new(filter)?)))
+            .collect::<Result<Vec<_>, StorageError>>()?;
         let state = self.state.read().await;
         let mut rows = state
             .objects
@@ -595,38 +602,35 @@ impl ComputedObjectStorage for MemoryStorage {
             })
             .filter(|object| filters.matches(object))
             .filter(|object| {
-                requested.filters().as_slice().iter().all(|filter| {
-                    if let Some(computed) = filter.field.computed_query() {
-                        let visibility = match computed.scope() {
-                            ComputedFieldScope::Shared => StorageComputedFieldVisibility::Shared,
-                            ComputedFieldScope::Personal => {
-                                let Some(owner_id) = personal_owner_id else {
-                                    return false;
-                                };
-                                StorageComputedFieldVisibility::Personal { owner_id }
-                            }
-                        };
-                        let value = state
-                            .computed_fields
-                            .values()
-                            .find(|definition| {
-                                definition.class_id() == object.class_id()
-                                    && definition.visibility() == visibility
-                                    && definition.key() == computed.key()
-                            })
-                            .map(|definition| evaluate_computed_definition(definition, object));
-                        let actual = value.as_ref().map_or_else(
-                            || "null".to_string(),
-                            |value| {
-                                value
-                                    .as_str()
-                                    .map(ToOwned::to_owned)
-                                    .unwrap_or_else(|| value.to_string())
-                            },
-                        );
-                        return string_filter_matches(&actual, &filter.operator, &filter.value);
-                    }
-                    true
+                computed_filters.iter().all(|(computed, filter)| {
+                    let visibility = match computed.scope() {
+                        ComputedFieldScope::Shared => StorageComputedFieldVisibility::Shared,
+                        ComputedFieldScope::Personal => {
+                            let Some(owner_id) = personal_owner_id else {
+                                return false;
+                            };
+                            StorageComputedFieldVisibility::Personal { owner_id }
+                        }
+                    };
+                    let value = state
+                        .computed_fields
+                        .values()
+                        .find(|definition| {
+                            definition.class_id() == object.class_id()
+                                && definition.visibility() == visibility
+                                && definition.key() == computed.key()
+                        })
+                        .map(|definition| evaluate_computed_definition(definition, object));
+                    let actual = value
+                        .as_ref()
+                        .filter(|value| !value.is_null())
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| value.to_string())
+                        });
+                    filter.matches(actual.as_deref())
                 })
             })
             .cloned()

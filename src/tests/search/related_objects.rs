@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use actix_web::{http, test};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use rstest::rstest;
 
 use crate::models::{
     HubuumClass, HubuumObject, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
@@ -226,6 +228,82 @@ async fn related_target_object_filters_support_json_and_revision_fields() {
         objects.iter().map(|object| object.id).collect::<Vec<_>>(),
         vec![fixture.host_complete.id, fixture.host_missing_person.id]
     );
+    fixture.collection.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::object("related.room.object.description__regex", r"\yfoo\y", 2)]
+#[case::json("related.room.object.json_data__regex", r"tier=\ygold\y", 2)]
+#[case::negated("related.room.object.description__not_regex", r"\yfoo\y", 1)]
+#[case::invalid("related.room.object.description__regex", "[", 0)]
+#[actix_web::test]
+async fn related_predicates_preserve_postgres_regex(
+    #[case] field: &str,
+    #[case] pattern: &str,
+    #[case] count: usize,
+) {
+    let context = TestContext::new().await;
+    let fixture = related_filter_fixture(&context).await;
+    let query = format!(
+        "related.room.class.name={}&{field}={}",
+        utf8_percent_encode(&fixture.room_class.name, NON_ALPHANUMERIC),
+        utf8_percent_encode(pattern, NON_ALPHANUMERIC),
+    );
+    let endpoint = format!("/api/v1/classes/{}/?{query}", fixture.host_class.id);
+    let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+    let status = if pattern == "[" {
+        http::StatusCode::BAD_REQUEST
+    } else {
+        http::StatusCode::OK
+    };
+    let response = assert_response_status(response, status).await;
+    if status == http::StatusCode::OK {
+        let objects: Vec<HubuumObject> = test::read_body_json(response).await;
+        assert_eq!(objects.len(), count);
+    }
+    fixture.collection.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::class_graph(true, "description__regex", r"\yRoom\y")]
+#[case::object_graph(false, "description__regex", r"\yfoo\y")]
+#[case::object_graph_json(false, "to_json_data__regex", r"tier=\ygold\y")]
+#[case::invalid_class_graph(true, "description__regex", "[")]
+#[case::invalid_object_graph(false, "description__regex", "[")]
+#[actix_web::test]
+async fn related_graph_queries_preserve_postgres_regex(
+    #[case] classes: bool,
+    #[case] field: &str,
+    #[case] pattern: &str,
+) {
+    let context = TestContext::new().await;
+    let fixture = related_filter_fixture(&context).await;
+    let query = format!(
+        "{field}={}&depth__lte=1",
+        utf8_percent_encode(pattern, NON_ALPHANUMERIC),
+    );
+    let endpoint = if classes {
+        format!(
+            "/api/v1/classes/{}/related/classes?{query}",
+            fixture.host_class.id
+        )
+    } else {
+        format!(
+            "/api/v1/classes/{}/objects/{}/related/objects?{query}",
+            fixture.host_class.id, fixture.host_complete.id
+        )
+    };
+    let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+    let status = if pattern == "[" {
+        http::StatusCode::BAD_REQUEST
+    } else {
+        http::StatusCode::OK
+    };
+    let response = assert_response_status(response, status).await;
+    if status == http::StatusCode::OK {
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(rows.len(), 1);
+    }
     fixture.collection.cleanup().await.unwrap();
 }
 

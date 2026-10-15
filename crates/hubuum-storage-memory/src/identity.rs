@@ -1890,19 +1890,13 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
+        let filters = ResourceFilters::new(query.options())?;
         let state = self.state.read().await;
         let limit = query.page_limit();
         let mut rows = state
             .groups
             .values()
-            .filter(|group| {
-                resource_filters_match(
-                    query.options(),
-                    group.id().id(),
-                    group.name(),
-                    group.description(),
-                )
-            })
+            .filter(|group| filters.matches(group.id().id(), group.name(), group.description()))
             .take(limit.get().saturating_add(1))
             .map(authorization_group)
             .collect::<Result<Vec<_>, _>>()?;

@@ -84,6 +84,15 @@ requirement to reproduce its complete parser, locale system, or regex engine.
 New backends must identify their supported forms and exceptions and exercise
 the applicable shared scenarios against PostgreSQL.
 
+The [regex contract](../querying.md#regular-expressions) deliberately preserves
+backend-native dialects. Adapters must execute supported regex predicates, not
+silently ignore them or validate them using a different backend's engine.
+Syntax, flags, Unicode classes and locale behavior may differ; negation must
+still exclude null or unavailable values. Native pattern-compilation failures
+are `InvalidInput` when detected. Query optimization may avoid evaluation, so
+list operations do not serve as standalone pattern validators. Differential
+tests record both shared results and intentional acceptance/matching differences.
+
 For direct object filters, memory locally formats JSON text, converts timestamps
 with numeric offsets to UTC, and checks decimal limits and special numeric
 values. JSON text formatting runs only where a text predicate needs it; numeric

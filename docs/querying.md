@@ -58,14 +58,57 @@ Example:
 - `in`
 - `is_null`
 
-Regex syntax and matching behavior currently depend on the storage backend.
-PostgreSQL uses its [advanced regular expressions](https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP),
-while direct object filters in memory use the Rust [`regex` crate](https://docs.rs/regex/latest/regex/#syntax).
-Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
-`\yrouter\y` for word boundaries, while memory rejects `\y`; PostgreSQL's default
-`.` also matches a newline, while memory's default does not. Keep backend-specific
-patterns with their backend until a shared regex contract is defined
-([follow-up #458](https://github.com/hubuum/hubuum/issues/458)).
+### Regular expressions
+
+`regex` and `not_regex` use the selected backend's native dialect. PostgreSQL
+uses [advanced regular expressions (ARE)](https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP);
+memory uses the Rust [`regex` crate](https://docs.rs/regex/latest/regex/#syntax).
+This is the supported contract, including for ordinary string fields, JSON
+text, computed strings, related predicates and structured-search predicates
+where those fields support regex. There is no portable mode or escape
+translation. Existing PostgreSQL patterns remain valid.
+
+A regex searches anywhere in the value unless anchored. Matching is case
+sensitive by default; use the dialect's inline flags, such as `(?i)`, to change
+it. `not_regex` negates a successful non-null match test. Missing JSON paths,
+JSON nulls and unavailable computed values do not match either operator.
+JSON values use the existing [text conversion](#filter-types-and-stored-value-conversion).
+
+| Pattern and input | PostgreSQL | Memory |
+| --- | --- | --- |
+| `out` against `router` | Matches | Matches |
+| `(?i)^ROUTER$` against `router` | Matches | Matches |
+| `\yrouter\y` against `router` | Matches | Invalid pattern |
+| `router.$` against `router` followed by a newline | Matches | No match |
+| `(?s)router.$` against `router` followed by a newline | Matches | Matches |
+| `^router$` against `router` followed by a newline | No match | No match |
+| `^(router)\1$` against `routerrouter` | Matches | Invalid pattern |
+| `router(?=$)` against `router` | Matches | Invalid pattern |
+| `^\p{Greek}+$` against `αβ` | Invalid pattern | Matches |
+
+Inline flag names are dialect-specific. PostgreSQL character classes and case
+behavior depend on the expression's collation and database locale; POSIX regex
+does not support nondeterministic collations. Memory uses Unicode character
+classes and simple Unicode case folding, independent of database locale.
+Neither backend normalizes Unicode. Before moving saved queries between
+backends, test both pattern acceptance and results, especially word boundaries,
+newlines, non-ASCII classes and case-insensitive matches. Translating a few
+escapes does not establish equivalence.
+
+Detected invalid patterns return `400 Bad Request` (`InvalidInput` in storage).
+Error text is not a cross-backend contract. Memory compiles patterns before
+scanning rows. PostgreSQL evaluates patterns in native queries, so an empty or
+short-circuited query need not detect an invalid pattern; a successful empty
+result is not a pattern-validation API.
+
+Regex work is subject to existing request and query budgets. PostgreSQL uses
+`HUBUUM_DB_STATEMENT_TIMEOUT_MS` (30,000 ms by default; zero disables the
+application-configured timeout); regex has no separate execution deadline. Memory compiles
+each filter once per storage operation using the regex library's default size
+and nesting limits. Compilation-limit failures are input errors. Matching has
+the library's `O(m × n)` bound for compiled pattern size `m` and input length
+`n`, not a wall-clock deadline. A page limit alone does not bound the rows
+examined, and neither backend promises a regex speedup or index use.
 
 ### Numeric and date fields
 

@@ -11,6 +11,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio
   1.53.3, and HTTP compression library updates.
+- Define regex search as backend-native: PostgreSQL retains its advanced regular
+  expressions and memory uses Rust regex syntax. Document differences in flags,
+  newlines, Unicode, invalid patterns and execution limits; saved patterns should
+  be checked before changing storage backends.
+
+### Fixed
+
+- Invalid PostgreSQL regex diagnostics return a client error instead of an
+  internal server error. Memory applies regex filters to class and collection
+  strings, authorization group candidates and computed strings, including
+  negation and null handling, before counting and pagination.
 
 ### Security
 
