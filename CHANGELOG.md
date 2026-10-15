@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio
+  1.53.3, and HTTP compression library updates.
+
 ### Security
 
 - Update the locked rustls dependency to 0.23.46, addressing
