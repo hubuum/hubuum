@@ -30,6 +30,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Memory applies regex filters to class and collection strings, authorization
   group candidates (both `name` and `groupname`) and computed strings, including
   negation and null handling, before counting and pagination.
+- Apply portable regex filters to memory user and group lists and related
+  class/object graphs before counting and pagination.
+- Restore reproducible Swagger UI builds after zip 8.x was yanked by using a
+  narrowly patched upstream build script with zip 9.0.4. Runtime Swagger UI
+  behavior and dependency-policy enforcement are unchanged.
 
 ### Security
 

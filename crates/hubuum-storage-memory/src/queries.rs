@@ -938,6 +938,51 @@ impl ObjectAggregateStorage for MemoryStorage {
     }
 }
 
+struct GraphRegexOptions {
+    from: QueryOptions,
+    to: QueryOptions,
+}
+
+impl GraphRegexOptions {
+    fn new(options: &QueryOptions, objects: bool) -> Result<Self, StorageError> {
+        let mut from = Vec::new();
+        let mut to = Vec::new();
+        for parameter in options
+            .filters()
+            .iter()
+            .filter(|filter| filter.regex_pattern().is_some())
+        {
+            let (target, field) = match parameter.field() {
+                FilterField::NameFrom => (&mut from, FilterField::Name),
+                FilterField::Name | FilterField::NameTo => (&mut to, FilterField::Name),
+                FilterField::DescriptionFrom => (&mut from, FilterField::Description),
+                FilterField::Description | FilterField::DescriptionTo => {
+                    (&mut to, FilterField::Description)
+                }
+                FilterField::JsonDataFrom if objects => (&mut from, FilterField::JsonData),
+                FilterField::JsonDataTo if objects => (&mut to, FilterField::JsonData),
+                field => {
+                    return Err(StorageError::invalid_input(format!(
+                        "Regex is not supported for graph field '{field}'"
+                    )));
+                }
+            };
+            target.push(
+                parameter
+                    .clone()
+                    .with_field(field)
+                    .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+            );
+        }
+        Ok(Self {
+            from: QueryOptions::new(from, vec![], None, None, false)
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+            to: QueryOptions::new(to, vec![], None, None, false)
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+        })
+    }
+}
+
 #[async_trait]
 impl RelationQueryStorage for MemoryStorage {
     async fn list_class_relations(
@@ -1104,6 +1149,9 @@ impl RelationQueryStorage for MemoryStorage {
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
         let (root_id, traversal, options, _) = query.into_parts();
+        let regex_options = GraphRegexOptions::new(&options, false)?;
+        let from_filters = ResourceFilters::new(&regex_options.from)?;
+        let to_filters = ResourceFilters::new(&regex_options.to)?;
         let root_id = ClassId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1111,9 +1159,14 @@ impl RelationQueryStorage for MemoryStorage {
             .get(&root_id.id())
             .ok_or_else(|| StorageError::not_found("Relation graph root class was not found"))?;
         let mut rows = Vec::new();
-        for relation in state.class_relations.values().filter(|relation| {
-            relation.from_class_id() == root_id || relation.to_class_id() == root_id
-        }) {
+        for (visited, relation) in state
+            .class_relations
+            .values()
+            .filter(|relation| {
+                relation.from_class_id() == root_id || relation.to_class_id() == root_id
+            })
+            .enumerate()
+        {
             let descendant_id = if relation.from_class_id() == root_id {
                 relation.to_class_id()
             } else {
@@ -1123,10 +1176,19 @@ impl RelationQueryStorage for MemoryStorage {
                 .classes
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related class is missing"))?;
-            if rows.len() >= traversal.max_work_rows() as usize {
+            if visited >= traversal.max_work_rows() as usize {
                 return Err(StorageError::invalid_input(
                     "Graph traversal exceeded the work budget",
                 ));
+            }
+            if !from_filters.matches(root.id().id(), root.name(), root.description())
+                || !to_filters.matches(
+                    descendant.id().id(),
+                    descendant.name(),
+                    descendant.description(),
+                )
+            {
+                continue;
             }
             rows.push(
                 StorageClassGraphRow::try_new(
@@ -1146,6 +1208,9 @@ impl RelationQueryStorage for MemoryStorage {
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
         let (root_id, traversal, options, _) = query.into_parts();
+        let regex_options = GraphRegexOptions::new(&options, true)?;
+        let from_filters = ObjectFilters::new(regex_options.from.filters())?;
+        let to_filters = ObjectFilters::new(regex_options.to.filters())?;
         let root_id = ObjectId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1153,9 +1218,14 @@ impl RelationQueryStorage for MemoryStorage {
             .get(&root_id.id())
             .ok_or_else(|| StorageError::not_found("Relation graph root object was not found"))?;
         let mut rows = Vec::new();
-        for relation in state.object_relations.values().filter(|relation| {
-            relation.from_object_id() == root_id || relation.to_object_id() == root_id
-        }) {
+        for (visited, relation) in state
+            .object_relations
+            .values()
+            .filter(|relation| {
+                relation.from_object_id() == root_id || relation.to_object_id() == root_id
+            })
+            .enumerate()
+        {
             let descendant_id = if relation.from_object_id() == root_id {
                 relation.to_object_id()
             } else {
@@ -1165,10 +1235,13 @@ impl RelationQueryStorage for MemoryStorage {
                 .objects
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related object is missing"))?;
-            if rows.len() >= traversal.max_work_rows() as usize {
+            if visited >= traversal.max_work_rows() as usize {
                 return Err(StorageError::invalid_input(
                     "Graph traversal exceeded the work budget",
                 ));
+            }
+            if !from_filters.matches(root) || !to_filters.matches(descendant) {
+                continue;
             }
             rows.push(
                 StorageObjectGraphRow::try_new(

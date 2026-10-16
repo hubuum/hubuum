@@ -713,6 +713,15 @@ for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubu
   assert_flag "$notification_output" code true
   assert_flag "$notification_output" container true
 done
+
+# The temporary Swagger UI dependency is compiled in the production cache stage.
+for vendor_input in vendor/utoipa-swagger-ui/Cargo.toml \
+  vendor/utoipa-swagger-ui/build.rs vendor/utoipa-swagger-ui/src/lib.rs \
+  vendor/utoipa-swagger-ui/README.upstream.txt; do
+  vendor_output="$(bash "$classifier" "$vendor_input")"
+  assert_flag "$vendor_output" rust true
+  assert_flag "$vendor_output" container true
+done
 notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
 assert_flag "$notification_output" code true
 

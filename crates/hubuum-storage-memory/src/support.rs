@@ -98,6 +98,8 @@ impl<'a> ResourceFilters<'a> {
                     *filter.field(),
                     FilterField::Id | FilterField::Name | FilterField::Description
                 ) || *filter.field() == name_alias
+                    || (name_alias == FilterField::Groupname
+                        && *filter.field() == FilterField::IdentityScope)
             })
             .map(|filter| Ok((filter.field(), StringFilter::new(filter)?)))
             .collect::<Result<_, _>>()
@@ -105,14 +107,22 @@ impl<'a> ResourceFilters<'a> {
     }
 
     pub(super) fn matches(&self, id: i32, name: &str, description: &str) -> bool {
-        self.0.iter().all(|(field, filter)| {
-            let actual = match field {
-                FilterField::Id => id.to_string(),
-                FilterField::Name | FilterField::Groupname => name.to_string(),
-                FilterField::Description => description.to_string(),
-                _ => return true,
-            };
-            filter.matches(Some(&actual))
+        self.matches_with_identity_scope(id, name, description, None)
+    }
+
+    pub(super) fn matches_with_identity_scope(
+        &self,
+        id: i32,
+        name: &str,
+        description: &str,
+        identity_scope: Option<&str>,
+    ) -> bool {
+        self.0.iter().all(|(field, filter)| match field {
+            FilterField::Id => filter.matches(Some(&id.to_string())),
+            FilterField::Name | FilterField::Groupname => filter.matches(Some(name)),
+            FilterField::Description => filter.matches(Some(description)),
+            FilterField::IdentityScope => filter.matches(identity_scope),
+            _ => unreachable!("compiled resource string filter"),
         })
     }
 }

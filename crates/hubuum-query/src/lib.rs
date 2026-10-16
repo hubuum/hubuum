@@ -1589,7 +1589,30 @@ pub struct ParsedQueryParam {
 #[derive(Debug, Clone, PartialEq)]
 enum QueryOperand {
     Text(String),
-    Regex { value: String, pattern: Pattern },
+    Regex(Box<RegexOperand>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RegexOperand {
+    value: String,
+    pattern: Pattern,
+}
+
+impl RegexOperand {
+    fn new(field: &FilterField, value: String) -> Result<Self, QueryError> {
+        let source = if field_has_json_operand(field) {
+            let (path, source) = value.split_once('=').ok_or_else(|| {
+                QueryError::BadRequest("Expected exactly two parts of key=value".into())
+            })?;
+            JsonFieldPathRef::new(path)?;
+            source
+        } else {
+            &value
+        };
+        let pattern =
+            Pattern::new(source).map_err(|error| QueryError::BadRequest(error.to_string()))?;
+        Ok(Self { value, pattern })
+    }
 }
 
 impl ParsedQueryParam {
@@ -1605,6 +1628,7 @@ impl ParsedQueryParam {
         )
     }
 
+    #[inline]
     pub fn from_parts(
         field: FilterField,
         operator: SearchOperator,
@@ -1612,18 +1636,7 @@ impl ParsedQueryParam {
     ) -> Result<Self, QueryError> {
         let value = value.into();
         let operand = if matches!(operator, SearchOperator::Regex { .. }) {
-            let source = if field_has_json_operand(&field) {
-                let (path, source) = value.split_once('=').ok_or_else(|| {
-                    QueryError::BadRequest("Expected exactly two parts of key=value".into())
-                })?;
-                JsonFieldPathRef::new(path)?;
-                source
-            } else {
-                &value
-            };
-            let pattern =
-                Pattern::new(source).map_err(|error| QueryError::BadRequest(error.to_string()))?;
-            QueryOperand::Regex { value, pattern }
+            QueryOperand::Regex(Box::new(RegexOperand::new(&field, value)?))
         } else {
             QueryOperand::Text(value)
         };
@@ -1647,14 +1660,15 @@ impl ParsedQueryParam {
     #[must_use]
     pub fn value(&self) -> &str {
         match &self.operand {
-            QueryOperand::Text(value) | QueryOperand::Regex { value, .. } => value,
+            QueryOperand::Text(value) => value,
+            QueryOperand::Regex(operand) => &operand.value,
         }
     }
 
     /// Return the proof carried from query construction without parsing again.
     pub fn regex_pattern(&self) -> Option<&Pattern> {
         match &self.operand {
-            QueryOperand::Regex { pattern, .. } => Some(pattern),
+            QueryOperand::Regex(operand) => Some(&operand.pattern),
             QueryOperand::Text(_) => None,
         }
     }
@@ -1677,7 +1691,8 @@ impl ParsedQueryParam {
     #[must_use]
     pub fn into_parts(self) -> (FilterField, SearchOperator, String) {
         let value = match self.operand {
-            QueryOperand::Text(value) | QueryOperand::Regex { value, .. } => value,
+            QueryOperand::Text(value) => value,
+            QueryOperand::Regex(operand) => operand.value,
         };
         (self.field, self.operator, value)
     }

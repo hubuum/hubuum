@@ -1201,19 +1201,47 @@ impl UserStorage for MemoryStorage {
         query: StorageUserListQuery,
     ) -> Result<StoragePage<StorageUserListItem>, StorageError> {
         let options = query.into_options();
+        let string_filters = options
+            .filters()
+            .iter()
+            .filter(|filter| {
+                matches!(
+                    filter.field(),
+                    FilterField::Name
+                        | FilterField::Username
+                        | FilterField::ProperName
+                        | FilterField::Email
+                        | FilterField::IdentityScope
+                )
+            })
+            .map(|filter| Ok((filter.field(), StringFilter::new(filter)?)))
+            .collect::<Result<Vec<_>, StorageError>>()?;
         let state = self.state.read().await;
         let rows = state
             .users
             .values()
             .filter(|record| {
-                options.filters().as_slice().iter().all(|filter| {
-                    let equal = match *filter.field() {
-                        FilterField::Id => {
-                            record.user.clone().into_parts().id().to_string() == filter.value()
-                        }
-                        FilterField::Name => record.name == filter.value(),
-                        _ => true,
+                let parts = record.user.clone().into_parts();
+                if !string_filters.iter().all(|(field, filter)| {
+                    let actual = match field {
+                        FilterField::Name | FilterField::Username => Some(record.name.as_str()),
+                        FilterField::ProperName => parts.proper_name(),
+                        FilterField::Email => parts.email(),
+                        FilterField::IdentityScope => state
+                            .identity_scopes
+                            .get(&record.identity_scope_id.id())
+                            .map(|scope| scope.name()),
+                        _ => unreachable!("compiled user string filter"),
                     };
+                    filter.matches(actual)
+                }) {
+                    return false;
+                }
+                options.filters().as_slice().iter().all(|filter| {
+                    if *filter.field() != FilterField::Id {
+                        return true;
+                    }
+                    let equal = parts.id().to_string() == filter.value();
                     match *filter.operator() {
                         SearchOperator::Equals { is_negated } => equal != is_negated,
                         _ => true,
@@ -1896,7 +1924,17 @@ impl AuthorizationDataStorage for MemoryStorage {
         let mut rows = state
             .groups
             .values()
-            .filter(|group| filters.matches(group.id().id(), group.name(), group.description()))
+            .filter(|group| {
+                filters.matches_with_identity_scope(
+                    group.id().id(),
+                    group.name(),
+                    group.description(),
+                    state
+                        .identity_scopes
+                        .get(&group.identity_scope_id().id())
+                        .map(|scope| scope.name()),
+                )
+            })
             .take(limit.get().saturating_add(1))
             .map(authorization_group)
             .collect::<Result<Vec<_>, _>>()?;
@@ -2157,7 +2195,24 @@ impl GroupStorage for MemoryStorage {
         query: StorageGroupListQuery,
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError> {
         let options = query.into_options();
-        let rows = self.state.read().await.groups.values().cloned().collect();
+        let filters = ResourceFilters::for_groups(&options)?;
+        let state = self.state.read().await;
+        let rows = state
+            .groups
+            .values()
+            .filter(|group| {
+                filters.matches_with_identity_scope(
+                    group.id().id(),
+                    group.name(),
+                    group.description(),
+                    state
+                        .identity_scopes
+                        .get(&group.identity_scope_id().id())
+                        .map(|scope| scope.name()),
+                )
+            })
+            .cloned()
+            .collect();
         page(rows, &options)
     }
 
@@ -2588,9 +2643,10 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
+        let filters = ResourceFilters::for_groups(query.query_options())?;
         let state = self.state.read().await;
         let groups = query.groups();
-        let rows = state
+        let mut rows = state
             .authorization_grants
             .values()
             .filter(|grant| {
@@ -2605,6 +2661,9 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
                     .and_then(authorization_group)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        rows.retain(|group| {
+            filters.matches(group.id().id(), group.group_name(), group.description())
+        });
         page(rows, query.query_options())
     }
 }

@@ -19,6 +19,7 @@ rust-api = "internal-application"
 
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
+exclude = ["vendor/utoipa-swagger-ui"]
 members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
@@ -45,6 +46,10 @@ members = [
     "crates/hubuum-task-core",
     "crates/hubuum-templates",
 ]
+
+[patch.crates-io]
+# Remove once upstream releases the zip 9 build fix (juhaku/utoipa#1645).
+utoipa-swagger-ui = { path = "vendor/utoipa-swagger-ui" }
 
 [dependencies]
 actix-rt = "2"

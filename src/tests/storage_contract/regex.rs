@@ -236,15 +236,21 @@ async fn catalog_string_regex_filters_are_applied_before_counting(
 }
 
 #[rstest]
-#[case::matching("_match_[12]$", false, &[1, 2][..])]
-#[case::nonmatching("^never_matches$", false, &[][..])]
-#[case::negated("_match_[12]$", true, &[0][..])]
+#[case::matching(FilterField::Name, "_match_[12]$", false, &[1, 2][..])]
+#[case::nonmatching(FilterField::Name, "^never_matches$", false, &[][..])]
+#[case::negated(FilterField::Name, "_match_[12]$", true, &[0][..])]
+#[case::alias_matching(FilterField::Groupname, "_match_[12]$", false, &[1, 2][..])]
+#[case::alias_nonmatching(FilterField::Groupname, "^never_matches$", false, &[][..])]
+#[case::alias_negated(FilterField::Groupname, "_match_[12]$", true, &[0][..])]
+#[case::scope(FilterField::IdentityScope, "^local$", false, &[0, 1, 2][..])]
+#[case::scope_negated(FilterField::IdentityScope, "^local$", true, &[][..])]
 #[actix_web::test]
-async fn authorization_group_regex_filters_apply_to_both_name_aliases(
+async fn authorization_group_regex_filters_apply_before_paging(
+    #[case] field: FilterField,
     #[case] pattern: &str,
     #[case] negated: bool,
     #[case] indices: &[usize],
-    #[values(FilterField::Name, FilterField::Groupname)] field: FilterField,
+    #[values(false, true)] direct_list: bool,
 ) {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
@@ -283,24 +289,39 @@ async fn authorization_group_regex_filters_apply_to_both_name_aliases(
                 .unwrap(),
             ],
             vec![],
+            Some(1),
             None,
-            None,
-            false,
+            true,
         )
         .unwrap();
-        let result = backend
-            .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
-                options,
-                StorageCandidatePageLimit::try_new(1).unwrap(),
-            ))
-            .await
-            .map(|page| {
-                let (rows, has_more) = page.into_parts();
-                (
-                    rows.iter().map(|group| group.id()).collect::<Vec<_>>(),
-                    has_more,
-                )
-            });
+        let result = if direct_list {
+            backend
+                .list_groups(StorageGroupListQuery::new(options))
+                .await
+                .map(|page| {
+                    let (rows, total) = page.into_parts();
+                    (
+                        rows.iter().map(|group| group.id()).collect::<Vec<_>>(),
+                        total,
+                        false,
+                    )
+                })
+        } else {
+            backend
+                .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
+                    options,
+                    StorageCandidatePageLimit::try_new(1).unwrap(),
+                ))
+                .await
+                .map(|page| {
+                    let (rows, has_more) = page.into_parts();
+                    (
+                        rows.iter().map(|group| group.id()).collect::<Vec<_>>(),
+                        None,
+                        has_more,
+                    )
+                })
+        };
         for group in &groups {
             backend
                 .delete_group(group.id(), &EventContext::system())
@@ -313,6 +334,235 @@ async fn authorization_group_regex_filters_apply_to_both_name_aliases(
             .take(1)
             .map(|index| groups[*index].id())
             .collect::<Vec<_>>();
-        assert_eq!(result.unwrap(), (first_page, indices.len() > 1));
+        assert_eq!(
+            result.unwrap(),
+            (
+                first_page,
+                direct_list.then_some(indices.len() as i64),
+                !direct_list && indices.len() > 1
+            )
+        );
+    }
+}
+
+#[rstest]
+#[case::name(FilterField::Name, "_user$", true)]
+#[case::username(FilterField::Username, "_user$", true)]
+#[case::proper_name(FilterField::ProperName, "(?i)^storage contract user$", true)]
+#[case::email(FilterField::Email, "@example[.]invalid$", true)]
+#[case::identity_scope(FilterField::IdentityScope, "^local$", true)]
+#[case::empty(FilterField::Name, "", true)]
+#[case::nonmatching(FilterField::Name, "^never_matches$", false)]
+#[actix_web::test]
+async fn user_string_regex_filters_apply_before_counting(
+    #[case] field: FilterField,
+    #[case] pattern: &str,
+    #[case] matched: bool,
+    #[values(false, true)] negated: bool,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let user =
+            create_backend_user(&backend, &format!("{}_user", prefix("regex_identity"))).await;
+        let options = QueryOptions::new(
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::Equals { is_negated: false },
+                    user.id.to_string(),
+                )
+                .unwrap(),
+                ParsedQueryParam::from_parts(
+                    field.clone(),
+                    SearchOperator::Regex {
+                        is_negated: negated,
+                    },
+                    pattern,
+                )
+                .unwrap(),
+            ],
+            vec![],
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap();
+        let result = backend
+            .list_users(StorageUserListQuery::new(options))
+            .await
+            .map(|page| {
+                let (rows, total) = page.into_parts();
+                (rows.len(), total)
+            });
+        delete_backend_user(&backend, user).await;
+        let count = usize::from(matched != negated);
+        assert_eq!(result.unwrap(), (count, Some(count as i64)));
+    }
+}
+
+#[rstest]
+#[case::name(FilterField::Name, "_(two|1)$", true)]
+#[case::from_name(FilterField::NameFrom, "_(one|0)$", true)]
+#[case::to_name(FilterField::NameTo, "_(two|1)$", true)]
+#[case::description(FilterField::Description, "(?i)^backend-local", true)]
+#[case::from_description(FilterField::DescriptionFrom, "(?i)^backend-local", true)]
+#[case::to_description(FilterField::DescriptionTo, "(?i)^backend-local", true)]
+#[case::nonmatching(FilterField::Name, "^never_matches$", false)]
+#[case::empty(FilterField::Name, "", true)]
+#[actix_web::test]
+async fn graph_string_regex_filters_apply_before_counting(
+    #[case] field: FilterField,
+    #[case] pattern: &str,
+    #[case] matched: bool,
+    #[values(false, true)] objects: bool,
+    #[values(false, true)] negated: bool,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("regex_graph")).await;
+        let options = QueryOptions::new(
+            vec![
+                ParsedQueryParam::from_parts(
+                    field.clone(),
+                    SearchOperator::Regex {
+                        is_negated: negated,
+                    },
+                    pattern,
+                )
+                .unwrap(),
+            ],
+            vec![],
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap();
+        let root = if objects {
+            ResourceId::new(fixture.objects[0].id().id()).unwrap()
+        } else {
+            ResourceId::new(fixture.classes[0].id().id()).unwrap()
+        };
+        let query = StorageRelationGraphQuery::new(
+            root,
+            hubuum_query::TraversalBudget::new(1, 100).unwrap(),
+            options,
+            visibility(),
+        );
+        let result = if objects {
+            backend.list_related_objects(query).await.map(|page| {
+                let (rows, total) = page.into_parts();
+                (rows.len(), total)
+            })
+        } else {
+            backend.list_related_classes(query).await.map(|page| {
+                let (rows, total) = page.into_parts();
+                (rows.len(), total)
+            })
+        };
+        delete_backend_relation_fixture(&backend, fixture).await;
+        let count = usize::from(matched != negated);
+        assert_eq!(result.unwrap(), (count, Some(count as i64)));
+    }
+}
+
+#[rstest]
+#[actix_web::test]
+async fn nullable_user_values_do_not_match_regex(
+    #[values(FilterField::ProperName, FilterField::Email)] field: FilterField,
+    #[values(false, true)] negated: bool,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let user = backend
+            .create_user(StorageUserCreate::new(
+                None,
+                prefix("regex_nullable_user"),
+                "storage-contract-password-hash",
+                None,
+                None,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value()
+            .into_parts();
+        let options = QueryOptions::new(
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::Equals { is_negated: false },
+                    user.id().to_string(),
+                )
+                .unwrap(),
+                ParsedQueryParam::from_parts(
+                    field.clone(),
+                    SearchOperator::Regex {
+                        is_negated: negated,
+                    },
+                    "",
+                )
+                .unwrap(),
+            ],
+            vec![],
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap();
+        let result = backend.list_users(StorageUserListQuery::new(options)).await;
+        backend
+            .delete_user(StorageUserDelete::new(user.id(), EventContext::system()))
+            .await
+            .unwrap()
+            .into_value();
+        let (rows, total) = result.unwrap().into_parts();
+        assert_eq!((rows.len(), total), (0, Some(0)));
+    }
+}
+
+#[rstest]
+#[case::matching("_owner$", true)]
+#[case::nonmatching("^never_matches$", false)]
+#[actix_web::test]
+async fn collection_permission_group_regex_filters_apply_before_counting(
+    #[case] pattern: &str,
+    #[case] matched: bool,
+    #[values(false, true)] negated: bool,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_object_fixture(&backend, &prefix("regex_grant"), vec![]).await;
+        let options = QueryOptions::new(
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Groupname,
+                    SearchOperator::Regex {
+                        is_negated: negated,
+                    },
+                    pattern,
+                )
+                .unwrap(),
+            ],
+            vec![],
+            Some(1),
+            None,
+            true,
+        )
+        .unwrap();
+        let result = backend
+            .list_groups_with_collection_permission(
+                StorageAuthorizationCollectionGroupsPageQuery::new(
+                    StorageAuthorizationCollectionGroupsQuery::new(
+                        fixture.collection.id(),
+                        StorageAuthorizationPermission::ReadCollection,
+                    ),
+                    options,
+                ),
+            )
+            .await;
+        delete_backend_object_fixture(&backend, fixture).await;
+        let (rows, total) = result.unwrap().into_parts();
+        let count = usize::from(matched != negated);
+        assert_eq!((rows.len(), total), (count, Some(count as i64)));
     }
 }

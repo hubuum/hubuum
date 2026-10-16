@@ -37,6 +37,7 @@ COPY crates/hubuum-storage-memory/Cargo.toml ./crates/hubuum-storage-memory/Carg
 COPY crates/hubuum-storage-postgres/Cargo.toml ./crates/hubuum-storage-postgres/Cargo.toml
 COPY crates/hubuum-task-core/Cargo.toml ./crates/hubuum-task-core/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
+COPY vendor/utoipa-swagger-ui ./vendor/utoipa-swagger-ui
 
 # Build dependencies against dummy targets. Benchmark targets are removed from
 # the copied manifests because benchmark sources are not present in this layer.
