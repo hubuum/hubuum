@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use actix_web::{http, test};
+use rstest::rstest;
 use serde_json::{Value, json};
 
 use crate::events::EventResponse;
@@ -64,6 +65,57 @@ fn request_for_class(class: &HubuumClass, filter: Value) -> Value {
         "sort": [{"field": "name", "direction": "asc"}],
         "include_total": true
     })
+}
+
+#[rstest]
+#[case::unicode_folding("(?i)^k$", "K", Some(true))]
+#[case::newline("router.$", "router\n", Some(false))]
+#[case::case_sensitive("ROUTER", "router", Some(false))]
+#[case::empty("", "router", Some(true))]
+#[case::invalid("[", "router", None)]
+#[case::native_boundary(r"\yrouter\y", "router", None)]
+#[actix_web::test]
+async fn structured_search_uses_portable_regex(
+    #[case] pattern: &str,
+    #[case] value: &str,
+    #[case] matched: Option<bool>,
+    #[values("description", "json_data")] field: &str,
+) {
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("structured_regex").await;
+    let class = save_class(&context, &collection, "regex").await;
+    save_object(
+        &context,
+        &collection,
+        &class,
+        "regex",
+        value,
+        json!({"value": value}),
+    )
+    .await;
+    let mut predicate = json!({"field": field, "operator": "regex", "value": pattern});
+    if field == "json_data" {
+        predicate["path"] = json!("value");
+    }
+    let request = request_for_class(&class, json!({"op": "field", "predicate": predicate}));
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search",
+        request,
+    )
+    .await;
+    let status = if matched.is_none() {
+        http::StatusCode::BAD_REQUEST
+    } else {
+        http::StatusCode::OK
+    };
+    let response = assert_response_status(response, status).await;
+    if let Some(matched) = matched {
+        let body: StructuredSearchResponse = test::read_body_json(response).await;
+        assert_eq!(object_results(body).len(), usize::from(matched));
+    }
+    collection.cleanup().await.unwrap();
 }
 
 fn object_results(response: StructuredSearchResponse) -> Vec<HubuumObject> {

@@ -12,6 +12,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-regex = { version = "=0.4.0", path = "../hubuum-regex" }
 async-trait = "0.1"
 bigdecimal = "0.4"
 chrono = "0.4"

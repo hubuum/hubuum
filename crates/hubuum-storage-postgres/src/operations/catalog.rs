@@ -330,7 +330,7 @@ fn reject_computed_object_query(options: &QueryOptions) -> Result<(), PostgresSt
     if options
         .filters()
         .iter()
-        .any(|filter| filter.field.computed_query().is_some())
+        .any(|filter| filter.field().computed_query().is_some())
         || options
             .sort()
             .iter()
@@ -397,13 +397,13 @@ pub(crate) fn apply_object_filters<'query>(
         query = query.filter(predicate);
     }
     for parameter in options.filters() {
-        if parameter.field.related_query().is_some() {
+        if parameter.field().related_query().is_some() {
             continue;
         }
-        if parameter.field.computed_query().is_some() {
+        if parameter.field().computed_query().is_some() {
             continue;
         }
-        match &parameter.field {
+        match parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, hubuumobject::id)
             }
@@ -547,7 +547,7 @@ fn apply_class_filters<'query>(
         query = query.filter(predicate);
     }
     for parameter in options.filters() {
-        match &parameter.field {
+        match parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, hubuumclass::id)
             }
@@ -745,7 +745,7 @@ fn apply_collection_filters<'query>(
         query = query.filter(predicate);
     }
     for parameter in options.filters() {
-        match &parameter.field {
+        match parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, collections::id)
             }
@@ -780,9 +780,9 @@ fn validate_permission_filters(
 ) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     filters
         .iter()
-        .filter(|parameter| parameter.field == FilterField::Permissions)
+        .filter(|parameter| *parameter.field() == FilterField::Permissions)
         .map(|parameter| {
-            StorageAuthorizationPermission::from_name(&parameter.value)
+            StorageAuthorizationPermission::from_name(parameter.value())
                 .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
         })
         .collect()
@@ -844,11 +844,12 @@ mod tests {
 
     #[test]
     fn permission_filters_are_validated_inside_the_adapter() {
-        let error = validate_permission_filters(&[ParsedQueryParam {
-            field: FilterField::Permissions,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: "DefinitelyNotAPermission".to_string(),
-        }])
+        let error = validate_permission_filters(&[ParsedQueryParam::from_parts(
+            FilterField::Permissions,
+            SearchOperator::Equals { is_negated: false },
+            "DefinitelyNotAPermission".to_string(),
+        )
+        .unwrap()])
         .unwrap_err();
 
         assert!(error.to_string().contains("Invalid permission"));

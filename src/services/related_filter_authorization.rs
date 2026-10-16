@@ -50,7 +50,7 @@ fn related_filter_groups(
 
     let mut groups = BTreeMap::<&str, PendingGroup<'_>>::new();
     for filter in filters {
-        let Some(field) = filter.field.related_query() else {
+        let Some(field) = filter.field().related_query() else {
             continue;
         };
         let group = groups.entry(field.alias()).or_default();
@@ -60,7 +60,7 @@ fn related_filter_groups(
                 group.object_filters.push((filter, object_field));
             }
             RelatedFilterTarget::Depth => {
-                group.max_depth = Some(filter.value.parse::<i32>().map_err(|_| {
+                group.max_depth = Some(filter.value().parse::<i32>().map_err(|_| {
                     ApiError::BadRequest("Related filter depth must be an integer".to_string())
                 })?);
             }
@@ -370,11 +370,11 @@ where
                 // objects. Equality filters accept at most 50 values.
                 for ids in ids.chunks(50) {
                     let mut query = QueryOptions::new(
-                        vec![ParsedQueryParam {
-                            field: FilterField::Id,
-                            operator: SearchOperator::Equals { is_negated: false },
-                            value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
-                        }],
+                        vec![ParsedQueryParam::from_parts(
+                            FilterField::Id,
+                            SearchOperator::Equals { is_negated: false },
+                            ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+                        )?],
                         Vec::new(),
                         Some(ids.len()),
                         None,
@@ -430,7 +430,7 @@ async fn load_related_target_class(
     class_filter: &ParsedQueryParam,
 ) -> Result<Option<HubuumClassExpanded>, ApiError> {
     let class_field = class_filter
-        .field
+        .field()
         .related_query()
         .and_then(|field| match field.target() {
             RelatedFilterTarget::Class(class_field) => Some(class_field),
@@ -459,11 +459,11 @@ async fn load_related_target_class(
         true,
         None,
         QueryOptions::new(
-            vec![ParsedQueryParam {
+            vec![ParsedQueryParam::from_parts(
                 field,
-                operator: class_filter.operator.clone(),
-                value: class_filter.value.clone(),
-            }],
+                class_filter.operator().clone(),
+                class_filter.value().to_string(),
+            )?],
             Vec::new(),
             Some(2),
             None,
@@ -484,14 +484,13 @@ fn related_target_query(
     class_id: i32,
 ) -> Result<QueryOptions, ApiError> {
     let mut filters = Vec::with_capacity(group.object_filters.len() + 1);
-    filters.push(ParsedQueryParam {
-        field: FilterField::ClassId,
-        operator: SearchOperator::Equals { is_negated: false },
-        value: class_id.to_string(),
-    });
-    filters.extend(group.object_filters.iter().map(|(filter, field)| {
-        let mut filter = (*filter).clone();
-        filter.field = match field {
+    filters.push(ParsedQueryParam::from_parts(
+        FilterField::ClassId,
+        SearchOperator::Equals { is_negated: false },
+        class_id.to_string(),
+    )?);
+    for (filter, field) in &group.object_filters {
+        let field = match field {
             RelatedObjectField::Id => FilterField::Id,
             RelatedObjectField::Name => FilterField::Name,
             RelatedObjectField::Description => FilterField::Description,
@@ -501,8 +500,8 @@ fn related_target_query(
             RelatedObjectField::Revision => FilterField::Revision,
             RelatedObjectField::JsonData => FilterField::JsonData,
         };
-        filter
-    }));
+        filters.push((*filter).clone().with_field(field)?);
+    }
     Ok(QueryOptions::new(filters, Vec::new(), None, None, false)?)
 }
 
@@ -728,15 +727,15 @@ async fn load_objects_by_ids(
             true,
             None,
             QueryOptions::new(
-                vec![ParsedQueryParam {
-                    field: FilterField::Id,
-                    operator: SearchOperator::In { is_negated: false },
-                    value: chunk
+                vec![ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::In { is_negated: false },
+                    chunk
                         .iter()
                         .map(i32::to_string)
                         .collect::<Vec<_>>()
                         .join(","),
-                }],
+                )?],
                 Vec::new(),
                 None,
                 None,

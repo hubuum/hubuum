@@ -1269,11 +1269,14 @@ mod tests {
                 CollectionId::new(9).unwrap(),
             ),
             QueryOptions::new(
-                vec![ParsedQueryParam::from_parts(
-                    FilterField::Name,
-                    SearchOperator::Equals { is_negated: false },
-                    "secret object",
-                )],
+                vec![
+                    ParsedQueryParam::from_parts(
+                        FilterField::Name,
+                        SearchOperator::Equals { is_negated: false },
+                        "secret object",
+                    )
+                    .unwrap(),
+                ],
                 Vec::new(),
                 Some(20),
                 Some("secret cursor".to_string()),

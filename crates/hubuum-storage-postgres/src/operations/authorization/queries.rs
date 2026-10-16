@@ -337,18 +337,26 @@ pub async fn load_authorization_group_candidates(
     runtime
         .with_read_connection(async |connection| {
             use crate::schema::groups::dsl::{
-                created_at, description, groupname, groups, id, revision, updated_at,
+                created_at, description, groupname, groups, id, identity_scope_id, revision,
+                updated_at,
             };
+            use crate::schema::identity_scopes;
 
             let mut candidates = groups.into_boxed();
             for parameter in options.filters() {
-                match parameter.field {
+                match *parameter.field() {
                     FilterField::Id => crate::postgres_integer_filter!(candidates, parameter, id),
                     FilterField::Name | FilterField::Groupname => {
                         crate::postgres_string_filter!(candidates, parameter, groupname)
                     }
                     FilterField::Description => {
                         crate::postgres_string_filter!(candidates, parameter, description)
+                    }
+                    FilterField::IdentityScope => {
+                        let mut scopes = identity_scopes::table.into_boxed();
+                        crate::postgres_string_filter!(scopes, parameter, identity_scopes::name);
+                        candidates = candidates
+                            .filter(identity_scope_id.eq_any(scopes.select(identity_scopes::id)));
                     }
                     FilterField::CreatedAt => {
                         crate::postgres_datetime_filter!(candidates, parameter, created_at)
@@ -363,7 +371,7 @@ pub async fn load_authorization_group_candidates(
                     _ => {
                         return Err(PostgresStorageError::invalid_input(format!(
                             "Field '{}' isn't searchable (or does not exist) for permissions",
-                            parameter.field
+                            *parameter.field()
                         )));
                     }
                 }
@@ -821,7 +829,7 @@ fn build_principal_grant_query(
         .filter(permissions::group_id.eq_any(group_ids))
         .into_boxed();
     for parameter in query.query_options().filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, permissions::id)
             }
@@ -841,7 +849,7 @@ fn build_principal_grant_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -904,7 +912,7 @@ fn build_groups_page_query(
 
     let mut groups = build_groups_with_permission_query(query.groups())?;
     for parameter in query.query_options().filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => crate::postgres_integer_filter!(groups, parameter, groups::id),
             FilterField::Name | FilterField::Groupname => {
                 crate::postgres_string_filter!(groups, parameter, groups::groupname)
@@ -924,7 +932,7 @@ fn build_groups_page_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for groups",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -1051,7 +1059,7 @@ fn build_group_grant_query<'a>(
         apply_permission_filter!(records, permission, true);
     }
     for parameter in query.query_options().filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, permissions::id)
             }
@@ -1068,7 +1076,7 @@ fn build_group_grant_query<'a>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -1081,7 +1089,7 @@ fn grant_query_permissions(
 ) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     let mut permissions = query.required_permissions().to_vec();
     for parameter in query.query_options().filters() {
-        if parameter.field == FilterField::Permissions {
+        if *parameter.field() == FilterField::Permissions {
             permissions.push(parse_permission_filter(parameter)?);
         }
     }
@@ -1093,7 +1101,7 @@ fn grant_query_permissions(
 fn parse_permission_filter(
     parameter: &hubuum_query::ParsedQueryParam,
 ) -> Result<StorageAuthorizationPermission, PostgresStorageError> {
-    StorageAuthorizationPermission::from_name(&parameter.value)
+    StorageAuthorizationPermission::from_name(parameter.value())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 

@@ -575,17 +575,19 @@ mod test {
             .await
             .unwrap();
 
-        let read_class_param = ParsedQueryParam {
-            field: FilterField::Permissions,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: "ReadClass".to_string(),
-        };
+        let read_class_param = ParsedQueryParam::from_parts(
+            FilterField::Permissions,
+            SearchOperator::Equals { is_negated: false },
+            "ReadClass".to_string(),
+        )
+        .unwrap();
 
-        let read_collection_param = ParsedQueryParam {
-            field: FilterField::Permissions,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: "ReadCollection".to_string(),
-        };
+        let read_collection_param = ParsedQueryParam::from_parts(
+            FilterField::Permissions,
+            SearchOperator::Equals { is_negated: false },
+            "ReadCollection".to_string(),
+        )
+        .unwrap();
 
         let collection_list = test_user_1
             .search_collections(

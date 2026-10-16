@@ -11,6 +11,32 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio
   1.53.3, and HTTP compression library updates.
+- **Breaking regex search change:** every backend now implements the bounded
+  portable language defined by the independent `hubuum-regex` crate. Patterns
+  are validated before storage access, with shared Unicode, case-folding, and
+  newline semantics. Revalidate saved queries and replace native constructs
+  such as backreferences, lookaround, and word-boundary assertions before
+  upgrading. No database migration is required.
+- **Breaking storage SDK change:** `ParsedQueryParam` now has private fields and
+  a fallible `from_parts` constructor that carries validated regex patterns.
+  Replace struct literals and direct field mutations with constructors,
+  accessors, and `with_field`; adapter authors must implement the complete
+  portable regex vocabulary and run its shared conformance cases.
+
+### Fixed
+
+- Invalid regex patterns consistently return a client error on every backend,
+  even for empty results and independently of the database message language.
+  Memory applies regex filters to class and collection strings, authorization
+  group candidates (both `name` and `groupname`) and computed strings, including
+  negation and null handling, before counting and pagination.
+- Apply portable regex filters to memory user and group lists and related
+  class/object graphs before counting and pagination.
+- Apply identity-scope filters consistently when enumerating PostgreSQL groups
+  for external authorization.
+- Replace the yanked zip 8.x build dependency with zip 9.0.4 through a narrowly
+  patched Swagger UI build script. Runtime Swagger UI
+  behavior and dependency-policy enforcement are unchanged.
 
 ### Security
 

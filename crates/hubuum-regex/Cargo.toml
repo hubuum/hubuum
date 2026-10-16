@@ -1,0 +1,22 @@
+[package]
+name = "hubuum-regex"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A bounded, backend-independent regular expression contract for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+readme = "../../docs/rust_api/hubuum-regex.md"
+publish = true
+
+[package.metadata.hubuum]
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-regex.md"
+release-train = "storage-sdk"
+
+[dependencies]
+# Unicode tables and parser behavior are part of the portable language contract.
+regex-syntax = "=0.8.11"
+
+[dev-dependencies]
+rstest = "0.27"

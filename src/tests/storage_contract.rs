@@ -4,6 +4,7 @@ mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
 mod login_events;
+mod regex;
 mod schema_evolution;
 mod task_control;
 mod webhook_notifications;
@@ -3023,11 +3024,14 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         );
         let user_options = prepare_db_pagination::<crate::models::UserWithName>(
             &QueryOptions::new(
-                vec![ParsedQueryParam {
-                    field: FilterField::Id,
-                    operator: SearchOperator::Equals { is_negated: false },
-                    value: contract_user_id.to_string(),
-                }],
+                vec![
+                    ParsedQueryParam::from_parts(
+                        FilterField::Id,
+                        SearchOperator::Equals { is_negated: false },
+                        contract_user_id.to_string(),
+                    )
+                    .unwrap(),
+                ],
                 Vec::new(),
                 Some(100),
                 None,
@@ -5882,11 +5886,14 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
         let group_candidates = backend
             .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
                 QueryOptions::new(
-                    vec![ParsedQueryParam {
-                        field: FilterField::Description,
-                        operator: SearchOperator::Equals { is_negated: false },
-                        value: group.description().to_string(),
-                    }],
+                    vec![
+                        ParsedQueryParam::from_parts(
+                            FilterField::Description,
+                            SearchOperator::Equals { is_negated: false },
+                            group.description().to_string(),
+                        )
+                        .unwrap(),
+                    ],
                     Vec::new(),
                     None,
                     None,
@@ -6125,11 +6132,14 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
         let request = || {
             StorageCatalogListQuery::new(
                 QueryOptions::new(
-                    vec![ParsedQueryParam {
-                        field: FilterField::Name,
-                        operator: SearchOperator::Contains { is_negated: false },
-                        value: needle.clone(),
-                    }],
+                    vec![
+                        ParsedQueryParam::from_parts(
+                            FilterField::Name,
+                            SearchOperator::Contains { is_negated: false },
+                            needle.clone(),
+                        )
+                        .unwrap(),
+                    ],
                     Vec::new(),
                     Some(10),
                     None,
@@ -6519,16 +6529,18 @@ async fn every_available_storage_backend_supplies_object_aggregates() {
                 ),
                 QueryOptions::new(
                     vec![
-                        ParsedQueryParam {
-                            field: FilterField::ClassId,
-                            operator: SearchOperator::Equals { is_negated: false },
-                            value: fixture.class.id().to_string(),
-                        },
-                        ParsedQueryParam {
-                            field: FilterField::CollectionId,
-                            operator: SearchOperator::Equals { is_negated: false },
-                            value: fixture.collection.id().to_string(),
-                        },
+                        ParsedQueryParam::from_parts(
+                            FilterField::ClassId,
+                            SearchOperator::Equals { is_negated: false },
+                            fixture.class.id().to_string(),
+                        )
+                        .unwrap(),
+                        ParsedQueryParam::from_parts(
+                            FilterField::CollectionId,
+                            SearchOperator::Equals { is_negated: false },
+                            fixture.collection.id().to_string(),
+                        )
+                        .unwrap(),
                     ],
                     Vec::new(),
                     Some(50),

@@ -202,23 +202,23 @@ pub trait ParsedQueryParamExt {
 
 impl ParsedQueryParamExt for ParsedQueryParam {
     fn value_as_permission(&self) -> Result<Permissions, ApiError> {
-        self.value.as_permission()
+        self.value().as_permission()
     }
 
     fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        self.value.as_integer()
+        self.value().as_integer()
     }
 
     fn value_as_revision(&self) -> Result<Vec<i64>, ApiError> {
-        hubuum_query::parse_positive_bigint_list_with_limit(&self.value, 50).map_err(Into::into)
+        hubuum_query::parse_positive_bigint_list_with_limit(self.value(), 50).map_err(Into::into)
     }
 
     fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.value.as_date()
+        self.value().as_date()
     }
 
     fn value_as_boolean(&self) -> Result<bool, ApiError> {
-        self.value.as_boolean()
+        self.value().as_boolean()
     }
 }
 
@@ -340,7 +340,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     fn json_datas(&self, field: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError> {
         let json_schema: Vec<&ParsedQueryParam> = self
             .iter()
-            .filter(|p| p.is_json_data() && p.field == field)
+            .filter(|p| p.is_json_data() && *p.field() == field)
             .collect();
 
         Ok(json_schema)
@@ -352,17 +352,13 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         operator: SearchOperator,
         value: &str,
     ) -> Result<(), ApiError> {
-        self.push(ParsedQueryParam {
-            field,
-            operator,
-            value: value.to_string(),
-        });
+        self.push(ParsedQueryParam::from_parts(field, operator, value)?);
         Ok(())
     }
 
     fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool {
         self.iter()
-            .any(|p| p.field == field && p.operator == operator)
+            .any(|p| *p.field() == field && *p.operator() == operator)
     }
 
     fn ensure_filter(
@@ -399,7 +395,7 @@ impl QueryParamsExt for QueryFilters {
     fn json_datas(&self, field: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError> {
         Ok(self
             .iter()
-            .filter(|parameter| parameter.is_json_data() && parameter.field == field)
+            .filter(|parameter| parameter.is_json_data() && *parameter.field() == field)
             .collect())
     }
 
@@ -409,17 +405,13 @@ impl QueryParamsExt for QueryFilters {
         operator: SearchOperator,
         value: &str,
     ) -> Result<(), ApiError> {
-        self.try_push(ParsedQueryParam {
-            field,
-            operator,
-            value: value.to_string(),
-        })?;
+        self.try_push(ParsedQueryParam::from_parts(field, operator, value)?)?;
         Ok(())
     }
 
     fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool {
         self.iter()
-            .any(|parameter| parameter.field == field && parameter.operator == operator)
+            .any(|parameter| *parameter.field() == field && *parameter.operator() == operator)
     }
 
     fn ensure_filter(
@@ -444,12 +436,24 @@ mod test {
 
     use super::*;
 
+    #[rstest]
+    fn adding_an_invalid_regex_returns_a_query_error(#[values(false, true)] bounded: bool) {
+        let operator = SearchOperator::Regex { is_negated: false };
+        let result = if bounded {
+            QueryFilters::default().add_filter(FilterField::Name, operator, "[")
+        } else {
+            Vec::<ParsedQueryParam>::new().add_filter(FilterField::Name, operator, "[")
+        };
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+
     fn pq(field: &str, operator: SearchOperator, value: &str) -> ParsedQueryParam {
-        ParsedQueryParam {
-            field: FilterField::from_str(field).unwrap(),
+        ParsedQueryParam::from_parts(
+            FilterField::from_str(field).unwrap(),
             operator,
-            value: value.to_string(),
-        }
+            value.to_string(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -895,12 +899,12 @@ mod test {
         .unwrap();
 
         assert_eq!(query_options.filters().len(), 1);
-        assert_eq!(query_options.filters()[0].field, FilterField::Name);
+        assert_eq!(*query_options.filters()[0].field(), FilterField::Name);
         assert_eq!(
-            query_options.filters()[0].operator,
+            *query_options.filters()[0].operator(),
             SearchOperator::Contains { is_negated: false }
         );
-        assert_eq!(query_options.filters()[0].value, "alpha");
+        assert_eq!(query_options.filters()[0].value(), "alpha");
         assert_eq!(query_options.sort().len(), 1);
         assert_eq!(
             passthrough.get("ignore_classes"),
@@ -951,12 +955,12 @@ mod test {
         let query_options = parse_query_parameter("name=alpha").unwrap();
 
         assert_eq!(query_options.filters().len(), 1);
-        assert_eq!(query_options.filters()[0].field, FilterField::Name);
+        assert_eq!(*query_options.filters()[0].field(), FilterField::Name);
         assert_eq!(
-            query_options.filters()[0].operator,
+            *query_options.filters()[0].operator(),
             SearchOperator::Equals { is_negated: false }
         );
-        assert_eq!(query_options.filters()[0].value, "alpha");
+        assert_eq!(query_options.filters()[0].value(), "alpha");
     }
 
     #[test]
@@ -964,12 +968,12 @@ mod test {
         let query_options = parse_query_parameter("name%5F%5Fcontains=alpha+beta").unwrap();
 
         assert_eq!(query_options.filters().len(), 1);
-        assert_eq!(query_options.filters()[0].field, FilterField::Name);
+        assert_eq!(*query_options.filters()[0].field(), FilterField::Name);
         assert_eq!(
-            query_options.filters()[0].operator,
+            *query_options.filters()[0].operator(),
             SearchOperator::Contains { is_negated: false }
         );
-        assert_eq!(query_options.filters()[0].value, "alpha beta");
+        assert_eq!(query_options.filters()[0].value(), "alpha beta");
     }
 
     // Covers docs/querying.md "Negation" (`not_` works with `between`).
@@ -981,13 +985,13 @@ mod test {
         .unwrap();
 
         assert_eq!(query_options.filters().len(), 1);
-        assert_eq!(query_options.filters()[0].field, FilterField::CreatedAt);
+        assert_eq!(*query_options.filters()[0].field(), FilterField::CreatedAt);
         assert_eq!(
-            query_options.filters()[0].operator,
+            *query_options.filters()[0].operator(),
             SearchOperator::Between { is_negated: true }
         );
         assert_eq!(
-            query_options.filters()[0].value,
+            query_options.filters()[0].value(),
             "2026-01-01T00:00:00Z,2026-02-01T00:00:00Z"
         );
     }

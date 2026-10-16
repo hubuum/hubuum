@@ -31,7 +31,7 @@ const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;
 macro_rules! apply_group_filters {
     ($query:ident, $options:expr, $allow_revision:expr) => {
         for parameter in $options.filters() {
-            match parameter.field {
+            match *parameter.field() {
                 FilterField::Id => {
                     crate::postgres_integer_filter!($query, parameter, crate::schema::groups::id)
                 }
@@ -70,7 +70,7 @@ macro_rules! apply_group_filters {
                 _ => {
                     return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
-                        parameter.field
+                        *parameter.field()
                     )));
                 }
             }
@@ -848,7 +848,7 @@ fn apply_member_filters<'query>(
     options: &QueryOptions,
 ) -> Result<GroupMemberQuery<'query>, PostgresStorageError> {
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, crate::schema::principals::id)
             }
@@ -873,7 +873,7 @@ fn apply_member_filters<'query>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for principals",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

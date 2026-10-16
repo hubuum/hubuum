@@ -8,6 +8,7 @@ impl CatalogStorage for MemoryStorage {
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
+        let filters = ResourceFilters::new(&options)?;
         let state = self.state.read().await;
         let rows = state
             .collections
@@ -16,8 +17,7 @@ impl CatalogStorage for MemoryStorage {
                 visibility
                     .resources()
                     .is_none_or(|scope| scope.collection_ids().contains(&collection.id()))
-                    && resource_filters_match(
-                        &options,
+                    && filters.matches(
                         collection.id().id(),
                         collection.name(),
                         collection.description(),
@@ -33,6 +33,7 @@ impl CatalogStorage for MemoryStorage {
         query: StorageCatalogListQuery,
     ) -> Result<StoragePage<StorageClassWithCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
+        let filters = ResourceFilters::new(&options)?;
         let state = self.state.read().await;
         let rows = state
             .classes
@@ -41,12 +42,7 @@ impl CatalogStorage for MemoryStorage {
                 visibility.resources().is_none_or(|scope| {
                     scope.class_ids().contains(&class.id())
                         || scope.collection_ids().contains(&class.collection_id())
-                }) && resource_filters_match(
-                    &options,
-                    class.id().id(),
-                    class.name(),
-                    class.description(),
-                )
+                }) && filters.matches(class.id().id(), class.name(), class.description())
             })
             .map(|class| class_with_collection(&state, class))
             .collect::<Result<Vec<_>, StorageError>>()?;
@@ -580,6 +576,17 @@ impl ComputedObjectStorage for MemoryStorage {
         let (class_id, personal_owner_id, options, visibility, projection) = query.into_parts();
         let (requested, _, effective_page_limit) = options.into_parts();
         let filters = ObjectFilters::new(requested.filters())?;
+        let computed_filters = requested
+            .filters()
+            .iter()
+            .filter_map(|filter| {
+                filter
+                    .field()
+                    .computed_query()
+                    .map(|computed| (computed, filter))
+            })
+            .map(|(computed, filter)| Ok((computed, StringFilter::new(filter)?)))
+            .collect::<Result<Vec<_>, StorageError>>()?;
         let state = self.state.read().await;
         let mut rows = state
             .objects
@@ -595,38 +602,35 @@ impl ComputedObjectStorage for MemoryStorage {
             })
             .filter(|object| filters.matches(object))
             .filter(|object| {
-                requested.filters().as_slice().iter().all(|filter| {
-                    if let Some(computed) = filter.field.computed_query() {
-                        let visibility = match computed.scope() {
-                            ComputedFieldScope::Shared => StorageComputedFieldVisibility::Shared,
-                            ComputedFieldScope::Personal => {
-                                let Some(owner_id) = personal_owner_id else {
-                                    return false;
-                                };
-                                StorageComputedFieldVisibility::Personal { owner_id }
-                            }
-                        };
-                        let value = state
-                            .computed_fields
-                            .values()
-                            .find(|definition| {
-                                definition.class_id() == object.class_id()
-                                    && definition.visibility() == visibility
-                                    && definition.key() == computed.key()
-                            })
-                            .map(|definition| evaluate_computed_definition(definition, object));
-                        let actual = value.as_ref().map_or_else(
-                            || "null".to_string(),
-                            |value| {
-                                value
-                                    .as_str()
-                                    .map(ToOwned::to_owned)
-                                    .unwrap_or_else(|| value.to_string())
-                            },
-                        );
-                        return string_filter_matches(&actual, &filter.operator, &filter.value);
-                    }
-                    true
+                computed_filters.iter().all(|(computed, filter)| {
+                    let visibility = match computed.scope() {
+                        ComputedFieldScope::Shared => StorageComputedFieldVisibility::Shared,
+                        ComputedFieldScope::Personal => {
+                            let Some(owner_id) = personal_owner_id else {
+                                return false;
+                            };
+                            StorageComputedFieldVisibility::Personal { owner_id }
+                        }
+                    };
+                    let value = state
+                        .computed_fields
+                        .values()
+                        .find(|definition| {
+                            definition.class_id() == object.class_id()
+                                && definition.visibility() == visibility
+                                && definition.key() == computed.key()
+                        })
+                        .map(|definition| evaluate_computed_definition(definition, object));
+                    let actual = value
+                        .as_ref()
+                        .filter(|value| !value.is_null())
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| value.to_string())
+                        });
+                    filter.matches(actual.as_deref())
                 })
             })
             .cloned()
@@ -934,6 +938,51 @@ impl ObjectAggregateStorage for MemoryStorage {
     }
 }
 
+struct GraphRegexOptions {
+    from: QueryOptions,
+    to: QueryOptions,
+}
+
+impl GraphRegexOptions {
+    fn new(options: &QueryOptions, objects: bool) -> Result<Self, StorageError> {
+        let mut from = Vec::new();
+        let mut to = Vec::new();
+        for parameter in options
+            .filters()
+            .iter()
+            .filter(|filter| filter.regex_pattern().is_some())
+        {
+            let (target, field) = match parameter.field() {
+                FilterField::NameFrom => (&mut from, FilterField::Name),
+                FilterField::Name | FilterField::NameTo => (&mut to, FilterField::Name),
+                FilterField::DescriptionFrom => (&mut from, FilterField::Description),
+                FilterField::Description | FilterField::DescriptionTo => {
+                    (&mut to, FilterField::Description)
+                }
+                FilterField::JsonDataFrom if objects => (&mut from, FilterField::JsonData),
+                FilterField::JsonDataTo if objects => (&mut to, FilterField::JsonData),
+                field => {
+                    return Err(StorageError::invalid_input(format!(
+                        "Regex is not supported for graph field '{field}'"
+                    )));
+                }
+            };
+            target.push(
+                parameter
+                    .clone()
+                    .with_field(field)
+                    .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+            );
+        }
+        Ok(Self {
+            from: QueryOptions::new(from, vec![], None, None, false)
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+            to: QueryOptions::new(to, vec![], None, None, false)
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?,
+        })
+    }
+}
+
 #[async_trait]
 impl RelationQueryStorage for MemoryStorage {
     async fn list_class_relations(
@@ -1100,6 +1149,9 @@ impl RelationQueryStorage for MemoryStorage {
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageClassGraphRow>, StorageError> {
         let (root_id, traversal, options, _) = query.into_parts();
+        let regex_options = GraphRegexOptions::new(&options, false)?;
+        let from_filters = ResourceFilters::new(&regex_options.from)?;
+        let to_filters = ResourceFilters::new(&regex_options.to)?;
         let root_id = ClassId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1107,9 +1159,14 @@ impl RelationQueryStorage for MemoryStorage {
             .get(&root_id.id())
             .ok_or_else(|| StorageError::not_found("Relation graph root class was not found"))?;
         let mut rows = Vec::new();
-        for relation in state.class_relations.values().filter(|relation| {
-            relation.from_class_id() == root_id || relation.to_class_id() == root_id
-        }) {
+        for (visited, relation) in state
+            .class_relations
+            .values()
+            .filter(|relation| {
+                relation.from_class_id() == root_id || relation.to_class_id() == root_id
+            })
+            .enumerate()
+        {
             let descendant_id = if relation.from_class_id() == root_id {
                 relation.to_class_id()
             } else {
@@ -1119,10 +1176,19 @@ impl RelationQueryStorage for MemoryStorage {
                 .classes
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related class is missing"))?;
-            if rows.len() >= traversal.max_work_rows() as usize {
+            if visited >= traversal.max_work_rows() as usize {
                 return Err(StorageError::invalid_input(
                     "Graph traversal exceeded the work budget",
                 ));
+            }
+            if !from_filters.matches(root.id().id(), root.name(), root.description())
+                || !to_filters.matches(
+                    descendant.id().id(),
+                    descendant.name(),
+                    descendant.description(),
+                )
+            {
+                continue;
             }
             rows.push(
                 StorageClassGraphRow::try_new(
@@ -1142,6 +1208,9 @@ impl RelationQueryStorage for MemoryStorage {
         query: StorageRelationGraphQuery,
     ) -> Result<StoragePage<StorageObjectGraphRow>, StorageError> {
         let (root_id, traversal, options, _) = query.into_parts();
+        let regex_options = GraphRegexOptions::new(&options, true)?;
+        let from_filters = ObjectFilters::new(regex_options.from.filters())?;
+        let to_filters = ObjectFilters::new(regex_options.to.filters())?;
         let root_id = ObjectId::from(root_id);
         let state = self.state.read().await;
         let root = state
@@ -1149,9 +1218,14 @@ impl RelationQueryStorage for MemoryStorage {
             .get(&root_id.id())
             .ok_or_else(|| StorageError::not_found("Relation graph root object was not found"))?;
         let mut rows = Vec::new();
-        for relation in state.object_relations.values().filter(|relation| {
-            relation.from_object_id() == root_id || relation.to_object_id() == root_id
-        }) {
+        for (visited, relation) in state
+            .object_relations
+            .values()
+            .filter(|relation| {
+                relation.from_object_id() == root_id || relation.to_object_id() == root_id
+            })
+            .enumerate()
+        {
             let descendant_id = if relation.from_object_id() == root_id {
                 relation.to_object_id()
             } else {
@@ -1161,10 +1235,13 @@ impl RelationQueryStorage for MemoryStorage {
                 .objects
                 .get(&descendant_id.id())
                 .ok_or_else(|| StorageError::internal("related object is missing"))?;
-            if rows.len() >= traversal.max_work_rows() as usize {
+            if visited >= traversal.max_work_rows() as usize {
                 return Err(StorageError::invalid_input(
                     "Graph traversal exceeded the work budget",
                 ));
+            }
+            if !from_filters.matches(root) || !to_filters.matches(descendant) {
+                continue;
             }
             rows.push(
                 StorageObjectGraphRow::try_new(

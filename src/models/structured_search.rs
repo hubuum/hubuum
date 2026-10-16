@@ -582,33 +582,27 @@ impl StructuredSearchFieldPredicate {
             if self.operator == StructuredSearchOperator::IsNull {
                 path
             } else {
-                format!(
-                    "{path}={}",
-                    structured_value_string(
-                        self.value.as_ref().expect("validated predicate value")
-                    )?
-                )
+                format!("{path}={}", self.value_string()?)
             }
         } else if self.operator == StructuredSearchOperator::IsNull {
             "true".to_string()
         } else {
-            structured_value_string(self.value.as_ref().expect("validated predicate value"))?
+            self.value_string()?
         };
 
-        Ok(ParsedQueryParam {
-            field: self.field.filter_field(kind)?,
+        Ok(ParsedQueryParam::from_parts(
+            self.field.filter_field(kind)?,
             operator,
             value,
-        })
+        )?)
     }
 
     pub(crate) fn related_query_param(&self, alias: &str) -> Result<ParsedQueryParam, ApiError> {
-        let mut param = self.query_param(StructuredSearchResourceKind::Object)?;
-        param.field = FilterField::from_str(&format!(
+        let param = self.query_param(StructuredSearchResourceKind::Object)?;
+        Ok(param.with_field(FilterField::from_str(&format!(
             "related.{alias}.object.{}",
             self.field.related_query_name()
-        ))?;
-        Ok(param)
+        ))?)?)
     }
 
     fn validate_for(&self, kind: StructuredSearchResourceKind) -> Result<(), ApiError> {
@@ -654,10 +648,18 @@ impl StructuredSearchFieldPredicate {
             )));
         }
 
-        if let Some(value) = &self.value {
-            let _ = structured_value_string(value)?;
+        if self.value.is_some() {
+            let _ = self.value_string()?;
         }
         Ok(())
+    }
+
+    fn value_string(&self) -> Result<String, ApiError> {
+        let value = self.value.as_ref().expect("validated predicate value");
+        match (self.operator, value) {
+            (StructuredSearchOperator::Regex, Value::String(value)) => Ok(value.clone()),
+            _ => structured_value_string(value),
+        }
     }
 }
 
@@ -967,13 +969,15 @@ impl StructuredSearchRequest {
     ) -> Result<QueryOptions, ApiError> {
         let kind = self.target.kind();
         let filters = class_id
-            .map(|class_id| ParsedQueryParam {
-                field: FilterField::ClassId,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: class_id.id().to_string(),
+            .map(|class_id| {
+                ParsedQueryParam::from_parts(
+                    FilterField::ClassId,
+                    SearchOperator::Equals { is_negated: false },
+                    class_id.id().to_string(),
+                )
             })
             .into_iter()
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let sort = self
             .sort
             .iter()
@@ -1358,8 +1362,8 @@ mod tests {
             .unwrap();
         let related = predicate.related_query_param("target").unwrap();
 
-        assert_eq!(direct.value, "hardware,cpu,count=8");
-        assert_eq!(related.value, "hardware,cpu,count=8");
+        assert_eq!(direct.value(), "hardware,cpu,count=8");
+        assert_eq!(related.value(), "hardware,cpu,count=8");
     }
 
     #[test]

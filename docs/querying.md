@@ -58,14 +58,81 @@ Example:
 - `in`
 - `is_null`
 
-Regex syntax and matching behavior currently depend on the storage backend.
-PostgreSQL uses its [advanced regular expressions](https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP),
-while direct object filters in memory use the Rust [`regex` crate](https://docs.rs/regex/latest/regex/#syntax).
-Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
-`\yrouter\y` for word boundaries, while memory rejects `\y`; PostgreSQL's default
-`.` also matches a newline, while memory's default does not. Keep backend-specific
-patterns with their backend until a shared regex contract is defined
-([follow-up #458](https://github.com/hubuum/hubuum/issues/458)).
+### Regular expressions
+
+`regex` and `not_regex` use one bounded, portable language on every storage
+backend. The independent `hubuum-regex` crate parses and validates patterns;
+each adapter compiles the validated expression for native execution. There is
+no backend-native mode. These rules apply to ordinary strings, JSON text,
+computed strings, related predicates, and structured-search predicates.
+
+A pattern searches anywhere unless anchored. An empty pattern matches every
+non-null value. Matching is case sensitive by default. `not_regex` negates the
+match for non-null values; missing JSON paths, JSON nulls, and unavailable
+computed values match neither operator. JSON text uses the existing
+[text conversion](#filter-types-and-stored-value-conversion).
+
+The source syntax is the bounded regular subset of Rust regex syntax:
+
+- Unicode literals, concatenation, alternation (`a|b`), grouping, and classes
+  (`[a-z]`, `[^a]`, class intersections and differences).
+- `*`, `+`, `?`, and bounded repetition. Each explicit repetition bound is at
+  most 255. Captures and greedy/lazy preferences do not change boolean results.
+- `^` and `$` anchor the whole text, including its final newline; `\A` and `\z`
+  always anchor the whole text. `(?m)` makes `^` and `$` recognize LF line
+  boundaries. CR is an ordinary character.
+- `.` excludes LF; `(?s)` includes it. Negated classes always include LF unless
+  it is explicitly excluded. Scoped flags such as `(?s:a.)b.` are supported.
+- `(?i)` uses Unicode simple case folding. `\d`, `\w`, `\s`, and Unicode
+  properties such as `\p{Greek}` use the shared parser's Unicode tables.
+  ASCII classes such as `[[:alpha:]]` remain ASCII; `(?-u:\d)` explicitly uses
+  ASCII digits. Byte patterns that could match invalid UTF-8 are rejected.
+- `(?x)` enables whitespace/comments syntax, and `(?U)` changes greediness.
+
+Backreferences, lookaround, word-boundary assertions (including `\b` and
+`\y`), CRLF anchor mode, and native dialect extensions are rejected. Unicode
+normalization and multi-character case folding are not performed. Text is a
+sequence of non-NUL Unicode scalars. NUL literals are rejected; character
+classes are restricted to this text domain.
+
+| Pattern and input | Result on every backend |
+| --- | --- |
+| `out` against `router` | Matches |
+| `(?i)^ROUTER$` against `router` | Matches |
+| `router.$` against `router` followed by LF | No match |
+| `(?s)router.$` against `router` followed by LF | Matches |
+| `^router$` against `router` followed by LF | No match |
+| `(?m)^router$` against `switch`, LF, `router`, LF | Matches |
+| `^\p{Greek}+$` against `αβ` | Matches |
+| `(?i)^k$` against the Kelvin sign `K` | Matches |
+| `(?i)^ss$` against `ß` | No match |
+| `^(router)\1$` or `router(?=$)` | Invalid pattern |
+
+Limits are 1,024 UTF-8 source bytes, 16 levels of syntax nesting, a maximum
+explicit repetition bound of 255, and expanded expression complexity of 4,096.
+Complexity counts normalized literals, character ranges, and expression nodes,
+including multiplication by repetition bounds. Large Unicode classes combined
+with repetition can therefore exceed the budget even in a short pattern.
+Invalid or oversized patterns return `400 Bad Request` during query construction,
+including when there are no matching rows. Storage APIs cannot construct an
+unchecked regex operand.
+
+PostgreSQL executes compiler-generated ARE patterns as bound operands with
+`COLLATE "C"`; explicit ranges and folding preserve the shared semantics
+independently of the column's locale. Filtering, counting, and paging stay in
+SQL. Memory compiles the same normalized expression into a Rust matcher before
+scanning rows. Every adapter must run the shared conformance corpus. Native
+compilation failures for validated expressions are adapter failures.
+
+Existing execution budgets still apply. PostgreSQL uses
+`HUBUUM_DB_STATEMENT_TIMEOUT_MS` (30,000 ms by default; zero disables the
+application-configured timeout). Memory retains the regex engine's compilation
+size limit and bounded matching behavior. Validation does not remove execution
+budgets. This change requires no database migration.
+
+**Breaking change:** previously accepted native PostgreSQL patterns and matching
+rules are replaced by this contract. Revalidate saved queries and rewrite
+unsupported constructs before upgrading.
 
 ### Numeric and date fields
 
@@ -466,9 +533,9 @@ PostgreSQL retains its native execution and input support. In particular:
 - **Timezone-less stored timestamps:** memory assumes UTC. PostgreSQL interprets
   them using its session `TimeZone` before converting to UTC. Use explicit offsets,
   or configure PostgreSQL sessions for UTC, to avoid different results.
-- **Text matching:** regex dialects, Unicode case folding, and locale-dependent
-  matching remain backend-specific. The [string operator notes](#string-fields)
-  describe the regex differences. No shared normalization changes native collation.
+- **Other text matching:** non-regex case-insensitive operators retain their
+  native locale behavior. The [portable regex contract](#regular-expressions)
+  defines regex classes and case folding independently of backend locale.
 - **Additional native inputs:** PostgreSQL may accept numeric or IP spellings
   outside the common forms; acceptance by its parser does not establish memory
   support. Use ordinary decimal/exponent strings and complete IP addresses.

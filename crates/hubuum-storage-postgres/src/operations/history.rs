@@ -429,10 +429,10 @@ fn history_cursor_field(
 
 fn validate_history_filters(options: &QueryOptions) -> Result<(), PostgresStorageError> {
     for parameter in options.filters() {
-        if parameter.field != FilterField::Revision {
+        if *parameter.field() != FilterField::Revision {
             return Err(PostgresStorageError::invalid_input(format!(
                 "Field '{}' is not searchable for history",
-                parameter.field
+                *parameter.field()
             )));
         }
     }

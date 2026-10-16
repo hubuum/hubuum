@@ -3,6 +3,7 @@
 use crate::cursor::{
     CursorSqlField, CursorSqlType, cursor_filter_sql_for_fields, order_sql_clause_for_field,
 };
+use crate::filters::regex_operand;
 use crate::operations::dynamic_sql::SqlValue;
 use crate::operations::json_filter::json_filter_sql;
 use crate::operations::relation::{ClassRelationRow, ObjectRelationRow};
@@ -776,16 +777,16 @@ fn build_graph_filter_clause(
     parameter: &ParsedQueryParam,
     bind_variables: &mut Vec<SqlValue>,
 ) -> Result<Option<String>, PostgresStorageError> {
-    if parameter.field == FilterField::Permissions {
+    if *parameter.field() == FilterField::Permissions {
         return Ok(None);
     }
     if matches!(kind, GraphKind::Object)
         && matches!(
-            parameter.field,
+            *parameter.field(),
             FilterField::JsonDataFrom | FilterField::JsonDataTo
         )
     {
-        let expression = if parameter.field == FilterField::JsonDataFrom {
+        let expression = if *parameter.field() == FilterField::JsonDataFrom {
             "list_related_objects.ancestor_data"
         } else {
             "list_related_objects.descendant_data"
@@ -795,18 +796,18 @@ fn build_graph_filter_clause(
         return Ok(Some(format!("({})", component.sql)));
     }
 
-    let column = graph_column(kind, &parameter.field).ok_or_else(|| {
+    let column = graph_column(kind, parameter.field()).ok_or_else(|| {
         PostgresStorageError::invalid_input(format!(
             "Field '{}' isn't searchable (or does not exist) for {}",
-            parameter.field,
+            *parameter.field(),
             kind.resource_label()
         ))
     })?;
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     let wrap = |sql: String| {
         if negated { format!("NOT ({sql})") } else { sql }
     };
-    let clause = if graph_numeric_field(&parameter.field) {
+    let clause = if graph_numeric_field(parameter.field()) {
         ensure_operator_type(parameter, DataType::NumericOrDate)?;
         let values = integer_values(parameter)?;
         if values.is_empty() {
@@ -838,24 +839,32 @@ fn build_graph_filter_clause(
             Operator::Between => return Err(between_requires_two(parameter)),
             _ => return Err(unsupported_operator(parameter, "numeric")),
         }
-    } else if graph_string_field(&parameter.field) {
+    } else if graph_string_field(parameter.field()) {
         ensure_operator_type(parameter, DataType::String)?;
         let (sql_operator, value) = match operator {
-            Operator::Equals => ("=", parameter.value.clone()),
-            Operator::IEquals => ("ILIKE", parameter.value.clone()),
-            Operator::Contains => ("LIKE", format!("%{}%", parameter.value)),
-            Operator::IContains => ("ILIKE", format!("%{}%", parameter.value)),
-            Operator::StartsWith => ("LIKE", format!("{}%", parameter.value)),
-            Operator::IStartsWith => ("ILIKE", format!("{}%", parameter.value)),
-            Operator::EndsWith => ("LIKE", format!("%{}", parameter.value)),
-            Operator::IEndsWith => ("ILIKE", format!("%{}", parameter.value)),
-            Operator::Like => ("LIKE", parameter.value.clone()),
-            Operator::Regex => ("~", parameter.value.clone()),
+            Operator::Equals => ("=", parameter.value().to_string()),
+            Operator::IEquals => ("ILIKE", parameter.value().to_string()),
+            Operator::Contains => ("LIKE", format!("%{}%", parameter.value())),
+            Operator::IContains => ("ILIKE", format!("%{}%", parameter.value())),
+            Operator::StartsWith => ("LIKE", format!("{}%", parameter.value())),
+            Operator::IStartsWith => ("ILIKE", format!("{}%", parameter.value())),
+            Operator::EndsWith => ("LIKE", format!("%{}", parameter.value())),
+            Operator::IEndsWith => ("ILIKE", format!("%{}", parameter.value())),
+            Operator::Like => ("LIKE", parameter.value().to_string()),
+            Operator::Regex => (
+                "~",
+                regex_operand(parameter.regex_pattern().expect("validated regex operand")),
+            ),
             _ => return Err(unsupported_operator(parameter, "string")),
         };
         bind_variables.push(SqlValue::String(value));
-        wrap(format!("{column} {sql_operator} ?"))
-    } else if graph_datetime_field(&parameter.field) {
+        let collation = if operator == Operator::Regex {
+            " COLLATE \"C\""
+        } else {
+            ""
+        };
+        wrap(format!("{column}{collation} {sql_operator} ?"))
+    } else if graph_datetime_field(parameter.field()) {
         ensure_operator_type(parameter, DataType::NumericOrDate)?;
         let values = datetime_values(parameter)?;
         if values.is_empty() {
@@ -879,7 +888,7 @@ fn build_graph_filter_clause(
             Operator::Between => return Err(between_requires_two(parameter)),
             _ => return Err(unsupported_operator(parameter, "date")),
         }
-    } else if parameter.field == FilterField::Path {
+    } else if *parameter.field() == FilterField::Path {
         ensure_operator_type(parameter, DataType::Array)?;
         let values = integer_values(parameter)?;
         if matches!(kind, GraphKind::Object) && values.is_empty() {
@@ -894,7 +903,7 @@ fn build_graph_filter_clause(
     } else {
         return Err(PostgresStorageError::invalid_input(format!(
             "Field '{}' isn't searchable (or does not exist) for {}",
-            parameter.field,
+            *parameter.field(),
             kind.resource_label()
         )));
     };
@@ -1034,46 +1043,48 @@ fn ensure_operator_type(
     parameter: &ParsedQueryParam,
     data_type: DataType,
 ) -> Result<(), PostgresStorageError> {
-    if parameter.operator.is_applicable_to(data_type) {
+    if parameter.operator().is_applicable_to(data_type) {
         Ok(())
     } else {
         Err(PostgresStorageError::invalid_input(format!(
             "Operator '{:?}' is not applicable to field '{}'",
-            parameter.operator, parameter.field
+            *parameter.operator(),
+            *parameter.field()
         )))
     }
 }
 
 fn integer_values(parameter: &ParsedQueryParam) -> Result<Vec<i32>, PostgresStorageError> {
-    hubuum_query::parse_integer_list(&parameter.value)
+    hubuum_query::parse_integer_list(parameter.value())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn datetime_values(
     parameter: &ParsedQueryParam,
 ) -> Result<Vec<chrono::NaiveDateTime>, PostgresStorageError> {
-    hubuum_query::parse_datetime_list(&parameter.value)
+    hubuum_query::parse_datetime_list(parameter.value())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn filter_requires_value(parameter: &ParsedQueryParam) -> PostgresStorageError {
     PostgresStorageError::invalid_input(format!(
         "Searching on field '{}' requires a value",
-        parameter.field
+        *parameter.field()
     ))
 }
 
 fn between_requires_two(parameter: &ParsedQueryParam) -> PostgresStorageError {
     PostgresStorageError::invalid_input(format!(
         "Operator 'between' requires 2 values (min,max) for field '{}'",
-        parameter.field
+        *parameter.field()
     ))
 }
 
 fn unsupported_operator(parameter: &ParsedQueryParam, kind: &str) -> PostgresStorageError {
     PostgresStorageError::invalid_input(format!(
         "Operator '{:?}' not implemented for field '{}' (type: {kind})",
-        parameter.operator, parameter.field
+        *parameter.operator(),
+        *parameter.field()
     ))
 }
 
@@ -1125,7 +1136,7 @@ fn related_depth_upper_bound(
 ) -> Result<Option<i32>, PostgresStorageError> {
     let mut upper_bound = None;
     for filter in filters {
-        if filter.field != FilterField::Depth {
+        if *filter.field() != FilterField::Depth {
             continue;
         }
         let values = integer_values(filter)?;
@@ -1133,7 +1144,7 @@ fn related_depth_upper_bound(
             continue;
         };
         let max = values.iter().copied().max().unwrap_or(min);
-        let candidate = match &filter.operator {
+        let candidate = match filter.operator() {
             hubuum_query::SearchOperator::Equals { is_negated: false } => Some(max),
             hubuum_query::SearchOperator::Lt { is_negated: false } => Some(min.saturating_sub(1)),
             hubuum_query::SearchOperator::Lte { is_negated: false } => Some(min),
@@ -2050,7 +2061,7 @@ fn build_class_relation_query<'query>(
         records = records.filter(hubuumclass_relation::to_hubuum_class_id.eq_any(ids));
     }
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, hubuumclass_relation::id)
             }
@@ -2081,7 +2092,7 @@ fn build_class_relation_query<'query>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for class relations",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -2150,7 +2161,7 @@ fn build_object_relation_query<'query>(
             .filter(hubuumobject_relation::to_hubuum_object_id.eq_any(scoped_object_ids()));
     }
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(records, parameter, hubuumobject_relation::id)
             }
@@ -2188,7 +2199,7 @@ fn build_object_relation_query<'query>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable (or does not exist) for object relations",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -2204,11 +2215,11 @@ async fn class_name_filter_ids(
     let from = options
         .filters()
         .iter()
-        .find(|parameter| parameter.field == FilterField::ClassFromName);
+        .find(|parameter| *parameter.field() == FilterField::ClassFromName);
     let to = options
         .filters()
         .iter()
-        .find(|parameter| parameter.field == FilterField::ClassToName);
+        .find(|parameter| *parameter.field() == FilterField::ClassToName);
     if from.is_none() && to.is_none() {
         return Ok((None, None));
     }

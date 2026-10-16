@@ -251,9 +251,9 @@ fn structured_field_clause(
         | StructuredSqlField::Boolean(column)
         | StructuredSqlField::Json(column) => column,
     };
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     if operator == Operator::IsNull && !matches!(sql_field, StructuredSqlField::Json(_)) {
-        let should_be_null = hubuum_query::parse_boolean_value(&parameter.value)
+        let should_be_null = hubuum_query::parse_boolean_value(parameter.value())
             .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
             != negated;
         return Ok(format!(
@@ -273,17 +273,20 @@ fn structured_field_clause(
             if operator != Operator::Equals {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Operator '{}' is not implemented for boolean field '{}'",
-                    parameter.operator, parameter.field
+                    *parameter.operator(),
+                    *parameter.field()
                 )));
             }
-            let value = hubuum_query::parse_boolean_value(&parameter.value)
+            let value = hubuum_query::parse_boolean_value(parameter.value())
                 .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
             bind_variables.push(SqlValue::Boolean(value));
             Ok(wrap_negated(format!("{column} = ?"), negated))
         }
         StructuredSqlField::Json(_) => {
-            let mut json_parameter = parameter.clone();
-            json_parameter.field = FilterField::JsonData;
+            let json_parameter = parameter
+                .clone()
+                .with_field(FilterField::JsonData)
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
             let component = json_filter_sql(&json_parameter, column)?;
             bind_variables.extend(component.bind_variables);
             Ok(format!("({})", component.sql))

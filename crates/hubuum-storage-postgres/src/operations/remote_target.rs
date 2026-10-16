@@ -600,7 +600,7 @@ fn build_list_query<'a>(
         .filter(collection_id.eq_any(allowed_collection_ids))
         .into_boxed();
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
             FilterField::Description => {
@@ -625,7 +625,7 @@ fn build_list_query<'a>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable for remote targets",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

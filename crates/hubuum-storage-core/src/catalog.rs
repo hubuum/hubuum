@@ -86,11 +86,14 @@ mod tests {
     #[test]
     fn debug_output_reports_only_bounded_query_shape() {
         let options = QueryOptions::new(
-            vec![hubuum_query::ParsedQueryParam::from_parts(
-                hubuum_query::FilterField::Name,
-                hubuum_query::SearchOperator::Equals { is_negated: false },
-                "secret catalog name",
-            )],
+            vec![
+                hubuum_query::ParsedQueryParam::from_parts(
+                    hubuum_query::FilterField::Name,
+                    hubuum_query::SearchOperator::Equals { is_negated: false },
+                    "secret catalog name",
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             Some(20),
             Some("secret cursor".to_string()),

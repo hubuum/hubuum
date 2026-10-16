@@ -16,6 +16,7 @@ mod migrations;
 mod operations;
 mod pool;
 mod query_usage_executor;
+pub mod regex_compiler;
 pub use query_usage_executor::{QueryUsageExecutionReport, QueryUsageExecutor};
 #[cfg(feature = "query-capture")]
 mod query_capture;

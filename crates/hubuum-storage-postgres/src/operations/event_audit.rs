@@ -244,7 +244,7 @@ fn build_audit_event_query(
     }
 
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::BeforeRevision => {
                 crate::postgres_revision_filter!(query, parameter, before_revision)
             }
@@ -254,7 +254,7 @@ fn build_audit_event_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for events",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

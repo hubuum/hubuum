@@ -84,6 +84,16 @@ requirement to reproduce its complete parser, locale system, or regex engine.
 New backends must identify their supported forms and exceptions and exercise
 the applicable shared scenarios against PostgreSQL.
 
+The [regex contract](../querying.md#regular-expressions) is portable and mandatory.
+`hubuum-regex` owns the bounded language, validated pattern, compiler trait, and
+engine-independent conformance corpus. It has no backend dependencies. Each
+adapter implements the entire accepted language and runs that corpus through
+native execution. `ParsedQueryParam` carries the validated pattern across query
+and storage boundaries; adapters never parse the raw operand as a native dialect.
+Invalid patterns fail before execution, even for empty or short-circuited queries.
+Negation excludes null or unavailable values. Backend compiler failures for a
+validated pattern are adapter errors; native execution budgets still apply.
+
 For direct object filters, memory locally formats JSON text, converts timestamps
 with numeric offsets to UTC, and checks decimal limits and special numeric
 values. JSON text formatting runs only where a text predicate needs it; numeric

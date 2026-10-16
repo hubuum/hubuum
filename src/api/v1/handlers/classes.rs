@@ -117,9 +117,9 @@ fn scope_object_query_to_class(
     params: &mut QueryOptions,
     class: &HubuumClassID,
 ) -> Result<(), ApiError> {
-    params
-        .filters_mut()
-        .try_retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes))?;
+    params.filters_mut().try_retain(|param| {
+        !matches!(*param.field(), FilterField::ClassId | FilterField::Classes)
+    })?;
     params.filters_mut().add_filter(
         FilterField::ClassId,
         SearchOperator::Equals { is_negated: false },

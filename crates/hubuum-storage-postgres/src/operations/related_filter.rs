@@ -9,6 +9,7 @@ use hubuum_query::{
 };
 use hubuum_storage_core::{StorageAuthorizationPermission, StorageVisibility};
 
+use crate::filters::regex_operand;
 use crate::operations::dynamic_sql::{
     BoundSqlPredicate, SqlComponent, SqlValue, bound_sql_predicate,
 };
@@ -100,7 +101,7 @@ fn related_filter_groups(
 
     let mut groups = BTreeMap::<&str, PendingGroup<'_>>::new();
     for filter in filters {
-        let Some(field) = filter.field.related_query() else {
+        let Some(field) = filter.field().related_query() else {
             continue;
         };
         let group = groups.entry(field.alias()).or_default();
@@ -108,11 +109,11 @@ fn related_filter_groups(
             RelatedFilterTarget::Class(_) => group.class_filters.push(filter),
             RelatedFilterTarget::Object(object_field) => {
                 if let Some(data_type) = object_field.data_type()
-                    && !filter.operator.is_applicable_to(data_type)
+                    && !filter.operator().is_applicable_to(data_type)
                 {
                     return Err(PostgresStorageError::invalid_input(format!(
                         "Operator '{}' is not applicable to related object field '{}'",
-                        filter.operator,
+                        *filter.operator(),
                         object_field.as_str()
                     )));
                 }
@@ -136,7 +137,7 @@ fn related_filter_groups(
                 )));
             }
             let class_filter = group.class_filters[0];
-            if class_filter.operator != (SearchOperator::Equals { is_negated: false }) {
+            if *class_filter.operator() != (SearchOperator::Equals { is_negated: false }) {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Related filter group '{alias}' requires an unnegated equality class selector"
                 )));
@@ -148,12 +149,12 @@ fn related_filter_groups(
             }
             let max_depth = match group.depth_filters.first() {
                 Some(filter) => {
-                    if filter.operator != (SearchOperator::Lte { is_negated: false }) {
+                    if *filter.operator() != (SearchOperator::Lte { is_negated: false }) {
                         return Err(PostgresStorageError::invalid_input(format!(
                             "Related filter group '{alias}' only supports depth__lte"
                         )));
                     }
-                    let depth = filter.value.parse::<u8>().map_err(|_| {
+                    let depth = filter.value().parse::<u8>().map_err(|_| {
                         PostgresStorageError::invalid_input(format!(
                             "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
                         ))
@@ -239,7 +240,7 @@ fn build_related_object_filter_sql(
 
         let class_field = group
             .class_filter
-            .field
+            .field()
             .related_query()
             .and_then(|field| match field.target() {
                 RelatedFilterTarget::Class(class_field) => Some(class_field),
@@ -260,7 +261,7 @@ fn build_related_object_filter_sql(
                 "target_class.id = ?".to_string()
             }
             RelatedClassField::Name => {
-                bind_variables.push(SqlValue::String(group.class_filter.value.clone()));
+                bind_variables.push(SqlValue::String(group.class_filter.value().to_string()));
                 "target_class.name = ?".to_string()
             }
         };
@@ -390,17 +391,19 @@ fn related_target_object_clause(
         RelatedObjectField::UpdatedAt => "target_object.updated_at",
         RelatedObjectField::Revision => "target_object.revision",
         RelatedObjectField::JsonData => {
-            let mut json_parameter = parameter.clone();
-            json_parameter.field = FilterField::JsonData;
+            let json_parameter = parameter
+                .clone()
+                .with_field(FilterField::JsonData)
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
             let predicate = json_filter_sql(&json_parameter, "target_object.data")?;
             bind_variables.extend(predicate.bind_variables);
             return Ok(format!("({})", predicate.sql));
         }
     };
 
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     if operator == Operator::IsNull {
-        let should_be_null = hubuum_query::parse_boolean_value(&parameter.value)
+        let should_be_null = hubuum_query::parse_boolean_value(parameter.value())
             .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
             != negated;
         return Ok(format!(
@@ -433,11 +436,11 @@ pub(crate) fn related_integer_clause(
     let minimum = *values.iter().min().ok_or_else(|| {
         PostgresStorageError::invalid_input(format!(
             "Searching on field '{}' requires a value",
-            parameter.field
+            *parameter.field()
         ))
     })?;
     let maximum = *values.iter().max().unwrap_or(&minimum);
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     let sql = match operator {
         Operator::Equals | Operator::In => {
             if values.len() > 50 {
@@ -461,7 +464,7 @@ pub(crate) fn related_integer_clause(
         Operator::Between => {
             return Err(PostgresStorageError::invalid_input(format!(
                 "Operator 'between' requires 2 values for field '{}'",
-                parameter.field
+                *parameter.field()
             )));
         }
         _ => return Err(unsupported_related_operator(parameter, "numeric")),
@@ -475,11 +478,11 @@ pub(crate) fn related_revision_clause(
     bind_variables: &mut Vec<SqlValue>,
 ) -> Result<String, PostgresStorageError> {
     let values = hubuum_query::parse_positive_bigint_list_with_limit(
-        &parameter.value,
+        parameter.value(),
         MAX_INTEGER_FILTER_VALUES,
     )
     .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     let sql = match operator {
         Operator::Equals if values.len() == 1 => {
             bound_comparison(column, "=", SqlValue::BigInteger(values[0]), bind_variables)
@@ -487,7 +490,7 @@ pub(crate) fn related_revision_clause(
         Operator::Equals => {
             return Err(PostgresStorageError::invalid_input(format!(
                 "Operator '{operator}' requires exactly 1 value for field '{}'",
-                parameter.field
+                *parameter.field()
             )));
         }
         Operator::In => {
@@ -517,7 +520,7 @@ pub(crate) fn related_revision_clause(
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte | Operator::Between => {
             return Err(PostgresStorageError::invalid_input(format!(
                 "Operator '{operator}' has the wrong number of values for field '{}'",
-                parameter.field
+                *parameter.field()
             )));
         }
         _ => return Err(unsupported_related_operator(parameter, "revision")),
@@ -530,16 +533,16 @@ pub(crate) fn related_date_clause(
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
 ) -> Result<String, PostgresStorageError> {
-    let values = hubuum_query::parse_datetime_list(&parameter.value)
+    let values = hubuum_query::parse_datetime_list(parameter.value())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
     let minimum = *values.iter().min().ok_or_else(|| {
         PostgresStorageError::invalid_input(format!(
             "Searching on field '{}' requires a value",
-            parameter.field
+            *parameter.field()
         ))
     })?;
     let maximum = *values.iter().max().unwrap_or(&minimum);
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     let sql = match operator {
         Operator::Equals | Operator::In => {
             let array = sql_datetime_array(&values, bind_variables);
@@ -561,7 +564,7 @@ pub(crate) fn related_date_clause(
         Operator::Between => {
             return Err(PostgresStorageError::invalid_input(format!(
                 "Operator 'between' requires 2 values for field '{}'",
-                parameter.field
+                *parameter.field()
             )));
         }
         _ => return Err(unsupported_related_operator(parameter, "date")),
@@ -574,11 +577,11 @@ pub(crate) fn related_string_clause(
     column: &str,
     bind_variables: &mut Vec<SqlValue>,
 ) -> Result<String, PostgresStorageError> {
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     let sql = match operator {
         Operator::In => {
             let values = parameter
-                .value
+                .value()
                 .split(',')
                 .map(str::to_string)
                 .collect::<Vec<_>>();
@@ -593,19 +596,17 @@ pub(crate) fn related_string_clause(
         | Operator::IStartsWith
         | Operator::EndsWith
         | Operator::IEndsWith
-        | Operator::Like
-        | Operator::Regex => {
+        | Operator::Like => {
             let (sql_operator, value) = match operator {
-                Operator::Equals => ("=", parameter.value.clone()),
-                Operator::IEquals => ("ILIKE", parameter.value.clone()),
-                Operator::Contains => ("LIKE", format!("%{}%", parameter.value)),
-                Operator::IContains => ("ILIKE", format!("%{}%", parameter.value)),
-                Operator::StartsWith => ("LIKE", format!("{}%", parameter.value)),
-                Operator::IStartsWith => ("ILIKE", format!("{}%", parameter.value)),
-                Operator::EndsWith => ("LIKE", format!("%{}", parameter.value)),
-                Operator::IEndsWith => ("ILIKE", format!("%{}", parameter.value)),
-                Operator::Like => ("LIKE", parameter.value.clone()),
-                Operator::Regex => ("~", parameter.value.clone()),
+                Operator::Equals => ("=", parameter.value().to_string()),
+                Operator::IEquals => ("ILIKE", parameter.value().to_string()),
+                Operator::Contains => ("LIKE", format!("%{}%", parameter.value())),
+                Operator::IContains => ("ILIKE", format!("%{}%", parameter.value())),
+                Operator::StartsWith => ("LIKE", format!("{}%", parameter.value())),
+                Operator::IStartsWith => ("ILIKE", format!("{}%", parameter.value())),
+                Operator::EndsWith => ("LIKE", format!("%{}", parameter.value())),
+                Operator::IEndsWith => ("ILIKE", format!("%{}", parameter.value())),
+                Operator::Like => ("LIKE", parameter.value().to_string()),
                 _ => unreachable!(),
             };
             bound_comparison(
@@ -615,13 +616,19 @@ pub(crate) fn related_string_clause(
                 bind_variables,
             )
         }
+        Operator::Regex => {
+            bind_variables.push(SqlValue::String(regex_operand(
+                parameter.regex_pattern().expect("validated regex operand"),
+            )));
+            format!("{column} COLLATE \"C\" ~ ?")
+        }
         _ => return Err(unsupported_related_operator(parameter, "string")),
     };
     Ok(wrap_negated(sql, negated))
 }
 
 fn parse_integer_values(parameter: &ParsedQueryParam) -> Result<Vec<i32>, PostgresStorageError> {
-    hubuum_query::parse_integer_list(&parameter.value)
+    hubuum_query::parse_integer_list(parameter.value())
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
@@ -645,7 +652,8 @@ fn unsupported_related_operator(
 ) -> PostgresStorageError {
     PostgresStorageError::invalid_input(format!(
         "Operator '{}' is not implemented for related {data_type} field '{}'",
-        parameter.operator, parameter.field
+        *parameter.operator(),
+        *parameter.field()
     ))
 }
 

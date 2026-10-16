@@ -144,7 +144,7 @@ pub(super) async fn load_aggregate_candidate_batch(
     for parameter in query_options
         .filters()
         .iter()
-        .filter(|parameter| parameter.field.computed_query().is_some())
+        .filter(|parameter| parameter.field().computed_query().is_some())
     {
         let snapshot = computed_filter_snapshot.ok_or_else(|| {
             PostgresStorageError::internal(

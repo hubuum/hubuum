@@ -989,14 +989,14 @@ fn build_administration_delivery_query(
         query = query.filter(subscription_id.eq(subscription_filter));
     }
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
-                let values = hubuum_query::parse_integer_list(&parameter.value)
+                let values = hubuum_query::parse_integer_list(parameter.value())
                     .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?
                     .into_iter()
                     .map(i64::from)
                     .collect::<Vec<_>>();
-                let (operator, negated) = parameter.operator.op_and_neg();
+                let (operator, negated) = parameter.operator().op_and_neg();
                 match (operator, negated) {
                     (Operator::Equals | Operator::In, false) => {
                         query = query.filter(id.eq_any(values));
@@ -1007,7 +1007,8 @@ fn build_administration_delivery_query(
                     _ => {
                         return Err(PostgresStorageError::invalid_input(format!(
                             "Operator '{:?}' not implemented for field '{}' (type: bigint)",
-                            parameter.operator, parameter.field
+                            *parameter.operator(),
+                            *parameter.field()
                         )));
                     }
                 }
@@ -1025,7 +1026,7 @@ fn build_administration_delivery_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event deliveries",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

@@ -968,7 +968,7 @@ fn apply_personal_definition_filters<'query>(
 > {
     use crate::schema::computed_field_definitions::dsl as definitions;
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => {
                 crate::postgres_integer_filter!(query, parameter, definitions::id)
             }
@@ -1688,11 +1688,14 @@ mod tests {
     #[test]
     fn personal_definition_filters_reject_fields_outside_the_contract() {
         let options = QueryOptions::new(
-            vec![ParsedQueryParam {
-                field: FilterField::Permissions,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: "read".to_string(),
-            }],
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Permissions,
+                    SearchOperator::Equals { is_negated: false },
+                    "read".to_string(),
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             None,
             None,

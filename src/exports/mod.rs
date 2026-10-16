@@ -1773,7 +1773,7 @@ fn resolve_relation_hydration_plan(
             )?;
             query_options
                 .filters_mut()
-                .try_retain(|filter| filter.field != FilterField::Depth)?;
+                .try_retain(|filter| *filter.field() != FilterField::Depth)?;
             query_options.filters_mut().try_push(ParsedQueryParam::new(
                 "depth",
                 Some(SearchOperator::Lte { is_negated: false }),
@@ -2946,12 +2946,12 @@ fn push_exact_filter(
     value: i32,
 ) -> Result<(), ApiError> {
     if query_options.filters().iter().any(|param| {
-        param.field == field
+        *param.field() == field
             && matches!(
-                param.operator,
+                *param.operator(),
                 crate::models::search::SearchOperator::Equals { is_negated: false }
             )
-            && param.value == value.to_string()
+            && param.value() == value.to_string()
     }) {
         return Ok(());
     }

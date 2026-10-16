@@ -502,7 +502,7 @@ fn build_list_query<'a>(
         query = query.filter(collection_id.eq_any(collection_ids));
     }
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
             FilterField::Description => {
@@ -527,7 +527,7 @@ fn build_list_query<'a>(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' isn't searchable for export templates",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

@@ -1301,11 +1301,14 @@ mod tests {
     #[test]
     fn task_pages_reject_untyped_query_filters() {
         let options = QueryOptions::new(
-            vec![ParsedQueryParam::from_parts(
-                FilterField::Status,
-                SearchOperator::Equals { is_negated: false },
-                "queued",
-            )],
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Status,
+                    SearchOperator::Equals { is_negated: false },
+                    "queued",
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             None,
             None,
@@ -1321,11 +1324,14 @@ mod tests {
     #[test]
     fn task_child_pages_reject_query_filters() {
         let options = QueryOptions::new(
-            vec![ParsedQueryParam::from_parts(
-                FilterField::Id,
-                SearchOperator::Equals { is_negated: false },
-                "1",
-            )],
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::Equals { is_negated: false },
+                    "1",
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             None,
             None,

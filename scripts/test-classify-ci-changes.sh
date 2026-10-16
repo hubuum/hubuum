@@ -73,6 +73,17 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
   assert_flag "$cursor_output" artifacts true
 done
 
+for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
+  src/tests/storage_contract/regex.rs \
+  crates/hubuum-regex/src/lib.rs crates/hubuum-regex/src/conformance.rs \
+  crates/hubuum-regex/Cargo.toml \
+  crates/hubuum-storage-memory/src/regex_compiler.rs \
+  crates/hubuum-storage-postgres/src/regex_compiler.rs; do
+  regex_output="$(bash "$classifier" "$regex_input")"
+  assert_flag "$regex_output" code true
+  assert_flag "$regex_output" rust true
+done
+
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
   test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \
@@ -701,6 +712,15 @@ for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubu
   notification_output="$(bash "$classifier" "$notification_path")"
   assert_flag "$notification_output" code true
   assert_flag "$notification_output" container true
+done
+
+# The temporary Swagger UI dependency is compiled in the production cache stage.
+for vendor_input in vendor/utoipa-swagger-ui/Cargo.toml \
+  vendor/utoipa-swagger-ui/build.rs vendor/utoipa-swagger-ui/src/lib.rs \
+  vendor/utoipa-swagger-ui/README.upstream.txt; do
+  vendor_output="$(bash "$classifier" "$vendor_input")"
+  assert_flag "$vendor_output" rust true
+  assert_flag "$vendor_output" container true
 done
 notification_output="$(bash "$classifier" src/tests/storage_contract/webhook_notifications.rs)"
 assert_flag "$notification_output" code true

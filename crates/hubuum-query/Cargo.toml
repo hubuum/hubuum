@@ -15,6 +15,7 @@ policy-document = "docs/rust_api/hubuum-query.md"
 release-train = "storage-sdk"
 
 [dependencies]
+hubuum-regex = { version = "=0.4.0", path = "../hubuum-regex" }
 base64 = "0.23"
 bigdecimal = "0.4"
 chrono = { version = "0.4", features = ["serde"] }

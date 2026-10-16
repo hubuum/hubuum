@@ -752,13 +752,13 @@ impl ObjectAggregateQuery {
         self.query_options
             .filters()
             .iter()
-            .any(|filter| filter.field.computed_query().is_some())
+            .any(|filter| filter.field().computed_query().is_some())
     }
 
     pub fn has_personal_computed_filter(&self) -> bool {
         self.query_options.filters().iter().any(|filter| {
             filter
-                .field
+                .field()
                 .computed_query()
                 .is_some_and(|field| field.scope() == ComputedFieldScope::Personal)
         })
@@ -903,7 +903,7 @@ impl ObjectAggregateRequestBuilder {
         let requires_personal_owner = spec.has_personal_computed_field()
             || query_options.filters().iter().any(|filter| {
                 filter
-                    .field
+                    .field()
                     .computed_query()
                     .is_some_and(|field| field.scope() == ComputedFieldScope::Personal)
             });

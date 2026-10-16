@@ -27,9 +27,9 @@ pub(super) fn applies(options: &QueryOptions) -> bool {
             .filters()
             .iter()
             .filter(|filter| {
-                filter.field == FilterField::JsonData
+                *filter.field() == FilterField::JsonData
                     && matches!(
-                        filter.operator.op_and_neg().0,
+                        filter.operator().op_and_neg().0,
                         Operator::Contains | Operator::IContains
                     )
             })

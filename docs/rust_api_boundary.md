@@ -89,6 +89,7 @@ manifest.
 | `hubuum-events-core` | Experimental public |
 | `hubuum-outbound-http` | Workspace-internal |
 | `hubuum-query` | Experimental public |
+| `hubuum-regex` | Experimental public |
 | `hubuum-schema-diagnostics` | Experimental public |
 | `hubuum-scale-benchmark` | Workspace-internal |
 | `hubuum-scale-core` | Workspace-internal |

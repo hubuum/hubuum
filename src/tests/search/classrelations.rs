@@ -75,15 +75,16 @@ mod test {
     }
 
     fn relations_constraint_query(relations: &[HubuumClassRelation]) -> ParsedQueryParam {
-        ParsedQueryParam {
-            field: FilterField::Id,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: relations
+        ParsedQueryParam::from_parts(
+            FilterField::Id,
+            SearchOperator::Equals { is_negated: false },
+            relations
                 .iter()
                 .map(|r| r.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
-        }
+        )
+        .unwrap()
     }
 
     // field, operator, value, list_of_expected_ids
@@ -145,11 +146,7 @@ mod test {
         });
 
         let query = vec![
-            ParsedQueryParam {
-                field: field.clone(),
-                operator,
-                value: value.to_string(),
-            },
+            ParsedQueryParam::from_parts(field.clone(), operator, value.to_string()).unwrap(),
             relations_constraint_query(&relations),
         ];
 

@@ -1,4 +1,6 @@
 use super::*;
+use crate::regex_compiler::{MemoryRegex, MemoryRegexCompiler};
+use hubuum_regex::Compiler;
 
 pub(super) fn ordered_ids<T: Ord>(first: T, second: T) -> (T, T) {
     if first < second {
@@ -25,11 +27,36 @@ pub(super) fn page<T>(
     StoragePage::try_new(rows, total).map_err(invalid_contract_value)
 }
 
-pub(super) fn string_filter_matches(
-    actual: &str,
-    operator: &SearchOperator,
-    expected: &str,
-) -> bool {
+pub(super) struct StringFilter<'a> {
+    operator: &'a SearchOperator,
+    expected: &'a str,
+    regex: Option<MemoryRegex>,
+}
+
+impl<'a> StringFilter<'a> {
+    pub(super) fn new(filter: &'a ParsedQueryParam) -> Result<Self, StorageError> {
+        let regex = filter
+            .regex_pattern()
+            .map(|pattern| MemoryRegexCompiler.compile(pattern))
+            .transpose()
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        Ok(Self {
+            operator: filter.operator(),
+            expected: filter.value(),
+            regex,
+        })
+    }
+
+    pub(super) fn matches(&self, actual: Option<&str>) -> bool {
+        if let Some(regex) = &self.regex {
+            return actual
+                .is_some_and(|actual| regex.is_match(actual) != self.operator.op_and_neg().1);
+        }
+        string_filter_matches(actual.unwrap_or("null"), self.operator, self.expected)
+    }
+}
+
+fn string_filter_matches(actual: &str, operator: &SearchOperator, expected: &str) -> bool {
     let (operator, negated) = operator.op_and_neg();
     let actual_lower = actual.to_lowercase();
     let expected_lower = expected.to_lowercase();
@@ -48,21 +75,56 @@ pub(super) fn string_filter_matches(
     matched != negated
 }
 
-pub(super) fn resource_filters_match(
-    options: &QueryOptions,
-    id: i32,
-    name: &str,
-    description: &str,
-) -> bool {
-    options.filters().as_slice().iter().all(|filter| {
-        let actual = match filter.field {
-            FilterField::Id => id.to_string(),
-            FilterField::Name => name.to_string(),
-            FilterField::Description => description.to_string(),
-            _ => return true,
-        };
-        string_filter_matches(&actual, &filter.operator, &filter.value)
-    })
+pub(super) struct ResourceFilters<'a>(Vec<(&'a FilterField, StringFilter<'a>)>);
+
+impl<'a> ResourceFilters<'a> {
+    pub(super) fn new(options: &'a QueryOptions) -> Result<Self, StorageError> {
+        Self::with_name_alias(options, FilterField::Name)
+    }
+
+    pub(super) fn for_groups(options: &'a QueryOptions) -> Result<Self, StorageError> {
+        Self::with_name_alias(options, FilterField::Groupname)
+    }
+
+    fn with_name_alias(
+        options: &'a QueryOptions,
+        name_alias: FilterField,
+    ) -> Result<Self, StorageError> {
+        options
+            .filters()
+            .iter()
+            .filter(|filter| {
+                matches!(
+                    *filter.field(),
+                    FilterField::Id | FilterField::Name | FilterField::Description
+                ) || *filter.field() == name_alias
+                    || (name_alias == FilterField::Groupname
+                        && *filter.field() == FilterField::IdentityScope)
+            })
+            .map(|filter| Ok((filter.field(), StringFilter::new(filter)?)))
+            .collect::<Result<_, _>>()
+            .map(Self)
+    }
+
+    pub(super) fn matches(&self, id: i32, name: &str, description: &str) -> bool {
+        self.matches_with_identity_scope(id, name, description, None)
+    }
+
+    pub(super) fn matches_with_identity_scope(
+        &self,
+        id: i32,
+        name: &str,
+        description: &str,
+        identity_scope: Option<&str>,
+    ) -> bool {
+        self.0.iter().all(|(field, filter)| match field {
+            FilterField::Id => filter.matches(Some(&id.to_string())),
+            FilterField::Name | FilterField::Groupname => filter.matches(Some(name)),
+            FilterField::Description => filter.matches(Some(description)),
+            FilterField::IdentityScope => filter.matches(identity_scope),
+            _ => unreachable!("compiled resource string filter"),
+        })
+    }
 }
 
 pub(super) fn authorization_collection(

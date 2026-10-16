@@ -27,9 +27,12 @@ must not reveal filter values where a type promises redaction.
 
 `QueryOptions` has a private representation. Its `QueryFilters`, `QuerySort`,
 and `QueryCursor` components validate their bounds and expose only
-invariant-preserving mutation. `SortParam` and `ParsedQueryParam` remain simple
-leaf DTOs with public fields as an intentional construction surface; placing
-them into the bounded collections still performs collection-level validation.
+invariant-preserving mutation. `SortParam` remains a leaf DTO with public fields. `ParsedQueryParam` has a
+private representation: its fallible constructors validate portable regex
+operands with `hubuum-regex` and retain the resulting proof. Read accessors and
+`with_field` preserve it across alias and related-field remapping. Moving a
+regex between plain and JSON operand formats requires a new constructor.
+Bounded collections additionally perform collection-level validation.
 Scalar inference uses application-neutral value categories. SQL expressions,
 column names, and database type identifiers belong to adapters and are not part
 of this crate's API.

@@ -9,6 +9,7 @@ use hubuum_query::{
 };
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
+use crate::filters::regex_operand;
 use crate::operations::catalog::object_cursor_field;
 use crate::operations::computed_definition::{
     ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY,
@@ -87,12 +88,12 @@ pub(crate) async fn resolve_computed_query_fields(
     validate_computed_filter_count(
         filters
             .iter()
-            .filter(|filter| filter.field.computed_query().is_some())
+            .filter(|filter| filter.field().computed_query().is_some())
             .count(),
     )?;
     let requested = filters
         .iter()
-        .filter_map(|filter| filter.field.computed_query())
+        .filter_map(|filter| filter.field().computed_query())
         .chain(sorts.iter().filter_map(|sort| sort.field.computed_query()))
         .map(|field| (field.scope(), field.key().to_string()))
         .collect::<BTreeSet<_>>();
@@ -394,14 +395,14 @@ pub(crate) fn computed_filter_sql_component(
     parameter: &ParsedQueryParam,
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<SqlComponent, PostgresStorageError> {
-    if parameter.value.contains('\0') {
+    if parameter.value().contains('\0') {
         return Err(PostgresStorageError::invalid_input(format!(
             "Filter value for computed field '{}' contains a null character",
-            parameter.field
+            *parameter.field()
         )));
     }
-    let computed = parameter.field.computed_query().ok_or_else(|| {
-        PostgresStorageError::internal(format!("Field '{}' is not computed", parameter.field))
+    let computed = parameter.field().computed_query().ok_or_else(|| {
+        PostgresStorageError::internal(format!("Field '{}' is not computed", *parameter.field()))
     })?;
     let value_type = computed.value_type().ok_or_else(|| {
         PostgresStorageError::internal(format!(
@@ -409,8 +410,8 @@ pub(crate) fn computed_filter_sql_component(
             computed.key()
         ))
     })?;
-    let field = object_computed_sql_field(&parameter.field, snapshot)?;
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let field = object_computed_sql_field(parameter.field(), snapshot)?;
+    let (operator, negated) = parameter.operator().op_and_neg();
 
     if operator == Operator::IsNull {
         let should_be_null = value_as_boolean(parameter)? != negated;
@@ -455,40 +456,48 @@ fn computed_string_filter(
     negated: bool,
 ) -> Result<SqlComponent, PostgresStorageError> {
     let (sql, values) = match operator {
-        Operator::Equals => (format!("{expression} = ?"), vec![parameter.value.clone()]),
+        Operator::Equals => (
+            format!("{expression} = ?"),
+            vec![parameter.value().to_string()],
+        ),
         Operator::IEquals => (
             format!("{expression} ILIKE ?"),
-            vec![parameter.value.clone()],
+            vec![parameter.value().to_string()],
         ),
         Operator::Contains => (
             format!("{expression} LIKE ?"),
-            vec![format!("%{}%", parameter.value)],
+            vec![format!("%{}%", parameter.value())],
         ),
         Operator::IContains => (
             format!("{expression} ILIKE ?"),
-            vec![format!("%{}%", parameter.value)],
+            vec![format!("%{}%", parameter.value())],
         ),
         Operator::StartsWith => (
             format!("{expression} LIKE ?"),
-            vec![format!("{}%", parameter.value)],
+            vec![format!("{}%", parameter.value())],
         ),
         Operator::IStartsWith => (
             format!("{expression} ILIKE ?"),
-            vec![format!("{}%", parameter.value)],
+            vec![format!("{}%", parameter.value())],
         ),
         Operator::EndsWith => (
             format!("{expression} LIKE ?"),
-            vec![format!("%{}", parameter.value)],
+            vec![format!("%{}", parameter.value())],
         ),
         Operator::IEndsWith => (
             format!("{expression} ILIKE ?"),
-            vec![format!("%{}", parameter.value)],
+            vec![format!("%{}", parameter.value())],
         ),
         Operator::Like => (
             format!("{expression} LIKE ?"),
-            vec![parameter.value.clone()],
+            vec![parameter.value().to_string()],
         ),
-        Operator::Regex => (format!("{expression} ~ ?"), vec![parameter.value.clone()]),
+        Operator::Regex => (
+            format!("{expression} COLLATE \"C\" ~ ?"),
+            vec![regex_operand(
+                parameter.regex_pattern().expect("validated regex operand"),
+            )],
+        ),
         Operator::In => {
             let values = exact_comma_separated_values(parameter, 50)?;
             let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -515,7 +524,8 @@ fn computed_numeric_filter(
             hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
                 PostgresStorageError::invalid_input(format!(
                     "Invalid numeric value '{}' for computed field '{}'",
-                    value, parameter.field
+                    value,
+                    *parameter.field()
                 ))
             })
         })
@@ -577,14 +587,14 @@ fn computed_json_filter(
     if operator == Operator::HasKey {
         return Ok(SqlComponent {
             sql: maybe_negate(format!("jsonb_exists({expression}, ?)"), negated),
-            bind_variables: vec![SqlValue::String(parameter.value.clone())],
+            bind_variables: vec![SqlValue::String(parameter.value().to_string())],
         });
     }
     if operator == Operator::ArrayLength && value_type == ComputedQueryValueType::Array {
-        let length = parameter.value.parse::<i32>().map_err(|_| {
+        let length = parameter.value().parse::<i32>().map_err(|_| {
             PostgresStorageError::invalid_input(format!(
                 "array_length requires an integer, got '{}'",
-                parameter.value
+                parameter.value()
             ))
         })?;
         if length < 0 {
@@ -601,10 +611,10 @@ fn computed_json_filter(
         return Err(computed_operator_mismatch(parameter, value_type.as_str()));
     }
 
-    let value: serde_json::Value = serde_json::from_str(&parameter.value).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_str(parameter.value()).map_err(|error| {
         PostgresStorageError::invalid_input(format!(
             "Invalid JSON value for computed field '{}': {error}",
-            parameter.field
+            *parameter.field()
         ))
     })?;
     let type_matches = matches!(
@@ -615,7 +625,7 @@ fn computed_json_filter(
     if !type_matches {
         return Err(PostgresStorageError::invalid_input(format!(
             "Filter value for computed field '{}' must be a JSON {}",
-            parameter.field,
+            *parameter.field(),
             value_type.as_str()
         )));
     }
@@ -655,7 +665,7 @@ fn exact_comma_separated_values(
     maximum: usize,
 ) -> Result<Vec<String>, PostgresStorageError> {
     let values = parameter
-        .value
+        .value()
         .split(',')
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -668,7 +678,7 @@ fn trimmed_comma_separated_values(
     maximum: usize,
 ) -> Result<Vec<String>, PostgresStorageError> {
     let values = parameter
-        .value
+        .value()
         .split(',')
         .map(str::trim)
         .map(str::to_string)
@@ -685,13 +695,13 @@ fn validate_comma_separated_values(
     if values.is_empty() || values.iter().any(String::is_empty) {
         return Err(PostgresStorageError::invalid_input(format!(
             "Filtering computed field '{}' requires a value",
-            parameter.field
+            *parameter.field()
         )));
     }
     if values.len() > maximum {
         return Err(PostgresStorageError::invalid_input(format!(
             "Filtering computed field '{}' accepts at most {maximum} values",
-            parameter.field
+            *parameter.field()
         )));
     }
     Ok(())
@@ -705,19 +715,21 @@ fn require_computed_value_count(
     if actual != expected {
         return Err(PostgresStorageError::invalid_input(format!(
             "Operator '{}' requires {expected} value(s) for field '{}'",
-            parameter.operator, parameter.field
+            *parameter.operator(),
+            *parameter.field()
         )));
     }
     Ok(())
 }
 
 fn value_as_boolean(parameter: &ParsedQueryParam) -> Result<bool, PostgresStorageError> {
-    match parameter.value.as_str() {
+    match parameter.value() {
         "true" | "1" => Ok(true),
         "false" | "0" => Ok(false),
         _ => Err(PostgresStorageError::invalid_input(format!(
             "Invalid boolean value '{}' for field '{}'",
-            parameter.value, parameter.field
+            parameter.value(),
+            *parameter.field()
         ))),
     }
 }
@@ -732,7 +744,8 @@ fn computed_operator_mismatch(
 ) -> PostgresStorageError {
     PostgresStorageError::invalid_input(format!(
         "Operator '{}' is not applicable to computed field '{}' (type: {value_type})",
-        parameter.operator, parameter.field
+        *parameter.operator(),
+        *parameter.field()
     ))
 }
 
