@@ -40,6 +40,10 @@ probe. Python applies the probe's process limits; its assertions remain in Rust.
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 
+The [portable regex fuzzing guide](regex-testing.md) covers the separate
+instrumented parser and native-backend targets, exact-limit tests, synthetic
+corpora, scheduled CI, and the distinction between language and execution limits.
+
 ## Python local regressions
 
 Python 3.11+ and the standard library are sufficient. The tests use local files,

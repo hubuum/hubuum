@@ -25,6 +25,7 @@ benchmarks=false
 runtime_benchmark=false
 scale_benchmark=false
 treetop_conformance=false
+regex_fuzz=false
 
 for path in "$@"; do
   any=true
@@ -32,6 +33,16 @@ for path in "$@"; do
   if [[ "$path" == *.md ]]; then
     markdown=true
   fi
+
+  case "$path" in
+    fuzz/* | crates/* | Cargo.toml | Cargo.lock | .python-version | deny.toml | \
+      .github/supply-chain-tools.env | .github/supply-chain-exceptions.json | \
+      scripts/run-cargo-deny.sh | scripts/check-supply-chain-policy.py | \
+      .github/workflows/regex-fuzz.yml | scripts/classify-ci-changes.sh | \
+      scripts/test-classify-ci-changes.sh | scripts/ci-changed-paths.sh)
+      regex_fuzz=true
+      ;;
+  esac
 
   case "$path" in
     tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py | \
@@ -86,6 +97,10 @@ for path in "$@"; do
   esac
 
   case "$path" in
+    fuzz/* | .github/workflows/regex-fuzz.yml)
+      # The standalone fuzz workflow owns these tests and lint checks.
+      code=true
+      ;;
     test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | .gitattributes | \
       docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
       tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
@@ -340,6 +355,7 @@ for path in "$@"; do
       artifacts=true
       benchmarks=true
       runtime_benchmark=true
+      regex_fuzz=true
       ;;
   esac
 done
@@ -359,6 +375,7 @@ outputs=(
   "runtime_benchmark=$runtime_benchmark"
   "scale_benchmark=$scale_benchmark"
   "treetop_conformance=$treetop_conformance"
+  "regex_fuzz=$regex_fuzz"
 )
 
 printf '%s\n' "${outputs[@]}"

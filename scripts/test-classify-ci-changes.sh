@@ -84,6 +84,30 @@ for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
   assert_flag "$regex_output" rust true
 done
 
+for fuzz_input in fuzz/Cargo.toml fuzz/Cargo.lock fuzz/fuzz_targets/regex_pattern.rs \
+  fuzz/fuzz_targets/regex_backends.rs fuzz/examples/seed.rs fuzz/tests/limits.rs \
+  fuzz/regex.dict fuzz/regressions/regex_pattern/example \
+  .github/workflows/regex-fuzz.yml; do
+  fuzz_output="$(bash "$classifier" "$fuzz_input")"
+  assert_flag "$fuzz_output" code true
+  assert_flag "$fuzz_output" regex_fuzz true
+  assert_flag "$fuzz_output" container false
+done
+
+for fuzz_dependency in crates/hubuum-regex/src/lib.rs \
+  crates/hubuum-storage-postgres/src/regex_compiler.rs \
+  crates/hubuum-storage-memory/src/regex_compiler.rs \
+  crates/hubuum-domain/src/lib.rs Cargo.toml Cargo.lock \
+  scripts/classify-ci-changes.sh scripts/ci-changed-paths.sh deny.toml \
+  scripts/run-cargo-deny.sh scripts/check-supply-chain-policy.py \
+  .github/supply-chain-tools.env .github/supply-chain-exceptions.json; do
+  fuzz_output="$(bash "$classifier" "$fuzz_dependency")"
+  assert_flag "$fuzz_output" regex_fuzz true
+done
+
+assert_flag "$(bash "$classifier" docs/testing.md)" regex_fuzz false
+assert_flag "$(bash "$classifier" new-build-input.bin)" regex_fuzz true
+
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
   test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \

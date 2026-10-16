@@ -7,6 +7,7 @@ CARGO_DENY_VERSION="$(
     --tool-value CARGO_DENY_VERSION
 )"
 report_path="${1:-cargo-deny.log}"
+manifest_path="${2:-$repo_root/Cargo.toml}"
 
 installed_version="$(cargo deny --version 2>/dev/null || true)"
 if [[ "$installed_version" != "cargo-deny ${CARGO_DENY_VERSION}" ]]; then
@@ -35,7 +36,8 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
 fi
 
 set +e
-cargo deny --all-features --locked check 2>&1 | tee "$report_path"
+cargo deny --manifest-path "$manifest_path" --config "$repo_root/deny.toml" \
+  --all-features --locked check 2>&1 | tee "$report_path"
 status="${PIPESTATUS[0]}"
 set -e
 exit "$status"

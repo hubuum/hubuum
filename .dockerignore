@@ -23,6 +23,7 @@ docs/
 
 # Test and development files
 benches/
+fuzz/
 **/test/
 # **/tests/
 *.log
