@@ -138,6 +138,7 @@ nav = [
       { "Domain" = "rust_api/hubuum-domain.md" },
       { "Events" = "rust_api/hubuum-events-core.md" },
       { "Query" = "rust_api/hubuum-query.md" },
+      { "Regex" = "rust_api/hubuum-regex.md" },
       { "Schema diagnostics" = "rust_api/hubuum-schema-diagnostics.md" },
       { "Storage conformance" = "rust_api/hubuum-storage-conformance.md" },
       { "Storage core" = "rust_api/hubuum-storage-core.md" },
