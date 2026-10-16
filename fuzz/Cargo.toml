@@ -1,0 +1,50 @@
+[package]
+name = "hubuum-regex-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Keep instrumentation and its dependencies outside the production workspace.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+hubuum-regex = { path = "../crates/hubuum-regex" }
+hubuum-storage-memory = { path = "../crates/hubuum-storage-memory", optional = true }
+hubuum-storage-postgres = { path = "../crates/hubuum-storage-postgres", optional = true }
+tokio = { version = "1", features = ["rt", "time"], optional = true }
+tokio-postgres = { version = "0.7", optional = true }
+
+[dev-dependencies]
+rstest = "0.27"
+tokio-postgres = "0.7"
+
+[features]
+postgres = ["dep:hubuum-storage-memory", "dep:hubuum-storage-postgres", "dep:tokio", "dep:tokio-postgres"]
+
+[[bin]]
+name = "regex_pattern"
+path = "fuzz_targets/regex_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regex_backends"
+path = "fuzz_targets/regex_backends.rs"
+test = false
+doc = false
+bench = false
+required-features = ["postgres"]
+
+# Most adapter code is unrelated to matching. Reduce compilation cost while
+# retaining sanitizers, overflow checks, and the real adapter implementations.
+[profile.release.package.hubuum-storage-postgres]
+opt-level = 1
+
+[profile.release.package.hubuum-storage-memory]
+opt-level = 1

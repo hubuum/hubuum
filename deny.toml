@@ -28,6 +28,7 @@ allow = [
   "ISC",
   "MIT",
   "MIT-0",
+  "NCSA", # The standalone fuzz harness's bundled libFuzzer engine.
   "PostgreSQL",
   "Unicode-3.0",
   "Zlib",

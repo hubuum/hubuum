@@ -114,6 +114,7 @@ nav = [
     { "Contributor guide" = "contributing/index.md" },
     { "Development setup" = "development.md" },
     { "Testing" = "testing.md" },
+    { "Regex fuzzing & limits" = "regex-testing.md" },
     { "Documentation" = "contributing/documentation.md" },
     { "Documentation review & roadmap" = "contributing/documentation-review.md" },
     { "Architecture" = [
