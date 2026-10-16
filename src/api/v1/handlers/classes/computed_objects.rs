@@ -185,7 +185,7 @@ async fn external_computed_page(
         |mut execution: QueryOptions| async {
             execution
                 .filters_mut()
-                .try_retain(|filter| filter.field.related_query().is_none())
+                .try_retain(|filter| filter.field().related_query().is_none())
                 .expect("removing every related filter preserves query invariants");
             let mut requested = execution.clone();
             requested.set_sort(params.sort().clone());

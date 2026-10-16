@@ -1115,11 +1115,14 @@ mod tests {
     #[test]
     fn query_debug_redacts_ids_filters_and_cursors() {
         let options = QueryOptions::new(
-            vec![hubuum_query::ParsedQueryParam::from_parts(
-                hubuum_query::FilterField::Name,
-                hubuum_query::SearchOperator::Equals { is_negated: false },
-                "secret relation",
-            )],
+            vec![
+                hubuum_query::ParsedQueryParam::from_parts(
+                    hubuum_query::FilterField::Name,
+                    hubuum_query::SearchOperator::Equals { is_negated: false },
+                    "secret relation",
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             Some(10),
             Some("secret cursor".to_string()),

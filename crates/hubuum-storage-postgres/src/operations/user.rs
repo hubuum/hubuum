@@ -27,7 +27,7 @@ const LOCAL_IDENTITY_SCOPE: &str = "local";
 macro_rules! apply_user_filters {
     ($query:ident, $options:expr) => {
         for parameter in $options.filters() {
-            match parameter.field {
+            match *parameter.field() {
                 FilterField::Id => {
                     crate::postgres_integer_filter!($query, parameter, crate::schema::users::id)
                 }
@@ -67,7 +67,7 @@ macro_rules! apply_user_filters {
                 _ => {
                     return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
-                        parameter.field
+                        *parameter.field()
                     )));
                 }
             }

@@ -232,12 +232,12 @@ async fn related_target_object_filters_support_json_and_revision_fields() {
 }
 
 #[rstest]
-#[case::object("related.room.object.description__regex", r"\yfoo\y", 2)]
-#[case::json("related.room.object.json_data__regex", r"tier=\ygold\y", 2)]
-#[case::negated("related.room.object.description__not_regex", r"\yfoo\y", 1)]
+#[case::object("related.room.object.description__regex", r"(?i)foo", 2)]
+#[case::json("related.room.object.json_data__regex", r"tier=(?i)gold", 2)]
+#[case::negated("related.room.object.description__not_regex", r"(?i)foo", 1)]
 #[case::invalid("related.room.object.description__regex", "[", 0)]
 #[actix_web::test]
-async fn related_predicates_preserve_postgres_regex(
+async fn related_predicates_use_portable_regex(
     #[case] field: &str,
     #[case] pattern: &str,
     #[case] count: usize,
@@ -265,13 +265,13 @@ async fn related_predicates_preserve_postgres_regex(
 }
 
 #[rstest]
-#[case::class_graph(true, "description__regex", r"\yRoom\y")]
-#[case::object_graph(false, "description__regex", r"\yfoo\y")]
-#[case::object_graph_json(false, "to_json_data__regex", r"tier=\ygold\y")]
+#[case::class_graph(true, "description__regex", r"(?i)Room")]
+#[case::object_graph(false, "description__regex", r"(?i)foo")]
+#[case::object_graph_json(false, "to_json_data__regex", r"tier=(?i)gold")]
 #[case::invalid_class_graph(true, "description__regex", "[")]
 #[case::invalid_object_graph(false, "description__regex", "[")]
 #[actix_web::test]
-async fn related_graph_queries_preserve_postgres_regex(
+async fn related_graph_queries_use_portable_regex(
     #[case] classes: bool,
     #[case] field: &str,
     #[case] pattern: &str,

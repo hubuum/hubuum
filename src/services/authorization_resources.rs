@@ -58,11 +58,11 @@ pub(crate) async fn task_class_authorization_resources(
     // Equality filters accept at most 50 values, even for internal queries.
     for ids in class_ids.chunks(50) {
         let query = QueryOptions::new(
-            vec![ParsedQueryParam {
-                field: FilterField::Id,
-                operator: SearchOperator::Equals { is_negated: false },
-                value: ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
-            }],
+            vec![ParsedQueryParam::from_parts(
+                FilterField::Id,
+                SearchOperator::Equals { is_negated: false },
+                ids.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+            )?],
             Vec::new(),
             Some(ids.len()),
             None,

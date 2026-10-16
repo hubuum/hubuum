@@ -581,7 +581,7 @@ impl ComputedObjectStorage for MemoryStorage {
             .iter()
             .filter_map(|filter| {
                 filter
-                    .field
+                    .field()
                     .computed_query()
                     .map(|computed| (computed, filter))
             })

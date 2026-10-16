@@ -1,5 +1,6 @@
 use super::*;
-use regex::Regex;
+use crate::regex_compiler::{MemoryRegex, MemoryRegexCompiler};
+use hubuum_regex::Compiler;
 
 pub(super) fn ordered_ids<T: Ord>(first: T, second: T) -> (T, T) {
     if first < second {
@@ -29,18 +30,19 @@ pub(super) fn page<T>(
 pub(super) struct StringFilter<'a> {
     operator: &'a SearchOperator,
     expected: &'a str,
-    regex: Option<Regex>,
+    regex: Option<MemoryRegex>,
 }
 
 impl<'a> StringFilter<'a> {
     pub(super) fn new(filter: &'a ParsedQueryParam) -> Result<Self, StorageError> {
-        let regex = (filter.operator.op_and_neg().0 == Operator::Regex)
-            .then(|| Regex::new(&filter.value))
+        let regex = filter
+            .regex_pattern()
+            .map(|pattern| MemoryRegexCompiler.compile(pattern))
             .transpose()
-            .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+            .map_err(|error| StorageError::internal(error.to_string()))?;
         Ok(Self {
-            operator: &filter.operator,
-            expected: &filter.value,
+            operator: filter.operator(),
+            expected: filter.value(),
             regex,
         })
     }
@@ -77,16 +79,27 @@ pub(super) struct ResourceFilters<'a>(Vec<(&'a FilterField, StringFilter<'a>)>);
 
 impl<'a> ResourceFilters<'a> {
     pub(super) fn new(options: &'a QueryOptions) -> Result<Self, StorageError> {
+        Self::with_name_alias(options, FilterField::Name)
+    }
+
+    pub(super) fn for_groups(options: &'a QueryOptions) -> Result<Self, StorageError> {
+        Self::with_name_alias(options, FilterField::Groupname)
+    }
+
+    fn with_name_alias(
+        options: &'a QueryOptions,
+        name_alias: FilterField,
+    ) -> Result<Self, StorageError> {
         options
             .filters()
             .iter()
             .filter(|filter| {
                 matches!(
-                    filter.field,
+                    *filter.field(),
                     FilterField::Id | FilterField::Name | FilterField::Description
-                )
+                ) || *filter.field() == name_alias
             })
-            .map(|filter| Ok((&filter.field, StringFilter::new(filter)?)))
+            .map(|filter| Ok((filter.field(), StringFilter::new(filter)?)))
             .collect::<Result<_, _>>()
             .map(Self)
     }
@@ -95,7 +108,7 @@ impl<'a> ResourceFilters<'a> {
         self.0.iter().all(|(field, filter)| {
             let actual = match field {
                 FilterField::Id => id.to_string(),
-                FilterField::Name => name.to_string(),
+                FilterField::Name | FilterField::Groupname => name.to_string(),
                 FilterField::Description => description.to_string(),
                 _ => return true,
             };

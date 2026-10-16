@@ -453,7 +453,7 @@ fn computed_filter_clause(
     for filter in query_options
         .filters()
         .iter()
-        .filter(|filter| filter.field.computed_query().is_some())
+        .filter(|filter| filter.field().computed_query().is_some())
     {
         let component = computed_filter_sql_component(filter, snapshot)?;
         clauses.push(format!("({})", component.sql));

@@ -9,6 +9,7 @@ use hubuum_query::{
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 
 use crate::PostgresStorageError;
+use crate::filters::regex_operand;
 use crate::operations::dynamic_sql::{
     BoundSqlPredicate, SqlComponent, SqlValue, bound_sql_predicate,
 };
@@ -27,19 +28,19 @@ pub(crate) fn json_filter_sql(
     if !parameter.is_json() {
         return Err(PostgresStorageError::internal(format!(
             "Attempt to filter '{}' as JSON",
-            parameter.field
+            *parameter.field()
         )));
     }
-    let (operator, negated) = parameter.operator.op_and_neg();
+    let (operator, negated) = parameter.operator().op_and_neg();
     if operator == Operator::IsNull {
-        let path = json_path(&parameter.value)?;
+        let path = json_path(parameter.value())?;
         let expression = json_text_path_expression(json_expression, path);
         return Ok(SqlComponent {
             sql: format!("{expression} IS {}NULL", if negated { "NOT " } else { "" }),
             bind_variables: Vec::new(),
         });
     }
-    let (raw_path, value) = parameter.value.split_once('=').ok_or_else(|| {
+    let (raw_path, value) = parameter.value().split_once('=').ok_or_else(|| {
         PostgresStorageError::invalid_input("Expected exactly two parts of key=value")
     })?;
     let path = json_path(raw_path)?;
@@ -152,7 +153,10 @@ pub(crate) fn json_filter_sql(
                 Operator::IStartsWith => ("ILIKE", format!("{value}%")),
                 Operator::EndsWith => ("LIKE", format!("%{value}")),
                 Operator::IEndsWith => ("ILIKE", format!("%{value}")),
-                Operator::Regex => ("~", value.to_string()),
+                Operator::Regex => (
+                    "~",
+                    regex_operand(parameter.regex_pattern().expect("validated regex operand")),
+                ),
                 Operator::Gt => (">", value.to_string()),
                 Operator::Gte => (">=", value.to_string()),
                 Operator::Lt => ("<", value.to_string()),
@@ -163,15 +167,20 @@ pub(crate) fn json_filter_sql(
                     )));
                 }
             };
+            let collation = if operator == Operator::Regex {
+                " COLLATE \"C\""
+            } else {
+                ""
+            };
             Ok(negated_json_component(
-                format!("{text_expression} {sql_operator} ?"),
+                format!("{text_expression}{collation} {sql_operator} ?"),
                 vec![SqlValue::String(value)],
                 negated,
             ))
         }
         None => Err(PostgresStorageError::invalid_input(format!(
             "Invalid JSON type mapping between key '{path}' and operator '{}'",
-            parameter.operator
+            *parameter.operator()
         ))),
     }
 }
@@ -199,7 +208,7 @@ fn typed_json_filter(
     if bind_variables.len() != required_values {
         return Err(PostgresStorageError::invalid_input(format!(
             "Operator '{operator}' requires exactly {required_values} value(s) for JSON field '{}'",
-            parameter.field
+            *parameter.field()
         )));
     }
     let predicate = match operator {

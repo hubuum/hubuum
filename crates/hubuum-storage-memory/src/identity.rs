@@ -1207,14 +1207,14 @@ impl UserStorage for MemoryStorage {
             .values()
             .filter(|record| {
                 options.filters().as_slice().iter().all(|filter| {
-                    let equal = match filter.field {
+                    let equal = match *filter.field() {
                         FilterField::Id => {
-                            record.user.clone().into_parts().id().to_string() == filter.value
+                            record.user.clone().into_parts().id().to_string() == filter.value()
                         }
-                        FilterField::Name => record.name == filter.value,
+                        FilterField::Name => record.name == filter.value(),
                         _ => true,
                     };
-                    match filter.operator {
+                    match *filter.operator() {
                         SearchOperator::Equals { is_negated } => equal != is_negated,
                         _ => true,
                     }
@@ -1890,7 +1890,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationGroupCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
-        let filters = ResourceFilters::new(query.options())?;
+        let filters = ResourceFilters::for_groups(query.options())?;
         let state = self.state.read().await;
         let limit = query.page_limit();
         let mut rows = state

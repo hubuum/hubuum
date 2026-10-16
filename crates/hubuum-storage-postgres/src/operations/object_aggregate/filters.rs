@@ -2,7 +2,7 @@ macro_rules! apply_object_aggregate_source_filters {
     ($query:ident, $query_options:expr, $computed_filter_snapshot:expr) => {{
         let query_params = $query_options.filters().clone();
         for param in query_params {
-            if param.field.computed_query().is_some() {
+            if param.field().computed_query().is_some() {
                 let snapshot = $computed_filter_snapshot.ok_or_else(|| {
                     $crate::PostgresStorageError::internal(
                         "Computed object aggregate filter is missing its resolved query snapshot",
@@ -15,7 +15,7 @@ macro_rules! apply_object_aggregate_source_filters {
                 );
                 continue;
             }
-            match param.field {
+            match *param.field() {
                 hubuum_query::FilterField::Id => {
                     $crate::postgres_integer_filter!($query, param, object_id)
                 }
@@ -48,7 +48,7 @@ macro_rules! apply_object_aggregate_source_filters {
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
-                        param.field
+                        *param.field()
                     )));
                 }
             }

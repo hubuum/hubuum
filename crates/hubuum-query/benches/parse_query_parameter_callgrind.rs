@@ -33,6 +33,7 @@ fn filter() -> ParsedQueryParam {
         SearchOperator::Contains { is_negated: false },
         "benchmark-value",
     )
+    .unwrap()
 }
 
 #[library_benchmark]

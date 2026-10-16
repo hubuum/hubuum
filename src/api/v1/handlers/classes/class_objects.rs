@@ -117,7 +117,7 @@ async fn list_objects_in_class(
                 || params
                     .filters()
                     .iter()
-                    .any(|filter| filter.field.computed_query().is_some());
+                    .any(|filter| filter.field().computed_query().is_some());
 
             if computed_querying {
                 let class =
@@ -194,7 +194,7 @@ async fn load_raw_object_page(
             |mut candidate_options| async {
                 candidate_options
                     .filters_mut()
-                    .try_retain(|filter| filter.field.related_query().is_none())
+                    .try_retain(|filter| filter.field().related_query().is_none())
                     .expect("removing every related filter preserves query invariants");
                 if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
                     return Ok(Vec::new());

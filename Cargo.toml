@@ -33,6 +33,7 @@ members = [
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
+    "crates/hubuum-regex",
     "crates/hubuum-scale-benchmark",
     "crates/hubuum-scale-core",
     "crates/hubuum-secrets",

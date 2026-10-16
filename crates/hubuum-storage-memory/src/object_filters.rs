@@ -4,12 +4,14 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::str::FromStr;
 
+use crate::regex_compiler::{MemoryRegex, MemoryRegexCompiler};
 use bigdecimal::{BigDecimal, Zero};
 use chrono::{DateTime, NaiveDateTime};
 use hubuum_query::{
     FilterField, JsonFieldPath, Operator, ParsedQueryParam, QueryFilters, QueryScalarType,
     infer_query_scalar_type, parse_boolean_value, parse_datetime_list, parse_integer_list,
 };
+use hubuum_regex::Compiler;
 use hubuum_storage_core::{StorageError, StorageObject};
 use ipnet::IpNet;
 use regex::Regex;
@@ -28,6 +30,7 @@ struct ObjectFilter {
 enum Operand {
     Text(String),
     Pattern(Regex),
+    Regex(MemoryRegex),
     Numbers(Vec<NumericValue>),
     Dates(Vec<NaiveDateTime>),
     Boolean(bool),
@@ -81,9 +84,9 @@ impl ObjectFilters {
         filters
             .iter()
             .filter(|filter| {
-                filter.field.computed_query().is_none()
-                    && filter.field.related_query().is_none()
-                    && filter.field != FilterField::Permissions
+                filter.field().computed_query().is_none()
+                    && filter.field().related_query().is_none()
+                    && *filter.field() != FilterField::Permissions
             })
             .map(ObjectFilter::new)
             .collect::<Result<_, _>>()
@@ -97,28 +100,28 @@ impl ObjectFilters {
 
 impl ObjectFilter {
     fn new(filter: &ParsedQueryParam) -> Result<Self, StorageError> {
-        let (mut operator, mut negated) = filter.operator.op_and_neg();
-        if operator == Operator::IsNull && filter.field != FilterField::JsonData {
-            negated ^= !parse_boolean_value(&filter.value).map_err(invalid)?;
+        let (mut operator, mut negated) = filter.operator().op_and_neg();
+        if operator == Operator::IsNull && *filter.field() != FilterField::JsonData {
+            negated ^= !parse_boolean_value(filter.value()).map_err(invalid)?;
         }
-        let (path, value) = if filter.field == FilterField::JsonData {
+        let (path, value) = if *filter.field() == FilterField::JsonData {
             let (path, value) = if operator == Operator::IsNull {
-                (filter.value.as_str(), "")
+                (filter.value(), "")
             } else {
-                filter.value.split_once('=').ok_or_else(|| {
+                filter.value().split_once('=').ok_or_else(|| {
                     StorageError::invalid_input("Expected exactly two parts of key=value")
                 })?
             };
             (Some(JsonFieldPath::new(path).map_err(invalid)?), value)
         } else {
-            (None, filter.value.as_str())
+            (None, filter.value())
         };
         // PostgreSQL's JSON LIKE filter adds substring wildcards; ordinary
         // string fields apply the caller's LIKE pattern as written.
         if path.is_some() && operator == Operator::Like {
             operator = Operator::Contains;
         }
-        let scalar = match filter.field {
+        let scalar = match *filter.field() {
             FilterField::JsonData => infer_query_scalar_type(value, operator.clone()),
             FilterField::Id
             | FilterField::ClassId
@@ -140,7 +143,7 @@ impl ObjectFilter {
             Operator::ArrayLength => Operand::Numbers(vec![NumericValue::integer(
                 value.parse::<i32>().map_err(invalid)?,
             )]),
-            Operator::In if filter.field == FilterField::Revision => Operand::Numbers(
+            Operator::In if *filter.field() == FilterField::Revision => Operand::Numbers(
                 hubuum_query::parse_positive_bigint_list_with_limit(
                     value,
                     hubuum_query::MAX_INTEGER_FILTER_VALUES,
@@ -169,7 +172,7 @@ impl ObjectFilter {
             ),
             _ => match scalar {
                 Some(QueryScalarType::Numeric) => {
-                    let numbers = if filter.field == FilterField::Revision {
+                    let numbers = if *filter.field() == FilterField::Revision {
                         hubuum_query::parse_positive_bigint_list_with_limit(
                             value,
                             hubuum_query::MAX_INTEGER_FILTER_VALUES,
@@ -195,7 +198,11 @@ impl ObjectFilter {
                 }
                 Some(QueryScalarType::String | QueryScalarType::None) => match operator {
                     Operator::Equals => Operand::Text(value.to_string()),
-                    Operator::Regex => Operand::Pattern(Regex::new(value).map_err(invalid)?),
+                    Operator::Regex => Operand::Regex(
+                        MemoryRegexCompiler
+                            .compile(filter.regex_pattern().expect("validated regex operand"))
+                            .map_err(|error| StorageError::internal(error.to_string()))?,
+                    ),
                     Operator::IEquals
                     | Operator::Contains
                     | Operator::IContains
@@ -218,7 +225,7 @@ impl ObjectFilter {
             },
         };
         if path.is_none()
-            && filter.field != FilterField::Revision
+            && *filter.field() != FilterField::Revision
             && operator == Operator::Equals
             && matches!(operand, Operand::Numbers(_) | Operand::Dates(_))
         {
@@ -249,7 +256,7 @@ impl ObjectFilter {
                 _ => 1,
             };
             if (operator == Operator::Between && length != 2)
-                || ((path.is_some() || filter.field == FilterField::Revision)
+                || ((path.is_some() || *filter.field() == FilterField::Revision)
                     && operator != Operator::Between
                     && length != 1)
             {
@@ -259,7 +266,7 @@ impl ObjectFilter {
             }
         }
         Ok(Self {
-            field: filter.field.clone(),
+            field: filter.field().clone(),
             path,
             operator,
             negated,
@@ -314,6 +321,9 @@ impl ObjectFilter {
             }),
             Operand::Text(expected) => value.and_then(json_text).map(|actual| actual == *expected),
             Operand::Pattern(pattern) => value
+                .and_then(json_text)
+                .map(|actual| pattern.is_match(&actual)),
+            Operand::Regex(pattern) => value
                 .and_then(json_text)
                 .map(|actual| pattern.is_match(&actual)),
             Operand::Numbers(expected) if self.operator == Operator::ArrayLength => {

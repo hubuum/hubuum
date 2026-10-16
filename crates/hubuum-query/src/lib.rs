@@ -10,6 +10,7 @@ pub use traversal::{MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_WORK_ROWS, TraversalBudge
 use base64::Engine as _;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate};
+use hubuum_regex::Pattern;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -327,12 +328,6 @@ fn parse_single_filter(
     value: &str,
     features: QueryParserFeatures,
 ) -> Result<ParsedQueryParam, QueryError> {
-    if value.is_empty() {
-        return Err(QueryError::BadRequest(format!(
-            "Invalid query parameter: '{key}', no value",
-        )));
-    }
-
     let (field_name, operator) = if is_computed_field_name(key) || key.starts_with("related.") {
         // Computed keys and related aliases may themselves contain double
         // underscores. Only a recognized terminal operator suffix is syntax;
@@ -353,6 +348,12 @@ fn parse_single_filter(
         }
     };
 
+    if value.is_empty() && !matches!(operator, SearchOperator::Regex { .. }) {
+        return Err(QueryError::BadRequest(format!(
+            "Invalid query parameter: '{key}', no value",
+        )));
+    }
+
     let field = FilterField::from_str(field_name)?;
     if field.computed_query().is_some() && !features.computed_filters {
         return Err(QueryError::BadRequest(
@@ -365,11 +366,7 @@ fn parse_single_filter(
         ));
     }
 
-    Ok(ParsedQueryParam {
-        field,
-        operator,
-        value: value.to_string(),
-    })
+    ParsedQueryParam::from_parts(field, operator, value)
 }
 
 fn validate_related_filter_groups(filters: &[ParsedQueryParam]) -> Result<(), QueryError> {
@@ -404,7 +401,7 @@ fn validate_related_filter_groups(filters: &[ParsedQueryParam]) -> Result<(), Qu
                         field.alias()
                     )));
                 }
-                let depth = filter.value.parse::<u8>().map_err(|_| {
+                let depth = filter.value().parse::<u8>().map_err(|_| {
                     QueryError::BadRequest(format!(
                         "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
                     ))
@@ -1584,9 +1581,15 @@ impl PartialEq for ComputedQueryField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedQueryParam {
-    pub field: FilterField,
-    pub operator: SearchOperator,
-    pub value: String,
+    field: FilterField,
+    operator: SearchOperator,
+    operand: QueryOperand,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum QueryOperand {
+    Text(String),
+    Regex { value: String, pattern: Pattern },
 }
 
 impl ParsedQueryParam {
@@ -1595,24 +1598,40 @@ impl ParsedQueryParam {
         operator: Option<SearchOperator>,
         value: &str,
     ) -> Result<Self, QueryError> {
-        Ok(Self {
-            field: FilterField::from_str(field)?,
-            operator: operator.unwrap_or(SearchOperator::Equals { is_negated: false }),
-            value: value.to_string(),
-        })
+        Self::from_parts(
+            FilterField::from_str(field)?,
+            operator.unwrap_or(SearchOperator::Equals { is_negated: false }),
+            value,
+        )
     }
 
-    #[must_use]
     pub fn from_parts(
         field: FilterField,
         operator: SearchOperator,
         value: impl Into<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, QueryError> {
+        let value = value.into();
+        let operand = if matches!(operator, SearchOperator::Regex { .. }) {
+            let source = if field_has_json_operand(&field) {
+                let (path, source) = value.split_once('=').ok_or_else(|| {
+                    QueryError::BadRequest("Expected exactly two parts of key=value".into())
+                })?;
+                JsonFieldPathRef::new(path)?;
+                source
+            } else {
+                &value
+            };
+            let pattern =
+                Pattern::new(source).map_err(|error| QueryError::BadRequest(error.to_string()))?;
+            QueryOperand::Regex { value, pattern }
+        } else {
+            QueryOperand::Text(value)
+        };
+        Ok(Self {
             field,
             operator,
-            value: value.into(),
-        }
+            operand,
+        })
     }
 
     #[must_use]
@@ -1627,12 +1646,40 @@ impl ParsedQueryParam {
 
     #[must_use]
     pub fn value(&self) -> &str {
-        &self.value
+        match &self.operand {
+            QueryOperand::Text(value) | QueryOperand::Regex { value, .. } => value,
+        }
+    }
+
+    /// Return the proof carried from query construction without parsing again.
+    pub fn regex_pattern(&self) -> Option<&Pattern> {
+        match &self.operand {
+            QueryOperand::Regex { pattern, .. } => Some(pattern),
+            QueryOperand::Text(_) => None,
+        }
+    }
+
+    /// Remap aliases or related fields while preserving the validated operand.
+    /// Changing between plain and JSON regex operands would change the source
+    /// expression and therefore requires constructing a new parameter instead.
+    pub fn with_field(mut self, field: FilterField) -> Result<Self, QueryError> {
+        if self.regex_pattern().is_some()
+            && field_has_json_operand(&self.field) != field_has_json_operand(&field)
+        {
+            return Err(QueryError::BadRequest(
+                "Cannot remap between text and JSON regex operands".into(),
+            ));
+        }
+        self.field = field;
+        Ok(self)
     }
 
     #[must_use]
     pub fn into_parts(self) -> (FilterField, SearchOperator, String) {
-        (self.field, self.operator, self.value)
+        let value = match self.operand {
+            QueryOperand::Text(value) | QueryOperand::Regex { value, .. } => value,
+        };
+        (self.field, self.operator, value)
     }
 
     pub fn is_permission(&self) -> bool {
@@ -1657,6 +1704,18 @@ impl ParsedQueryParam {
     pub fn is_json(&self) -> bool {
         self.is_json_schema() || self.is_json_data()
     }
+}
+
+fn field_has_json_operand(field: &FilterField) -> bool {
+    matches!(
+        field,
+        FilterField::JsonSchema
+            | FilterField::JsonData
+            | FilterField::JsonDataFrom
+            | FilterField::JsonDataTo
+    ) || field.related_query().is_some_and(|related| {
+        related.target() == RelatedFilterTarget::Object(RelatedObjectField::JsonData)
+    })
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -2609,6 +2668,76 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
+    #[rstest]
+    fn regex_operands_are_validated_before_storage(
+        #[values(
+            "name",
+            "groupname",
+            "json_data",
+            "json_schema",
+            "from_json_data",
+            "computed.shared.value",
+            "related.room.object.json_data"
+        )]
+        field: &str,
+        #[values(false, true)] negated: bool,
+    ) {
+        let field = FilterField::from_str(field).unwrap();
+        for pattern in hubuum_regex::conformance::invalid_patterns() {
+            let value = if field_has_json_operand(&field) {
+                format!("value={pattern}")
+            } else {
+                pattern.to_string()
+            };
+            assert!(
+                ParsedQueryParam::from_parts(
+                    field.clone(),
+                    SearchOperator::Regex {
+                        is_negated: negated
+                    },
+                    value
+                )
+                .is_err(),
+                "{field}: {pattern}"
+            );
+        }
+    }
+
+    #[rstest]
+    #[case::empty("name__regex=", "")]
+    #[case::json_equals("json_data__regex=value=a=b", "a=b")]
+    #[case::json_empty("json_data__not_regex=value=", "")]
+    fn parsed_regex_retains_only_the_pattern_operand(#[case] query: &str, #[case] source: &str) {
+        let options = parse_query_parameter(query).unwrap();
+        assert_eq!(
+            options.filters()[0].regex_pattern(),
+            Some(&Pattern::new(source).unwrap())
+        );
+    }
+
+    #[test]
+    fn related_json_remapping_preserves_the_validated_pattern() {
+        let parameter = ParsedQueryParam::new(
+            "related.room.object.json_data",
+            Some(SearchOperator::Regex { is_negated: false }),
+            "value=a=b",
+        )
+        .unwrap();
+        let remapped = parameter.clone().with_field(FilterField::JsonData).unwrap();
+        assert_eq!(remapped.regex_pattern(), parameter.regex_pattern());
+    }
+
+    #[test]
+    fn regex_remapping_cannot_change_operand_shape() {
+        let parameter = ParsedQueryParam::new(
+            "name",
+            Some(SearchOperator::Regex { is_negated: false }),
+            "value=a=b",
+        )
+        .unwrap();
+        assert!(parameter.with_field(FilterField::JsonData).is_err());
+    }
+
     #[test]
     fn filter_field_keeps_ordinary_variants_compact() {
         assert!(
@@ -2681,6 +2810,7 @@ mod tests {
                     SearchOperator::Contains { is_negated: false },
                     "value",
                 )
+                .unwrap()
             })
             .take(MAX_QUERY_FILTERS)
             .collect(),
@@ -2693,11 +2823,14 @@ mod tests {
 
         let error = options
             .filters_mut()
-            .try_push(ParsedQueryParam::from_parts(
-                FilterField::Description,
-                SearchOperator::Contains { is_negated: false },
-                "extra",
-            ))
+            .try_push(
+                ParsedQueryParam::from_parts(
+                    FilterField::Description,
+                    SearchOperator::Contains { is_negated: false },
+                    "extra",
+                )
+                .unwrap(),
+            )
             .unwrap_err();
 
         assert!(error.to_string().contains("at most"));
@@ -3213,7 +3346,7 @@ mod tests {
     fn decodes_form_encoded_filter_values() {
         let parsed = parse_query_parameter("name=core+router%2Fedge").unwrap();
 
-        assert_eq!(parsed.filters[0].value, "core router/edge");
+        assert_eq!(parsed.filters[0].value(), "core router/edge");
     }
 
     #[test]

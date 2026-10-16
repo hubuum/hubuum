@@ -934,7 +934,7 @@ fn build_event_sink_query(
 
     let mut query = event_sinks.into_boxed();
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
             FilterField::Kind => crate::postgres_string_filter!(query, parameter, kind),
@@ -947,7 +947,7 @@ fn build_event_sink_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event sinks",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }
@@ -970,7 +970,7 @@ fn build_event_subscription_query(
         .filter(collection_id.is_not_distinct_from(collection))
         .into_boxed();
     for parameter in options.filters() {
-        match parameter.field {
+        match *parameter.field() {
             FilterField::Id => crate::postgres_integer_filter!(query, parameter, id),
             FilterField::Name => crate::postgres_string_filter!(query, parameter, name),
             FilterField::CreatedAt => {
@@ -982,7 +982,7 @@ fn build_event_subscription_query(
             _ => {
                 return Err(PostgresStorageError::invalid_input(format!(
                     "Field '{}' is not searchable for event subscriptions",
-                    parameter.field
+                    *parameter.field()
                 )));
             }
         }

@@ -34,7 +34,7 @@ const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC
 macro_rules! apply_service_account_filters {
     ($query:ident, $options:expr) => {
         for parameter in $options.filters() {
-            match parameter.field {
+            match *parameter.field() {
                 FilterField::Id => crate::postgres_integer_filter!(
                     $query,
                     parameter,
@@ -68,7 +68,7 @@ macro_rules! apply_service_account_filters {
                 _ => {
                     return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable for service accounts",
-                        parameter.field
+                        *parameter.field()
                     )));
                 }
             }

@@ -199,7 +199,7 @@ type TokenQuery<'query> = crate::schema::tokens::BoxedQuery<'query, Pg>;
 macro_rules! apply_token_filters {
     ($query:ident, $options:expr) => {
         for parameter in $options.filters() {
-            match parameter.field {
+            match *parameter.field() {
                 FilterField::IssuedAt => crate::postgres_datetime_filter!(
                     $query,
                     parameter,
@@ -226,7 +226,7 @@ macro_rules! apply_token_filters {
                 _ => {
                     return Err(PostgresStorageError::invalid_input(format!(
                         "Field '{}' isn't searchable (or does not exist) for tokens",
-                        parameter.field
+                        *parameter.field()
                     )));
                 }
             }

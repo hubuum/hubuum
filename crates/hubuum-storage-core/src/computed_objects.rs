@@ -488,11 +488,14 @@ mod tests {
 
     fn computed_query(filter: &str, cursor: Option<&str>, include_total: bool) -> QueryOptions {
         QueryOptions::new(
-            vec![ParsedQueryParam::from_parts(
-                FilterField::Name,
-                SearchOperator::Equals { is_negated: false },
-                filter,
-            )],
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Name,
+                    SearchOperator::Equals { is_negated: false },
+                    filter,
+                )
+                .unwrap(),
+            ],
             Vec::new(),
             Some(20),
             cursor.map(str::to_string),
@@ -507,11 +510,14 @@ mod tests {
         include_total: bool,
     ) -> QueryOptions {
         QueryOptions::new(
-            vec![ParsedQueryParam::from_parts(
-                FilterField::Name,
-                SearchOperator::Equals { is_negated: false },
-                filter,
-            )],
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Name,
+                    SearchOperator::Equals { is_negated: false },
+                    filter,
+                )
+                .unwrap(),
+            ],
             vec![SortParam::new(FilterField::Id, false)],
             Some(21),
             cursor.map(str::to_string),
@@ -675,11 +681,14 @@ mod tests {
             PrincipalId::new(9).ok(),
             StorageComputedObjectQueryOptions::try_new(
                 QueryOptions::new(
-                    vec![ParsedQueryParam::from_parts(
-                        FilterField::Name,
-                        SearchOperator::Equals { is_negated: false },
-                        "secret object",
-                    )],
+                    vec![
+                        ParsedQueryParam::from_parts(
+                            FilterField::Name,
+                            SearchOperator::Equals { is_negated: false },
+                            "secret object",
+                        )
+                        .unwrap(),
+                    ],
                     Vec::new(),
                     Some(20),
                     Some("secret cursor".to_string()),
@@ -687,11 +696,14 @@ mod tests {
                 )
                 .unwrap(),
                 QueryOptions::new(
-                    vec![ParsedQueryParam::from_parts(
-                        FilterField::Name,
-                        SearchOperator::Equals { is_negated: false },
-                        "secret object",
-                    )],
+                    vec![
+                        ParsedQueryParam::from_parts(
+                            FilterField::Name,
+                            SearchOperator::Equals { is_negated: false },
+                            "secret object",
+                        )
+                        .unwrap(),
+                    ],
                     vec![SortParam::new(FilterField::Id, false)],
                     Some(21),
                     Some("secret cursor".to_string()),

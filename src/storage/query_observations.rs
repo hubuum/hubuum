@@ -105,9 +105,9 @@ impl QueryObservations {
         let mut patterns = HashSet::new();
         for filter in filters
             .iter()
-            .filter(|filter| filter.field == FilterField::JsonData)
+            .filter(|filter| *filter.field() == FilterField::JsonData)
         {
-            let (operator, negated) = filter.operator.op_and_neg();
+            let (operator, negated) = filter.operator().op_and_neg();
             if negated {
                 continue;
             }
@@ -120,7 +120,7 @@ impl QueryObservations {
                 Operator::Between => UsageOperation::Between,
                 _ => continue,
             };
-            let Some((path, value)) = filter.value.split_once('=') else {
+            let Some((path, value)) = filter.value().split_once('=') else {
                 continue;
             };
             if path.len() > 512 || value.len() > 4096 {
@@ -257,13 +257,13 @@ fn attributed_class(filters: &[&ParsedQueryParam]) -> Option<ClassId> {
     let mut class = None;
     for filter in filters
         .iter()
-        .filter(|filter| matches!(filter.field, FilterField::ClassId | FilterField::Classes))
+        .filter(|filter| matches!(*filter.field(), FilterField::ClassId | FilterField::Classes))
     {
-        let (operator, negated) = filter.operator.op_and_neg();
+        let (operator, negated) = filter.operator().op_and_neg();
         if negated || !matches!(operator, Operator::Equals | Operator::In) {
             return None;
         }
-        let id = ClassId::new(filter.value.parse::<i32>().ok()?).ok()?;
+        let id = ClassId::new(filter.value().parse::<i32>().ok()?).ok()?;
         if class.is_some_and(|previous| previous != id) {
             return None;
         }

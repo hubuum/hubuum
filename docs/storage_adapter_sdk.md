@@ -12,6 +12,7 @@ The statically linked storage adapter SDK consists of these crates:
 | `hubuum-schema-diagnostics` | Generic bounded diagnostics for `jsonschema` errors | Default; `openapi` |
 | `hubuum-domain` | Validated identifiers, revisions, JSON Patch, and domain values | Default; `openapi` |
 | `hubuum-events-core` | Event catalog, envelopes, filters, and mutation provenance | Default; `schema` |
+| `hubuum-regex` | Bounded portable regex language, compiler interface, and conformance cases | Default only |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
 | `hubuum-task-core` | Task identity, idempotency, validated execution limits and cooperative stop contexts | Default only |
 | `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default only |
@@ -37,9 +38,10 @@ hubuum-storage-core
     +---------------------------------- hubuum-computed-fields
 
 hubuum-domain --> hubuum-schema-diagnostics
+hubuum-query --> hubuum-regex
 ```
 
-Every in-graph dependency uses an exact version requirement. The eight packages
+Every in-graph dependency uses an exact version requirement. The nine packages
 share one version and are released together. The root application and
 `hubuum-storage-postgres` are not part of the supported SDK. PostgreSQL remains
 the in-repository reference implementation, while an external adapter depends
@@ -55,7 +57,7 @@ The SDK remains `experimental-public` during the `0.x` series:
 
 - a patch release is source compatible with its minor line;
 - a minor release may make a documented breaking change;
-- all eight crates still advance together, even when only one crate changes; and
+- all nine crates still advance together, even when only one crate changes; and
 - adapter manifests use an exact requirement for `hubuum-storage-core` and the
   matching `hubuum-storage-conformance` release.
 
@@ -117,6 +119,7 @@ closed set is:
   `SchemaDiagnosticOmission`, and `SchemaExpectedValue`;
 - `hubuum-events-core`: `Action`, `ActorKind`, `EntityType`,
   `EventCatalogError`, `EventFilterError`, and `EventSinkSecretError`;
+- `hubuum-regex`: `ExpressionKind` and `Assertion`;
 - `hubuum-query`: `ComputedFieldScope`, `ComputedQueryValueType`,
   `CursorCodecError`, `CursorValue`, `DataType`, `Operator`,
   `QueryError`, `QueryScalarType`, `RelatedClassField`,
@@ -149,7 +152,7 @@ versions, and the safest available migration.
 
 SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 
-1. choose one version for all eight packages and update every exact in-graph
+1. choose one version for all nine packages and update every exact in-graph
    dependency plus `Cargo.lock`;
 2. record supported additions, changes, deprecations, and every breaking
    migration in `CHANGELOG.md`;
@@ -158,11 +161,12 @@ SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 4. run the Rust API policy, package, rustdoc, SemVer, formatting, lint, and full
    repository suites;
 5. publish in dependency order, waiting for crates.io index visibility between
-   layers: `hubuum-computed-fields`, `hubuum-domain`, `hubuum-query`, and
-   `hubuum-task-core` first, `hubuum-events-core` second, `hubuum-storage-core`
-   third, and `hubuum-storage-conformance` last; and
+   layers: `hubuum-schema-diagnostics`, `hubuum-computed-fields`, `hubuum-regex`,
+   and `hubuum-task-core` first; `hubuum-domain` and `hubuum-query` second;
+   `hubuum-events-core` third; `hubuum-storage-core` fourth; and
+   `hubuum-storage-conformance` last; and
 6. create an annotated `storage-sdk-vX.Y.Z` tag and release notes only after all
-   seven immutable crate versions are visible.
+   nine immutable crate versions are visible.
 
 The local publication checks are:
 
@@ -171,9 +175,11 @@ python3 scripts/check-rust-api-policy.py
 python3 tests/python/run.py unit policies.test_rust_api
 cargo package --locked \
   --package hubuum-computed-fields \
+  --package hubuum-schema-diagnostics \
   --package hubuum-domain \
   --package hubuum-events-core \
   --package hubuum-query \
+  --package hubuum-regex \
   --package hubuum-task-core \
   --package hubuum-storage-core \
   --package hubuum-storage-conformance
@@ -190,7 +196,8 @@ Adapter authors should upgrade `hubuum-storage-core` and
 SDK dependency to that version, and then:
 
 1. compile the complete `StorageBackend` aggregate;
-2. run the unchanged portable conformance suite;
+2. run the unchanged storage conformance suite and the `hubuum-regex` corpus
+   through the adapter's native compiler and execution path;
 3. run backend-native transaction, consistency, migration, failure, and
    connection-loss tests; and
 4. review the SDK changelog for behavior changes that compile-time checks do
@@ -314,11 +321,21 @@ rollback, expiry, origin revocation, and request binding. See the
 
 ## Upgrading from 0.3 to 0.4
 
-Update all eight SDK dependencies to exactly 0.4.0 together. Subscription
+Update all nine SDK dependencies to exactly 0.4.0 together. Subscription
 requests, projections and lookups now carry `EventSubscriptionScope`, which
 preserves either a collection ID or system scope. Use `scope().collection_id()`
 when an optional collection is required. `TaskKind` is shared through
 `hubuum-domain`; subscription filters add `task_kinds`.
+
+Regex queries use the bounded portable language in `hubuum-regex`. Implement
+its `Compiler` trait and support every accepted normalized expression through
+native execution. `ParsedQueryParam` constructors now return validated regex
+operands; `from_parts` is fallible and fields are private. Replace struct
+literals with constructors and field access with accessors. Use `with_field`
+for aliases and related-field remapping that preserves the operand format.
+Consume `regex_pattern()` instead of interpreting the raw value in a native
+dialect. Revalidate saved patterns against the
+[portable contract](querying.md#regular-expressions).
 
 Implement `load_event_notification`, `enqueue_event_notification_test` and
 `finish_event_delivery` on complete adapters. Preserve test purpose and deferral

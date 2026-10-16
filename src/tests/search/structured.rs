@@ -68,15 +68,17 @@ fn request_for_class(class: &HubuumClass, filter: Value) -> Value {
 }
 
 #[rstest]
-#[case::native_boundary(r"\yrouter\y", "router", true)]
-#[case::newline("router.$", "router\n", true)]
-#[case::case_sensitive("ROUTER", "router", false)]
-#[case::invalid("[", "router", false)]
+#[case::unicode_folding("(?i)^k$", "K", Some(true))]
+#[case::newline("router.$", "router\n", Some(false))]
+#[case::case_sensitive("ROUTER", "router", Some(false))]
+#[case::empty("", "router", Some(true))]
+#[case::invalid("[", "router", None)]
+#[case::native_boundary(r"\yrouter\y", "router", None)]
 #[actix_web::test]
-async fn structured_search_preserves_postgres_regex(
+async fn structured_search_uses_portable_regex(
     #[case] pattern: &str,
     #[case] value: &str,
-    #[case] matched: bool,
+    #[case] matched: Option<bool>,
     #[values("description", "json_data")] field: &str,
 ) {
     let context = TestContext::new().await;
@@ -103,13 +105,13 @@ async fn structured_search_preserves_postgres_regex(
         request,
     )
     .await;
-    let status = if pattern == "[" {
+    let status = if matched.is_none() {
         http::StatusCode::BAD_REQUEST
     } else {
         http::StatusCode::OK
     };
     let response = assert_response_status(response, status).await;
-    if status == http::StatusCode::OK {
+    if let Some(matched) = matched {
         let body: StructuredSearchResponse = test::read_body_json(response).await;
         assert_eq!(object_results(body).len(), usize::from(matched));
     }

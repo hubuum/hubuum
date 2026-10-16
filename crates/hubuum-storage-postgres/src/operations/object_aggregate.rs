@@ -67,7 +67,7 @@ impl ObjectAggregatePaging {
         self.query_options
             .filters()
             .iter()
-            .any(|filter| filter.field.computed_query().is_some())
+            .any(|filter| filter.field().computed_query().is_some())
     }
 
     async fn resolve_computed_filters(
@@ -455,7 +455,7 @@ fn object_aggregate_authorization_chunk_options(query_options: &QueryOptions) ->
     let mut chunk_options = object_aggregate_chunk_options(query_options);
     chunk_options
         .filters_mut()
-        .try_retain(|filter| filter.field.computed_query().is_none())
+        .try_retain(|filter| filter.field().computed_query().is_none())
         .expect("removing computed filters preserves related-filter invariants");
     chunk_options
 }
@@ -491,7 +491,7 @@ fn reject_unsupported_filters(options: &QueryOptions) -> Result<(), PostgresStor
     if let Some(field) = options
         .filters()
         .iter()
-        .map(|filter| &filter.field)
+        .map(|filter| filter.field())
         .find(|field| field.related_query().is_some())
     {
         return Err(PostgresStorageError::invalid_input(format!(

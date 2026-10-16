@@ -1,20 +1,34 @@
 //! Reusable PostgreSQL filter expansion for backend-neutral query values.
 
-diesel::infix_operator!(RegexMatch, " ~ ", backend: diesel::pg::Pg);
+use crate::regex_compiler::PostgresRegexCompiler;
+use diesel::dsl::AsExprOf;
+use diesel::expression::{AsExpression, Expression};
+use diesel::sql_types::Text;
+use hubuum_regex::{Compiler, Pattern};
+
+diesel::infix_operator!(RegexMatch, " COLLATE \"C\" ~ ", backend: diesel::pg::Pg);
 
 #[doc(hidden)]
-pub(crate) fn regex_match<T, U, ST>(left: T, right: U) -> RegexMatch<T, U::Expression>
+pub(crate) fn regex_match<T>(left: T, pattern: &Pattern) -> RegexMatch<T, AsExprOf<String, Text>>
 where
-    T: diesel::expression::Expression<SqlType = ST>,
-    U: diesel::expression::AsExpression<ST>,
-    ST: diesel::sql_types::SqlType + diesel::expression::TypedExpressionType,
+    T: Expression,
 {
-    RegexMatch::new(left, right.as_expression())
+    RegexMatch::new(
+        left,
+        <String as AsExpression<Text>>::as_expression(regex_operand(pattern)),
+    )
+}
+
+pub(crate) fn regex_operand(pattern: &Pattern) -> String {
+    PostgresRegexCompiler
+        .compile(pattern)
+        .unwrap()
+        .into_string()
 }
 
 macro_rules! postgres_is_null_filter {
     ($query:ident, $param:expr, $operator:expr, $field:expr) => {{
-        let is_null = hubuum_query::parse_boolean_value(&$param.value)
+        let is_null = hubuum_query::parse_boolean_value($param.value())
             .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
         let (_, negated) = $operator.op_and_neg();
         if is_null != negated {
@@ -31,7 +45,7 @@ macro_rules! postgres_string_filter {
         use diesel::{PgTextExpressionMethods, TextExpressionMethods};
         use hubuum_query::{DataType, Operator};
 
-        let operator = $param.operator.clone();
+        let operator = $param.operator().clone();
         let (operation, negated) = operator.op_and_neg();
         if operation == Operator::IsNull {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
@@ -39,14 +53,14 @@ macro_rules! postgres_string_filter {
             if !operator.is_applicable_to(DataType::String) {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
-            let value = $param.value.clone();
-            if value.is_empty() {
+            let value = $param.value().to_string();
+            if value.is_empty() && operation != Operator::Regex {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
-                    $param.field
+                    *$param.field()
                 )));
             }
             match (operation, negated) {
@@ -103,15 +117,21 @@ macro_rules! postgres_string_filter {
                 (Operator::Like, false) => $query = $query.filter($field.like(value)),
                 (Operator::Like, true) => $query = $query.filter(not($field.like(value))),
                 (Operator::Regex, false) => {
-                    $query = $query.filter($crate::filters::regex_match($field, value))
+                    $query = $query.filter($crate::filters::regex_match(
+                        $field,
+                        $param.regex_pattern().expect("validated regex operand"),
+                    ))
                 }
                 (Operator::Regex, true) => {
-                    $query = $query.filter(not($crate::filters::regex_match($field, value)))
+                    $query = $query.filter(not($crate::filters::regex_match(
+                        $field,
+                        $param.regex_pattern().expect("validated regex operand"),
+                    )))
                 }
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: string)",
-                        $param.field
+                        *$param.field()
                     )));
                 }
             }
@@ -124,7 +144,7 @@ macro_rules! postgres_datetime_filter {
         use diesel::dsl::not;
         use hubuum_query::{DataType, Operator};
 
-        let operator = $param.operator.clone();
+        let operator = $param.operator().clone();
         let (operation, negated) = operator.op_and_neg();
         if operation == Operator::IsNull {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
@@ -132,22 +152,22 @@ macro_rules! postgres_datetime_filter {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
-            let values = hubuum_query::parse_datetime_list(&$param.value)
+            let values = hubuum_query::parse_datetime_list($param.value())
                 .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             let Some(minimum) = values.iter().min().copied() else {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
-                    $param.field
+                    *$param.field()
                 )));
             };
             let maximum = values.iter().max().copied().unwrap_or(minimum);
             if operation == Operator::Between && values.len() != 2 {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
             match (operation, negated) {
@@ -174,7 +194,7 @@ macro_rules! postgres_datetime_filter {
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: date)",
-                        $param.field
+                        *$param.field()
                     )));
                 }
             }
@@ -187,7 +207,7 @@ macro_rules! postgres_integer_filter {
         use diesel::dsl::not;
         use hubuum_query::{DataType, Operator};
 
-        let operator = $param.operator.clone();
+        let operator = $param.operator().clone();
         let (operation, negated) = operator.op_and_neg();
         if operation == Operator::IsNull {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
@@ -195,22 +215,22 @@ macro_rules! postgres_integer_filter {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
-            let values = hubuum_query::parse_integer_list(&$param.value)
+            let values = hubuum_query::parse_integer_list($param.value())
                 .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             let Some(minimum) = values.iter().min().copied() else {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Searching on field '{}' requires a value",
-                    $param.field
+                    *$param.field()
                 )));
             };
             let maximum = values.iter().max().copied().unwrap_or(minimum);
             if operation == Operator::Between && values.len() != 2 {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
             if matches!(operation, Operator::Equals | Operator::In) && values.len() > 50 {
@@ -243,7 +263,7 @@ macro_rules! postgres_integer_filter {
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operation}' not implemented for field '{}' (type: numeric)",
-                        $param.field
+                        *$param.field()
                     )));
                 }
             }
@@ -256,7 +276,7 @@ macro_rules! postgres_revision_filter {
         use diesel::dsl::not;
         use hubuum_query::{DataType, Operator};
 
-        let operator = $param.operator.clone();
+        let operator = $param.operator().clone();
         let (operation, negated) = operator.op_and_neg();
         if operation == Operator::IsNull {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
@@ -264,18 +284,18 @@ macro_rules! postgres_revision_filter {
             if !operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
             let values = hubuum_query::parse_positive_bigint_list_with_limit(
-                &$param.value,
+                $param.value(),
                 hubuum_query::MAX_INTEGER_FILTER_VALUES,
             )
             .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             if operation == Operator::Between && values.len() != 2 {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator 'between' requires 2 values (min,max) for field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
             if matches!(
@@ -285,7 +305,7 @@ macro_rules! postgres_revision_filter {
             {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operation}' requires exactly 1 value for field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
             match (operation.clone(), negated) {
@@ -312,7 +332,7 @@ macro_rules! postgres_revision_filter {
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operation}' is not implemented for revision field '{}'",
-                        $param.field
+                        *$param.field()
                     )));
                 }
             }
@@ -325,7 +345,7 @@ macro_rules! postgres_boolean_filter {
         use diesel::dsl::not;
         use hubuum_query::{DataType, Operator};
 
-        let operator = $param.operator.clone();
+        let operator = $param.operator().clone();
         let (operation, negated) = operator.op_and_neg();
         if operation == Operator::IsNull {
             $crate::postgres_is_null_filter!($query, $param, operator, $field);
@@ -333,10 +353,10 @@ macro_rules! postgres_boolean_filter {
             if !operator.is_applicable_to(DataType::Boolean) {
                 return Err($crate::PostgresStorageError::invalid_input(format!(
                     "Operator '{operator:?}' is not applicable to field '{}'",
-                    $param.field
+                    *$param.field()
                 )));
             }
-            let value = hubuum_query::parse_boolean_value(&$param.value)
+            let value = hubuum_query::parse_boolean_value($param.value())
                 .map_err(|error| $crate::PostgresStorageError::invalid_input(error.to_string()))?;
             match (operation, negated) {
                 (Operator::Equals, false) => $query = $query.filter($field.eq(value)),
@@ -344,7 +364,7 @@ macro_rules! postgres_boolean_filter {
                 _ => {
                     return Err($crate::PostgresStorageError::invalid_input(format!(
                         "Operator '{operator:?}' not implemented for field '{}' (type: boolean)",
-                        $param.field
+                        *$param.field()
                     )));
                 }
             }

@@ -141,7 +141,7 @@ fn domain_and_storage_contract_sources_stay_backend_and_transport_neutral() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut violations = Vec::new();
 
-    for member in ["hubuum-domain", "hubuum-storage-core"] {
+    for member in ["hubuum-domain", "hubuum-storage-core", "hubuum-regex"] {
         for (path, source) in rust_sources(&repository.join("crates").join(member).join("src")) {
             for forbidden in [
                 "use actix",
@@ -164,6 +164,25 @@ fn domain_and_storage_contract_sources_stay_backend_and_transport_neutral() {
         "workspace boundary source leaked backend or transport details:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn portable_regex_crate_has_no_application_or_backend_dependencies() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = fs::read_to_string(repository.join("crates/hubuum-regex/Cargo.toml")).unwrap();
+    let manifest = toml::from_str::<toml::Value>(&manifest).unwrap();
+    for dependencies in dependency_tables(&manifest) {
+        for (alias, dependency) in dependencies {
+            let package = dependency_package_name(alias, dependency, None);
+            assert!(
+                !["hubuum", "actix", "diesel", "tokio", "sqlx"]
+                    .iter()
+                    .any(|prefix| package.starts_with(prefix))
+                    && package != "regex",
+                "portable regex language must not depend on application, backend, runtime, or matching engine: {package}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -92,9 +92,9 @@ pub(crate) fn required_permissions(
 ) -> Result<Vec<StorageAuthorizationPermission>, PostgresStorageError> {
     let mut permissions = baseline.into_iter().collect::<Vec<_>>();
     for parameter in options.filters() {
-        if parameter.field == FilterField::Permissions {
+        if *parameter.field() == FilterField::Permissions {
             permissions.push(
-                StorageAuthorizationPermission::from_name(&parameter.value)
+                StorageAuthorizationPermission::from_name(parameter.value())
                     .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?,
             );
         }

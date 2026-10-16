@@ -804,6 +804,7 @@ impl Default for MemoryStorage {
     }
 }
 
+pub mod regex_compiler;
 mod support;
 use support::*;
 

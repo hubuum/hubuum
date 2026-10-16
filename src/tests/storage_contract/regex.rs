@@ -20,30 +20,24 @@ fn visibility() -> StorageVisibility {
     )
 }
 
-// None means the backend rejects this dialect's pattern. Null/missing values
-// never match, including under negation, in any of these query paths.
+// Null/missing values never match, including under negation, in any query path.
 #[rstest]
-#[case::substring("out", "router", Some(true), Some(true))]
-#[case::anchored("^router$", "a router", Some(false), Some(false))]
-#[case::case_sensitive("ROUTER", "router", Some(false), Some(false))]
-#[case::case_insensitive("(?i)^ROUTER$", "router", Some(true), Some(true))]
-#[case::unicode_literal("^røuter$", "røuter", Some(true), Some(true))]
-#[case::postgres_word_boundary(r"\yrouter\y", "router", Some(true), None)]
-#[case::newline_dot("router.$", "router\n", Some(true), Some(false))]
-#[case::explicit_dotall("(?s)router.$", "router\n", Some(true), Some(true))]
-#[case::final_newline("^router$", "router\n", Some(false), Some(false))]
-#[case::multiline("(?m)^router$", "switch\nrouter\nswitch", Some(true), Some(true))]
-#[case::backreference(r"^(router)\1$", "routerrouter", Some(true), None)]
-#[case::lookahead(r"router(?=$)", "router", Some(true), None)]
-#[case::rust_unicode_class(r"^\p{Greek}+$", "αβ", None, Some(true))]
-#[case::invalid("[", "router", None, None)]
-#[case::repetition_limit("a{1000000000}", "router", None, None)]
+#[case::empty("", "router", true)]
+#[case::substring("out", "router", true)]
+#[case::anchored("^router$", "a router", false)]
+#[case::case_sensitive("ROUTER", "router", false)]
+#[case::case_insensitive("(?i)^ROUTER$", "router", true)]
+#[case::unicode_literal("^røuter$", "røuter", true)]
+#[case::newline_dot("router.$", "router\n", false)]
+#[case::explicit_dotall("(?s)router.$", "router\n", true)]
+#[case::final_newline("^router$", "router\n", false)]
+#[case::multiline("(?m)^router$", "switch\nrouter\nswitch", true)]
+#[case::unicode_class(r"^\p{Greek}+$", "αβ", true)]
 #[actix_web::test]
-async fn regex_uses_the_selected_backends_native_dialect(
+async fn regex_has_portable_results_across_query_paths(
     #[case] pattern: &str,
     #[case] value: &str,
-    #[case] postgres: Option<bool>,
-    #[case] memory: Option<bool>,
+    #[case] matched: bool,
     #[values(QueryPath::Object, QueryPath::Computed, QueryPath::Aggregate)] path: QueryPath,
     #[values(false, true)] negated: bool,
 ) {
@@ -168,32 +162,19 @@ async fn regex_uses_the_selected_backends_native_dialect(
         if let Some(owner) = owner {
             delete_backend_user(&backend, owner).await;
         }
-        let expected = match backend.descriptor().kind() {
-            StorageBackendKind::Postgres => postgres,
-            StorageBackendKind::Memory => memory,
-        };
-        match expected {
-            Some(matched) => {
-                let count = usize::from(matched != negated);
-                assert_eq!(
-                    result.unwrap(),
-                    (count, Some(count as i64)),
-                    "{path:?}: {pattern}"
-                );
-            }
-            None => assert_eq!(
-                result.unwrap_err().kind(),
-                StorageErrorKind::InvalidInput,
-                "{path:?}: {pattern}"
-            ),
-        }
+        let count = usize::from(matched != negated);
+        assert_eq!(
+            result.unwrap(),
+            (count, Some(count as i64)),
+            "{path:?}: {pattern}"
+        );
     }
 }
 
 #[rstest]
 #[case::matching("_class$", true)]
 #[case::nonmatching("^never_matches$", false)]
-#[case::native_word_boundary(r"\ybackend\y", true)]
+#[case::description("(?i)BACKEND", true)]
 #[actix_web::test]
 async fn catalog_string_regex_filters_are_applied_before_counting(
     #[case] pattern: &str,
@@ -205,7 +186,7 @@ async fn catalog_string_regex_filters_are_applied_before_counting(
         let fixture =
             create_backend_object_fixture(&backend, &prefix("regex_catalog"), vec![]).await;
         let pattern = pattern.replace("_class", &format!("_{target}"));
-        let field = if pattern.starts_with(r"\y") {
+        let field = if pattern.starts_with("(?i)") {
             FilterField::Description
         } else {
             FilterField::Name
@@ -217,16 +198,18 @@ async fn catalog_string_regex_filters_are_applied_before_counting(
         };
         let options = QueryOptions::new(
             vec![
-                ParsedQueryParam {
-                    field: FilterField::Id,
-                    operator: SearchOperator::Equals { is_negated: false },
-                    value: id.to_string(),
-                },
-                ParsedQueryParam {
+                ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::Equals { is_negated: false },
+                    id.to_string(),
+                )
+                .unwrap(),
+                ParsedQueryParam::from_parts(
                     field,
-                    operator: SearchOperator::Regex { is_negated: false },
-                    value: pattern.clone(),
-                },
+                    SearchOperator::Regex { is_negated: false },
+                    pattern.clone(),
+                )
+                .unwrap(),
             ],
             vec![],
             Some(1),
@@ -247,11 +230,89 @@ async fn catalog_string_regex_filters_are_applied_before_counting(
             })
         };
         delete_backend_object_fixture(&backend, fixture).await;
-        if pattern.starts_with(r"\y") && backend.descriptor().kind() == StorageBackendKind::Memory {
-            assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
-        } else {
-            let count = usize::from(matches);
-            assert_eq!(result.unwrap(), (count, Some(count as i64)));
+        let count = usize::from(matches);
+        assert_eq!(result.unwrap(), (count, Some(count as i64)));
+    }
+}
+
+#[rstest]
+#[case::matching("_match_[12]$", false, &[1, 2][..])]
+#[case::nonmatching("^never_matches$", false, &[][..])]
+#[case::negated("_match_[12]$", true, &[0][..])]
+#[actix_web::test]
+async fn authorization_group_regex_filters_apply_to_both_name_aliases(
+    #[case] pattern: &str,
+    #[case] negated: bool,
+    #[case] indices: &[usize],
+    #[values(FilterField::Name, FilterField::Groupname)] field: FilterField,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let name = prefix("regex_group");
+        let mut groups = Vec::new();
+        for suffix in ["excluded", "match_1", "match_2"] {
+            let group = backend
+                .create_group(
+                    StorageGroupCreate::new(None, format!("{name}_{suffix}"), None),
+                    &EventContext::system(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+            groups.push(group);
         }
+        let options = QueryOptions::new(
+            vec![
+                ParsedQueryParam::from_parts(
+                    FilterField::Id,
+                    SearchOperator::In { is_negated: false },
+                    groups
+                        .iter()
+                        .map(|group| group.id().to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+                .unwrap(),
+                ParsedQueryParam::from_parts(
+                    field.clone(),
+                    SearchOperator::Regex {
+                        is_negated: negated,
+                    },
+                    pattern.to_string(),
+                )
+                .unwrap(),
+            ],
+            vec![],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let result = backend
+            .load_authorization_group_candidates(StorageAuthorizationGroupCandidateQuery::new(
+                options,
+                StorageCandidatePageLimit::try_new(1).unwrap(),
+            ))
+            .await
+            .map(|page| {
+                let (rows, has_more) = page.into_parts();
+                (
+                    rows.iter().map(|group| group.id()).collect::<Vec<_>>(),
+                    has_more,
+                )
+            });
+        for group in &groups {
+            backend
+                .delete_group(group.id(), &EventContext::system())
+                .await
+                .unwrap()
+                .into_value();
+        }
+        let first_page = indices
+            .iter()
+            .take(1)
+            .map(|index| groups[*index].id())
+            .collect::<Vec<_>>();
+        assert_eq!(result.unwrap(), (first_page, indices.len() > 1));
     }
 }

@@ -12,6 +12,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-regex = { version = "=0.4.0", path = "../hubuum-regex" }
 hubuum-task-core = { version = "=0.4.0", path = "../hubuum-task-core" }
 argon2 = "0.6.0"
 async-trait = "0.1"
@@ -56,4 +57,5 @@ scale-benchmark-support = ["benchmark-support", "dep:hubuum-scale-core", "dep:sy
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]
+hubuum-storage-memory = { path = "../hubuum-storage-memory" }
 rstest = "0.27"

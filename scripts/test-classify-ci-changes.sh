@@ -73,6 +73,17 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
   assert_flag "$cursor_output" artifacts true
 done
 
+for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
+  src/tests/storage_contract/regex.rs \
+  crates/hubuum-regex/src/lib.rs crates/hubuum-regex/src/conformance.rs \
+  crates/hubuum-regex/Cargo.toml \
+  crates/hubuum-storage-memory/src/regex_compiler.rs \
+  crates/hubuum-storage-postgres/src/regex_compiler.rs; do
+  regex_output="$(bash "$classifier" "$regex_input")"
+  assert_flag "$regex_output" code true
+  assert_flag "$regex_output" rust true
+done
+
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
   test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \

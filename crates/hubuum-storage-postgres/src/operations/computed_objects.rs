@@ -234,7 +234,7 @@ fn filtered_object_query<'query>(
     for parameter in options
         .filters()
         .iter()
-        .filter(|parameter| parameter.field.computed_query().is_some())
+        .filter(|parameter| parameter.field().computed_query().is_some())
     {
         query = query.filter(query::computed_filter_predicate(parameter, snapshot)?);
     }

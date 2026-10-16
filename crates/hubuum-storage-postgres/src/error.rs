@@ -308,11 +308,6 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
-                // Diesel does not retain SQLSTATE 2201B. Recognize the native
-                // regex diagnostic without exposing database or pattern details.
-                if message.starts_with("invalid regular expression: ") {
-                    return Self::invalid_input("Invalid PostgreSQL regular expression");
-                }
                 if message == "hubuum_task_cancelled" {
                     return Self::task_stopped(TaskStopReason::Cancelled);
                 }
@@ -442,19 +437,6 @@ mod tests {
         assert_eq!(portable.kind(), StorageErrorKind::Backend);
         assert_eq!(portable.message(), "PostgreSQL query failed");
         assert!(!portable.message().contains(native_detail));
-    }
-
-    #[test]
-    fn invalid_regex_is_a_client_error_without_native_details() {
-        let error = DieselError::DatabaseError(
-            DatabaseErrorKind::Unknown,
-            Box::new(TestDatabaseErrorInformation::new(
-                "invalid regular expression: invalid escape \\ sequence",
-            )),
-        );
-        let portable = StorageError::from(PostgresStorageError::from(error));
-        assert_eq!(portable.kind(), StorageErrorKind::InvalidInput);
-        assert_eq!(portable.message(), "Invalid PostgreSQL regular expression");
     }
 
     #[test]

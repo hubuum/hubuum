@@ -2291,10 +2291,19 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "gungraun",
+ "hubuum-regex",
  "percent-encoding",
  "rstest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hubuum-regex"
+version = "0.4.0"
+dependencies = [
+ "regex-syntax",
+ "rstest",
 ]
 
 [[package]]
@@ -2385,6 +2394,7 @@ dependencies = [
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
+ "hubuum-regex",
  "hubuum-storage-core",
  "ipnet",
  "json-patch",
@@ -2409,8 +2419,10 @@ dependencies = [
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
+ "hubuum-regex",
  "hubuum-scale-core",
  "hubuum-storage-core",
+ "hubuum-storage-memory",
  "hubuum-task-core",
  "hubuum-templates",
  "ipnet",
