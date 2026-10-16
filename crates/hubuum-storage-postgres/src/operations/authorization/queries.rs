@@ -337,8 +337,10 @@ pub async fn load_authorization_group_candidates(
     runtime
         .with_read_connection(async |connection| {
             use crate::schema::groups::dsl::{
-                created_at, description, groupname, groups, id, revision, updated_at,
+                created_at, description, groupname, groups, id, identity_scope_id, revision,
+                updated_at,
             };
+            use crate::schema::identity_scopes;
 
             let mut candidates = groups.into_boxed();
             for parameter in options.filters() {
@@ -349,6 +351,12 @@ pub async fn load_authorization_group_candidates(
                     }
                     FilterField::Description => {
                         crate::postgres_string_filter!(candidates, parameter, description)
+                    }
+                    FilterField::IdentityScope => {
+                        let mut scopes = identity_scopes::table.into_boxed();
+                        crate::postgres_string_filter!(scopes, parameter, identity_scopes::name);
+                        candidates = candidates
+                            .filter(identity_scope_id.eq_any(scopes.select(identity_scopes::id)));
                     }
                     FilterField::CreatedAt => {
                         crate::postgres_datetime_filter!(candidates, parameter, created_at)

@@ -532,6 +532,19 @@ async fn collection_permission_group_regex_filters_apply_before_counting(
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         let fixture = create_backend_object_fixture(&backend, &prefix("regex_grant"), vec![]).await;
+        backend
+            .apply_local_collection_grant(StorageAuthorizationGrantMutation::new(
+                StorageAuthorizationGrantKey::new(
+                    fixture.collection.id(),
+                    fixture.owned_group.as_ref().unwrap().id(),
+                ),
+                [StorageAuthorizationPermission::ReadCollection],
+                false,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
         let options = QueryOptions::new(
             vec![
                 ParsedQueryParam::from_parts(
