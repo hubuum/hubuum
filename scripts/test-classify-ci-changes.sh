@@ -86,6 +86,7 @@ done
 
 for fuzz_input in fuzz/Cargo.toml fuzz/Cargo.lock fuzz/fuzz_targets/regex_pattern.rs \
   fuzz/fuzz_targets/regex_backends.rs fuzz/examples/seed.rs fuzz/tests/limits.rs \
+  fuzz/src/lib.rs fuzz/src/tests.rs \
   fuzz/regex.dict fuzz/regressions/regex_pattern/example \
   .github/workflows/regex-fuzz.yml; do
   fuzz_output="$(bash "$classifier" "$fuzz_input")"

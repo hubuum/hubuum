@@ -82,7 +82,7 @@ an isolated UTF-8 PostgreSQL server. Python tooling, when used, remains Python
 rustup toolchain install nightly-2026-08-29 --profile minimal --component clippy --component rustfmt
 cargo install cargo-fuzz --version '=0.13.2' --locked
 cargo +nightly-2026-08-29 fetch --manifest-path fuzz/Cargo.toml --locked
-cargo +nightly-2026-08-29 test --manifest-path fuzz/Cargo.toml --test limits --locked
+cargo +nightly-2026-08-29 test --manifest-path fuzz/Cargo.toml --lib --test limits --locked
 cargo +nightly-2026-08-29 run --manifest-path fuzz/Cargo.toml --example seed --locked
 
 CARGO_NET_OFFLINE=true cargo +nightly-2026-08-29 fuzz run regex_pattern --fuzz-dir fuzz --codegen-units 16 -- \
@@ -105,7 +105,8 @@ CARGO_NET_OFFLINE=true cargo +nightly-2026-08-29 fuzz run regex_backends --fuzz-
 docker stop hubuum-regex-fuzz
 ```
 
-The target requires a loopback host and the dedicated `hubuum_regex_fuzz`
+The target checks both `host` and any overriding `hostaddr` for loopback
+destinations and requires the dedicated `hubuum_regex_fuzz`
 database. It never falls back to application database environment variables.
 Its input format is UTF-8 pattern bytes, one NUL delimiter, then UTF-8 text;
 text is limited to 1,024 bytes and cannot contain NUL. The source retains the

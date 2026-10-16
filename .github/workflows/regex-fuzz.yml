@@ -94,7 +94,7 @@ jobs:
           cargo fetch --manifest-path fuzz/Cargo.toml --locked
           cargo fmt --manifest-path fuzz/Cargo.toml --check
           cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --all-features --locked -- -D warnings
-          cargo test --manifest-path fuzz/Cargo.toml --test limits --locked
+          cargo test --manifest-path fuzz/Cargo.toml --lib --test limits --locked
       - name: Audit standalone fuzz dependencies
         run: bash scripts/run-cargo-deny.sh "$RUNNER_TEMP/regex-fuzz-deny.log" fuzz/Cargo.toml
       - name: Seed from the portable contract and retained regressions

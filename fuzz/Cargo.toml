@@ -21,6 +21,7 @@ tokio-postgres = { version = "0.7", optional = true }
 
 [dev-dependencies]
 rstest = "0.27"
+tokio-postgres = "0.7"
 
 [features]
 postgres = ["dep:hubuum-storage-memory", "dep:hubuum-storage-postgres", "dep:tokio", "dep:tokio-postgres"]

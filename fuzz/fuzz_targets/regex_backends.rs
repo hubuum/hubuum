@@ -3,13 +3,13 @@
 use std::time::Duration;
 
 use hubuum_regex::{Compiler, MAX_PATTERN_BYTES, Pattern};
+use hubuum_regex_fuzz::database_config;
 use hubuum_storage_memory::regex_compiler::MemoryRegexCompiler;
 use hubuum_storage_postgres::regex_compiler::PostgresRegexCompiler;
 use libfuzzer_sys::fuzz_target;
 use tokio::runtime::{Builder, Runtime};
-use tokio_postgres::config::Host;
 use tokio_postgres::error::SqlState;
-use tokio_postgres::{Client, Config, NoTls, Statement};
+use tokio_postgres::{Client, NoTls, Statement};
 
 thread_local! {
     static DATABASE: Oracle = Oracle::new();
@@ -26,12 +26,7 @@ impl Oracle {
         // Never inherit application database configuration from .env.
         let url = std::env::var("HUBUUM_REGEX_FUZZ_DATABASE_URL")
             .expect("set HUBUUM_REGEX_FUZZ_DATABASE_URL for a disposable database");
-        let mut config: Config = url.parse().expect("invalid fuzz database configuration");
-        assert_eq!(config.get_dbname(), Some("hubuum_regex_fuzz"));
-        assert!(!config.get_hosts().is_empty());
-        assert!(config.get_hosts().iter().all(|host| {
-            matches!(host, Host::Tcp(name) if matches!(name.as_str(), "localhost" | "127.0.0.1" | "::1"))
-        }), "the fuzz database must use a loopback host");
+        let mut config = database_config(&url).expect("invalid fuzz database configuration");
         config
             .application_name("hubuum-regex-fuzz")
             .connect_timeout(Duration::from_secs(5));
