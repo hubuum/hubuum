@@ -4022,6 +4022,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
         
   
@@ -4630,6 +4657,15 @@ would require costly emulation. PostgreSQL's wider input vocabulary is not a
 requirement to reproduce its complete parser, locale system, or regex engine.
 New backends must identify their supported forms and exceptions and exercise
 the applicable shared scenarios against PostgreSQL.</p>
+<p>The <a href="../../querying/#regular-expressions">regex contract</a> is portable and mandatory.
+<code>hubuum-regex</code> owns the bounded language, validated pattern, compiler trait, and
+engine-independent conformance corpus. It has no backend dependencies. Each
+adapter implements the entire accepted language and runs that corpus through
+native execution. <code>ParsedQueryParam</code> carries the validated pattern across query
+and storage boundaries; adapters never parse the raw operand as a native dialect.
+Invalid patterns fail before execution, even for empty or short-circuited queries.
+Negation excludes null or unavailable values. Backend compiler failures for a
+validated pattern are adapter errors; native execution budgets still apply.</p>
 <p>For direct object filters, memory locally formats JSON text, converts timestamps
 with numeric offsets to UTC, and checks decimal limits and special numeric
 values. JSON text formatting runs only where a text predicate needs it; numeric

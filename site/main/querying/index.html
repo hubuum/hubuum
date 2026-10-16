@@ -1214,6 +1214,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#regular-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Regular expressions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#numeric-and-date-fields" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4215,6 +4226,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../rust_api/hubuum-regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
         
   
@@ -4641,6 +4679,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#regular-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Regular expressions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#numeric-and-date-fields" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4986,14 +5035,111 @@ checks verify the filtered result and pagination against the server.</p>
 <li><code>in</code></li>
 <li><code>is_null</code></li>
 </ul>
-<p>Regex syntax and matching behavior currently depend on the storage backend.
-PostgreSQL uses its <a href="https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-POSIX-REGEXP">advanced regular expressions</a>,
-while direct object filters in memory use the Rust <a href="https://docs.rs/regex/latest/regex/#syntax"><code>regex</code> crate</a>.
-Patterns are not guaranteed to be portable: for example, PostgreSQL accepts
-<code>\yrouter\y</code> for word boundaries, while memory rejects <code>\y</code>; PostgreSQL's default
-<code>.</code> also matches a newline, while memory's default does not. Keep backend-specific
-patterns with their backend until a shared regex contract is defined
-(<a href="https://github.com/hubuum/hubuum/issues/458">follow-up #458</a>).</p>
+<h3 id="regular-expressions">Regular expressions<a class="headerlink" href="#regular-expressions" title="Permanent link">&para;</a></h3>
+<p><code>regex</code> and <code>not_regex</code> use one bounded, portable language on every storage
+backend. The independent <code>hubuum-regex</code> crate parses and validates patterns;
+each adapter compiles the validated expression for native execution. There is
+no backend-native mode. These rules apply to ordinary strings, JSON text,
+computed strings, related predicates, and structured-search predicates.</p>
+<p>A pattern searches anywhere unless anchored. An empty pattern matches every
+non-null value. Matching is case sensitive by default. <code>not_regex</code> negates the
+match for non-null values; missing JSON paths, JSON nulls, and unavailable
+computed values match neither operator. JSON text uses the existing
+<a href="#filter-types-and-stored-value-conversion">text conversion</a>.</p>
+<p>The source syntax is the bounded regular subset of Rust regex syntax:</p>
+<ul>
+<li>Unicode literals, concatenation, alternation (<code>a|b</code>), grouping, and classes
+  (<code>[a-z]</code>, <code>[^a]</code>, class intersections and differences).</li>
+<li><code>*</code>, <code>+</code>, <code>?</code>, and bounded repetition. Each explicit repetition bound is at
+  most 255. Captures and greedy/lazy preferences do not change boolean results.</li>
+<li><code>^</code> and <code>$</code> anchor the whole text, including its final newline; <code>\A</code> and <code>\z</code>
+  always anchor the whole text. <code>(?m)</code> makes <code>^</code> and <code>$</code> recognize LF line
+  boundaries. CR is an ordinary character.</li>
+<li><code>.</code> excludes LF; <code>(?s)</code> includes it. Negated classes always include LF unless
+  it is explicitly excluded. Scoped flags such as <code>(?s:a.)b.</code> are supported.</li>
+<li><code>(?i)</code> uses Unicode simple case folding. <code>\d</code>, <code>\w</code>, <code>\s</code>, and Unicode
+  properties such as <code>\p{Greek}</code> use the shared parser's Unicode tables.
+  ASCII classes such as <code>[[:alpha:]]</code> remain ASCII; <code>(?-u:\d)</code> explicitly uses
+  ASCII digits. Byte patterns that could match invalid UTF-8 are rejected.</li>
+<li><code>(?x)</code> enables whitespace/comments syntax, and <code>(?U)</code> changes greediness.</li>
+</ul>
+<p>Backreferences, lookaround, word-boundary assertions (including <code>\b</code> and
+<code>\y</code>), CRLF anchor mode, and native dialect extensions are rejected. Unicode
+normalization and multi-character case folding are not performed. Text is a
+sequence of non-NUL Unicode scalars. NUL literals are rejected; character
+classes are restricted to this text domain.</p>
+<table>
+<thead>
+<tr>
+<th>Pattern and input</th>
+<th>Result on every backend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>out</code> against <code>router</code></td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>(?i)^ROUTER$</code> against <code>router</code></td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>router.$</code> against <code>router</code> followed by LF</td>
+<td>No match</td>
+</tr>
+<tr>
+<td><code>(?s)router.$</code> against <code>router</code> followed by LF</td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>^router$</code> against <code>router</code> followed by LF</td>
+<td>No match</td>
+</tr>
+<tr>
+<td><code>(?m)^router$</code> against <code>switch</code>, LF, <code>router</code>, LF</td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>^\p{Greek}+$</code> against <code>αβ</code></td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>(?i)^k$</code> against the Kelvin sign <code>K</code></td>
+<td>Matches</td>
+</tr>
+<tr>
+<td><code>(?i)^ss$</code> against <code>ß</code></td>
+<td>No match</td>
+</tr>
+<tr>
+<td><code>^(router)\1$</code> or <code>router(?=$)</code></td>
+<td>Invalid pattern</td>
+</tr>
+</tbody>
+</table>
+<p>Limits are 1,024 UTF-8 source bytes, 16 levels of syntax nesting, a maximum
+explicit repetition bound of 255, and expanded expression complexity of 4,096.
+Complexity counts normalized literals, character ranges, and expression nodes,
+including multiplication by repetition bounds. Large Unicode classes combined
+with repetition can therefore exceed the budget even in a short pattern.
+Invalid or oversized patterns return <code>400 Bad Request</code> during query construction,
+including when there are no matching rows. Storage APIs cannot construct an
+unchecked regex operand.</p>
+<p>PostgreSQL executes compiler-generated ARE patterns as bound operands with
+<code>COLLATE "C"</code>; explicit ranges and folding preserve the shared semantics
+independently of the column's locale. Filtering, counting, and paging stay in
+SQL. Memory compiles the same normalized expression into a Rust matcher before
+scanning rows. Every adapter must run the shared conformance corpus. Native
+compilation failures for validated expressions are adapter failures.</p>
+<p>Existing execution budgets still apply. PostgreSQL uses
+<code>HUBUUM_DB_STATEMENT_TIMEOUT_MS</code> (30,000 ms by default; zero disables the
+application-configured timeout). Memory retains the regex engine's compilation
+size limit and bounded matching behavior. Validation does not remove execution
+budgets. This change requires no database migration.</p>
+<p><strong>Breaking change:</strong> previously accepted native PostgreSQL patterns and matching
+rules are replaced by this contract. Revalidate saved queries and rewrite
+unsupported constructs before upgrading.</p>
 <h3 id="numeric-and-date-fields">Numeric and date fields<a class="headerlink" href="#numeric-and-date-fields" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>equals</code></li>
@@ -5341,9 +5487,9 @@ PostgreSQL retains its native execution and input support. In particular:</p>
 <li><strong>Timezone-less stored timestamps:</strong> memory assumes UTC. PostgreSQL interprets
   them using its session <code>TimeZone</code> before converting to UTC. Use explicit offsets,
   or configure PostgreSQL sessions for UTC, to avoid different results.</li>
-<li><strong>Text matching:</strong> regex dialects, Unicode case folding, and locale-dependent
-  matching remain backend-specific. The <a href="#string-fields">string operator notes</a>
-  describe the regex differences. No shared normalization changes native collation.</li>
+<li><strong>Other text matching:</strong> non-regex case-insensitive operators retain their
+  native locale behavior. The <a href="#regular-expressions">portable regex contract</a>
+  defines regex classes and case folding independently of backend locale.</li>
 <li><strong>Additional native inputs:</strong> PostgreSQL may accept numeric or IP spellings
   outside the common forms; acceptance by its parser does not establish memory
   support. Use ordinary decimal/exponent strings and complete IP addresses.</li>

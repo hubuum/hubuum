@@ -16,7 +16,7 @@
         <link rel="prev" href="../hubuum-events-core/">
       
       
-        <link rel="next" href="../hubuum-schema-diagnostics/">
+        <link rel="next" href="../hubuum-regex/">
       
       
         
@@ -3994,6 +3994,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../hubuum-regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../hubuum-schema-diagnostics/" class="md-nav__link">
         
   
@@ -4521,9 +4548,12 @@ runtime or cancellation requirement. Query debug output must remain bounded and
 must not reveal filter values where a type promises redaction.</p>
 <p><code>QueryOptions</code> has a private representation. Its <code>QueryFilters</code>, <code>QuerySort</code>,
 and <code>QueryCursor</code> components validate their bounds and expose only
-invariant-preserving mutation. <code>SortParam</code> and <code>ParsedQueryParam</code> remain simple
-leaf DTOs with public fields as an intentional construction surface; placing
-them into the bounded collections still performs collection-level validation.
+invariant-preserving mutation. <code>SortParam</code> remains a leaf DTO with public fields. <code>ParsedQueryParam</code> has a
+private representation: its fallible constructors validate portable regex
+operands with <code>hubuum-regex</code> and retain the resulting proof. Read accessors and
+<code>with_field</code> preserve it across alias and related-field remapping. Moving a
+regex between plain and JSON operand formats requires a new constructor.
+Bounded collections additionally perform collection-level validation.
 Scalar inference uses application-neutral value categories. SQL expressions,
 column names, and database type identifiers belong to adapters and are not part
 of this crate's API.</p>
@@ -4593,13 +4623,13 @@ baseline exists.</p>
         
         
           
-          <a href="../hubuum-schema-diagnostics/" class="md-footer__link md-footer__link--next" aria-label="Next: Schema diagnostics">
+          <a href="../hubuum-regex/" class="md-footer__link md-footer__link--next" aria-label="Next: Regex">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Schema diagnostics
+                Regex
               </div>
             </div>
             <div class="md-footer__button md-icon">

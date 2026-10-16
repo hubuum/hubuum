@@ -4093,6 +4093,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../rust_api/hubuum-regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
         
   
@@ -4733,6 +4760,11 @@
 <td>Default; <code>schema</code></td>
 </tr>
 <tr>
+<td><code>hubuum-regex</code></td>
+<td>Bounded portable regex language, compiler interface, and conformance cases</td>
+<td>Default only</td>
+</tr>
+<tr>
 <td><code>hubuum-query</code></td>
 <td>Bounded, backend-neutral query parsing and values</td>
 <td>Default only</td>
@@ -4771,8 +4803,9 @@ publication and a separate release cadence require a later review.</p>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    +---------------------------------- hubuum-computed-fields
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>hubuum-domain --&gt; hubuum-schema-diagnostics
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>hubuum-query --&gt; hubuum-regex
 </code></pre></div>
-<p>Every in-graph dependency uses an exact version requirement. The eight packages
+<p>Every in-graph dependency uses an exact version requirement. The nine packages
 share one version and are released together. The root application and
 <code>hubuum-storage-postgres</code> are not part of the supported SDK. PostgreSQL remains
 the in-repository reference implementation, while an external adapter depends
@@ -4785,7 +4818,7 @@ server embedding API.</p>
 <ul>
 <li>a patch release is source compatible with its minor line;</li>
 <li>a minor release may make a documented breaking change;</li>
-<li>all eight crates still advance together, even when only one crate changes; and</li>
+<li>all nine crates still advance together, even when only one crate changes; and</li>
 <li>adapter manifests use an exact requirement for <code>hubuum-storage-core</code> and the
   matching <code>hubuum-storage-conformance</code> release.</li>
 </ul>
@@ -4838,6 +4871,7 @@ closed set is:</p>
   <code>SchemaDiagnosticOmission</code>, and <code>SchemaExpectedValue</code>;</li>
 <li><code>hubuum-events-core</code>: <code>Action</code>, <code>ActorKind</code>, <code>EntityType</code>,
   <code>EventCatalogError</code>, <code>EventFilterError</code>, and <code>EventSinkSecretError</code>;</li>
+<li><code>hubuum-regex</code>: <code>ExpressionKind</code> and <code>Assertion</code>;</li>
 <li><code>hubuum-query</code>: <code>ComputedFieldScope</code>, <code>ComputedQueryValueType</code>,
   <code>CursorCodecError</code>, <code>CursorValue</code>, <code>DataType</code>, <code>Operator</code>,
   <code>QueryError</code>, <code>QueryScalarType</code>, <code>RelatedClassField</code>,
@@ -4865,7 +4899,7 @@ versions, and the safest available migration.</p>
 <h2 id="release-process">Release Process<a class="headerlink" href="#release-process" title="Permanent link">&para;</a></h2>
 <p>SDK releases are distinct from server <code>vX.Y.Z</code> releases. Maintainers:</p>
 <ol>
-<li>choose one version for all eight packages and update every exact in-graph
+<li>choose one version for all nine packages and update every exact in-graph
    dependency plus <code>Cargo.lock</code>;</li>
 <li>record supported additions, changes, deprecations, and every breaking
    migration in <code>CHANGELOG.md</code>;</li>
@@ -4874,23 +4908,26 @@ versions, and the safest available migration.</p>
 <li>run the Rust API policy, package, rustdoc, SemVer, formatting, lint, and full
    repository suites;</li>
 <li>publish in dependency order, waiting for crates.io index visibility between
-   layers: <code>hubuum-computed-fields</code>, <code>hubuum-domain</code>, <code>hubuum-query</code>, and
-   <code>hubuum-task-core</code> first, <code>hubuum-events-core</code> second, <code>hubuum-storage-core</code>
-   third, and <code>hubuum-storage-conformance</code> last; and</li>
+   layers: <code>hubuum-schema-diagnostics</code>, <code>hubuum-computed-fields</code>, <code>hubuum-regex</code>,
+   and <code>hubuum-task-core</code> first; <code>hubuum-domain</code> and <code>hubuum-query</code> second;
+   <code>hubuum-events-core</code> third; <code>hubuum-storage-core</code> fourth; and
+   <code>hubuum-storage-conformance</code> last; and</li>
 <li>create an annotated <code>storage-sdk-vX.Y.Z</code> tag and release notes only after all
-   seven immutable crate versions are visible.</li>
+   nine immutable crate versions are visible.</li>
 </ol>
 <p>The local publication checks are:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python3<span class="w"> </span>scripts/check-rust-api-policy.py
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>policies.test_rust_api
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>cargo<span class="w"> </span>package<span class="w"> </span>--locked<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-computed-fields<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-domain<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-events-core<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-query<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-task-core<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-storage-core<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-storage-conformance
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-schema-diagnostics<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-domain<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-events-core<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-query<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-regex<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-task-core<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-storage-core<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--package<span class="w"> </span>hubuum-storage-conformance
 </code></pre></div>
 <p>CI builds rustdoc with warnings denied and all features enabled. It runs
 <code>cargo-semver-checks</code> once a registry baseline exists. Publication itself is a
@@ -4901,7 +4938,8 @@ maintainer-controlled operation because crates.io versions cannot be replaced.</
 SDK dependency to that version, and then:</p>
 <ol>
 <li>compile the complete <code>StorageBackend</code> aggregate;</li>
-<li>run the unchanged portable conformance suite;</li>
+<li>run the unchanged storage conformance suite and the <code>hubuum-regex</code> corpus
+   through the adapter's native compiler and execution path;</li>
 <li>run backend-native transaction, consistency, migration, failure, and
    connection-loss tests; and</li>
 <li>review the SDK changelog for behavior changes that compile-time checks do
@@ -5003,11 +5041,20 @@ provenance. PostgreSQL and memory conformance tests cover single use, concurrenc
 rollback, expiry, origin revocation, and request binding. See the
 <a href="../credential_approvals/">wire protocol and deployment guide</a>.</p>
 <h2 id="upgrading-from-03-to-04">Upgrading from 0.3 to 0.4<a class="headerlink" href="#upgrading-from-03-to-04" title="Permanent link">&para;</a></h2>
-<p>Update all eight SDK dependencies to exactly 0.4.0 together. Subscription
+<p>Update all nine SDK dependencies to exactly 0.4.0 together. Subscription
 requests, projections and lookups now carry <code>EventSubscriptionScope</code>, which
 preserves either a collection ID or system scope. Use <code>scope().collection_id()</code>
 when an optional collection is required. <code>TaskKind</code> is shared through
 <code>hubuum-domain</code>; subscription filters add <code>task_kinds</code>.</p>
+<p>Regex queries use the bounded portable language in <code>hubuum-regex</code>. Implement
+its <code>Compiler</code> trait and support every accepted normalized expression through
+native execution. <code>ParsedQueryParam</code> constructors now return validated regex
+operands; <code>from_parts</code> is fallible and fields are private. Replace struct
+literals with constructors and field access with accessors. Use <code>with_field</code>
+for aliases and related-field remapping that preserves the operand format.
+Consume <code>regex_pattern()</code> instead of interpreting the raw value in a native
+dialect. Revalidate saved patterns against the
+<a href="../querying/#regular-expressions">portable contract</a>.</p>
 <p>Implement <code>load_event_notification</code>, <code>enqueue_event_notification_test</code> and
 <code>finish_event_delivery</code> on complete adapters. Preserve test purpose and deferral
 reason, validate event scope and sink identity before preview/test, and audit
