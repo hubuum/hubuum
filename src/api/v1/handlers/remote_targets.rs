@@ -22,6 +22,7 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{
     AppContext, CompleteCollectionCandidateLimit, MAX_COMPLETE_COLLECTION_CANDIDATES, PrincipalRef,
+    require_unscoped_runtime_admin,
 };
 use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
@@ -39,6 +40,7 @@ use crate::traits::{UserPermissions, scope_allows};
 #[utoipa::path(
     post,
     path = "/api/v1/remote-targets",
+    description = "Create a collection target. Server-credential authentication additionally requires an unscoped runtime administrator; enabled targets constitute approval of their destination and credential binding.",
     tag = "remote-targets",
     security(("bearer_auth" = [])),
     request_body = NewRemoteTarget,
@@ -68,6 +70,9 @@ pub async fn create_remote_target(
         [Permissions::CreateRemoteTarget],
         target.collection_id
     );
+    if target.auth_config.uses_server_credentials() {
+        require_unscoped_runtime_admin(&context, user, requestor.scopes().is_some()).await?;
+    }
     validate_remote_target_class_scope(
         &context,
         target.collection_id.id(),
@@ -177,6 +182,7 @@ pub async fn get_remote_target(
 #[utoipa::path(
     patch,
     path = "/api/v1/remote-targets/{target_id}",
+    description = "Update a target. Credential-binding changes and re-enabling require an unscoped runtime administrator. Binding edits disable the target unless enabled=true explicitly approves the result. Concurrent edits return a conflict.",
     tag = "remote-targets",
     security(("bearer_auth" = [])),
     params(("target_id" = i32, Path, description = "Remote target ID")),
@@ -215,6 +221,9 @@ pub async fn patch_remote_target(
         [Permissions::UpdateRemoteTarget],
         CollectionID::new(existing.collection_id)?
     );
+    if update.requires_credential_owner(&existing) {
+        require_unscoped_runtime_admin(&context, user, requestor.scopes().is_some()).await?;
+    }
     if let Some(collection_id) = update.collection_id {
         can!(
             &context,
@@ -310,6 +319,7 @@ pub async fn delete_remote_target(
 #[utoipa::path(
     post,
     path = "/api/v1/remote-targets/{target_id}/invoke",
+    description = "Invoke the current target revision using ExecuteRemoteTarget and subject read permission. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
     tag = "remote-targets",
     security(("bearer_auth" = [])),
     params(
@@ -344,6 +354,7 @@ pub async fn invoke_remote_target(
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
         target_id,
+        target_revision: Some(target.revision),
         subject: invoke.subject,
         parameters: invoke.parameters,
         body_override: invoke.body_override,

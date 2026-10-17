@@ -1,3 +1,4 @@
+use crate::models::remote_target::CredentialBoundDestination;
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use base64::Engine;
@@ -144,6 +145,7 @@ where
 {
     let target =
         crate::services::remote_targets::get_remote_target(backend, request.target_id.id()).await?;
+    request.validate_target_revision(target.revision)?;
     let resolved =
         authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
 
@@ -172,8 +174,8 @@ where
         subject_id: ResourceId::new(resolved.subject_id)?,
         method: target.method,
     };
-    let normalized_rendered_url = match validate_outbound_url(&rendered_url) {
-        Ok(parts) => parts.url().to_string(),
+    let rendered_destination = match validate_outbound_url(&rendered_url) {
+        Ok(parts) => parts,
         Err(error) => {
             return Ok(remote_call_failure(
                 &failure_context,
@@ -184,6 +186,11 @@ where
         }
     };
 
+    if target.auth_config.uses_server_credentials() {
+        CredentialBoundDestination::from_template(&target.url_template)?
+            .validate_rendered(&rendered_destination)?;
+    }
+    let normalized_rendered_url = rendered_destination.url().to_string();
     let mut headers = rendered_headers;
     apply_auth(&mut headers, &target.auth_config).await?;
 

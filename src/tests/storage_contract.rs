@@ -5,6 +5,7 @@ mod credential_approvals;
 mod event_delivery;
 mod login_events;
 mod regex;
+mod remote_targets;
 mod schema_evolution;
 mod task_control;
 mod webhook_notifications;
@@ -4810,6 +4811,7 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
         let updated = backend
             .update_remote_target(StorageRemoteTargetUpdate::new(
                 target_id,
+                loaded.metadata().revision(),
                 StorageRemoteTargetPatch::new()
                     .with_name(Some(format!("{name}_updated")))
                     .with_enabled(Some(false)),

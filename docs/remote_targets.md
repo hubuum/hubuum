@@ -1,7 +1,8 @@
 # Remote Target API
 
 Remote targets let collection administrators define outbound HTTP actions and let authorized users
-invoke one action for one Hubuum subject.
+invoke one action for one Hubuum subject. Using server credentials additionally requires approval
+from an unscoped runtime administrator, who controls the destination and credential binding.
 
 The first version is manual invocation only:
 
@@ -57,6 +58,44 @@ outbound call.
 `ExecuteRemoteTarget` is checked on the target collection. `ReadRemoteTarget` is not required to
 invoke a target by ID. For relation subjects, the target collection must be one of the relation
 endpoint collections.
+
+### Sharing credential-bearing targets
+
+An unscoped runtime administrator creates and approves targets that use `bearer_secret`,
+`basic_secret`, or `api_key_secret`. Grant consumers `ExecuteRemoteTarget` and the required subject
+read permission to share invocation. Consumers do not need `ReadRemoteTarget` or access to the
+resolved secret. Collection ownership and scoped administrator tokens do not grant credential-owner
+authority. Administrator authority follows the configured authorization backend.
+
+Creating a credential-bearing target requires this separate authority even when `enabled` is false.
+For an existing credential-bearing target, changing its destination, method, authentication, header
+or body templates, collection, class, or allowed subject types also requires that authority.
+Adding or removing authentication follows the same rule. These changes disable the target unless
+the administrator explicitly includes `"enabled": true` to approve the resulting binding. An
+administrator can also review a disabled target and approve it with `PATCH {"enabled": true}`.
+Supplying a binding field requires renewed approval even if its value is unchanged.
+Collection managers can still edit the name, description and timeout, or disable the target.
+Re-enabling a credential-bearing target requires administrator approval.
+
+Credential-bearing URL templates must start with a literal HTTPS host and optional port. Templates
+may fill the path or query; they cannot select the scheme, host or port. Before resolving a secret,
+the worker checks that the rendered URL has the approved origin. Transport-controlled headers
+remain forbidden, redirects are not followed, and existing DNS/address screening still applies.
+The administrator must review the permitted path, query and request-body substitutions as part of
+approving what the shared action can do.
+
+Every invocation records the target revision. If the target changes before execution, the worker
+fails that invocation and the caller must submit a new one. This includes metadata edits and
+pre-upgrade queued invocations without a recorded revision. Once dispatch starts, an in-flight
+request uses the already checked target snapshot; later edits cannot redirect it.
+
+**Upgrade:** stop older API servers and workers before applying the remote credential binding
+migration. It disables existing credential-bearing targets because their destination bindings
+previously did not require administrator approval. Review each target, replace any dynamic host
+or port with a literal HTTPS authority, then explicitly enable it using an unscoped administrator
+token. The rollback does not re-enable these targets. Resubmit queued remote calls after upgrading.
+Administrative imports and restores remain trusted operations; review credential-bearing targets
+in their input as well.
 
 ## Target model
 
@@ -117,6 +156,10 @@ HUBUUM_REMOTE_SECRET_<UPPERCASE_SECRET_NAME>
 The reference name is configuration metadata, not a secret value. Users with `ReadRemoteTarget` can
 see which reference name a target uses, but only the worker receives the
 resolved value.
+
+Target definitions, including literal URLs and header templates, remain visible to readers.
+Keep reusable credentials in the secret source and reference them through `auth_config`; this
+binding protection does not turn inline configuration values into hidden secrets.
 
 For example, this target auth config:
 
@@ -348,8 +391,9 @@ The response includes:
 Location: /api/v1/tasks/42
 ```
 
-`Idempotency-Key` is supported. Reusing the same key with the same rendered task submission returns
-the same task. Reusing it with a different submission returns `409 Conflict`.
+`Idempotency-Key` is supported. Reusing the same key with the same invocation input and target
+revision returns the same task. Reusing it with different input or a changed target revision returns
+`409 Conflict`; use a new key when resubmitting after a target edit.
 Keys must contain between 1 and 255 bytes; empty or longer keys return
 `400 Bad Request`.
 

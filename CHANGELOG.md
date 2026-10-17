@@ -40,6 +40,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking remote-target authorization change:** server-credential bindings require
+  an unscoped runtime administrator. Collection grants can share invocation but cannot
+  create, redirect, alter or re-enable those bindings. Binding edits disable a target
+  unless the administrator explicitly approves the result with `enabled: true`.
+  Credential-bearing URL templates require a literal HTTPS host and port; rendered
+  URLs must remain on that origin before credentials are resolved. Stop older servers
+  and workers before migrating, review and re-enable existing credential-bearing
+  targets disabled by the migration, and resubmit pre-upgrade queued calls. Queued
+  calls also fail if their target revision changes before execution.
+- **Breaking storage SDK change:** `StorageRemoteTargetUpdate::new` now requires
+  the revision used for authorization, and `into_parts` returns it. Update adapter
+  callers to pass that revision and reject stale writes atomically; both bundled
+  adapters enforce this independently of optional HTTP conditional headers.
 - Stored export downloads enforce the requesting token's permission and resource
   boundaries against the submitting token's saved scope, including rendered
   template output. Scoped tokens can no longer read artifacts produced with a

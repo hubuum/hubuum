@@ -129,6 +129,279 @@ mod tests {
         })
     }
 
+    fn credential_target_payload(collection_id: i32) -> serde_json::Value {
+        let mut payload = target_payload_with_subjects(
+            collection_id,
+            None,
+            "credential-binding",
+            "https://service.example/hook",
+            serde_json::json!(["collection"]),
+        );
+        payload["auth_config"] =
+            serde_json::json!({"type":"bearer_secret","secret":"remote_shared_token"});
+        payload
+    }
+
+    #[rstest]
+    #[case::manager(false)]
+    #[case::scoped_administrator(true)]
+    #[actix_web::test]
+    async fn collection_authority_cannot_bind_server_credentials(#[case] scoped_admin: bool) {
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("credential_create_denied").await;
+        fixture
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let token = if scoped_admin {
+            crate::tests::scoped_token(
+                &context.pool,
+                context.admin_user.id,
+                &[Permissions::CreateRemoteTarget],
+            )
+            .await
+        } else {
+            context.normal_token.clone()
+        };
+        let response = post_request(
+            &context.pool,
+            &token,
+            RT_ENDPOINT,
+            credential_target_payload(fixture.collection_id()),
+        )
+        .await;
+        assert_response_status(response, StatusCode::FORBIDDEN).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::manager(false)]
+    #[case::scoped_administrator(true)]
+    #[actix_web::test]
+    async fn patch_cannot_attach_credentials_without_owner_authority(#[case] scoped_admin: bool) {
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("credential_attach_denied").await;
+        fixture
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let mut payload = credential_target_payload(fixture.collection_id());
+        payload["auth_config"] = serde_json::json!({"type":"none"});
+        let response =
+            post_request(&context.pool, &context.normal_token, RT_ENDPOINT, payload).await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let token = if scoped_admin {
+            crate::tests::scoped_token(
+                &context.pool,
+                context.admin_user.id,
+                &[Permissions::UpdateRemoteTarget],
+            )
+            .await
+        } else {
+            context.normal_token.clone()
+        };
+        let response = patch_request(&context.pool, &token, &format!("{RT_ENDPOINT}/{}", target.id),
+            serde_json::json!({"auth_config":{"type":"bearer_secret","secret":"remote_shared_token"}, "enabled":true})).await;
+        assert_response_status(response, StatusCode::FORBIDDEN).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn credential_owner_cannot_approve_a_caller_selected_origin() {
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("credential_dynamic_origin")
+            .await;
+        let mut payload = credential_target_payload(fixture.collection_id());
+        payload["url_template"] = serde_json::json!("https://{{ parameters.host }}/hook");
+        let response =
+            post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::local_admin_is_insufficient(false)]
+    #[case::selected_backend_grants_authority(true)]
+    #[actix_web::test]
+    async fn credential_owner_authority_uses_selected_permission_backend(#[case] approved: bool) {
+        use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
+        use crate::permissions::{ResourceFields, ResourceKind};
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("credential_policy_authority")
+            .await;
+        let policy = Arc::new(MockTreetopBackend::new());
+        policy.add_rule(MockAllowRule {
+            group_id: fixture.owner_group.id,
+            action: Permissions::CreateRemoteTarget,
+            resource_kind: ResourceKind::Collection,
+            resource_id: Some(fixture.collection_id()),
+            attrs: ResourceFields {
+                collection_id: Some(fixture.collection_id()),
+                ..ResourceFields::default()
+            },
+        });
+        if approved {
+            policy.add_admin_rule(fixture.owner_group.id);
+        }
+        let response = crate::tests::api_operations::post_request_with_permission_backend(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            credential_target_payload(fixture.collection_id()),
+            policy,
+        )
+        .await;
+        assert_response_status(
+            response,
+            if approved {
+                StatusCode::CREATED
+            } else {
+                StatusCode::FORBIDDEN
+            },
+        )
+        .await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::destination(serde_json::json!({"url_template":"https://elsewhere.example/hook"}), StatusCode::FORBIDDEN)]
+    #[case::credential(serde_json::json!({"auth_config":{"type":"bearer_secret","secret":"another_secret"}}), StatusCode::FORBIDDEN)]
+    #[case::remove_credential(serde_json::json!({"auth_config":{"type":"none"}}), StatusCode::FORBIDDEN)]
+    #[case::headers(serde_json::json!({"headers_template":{"X-Forwarded-Host":"elsewhere.example"}}), StatusCode::FORBIDDEN)]
+    #[case::body(serde_json::json!({"body_template":"{{ parameters }}"}), StatusCode::FORBIDDEN)]
+    #[case::method(serde_json::json!({"method":"delete"}), StatusCode::FORBIDDEN)]
+    #[case::subjects(serde_json::json!({"allowed_subject_types":["collection","class"]}), StatusCode::FORBIDDEN)]
+    #[case::enable(serde_json::json!({"enabled":true}), StatusCode::FORBIDDEN)]
+    #[case::disable(serde_json::json!({"enabled":false}), StatusCode::OK)]
+    #[case::description(serde_json::json!({"description":"Changed description"}), StatusCode::OK)]
+    #[actix_web::test]
+    async fn collection_manager_cannot_change_credential_binding(
+        #[case] patch: serde_json::Value,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("credential_patch_authority")
+            .await;
+        fixture
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            credential_target_payload(fixture.collection_id()),
+        )
+        .await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let response = patch_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{RT_ENDPOINT}/{}", target.id),
+            patch,
+        )
+        .await;
+        assert_response_status(response, expected).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::awaits_approval(false)]
+    #[case::explicitly_approved(true)]
+    #[actix_web::test]
+    async fn credential_binding_change_requires_renewed_approval(#[case] approve: bool) {
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("credential_reapproval").await;
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            credential_target_payload(fixture.collection_id()),
+        )
+        .await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let mut patch = serde_json::json!({"url_template":"https://replacement.example/hook"});
+        if approve {
+            patch["enabled"] = serde_json::json!(true);
+        }
+        let response = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{RT_ENDPOINT}/{}", target.id),
+            patch,
+        )
+        .await;
+        let updated: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
+        assert_eq!(updated.enabled, approve);
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn invoke_shared_credential_binding_needs_only_execute_and_subject_read() {
+        let _local_target = crate::test_support::allow_local_remote_target();
+        unsafe {
+            std::env::set_var(
+                "HUBUUM_REMOTE_SECRET_REMOTE_SHARED_TOKEN",
+                "shared-test-credential",
+            );
+        }
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("credential_shared_invocation")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        fixture
+            .collection
+            .grant_without_events(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                PermissionsList::new([
+                    Permissions::ExecuteRemoteTarget,
+                    Permissions::ReadCollection,
+                ]),
+            )
+            .await
+            .unwrap();
+        let (port, request_rx) = spawn_https_remote_server().await;
+        let mut payload = credential_target_payload(fixture.collection_id());
+        payload["url_template"] = serde_json::json!(format!("https://localhost:{port}/hook"));
+        let response =
+            post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let response = post_request(
+            &context.pool,
+            &context.normal_token,
+            &invoke_endpoint(target.id),
+            serde_json::json!({
+                "subject":{"type":"collection","collection_id":fixture.collection_id()}
+            }),
+        )
+        .await;
+        let task: TaskResponse =
+            test::read_body_json(assert_response_status(response, StatusCode::ACCEPTED).await)
+                .await;
+        wait_for_task(&context, task.id, TaskStatus::Succeeded).await;
+        let request = request_rx.await.unwrap();
+        assert!(request.contains("authorization: Bearer shared-test-credential"));
+        fixture.cleanup().await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
     fn object_invoke_body(class_id: i32, object_id: i32) -> serde_json::Value {
         serde_json::json!({
             "subject": {

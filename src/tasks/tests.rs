@@ -118,6 +118,65 @@ async fn claim_worker_test_task(
     ClaimedTask::from_storage(claim).expect("the claimed worker test task should be valid")
 }
 
+#[rstest]
+#[case::edited_binding(false)]
+#[case::legacy_unbound_invocation(true)]
+#[tokio::test]
+async fn remote_worker_rejects_changed_or_unbound_target_before_resolving_credentials(
+    #[case] legacy: bool,
+) {
+    let context = TestContext::new().await;
+    let backend = crate::tests::app_context(&context.pool);
+    let fixture = context.collection_fixture("remote_binding_revision").await;
+    let target = crate::services::remote_targets::create_remote_target(&backend,
+        serde_json::from_value(serde_json::json!({
+            "collection_id": fixture.collection_id(), "name":"revision-bound-target", "description":"test",
+            "method":"post", "url_template":"https://service.example/hook", "allowed_subject_types":["collection"],
+            "auth_config":{"type":"bearer_secret", "secret":"missing_revision_test_secret"}
+        })).unwrap(), crate::events::EventContext::system()).await.unwrap();
+    let mut payload = serde_json::json!({
+        "target_id":target.id, "target_revision":target.revision,
+        "subject":{"type":"collection", "collection_id":fixture.collection_id()},
+        "parameters":{}, "body_override":{}
+    });
+    if legacy {
+        payload.as_object_mut().unwrap().remove("target_revision");
+    } else {
+        crate::services::remote_targets::update_remote_target(&backend, target.id,
+            serde_json::from_value(serde_json::json!({"url_template":"https://replacement.example/hook", "enabled":true})).unwrap(),
+            &target, crate::events::EventContext::system()).await.unwrap();
+    }
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::RemoteCall,
+        payload,
+        1,
+        "remote_revision_task",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let principal = crate::services::authentication::ExecutionPrincipal::resolve(
+        &backend,
+        context.admin_user.id,
+    )
+    .await
+    .unwrap();
+    let status = super::remote_call::execute_remote_call_task(&backend, &claimed, &principal, None)
+        .await
+        .unwrap();
+    assert_eq!(status, TaskStatus::Failed);
+    let finished = find_task(&backend, crate::models::TaskID::new(task.id).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        finished
+            .summary
+            .unwrap()
+            .contains("submit a new invocation")
+    );
+    fixture.cleanup().await.unwrap();
+}
+
 #[tokio::test]
 async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
     let context = TestContext::new().await;
