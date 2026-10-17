@@ -67,6 +67,251 @@ fn request_for_class(class: &HubuumClass, filter: Value) -> Value {
     })
 }
 
+async fn hydration_fixture(
+    context: &TestContext,
+    collection: &CollectionFixture,
+) -> (
+    HubuumClass,
+    HubuumClass,
+    Vec<HubuumObject>,
+    Vec<crate::models::HubuumObjectRelation>,
+) {
+    let hosts = save_class(context, collection, "hydration_hosts").await;
+    let sites = save_class(context, collection, "hydration_sites").await;
+    let class_relation = NewHubuumClassRelation {
+        from_hubuum_class_id: hosts.id,
+        to_hubuum_class_id: sites.id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let mut objects = Vec::new();
+    for (index, class) in [&hosts, &sites, &hosts, &sites].into_iter().enumerate() {
+        objects.push(
+            save_object(
+                context,
+                collection,
+                class,
+                &format!("hydration_{index}"),
+                "hydration",
+                json!({}),
+            )
+            .await,
+        );
+    }
+    let mut relations = Vec::new();
+    for (from, to) in [(0, 1), (2, 1), (2, 3), (0, 3)] {
+        relations.push(
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: objects[from].id,
+                to_hubuum_object_id: objects[to].id,
+                class_relation_id: class_relation.id,
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap(),
+        );
+    }
+    (hosts, sites, objects, relations)
+}
+
+fn hydration_request(root: &HubuumObject, target: &HubuumClass, limit: u8) -> Value {
+    json!({ "version": 1, "root_class_id": root.hubuum_class_id, "root_object_id": root.id,
+        "class": {"id": target.id}, "depth": 3, "limit": limit })
+}
+
+#[actix_web::test]
+async fn hydration_deduplicates_shared_resources_and_bounds_cycles() {
+    use crate::models::SearchHydrationResponse;
+    use std::collections::HashSet;
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("hydration_cycles").await;
+    let (_, sites, objects, _) = hydration_fixture(&context, &collection).await;
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search/hydrate",
+        hydration_request(&objects[0], &sites, 50),
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    assert_eq!(
+        response.headers().get("Cache-Control").unwrap(),
+        "private, no-store"
+    );
+    let body: SearchHydrationResponse = test::read_body_json(response).await;
+    assert!(!body.truncated);
+    assert!(!body.paths.is_empty());
+    assert_eq!(
+        body.objects
+            .iter()
+            .map(|object| object.id)
+            .collect::<HashSet<_>>()
+            .len(),
+        body.objects.len()
+    );
+    assert_eq!(
+        body.relations
+            .iter()
+            .map(|relation| relation.id)
+            .collect::<HashSet<_>>()
+            .len(),
+        body.relations.len()
+    );
+    for path in &body.paths {
+        assert_eq!(path.object_ids.first(), Some(&objects[0].id));
+        assert_eq!(
+            path.object_ids.len(),
+            path.object_ids.iter().collect::<HashSet<_>>().len()
+        );
+        assert!(path.object_ids.len() <= 4);
+        assert_eq!(path.relation_ids.len() + 1, path.object_ids.len());
+        for (pair, id) in path.object_ids.windows(2).zip(&path.relation_ids) {
+            let relation = body
+                .relations
+                .iter()
+                .find(|relation| relation.id == *id)
+                .unwrap();
+            assert_eq!(
+                HashSet::from([pair[0], pair[1]]),
+                HashSet::from([relation.from_hubuum_object_id, relation.to_hubuum_object_id])
+            );
+        }
+    }
+    collection.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn hydration_truncation_does_not_change_search_page_or_cursor() {
+    use crate::models::SearchHydrationResponse;
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("hydration_page").await;
+    let (hosts, sites, objects, _) = hydration_fixture(&context, &collection).await;
+    let mut request = request_for_class(
+        &hosts,
+        json!({"op":"field","predicate":{"field":"description","operator":"equals","value":"hydration"}}),
+    );
+    request["limit"] = json!(1);
+    let before = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search",
+        request.clone(),
+    )
+    .await;
+    let before: Value =
+        test::read_body_json(assert_response_status(before, http::StatusCode::OK).await).await;
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search/hydrate",
+        hydration_request(&objects[0], &sites, 1),
+    )
+    .await;
+    let body: SearchHydrationResponse =
+        test::read_body_json(assert_response_status(response, http::StatusCode::OK).await).await;
+    assert!(body.truncated);
+    assert_eq!(body.paths.len(), 1);
+    let after = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search",
+        request.clone(),
+    )
+    .await;
+    let after: Value =
+        test::read_body_json(assert_response_status(after, http::StatusCode::OK).await).await;
+    assert_eq!(before, after);
+    request["cursor"] = before["next"].clone();
+    let next = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search",
+        request,
+    )
+    .await;
+    let next: Value =
+        test::read_body_json(assert_response_status(next, http::StatusCode::OK).await).await;
+    assert_ne!(before["results"], next["results"]);
+    collection.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::hidden_relation(false, true)]
+#[case::hidden_object(true, false)]
+#[case::visible(true, true)]
+#[actix_web::test]
+async fn hydration_obeys_external_object_and_edge_permissions(
+    #[case] allow_relation: bool,
+    #[case] allow_object: bool,
+) {
+    use crate::models::SearchHydrationResponse;
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("hydration_permissions").await;
+    let group = create_test_group(&context.pool).await;
+    group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let (hosts, sites, objects, relations) = hydration_fixture(&context, &collection).await;
+    let backend = MockTreetopBackend::new();
+    let allow = |action, resource_kind, id| {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action,
+            resource_kind,
+            resource_id: Some(id),
+            attrs: ResourceFields::default(),
+        })
+    };
+    allow(
+        Permissions::ReadCollection,
+        ResourceKind::Collection,
+        collection.collection.id,
+    );
+    for id in [hosts.id, sites.id] {
+        allow(Permissions::ReadClass, ResourceKind::Class, id);
+    }
+    allow(Permissions::ReadObject, ResourceKind::Object, objects[0].id);
+    if allow_object {
+        allow(Permissions::ReadObject, ResourceKind::Object, objects[1].id);
+    }
+    if allow_relation {
+        allow(
+            Permissions::ReadObjectRelation,
+            ResourceKind::ObjectRelation,
+            relations[0].id,
+        );
+    }
+    let response = post_request_with_permission_backend(
+        &context.pool,
+        &context.normal_token,
+        "/api/v1/search/hydrate",
+        hydration_request(&objects[0], &sites, 50),
+        Arc::new(backend),
+    )
+    .await;
+    let body: SearchHydrationResponse =
+        test::read_body_json(assert_response_status(response, http::StatusCode::OK).await).await;
+    assert_eq!(body.paths.is_empty(), !(allow_relation && allow_object));
+    assert!(!body.truncated);
+    assert!(
+        body.objects.iter().all(
+            |object| object.id == objects[0].id || (allow_object && object.id == objects[1].id)
+        )
+    );
+    assert!(
+        body.relations
+            .iter()
+            .all(|relation| allow_relation && relation.id == relations[0].id)
+    );
+    collection.cleanup().await.unwrap();
+}
+
 #[rstest]
 #[case::unicode_folding("(?i)^k$", "K", Some(true))]
 #[case::newline("router.$", "router\n", Some(false))]

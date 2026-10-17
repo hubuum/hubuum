@@ -1,5 +1,5 @@
 use crate::storage::storage_handle;
-use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 use bytes::Bytes;
 use futures_util::{
     FutureExt, Stream, StreamExt,
@@ -28,6 +28,7 @@ use crate::models::{
     decode_structured_search_cursor, encode_structured_search_cursor, execute_unified_search,
     execute_unified_search_batch, parse_unified_search_query,
 };
+use crate::models::{SearchHydrationRequest, SearchHydrationResponse, ValidatedSearchHydration};
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, effective_page_limit, finalize_page,
     prepare_db_pagination,
@@ -45,6 +46,42 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
         ApiError::InternalServerError(format!("Failed to serialize SSE payload: {error}"))
     })?;
     Ok(Bytes::from(format!("event: {event}\ndata: {data}\n\n")))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/search/hydrate",
+    tag = "search",
+    description = "Lazy bounded visible neighborhood for one root object. Scope is all visible related endpoints in the selected class, not evidence for a search predicate. Does not execute or change root search results or cursors. Returns unique objects/relations and up to limit visible paths, with a truncation flag; no hydration pagination.",
+    security(("bearer_auth" = [])),
+    request_body = SearchHydrationRequest,
+    responses(
+        (status = 200, description = "Bounded visible neighborhood", body = SearchHydrationResponse),
+        (status = 400, description = "Invalid hydration request or traversal work bound exceeded", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Root or target class unavailable", body = ApiErrorResponse),
+        (status = 409, description = "Resources changed during hydration; retry", body = ApiErrorResponse)
+    )
+)]
+#[post("/hydrate")]
+pub async fn hydrate_search(
+    context: AppContext,
+    requestor: Authenticated,
+    payload: web::Json<SearchHydrationRequest>,
+) -> Result<impl Responder, ApiError> {
+    let response = crate::services::search_hydration::hydrate_search_object(
+        &context,
+        &requestor.principal,
+        requestor.scopes(),
+        ValidatedSearchHydration::try_from(payload.into_inner())?,
+    )
+    .await?;
+    Ok(ApiResponse::new_with_headers(
+        response,
+        StatusCode::OK,
+        HashMap::from([("Cache-Control".to_string(), "private, no-store".to_string())]),
+    ))
 }
 
 type UnifiedSearchBatchFuture = BoxFuture<'static, Result<UnifiedSearchBatchResponse, ApiError>>;

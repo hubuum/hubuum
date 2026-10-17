@@ -549,6 +549,62 @@ a new DSL version. Unknown properties on the request, target, expression,
 predicate, related predicate, and sort objects remain errors so misspellings do
 not silently broaden a query.
 
+### Lazy relation hydration
+
+`POST /api/v1/search/hydrate` is an optional companion to structured search.
+It does not rerun a search or accept its cursor: applications request it only
+when a user inspects an object on the executed result page. Ordinary search
+results, ordering, exact totals and pagination remain unchanged.
+
+```json
+{
+  "version": 1,
+  "root_class_id": 12,
+  "root_object_id": 123,
+  "class": {"id": 20},
+  "depth": 2,
+  "limit": 25
+}
+```
+
+The scope is **all visible related endpoints in the selected class** along
+bidirectional paths of at most `depth` edges. This is contextual information,
+not evidence that any particular `related` predicate matched. Intermediate
+objects may belong to other classes. `class` uses the same exact ID/name
+selector as structured search; clients should store IDs to survive renames.
+
+The response contains `version`, `root_object_id`, `target_class_id`, `depth`,
+`limit`, `objects`, `relations`, `paths`, and `truncated`. Each path has
+`object_ids` from root to endpoint and corresponding `relation_ids` for the
+successive edges. Edges retain their stored orientation, which can differ from
+traversal direction. Objects and relations use their normal public models and
+are deduplicated by ID across the returned paths. Class/collection IDs remain
+references: read their names through the normal authorized resource endpoints.
+
+Limits are required: depth 1–10 and at most 50 visible paths per root. Paths
+use stable `path.asc,id.asc` ordering. Shared objects can participate in several
+paths without duplication in `objects`. Cycles do not cause repeated vertices
+in a path. The response contains at most 501 objects and 500 connecting edges;
+existing traversal work and statement-timeout limits also apply. Only edges
+on returned paths are included, not every edge in their induced graph.
+
+`truncated: true` means another **visible** path exists beyond the requested
+limit. It is not a hidden-resource count. There is no hydration cursor in this
+version: narrow the class/depth or increase the limit to inspect the scope.
+Never label a truncated expansion complete. A work-limit failure returns `400`
+without a partial success body. If objects or edges become unavailable during
+the secondary reads, `409` asks the caller to retry; no incomplete path is
+returned. Root/class permission failures remain normal `403`/`404` responses.
+Every path object and relation is permission checked, including delegated
+policies and token scopes. Responses have `Cache-Control: private, no-store`.
+
+This endpoint is a new capability after Server v0.0.19. Clients must treat
+`404`/`405` as unavailable hydration, leaving the already executed root search
+usable. Do not retry a failed search with missing predicates, or replace this
+scope with an unbounded relation scan. In-memory frontend caches should be
+bound to the authenticated session, executed query and root page and cleared
+when those change.
+
 ### Structured streaming
 
 `POST /api/v1/search/stream` returns `text/event-stream` and accepts the exact
