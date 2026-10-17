@@ -3846,6 +3846,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#external-identity-rejection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        External identity rejection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4607,6 +4618,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#external-identity-rejection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        External identity rejection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4773,9 +4795,17 @@ the audit event does not satisfy the contract.</p>
 fan-out capability creates durable delivery rows, and delivery workers call the
 configured sinks with at-least-once semantics. Notifications reduce latency;
 polling the durable event and delivery state remains the recovery path.</p>
-<p>Login issuance uses <code>StorageTokenCreate::for_login</code>: <code>TokenStorage::create_token</code>
-must commit the token, <code>token.created</code>, and <code>authentication.succeeded</code> together
-and return both audit receipts. The application supplies a validated
+<p>Login issuance uses <code>StorageTokenCreate::for_login</code> with a validated <code>StorageLogin</code>
+snapshot. The adapter checks that the current human's password hash and update
+stamp still match the authenticated snapshot and that the user is not anonymized.
+Provider-managed users must also retain a successful external sync; a rejected
+identity cannot issue tokens while its cached authority is invalid.
+This check and token insertion share the principal lock used by password changes,
+so issuance either precedes reset and is revoked, or observes the reset and fails
+with <code>AuthenticationRequired</code>. Both backends cover this in
+<code>src/tests/storage_contract/authentication.rs</code>.</p>
+<p><code>TokenStorage::create_token</code> must commit the token, <code>token.created</code>, and
+<code>authentication.succeeded</code> together and return both audit receipts. The application supplies a validated
 <code>EventSubject</code> after authentication, identity synchronization, and the configured
 administrator-policy check. Adapters persist this immutable snapshot in
 <code>metadata.subject</code>; fan-out must not look up current membership or identity.
@@ -4812,8 +4842,9 @@ for an exception.</p>
   <code>LocalIdentityCredentialStorage::bootstrap_default_admin</code> runs only while no
   actor can yet exist; <code>IdentityScopeStorage::ensure_identity_scope</code> is
   idempotent provider configuration reconciliation;
-  <code>ExternalIdentityStorage::mark_external_sync_attempted</code> is synchronization
-  telemetry; and <code>ExternalIdentityStorage::sync_external_user</code> is an
+  <code>ExternalIdentityStorage::record_external_sync_failure</code> is synchronization
+  bookkeeping and fails closed by invalidating rejected identities;
+  <code>ExternalIdentityStorage::sync_external_user</code> is an
   identity-provider reconciliation operation that emits a system-attributed
   audit event and returns its <code>StorageMutationOutcome</code>.</li>
 <li>Workflow state machines:
@@ -4987,6 +5018,25 @@ adapters must commit it in the same fenced transaction as the updated checkpoint
 workers and activation proofs use <code>get_schema_work</code> without reading past findings.
 Impact does not replace active evidence. Strict activation rechecks the captured baseline
 and population epoch while holding the class boundary.</p>
+<h2 id="external-identity-rejection">External identity rejection<a class="headerlink" href="#external-identity-rejection" title="Permanent link">&para;</a></h2>
+<p><code>sync_external_user</code> matches existing humans by the configured external subject.
+Name collisions with different subjects, unmanaged principals, or other principal
+kinds must fail without overwriting identity state. Stable subjects may rename to
+an unused name; username subjects remain valid identity keys within a scope.</p>
+<p><code>record_external_sync_failure</code> distinguishes <code>Unavailable</code> from <code>Rejected</code>.
+Unavailability records the attempt while preserving the last successful sync.
+Rejection atomically clears the last success, invalidates pending login evidence,
+and revokes all active principal tokens. Pending evidence must remain invalid after
+a later successful synchronization, even when the profile is unchanged. The current
+adapters store a non-authenticating rejection marker in the existing password field
+to advance the user snapshot; successful synchronization clears that marker and
+returns a password-free human with a newer snapshot. This requires no migration.
+Subsequent unavailable attempts must not restore the rejected cache.
+Use the same principal lock and transaction ordering
+as token issuance and external synchronization. The operation retains
+<code>mark_external_sync_attempted</code> as its telemetry label for compatibility.
+These are synchronization metadata
+and credential invalidation effects, with no independent lifecycle audit event.</p>
 
 
 

@@ -1987,6 +1987,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#identity-subjects-and-account-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identity subjects and account eligibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#multiple-ldap-scopes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4447,6 +4458,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#identity-subjects-and-account-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identity subjects and account eligibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#multiple-ldap-scopes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4620,35 +4642,59 @@ filters the group names produced by <code>group_rules</code>. When the list is n
 a mapped name must match at least one regular expression to be included.
 Omitting the list or setting it to an empty list preserves all groups produced
 by a group rule.</p>
+<h3 id="identity-subjects-and-account-eligibility">Identity subjects and account eligibility<a class="headerlink" href="#identity-subjects-and-account-eligibility" title="Permanent link">&para;</a></h3>
+<p><code>subject_attribute</code> selects the identity key within each scope. Use an immutable
+identifier such as <code>entryUUID</code> when the provider exposes one. Providers that only
+expose usernames can use <code>subject_attribute = "uid"</code> (or their username attribute).
+Repeated logins with the same configured subject continue to use the same local
+account. With username subjects, the directory must prevent username reuse: Hubuum
+cannot distinguish a recycled username from the original identity.</p>
+<p>When a different subject presents an existing name, synchronization fails without
+changing that account, its memberships, or its permissions. A stable subject can
+still rename its own principal to an unused name. Changing <code>subject_attribute</code>
+on an established scope is an identity migration: provision a new scope and
+explicitly review permission assignments instead of relying on name matching.</p>
+<p>Account eligibility belongs in <code>user_filter</code>, which is applied both at login and
+at token-time refresh. Include your directory's enabled-account condition; for
+example, if your directory uses <code>employeeType=active</code> as its eligibility policy:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">user_filter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"(&amp;(uid={username})(employeeType=active))"</span>
+</code></pre></div>
+<p>Use your provider's actual status attributes and matching rules, and ensure the
+service bind can search them. Hubuum does not infer account status from arbitrary
+returned attributes. A successful service-account search is not a user password
+bind, so a directory rejecting disabled users' password binds alone does not
+invalidate existing Hubuum tokens. Test that disabling a user removes it from
+this configured search. Eligibility changes are detected at the next refresh;
+choose <code>refresh_ttl_seconds</code> to match your revocation requirements.</p>
 <h3 id="multiple-ldap-scopes">Multiple LDAP scopes<a class="headerlink" href="#multiple-ldap-scopes" title="Permanent link">&para;</a></h3>
 <p>Each <code>[[ldap]]</code> entry creates an independent provider instance keyed by its
 <code>scope</code>. Entries may use different servers, or reuse one LDAP server with
 different search bases, login attributes, and group semantics. A nested
 <code>[[ldap.group_rules]]</code> belongs to the immediately preceding <code>[[ldap]]</code> entry.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[[ldap]]</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"employees"</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ldaps://directory.example.org"</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">user_base_dn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ou=employees,dc=example,dc=org"</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">user_filter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"(uid={username})"</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">group_attributes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memberOf"</span><span class="p">]</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">[[ldap.group_rules]]</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"^cn=([^,]+),ou=staff-groups,dc=example,dc=org$"</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$1"</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$0"</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">[[ldap]]</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"partners"</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ldaps://directory.example.org"</span>
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">user_base_dn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ou=partners,dc=example,dc=org"</span>
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">user_filter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"(mail={username})"</span>
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">username_attribute</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"mail"</span>
-<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">group_attributes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"businessCategory"</span><span class="p">]</span>
-<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
-<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="k">[[ldap.group_rules]]</span>
-<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"^partner:(.+)$"</span>
-<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"partner-$1"</span>
-<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$0"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[[ldap]]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"employees"</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ldaps://directory.example.org"</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">user_base_dn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ou=employees,dc=example,dc=org"</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">user_filter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"(uid={username})"</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">group_attributes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memberOf"</span><span class="p">]</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">[[ldap.group_rules]]</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"^cn=([^,]+),ou=staff-groups,dc=example,dc=org$"</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$1"</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$0"</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">[[ldap]]</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"partners"</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ldaps://directory.example.org"</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">user_base_dn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ou=partners,dc=example,dc=org"</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">user_filter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"(mail={username})"</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">username_attribute</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"mail"</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">group_attributes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"businessCategory"</span><span class="p">]</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">[[ldap.group_rules]]</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"^partner:(.+)$"</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"partner-$1"</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"$0"</span>
 </code></pre></div>
 <p>Users select the matching scope at login. Materialized users and groups remain
 namespaced by that scope, so <code>employees/admin</code> and <code>partners/admin</code> are distinct
@@ -4661,11 +4707,11 @@ data.</p>
 <p>Local users can omit <code>identity_scope</code> or use <code>local</code>.
 Login names must satisfy the <a href="../auth_model/#username-requirements">username requirements</a>,
 including a nonblank principal name and the 255-character login request limit.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"identity_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"example-directory"</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alice"</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"password"</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"identity_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"example-directory"</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alice"</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"password"</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
 </code></pre></div>
 <p>The response is the normal bearer token response. Token validation may refresh
 provider-managed group membership when the cached sync is older than the scope
@@ -4673,10 +4719,15 @@ TTL. Refresh locates the current directory entry with <code>user_filter</code> a
 materialized principal name, then verifies that the entry's
 <code>subject_attribute</code> still matches the stable subject stored at login. The
 subject attribute therefore does not need to support an efficient
-directory-wide search. If refresh fails, cached membership remains usable only
-inside the configured max-stale window. Further requests back off for the scope
-refresh TTL before retrying the provider, so one outage does not serialize
-every request on repeated LDAP timeouts. Once the cache exceeds
+directory-wide search. Only temporary provider unavailability permits cached
+membership inside the configured max-stale window, including LDAP <code>busy</code> (51) and
+<code>unavailable</code> (52) responses during service binding or search. A missing/filtered-out account,
+a changed subject, an invalid provider response, or a configuration error fails
+closed: cached authority is invalidated and existing tokens are revoked. A later
+outage cannot restore rejected authority; a new successful login is required.
+Further requests back off for the scope refresh TTL before retrying the provider,
+so one outage does not serialize every request on repeated LDAP timeouts. Once
+the cache exceeds
 <code>max_stale_seconds</code>, requests fail with <code>503 Service Unavailable</code> during that
 backoff instead of using stale membership. Both durations must be positive and
 representable, and <code>max_stale_seconds</code> must be greater than or equal to

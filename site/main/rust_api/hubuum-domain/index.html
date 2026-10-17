@@ -4572,9 +4572,11 @@ type's documentation explicitly says otherwise. The optional <code>openapi</code
 implements Utoipa 6 schema traits for values also used by Hubuum's HTTP API.</p>
 <h2 id="errors-runtime-and-security">Errors, Runtime, and Security<a class="headerlink" href="#errors-runtime-and-security" title="Permanent link">&para;</a></h2>
 <p>Validation returns crate-owned errors and does not panic for caller input.
-There is no asynchronous runtime requirement, I/O, credential handling, or
-cancellation behavior. JSON Schema validation rejects external references and
-uses a bounded process-local compilation cache; cache contents do not change
+There is no asynchronous runtime requirement, I/O, or cancellation behavior.
+<code>PlaintextPassword</code> validates nonempty passwords up to 4096 Unicode characters,
+preserves their exact contents, and redacts debug output. Hashing and verification
+belong to consumers; plaintext is accessible only through its explicit accessor.
+JSON Schema validation rejects external references and uses a bounded process-local compilation cache; cache contents do not change
 validation results. Private fields and validating builders protect invariants.
 Positive resource identifiers and <code>ResourceRevision</code> are opaque newtypes with
 validated constructors and explicit primitive accessors. Generic storage

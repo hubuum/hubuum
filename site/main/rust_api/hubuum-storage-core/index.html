@@ -4594,6 +4594,12 @@ semantic coverage inventory, and contract documentation must change together.</p
 Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by <code>StorageTransaction</code>; native connections and query
 interfaces remain private to each adapter.</p>
+<p>Login issuance requires <code>StorageLogin</code> evidence carried by
+<code>StorageTokenCreate::for_login</code>. Adapters must recheck it atomically against the
+current user while fencing credential changes. External refresh bookkeeping uses
+<code>record_external_sync_failure</code> with <code>StorageExternalSyncFailure</code>; rejection must
+invalidate cached authority, pending login evidence, and active tokens. See the
+<a href="../../storage_boundary/transactions-and-events/">transaction contract</a>.</p>
 <p>Ordinary resource mutations require <code>EventContext</code> and return
 <code>StorageMutationOutcome</code>. A committed outcome includes a non-empty set of
 non-sensitive <code>StorageAuditReceipt</code> values for the durable events written atomically

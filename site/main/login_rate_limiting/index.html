@@ -4748,7 +4748,7 @@ endpoint. Two attacks motivated the current design (see advisory GHSA-63j4-jh8h-
    by rotating the header, defeating single-account brute force.</li>
 </ol>
 <h2 id="layered-scopes">Layered scopes<a class="headerlink" href="#layered-scopes" title="Permanent link">&para;</a></h2>
-<p>Every failed login is recorded against up to three scopes, each with its own threshold.
+<p>Every failed login is recorded against up to four scopes, each with its own threshold.
 A login is throttled if <em>any</em> applicable scope is currently locked out.</p>
 <table>
 <thead>
@@ -4762,9 +4762,15 @@ A login is throttled if <em>any</em> applicable scope is currently locked out.</
 <tbody>
 <tr>
 <td>Name + IP</td>
-<td><code>(name, client IP)</code></td>
+<td><code>(identity scope, name, client IP)</code></td>
 <td><code>5</code></td>
 <td>Single-account brute force from one host</td>
+</tr>
+<tr>
+<td>Account</td>
+<td><code>(identity scope, name)</code></td>
+<td><code>20</code></td>
+<td>Guessing one account across different networks</td>
 </tr>
 <tr>
 <td>IP</td>
@@ -4780,12 +4786,23 @@ A login is throttled if <em>any</em> applicable scope is currently locked out.</
 </tr>
 </tbody>
 </table>
+<p>The account scope applies across all client IPs, including unknown IPs. Setting
+<code>HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT=0</code> disables this scope.
+Local account names retain their exact case and whitespace. Provider scope names
+are also case-sensitive. LDAP usernames use RFC 4518 case-ignore grouping,
+including Unicode case folding, compatibility normalization, ignored characters,
+and insignificant spaces, so equivalent directory names share a budget. This
+normalization affects throttle keys only; LDAP receives the original username.
+Delimiters in scope names and usernames are escaped in
+the admin identifiers so distinct identities cannot share a bucket accidentally.
+Account lockouts can also deny the account owner access until expiry or an admin
+release; tune the threshold for your traffic and support process.</p>
 <p>The per-IP and per-subnet scopes apply only when a client IP is known and their thresholds
 are non-zero. Setting <code>HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0</code> or
 <code>HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET=0</code> disables that scope.</p>
 <p>Subnets are formed by masking the client IP to a configurable prefix length (default <code>/24</code>
 for IPv4, <code>/64</code> for IPv6).</p>
-<p>A successful login clears only the <code>(name, IP)</code> scope. The per-IP and per-subnet
+<p>A successful login clears the account and its current <code>(name, IP)</code> scope. The per-IP and per-subnet
 budgets are deliberately left intact, so one user's success cannot reset the spray or
 distributed counters for the whole host or network.</p>
 <p>Pending authentication reserves capacity in every applicable scope. Canceled requests
@@ -4872,6 +4889,11 @@ the peer is the attacker's own untrusted address, so it becomes the client regar
 <td>Max failed attempts per <code>(name, IP)</code> per window</td>
 </tr>
 <tr>
+<td><code>HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT</code></td>
+<td><code>20</code></td>
+<td>Max failed attempts per scoped account across all networks (<code>0</code> disables)</td>
+</tr>
+<tr>
 <td><code>HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP</code></td>
 <td><code>20</code></td>
 <td>Max failed attempts per client IP per window (<code>0</code> disables)</td>
@@ -4954,7 +4976,7 @@ user after verifying the cause).</p>
 <ul>
 <li><code>include</code> — <code>locked</code> (default, only currently-locked scopes) or <code>all</code> (every tracked
   scope).</li>
-<li><code>scope</code> — restrict to one scope kind: <code>user_ip</code>, <code>ip</code>, or <code>subnet</code>.</li>
+<li><code>scope</code> — restrict to one scope kind: <code>user_ip</code>, <code>account</code>, <code>ip</code>, or <code>subnet</code>.</li>
 <li><code>q</code> — case-insensitive substring match on the scope identifier (a name, IP, or
   subnet). For example, <code>q=alice</code> or <code>q=198.51.100</code>.</li>
 </ul>
@@ -4964,7 +4986,7 @@ configuration, those counts, and the matching scopes:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>{
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  "config": {
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    "enabled": true, "backend": "memory", "max_attempts": 5, "max_attempts_per_ip": 20,
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    "max_attempts_per_subnet": 100, "window_seconds": 300,
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    "max_attempts_per_account": 20, "max_attempts_per_subnet": 100, "window_seconds": 300,
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    "backoff_base_seconds": 300, "backoff_max_seconds": 86400,
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    "subnet_prefix_v4": 24, "subnet_prefix_v6": 64
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  },
