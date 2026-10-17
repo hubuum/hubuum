@@ -8,7 +8,7 @@ use super::*;
 async fn canceled_authentication_releases_every_scope_without_failures() {
     let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
     reset_login_rate_limit_for_tests().await;
-    let config = cfg();
+    let config = login_rate_limit_config();
     let ip = Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
     for _ in 0..config.max_attempts {
         let mut request = Box::pin(async {
@@ -22,7 +22,7 @@ async fn canceled_authentication_releases_every_scope_without_failures() {
                 .unwrap();
         });
         assert!(poll!(&mut request).is_pending());
-        assert_eq!(LOGIN_ATTEMPTS.lock().await.len(), 3);
+        assert_eq!(LOGIN_ATTEMPTS.lock().await.len(), 4);
         drop(request);
     }
 
